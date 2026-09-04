@@ -1,0 +1,125 @@
+# The model — how a horde thinks
+
+## Three planes, two loops
+
+```
+INTENT     charter · rulings · evidence catalogue          director + the user
+   │ "what must become true"                    ▲ escalations, dissents, wave closes
+META       the graph: nodes · charters · contracts · rules · log     owners, architect
+   │ "how it must be built"                     ▲ drift: code the graph no longer describes
+CODE       worktrees · branches · tests · scenarios         workers, verifiers
+```
+
+The meta plane is the memory of the organisation. In a repository with Yggdrasil it already exists:
+`.yggdrasil/model/<node>/yg-node.yaml`, aspects with rules, `yg check` (the loop downwards: does the
+code respect the graph?), the verification status (the loop upwards: does the graph still describe
+the code?). The horde invents no meta level; it is the organisation that keeps both loops closed when
+the work is too large for one agent. Where there is no Yggdrasil the horde keeps its own committed node
+map (`config.nodeSource = manual`, a plain directory of node folders with the same shape: boundary,
+charter, contracts, log, stamp). Every role sees the same commands in both modes; only the enforcement
+loop downwards is weaker without Yggdrasil — contract tests instead of a rule checker.
+
+Versioning of the meta plane needs two axes, not one: git for content, and per node a stamp
+"verified against code at SHA X". A node's charter is current only where its stamp matches HEAD.
+
+## The node
+
+A node is a bounded piece of the system — a module, a screen, a package, a cross-cutting concern —
+that has:
+
+- a **boundary**: paths, what it exposes, what it depends on;
+- a **charter**: why it exists, its constraints, the decisions in force;
+- an **owner**: a role leased while work touches the node;
+- a **log**: decisions and history — why things are as they are;
+- **contracts** with neighbours: what it promises other nodes, each expressed as a test or scenario;
+- **evidence**: tests and scenarios that prove it does what it claims.
+
+Why a node and not a team: a team is people who must know each other; a node is context that can be
+loaded. An agent has no memory between sessions, but a node has a log. Owners are replaceable; the
+context stays.
+
+**Right size.** A node is cut correctly when its charter, its contracts and its code fit one Sonnet
+context with room to work. Finer costs coordination; coarser overflows context. This is the only
+cutting rule. The first cut of a graph is made with the user.
+
+## Roles as functions of the graph
+
+| role | model | holds | decides | never |
+|---|---|---|---|---|
+| director | Fable or Opus (the user's session) | intent: charter, decision rights, boundary | the escalation list; charter; who audits | reads worker output; merges; dispatches tickets |
+| steward | Sonnet, long-lived, one per team branch | queue, journal, handoff, liveness of its team | scheduling, dispatch, mechanical verification, merge on its branch | judgement — escalates |
+| owner | Sonnet (Opus for a hard node), leased per mission or per wave as the charter says | the node's context: charter, contracts, log | the inside of the node; reviews every change in it; proposes tickets | contracts alone; the graph; reviewing its own ticket |
+| architect | Opus, cross-cutting, no node | coherence of the whole graph | approves or vetoes graph changes; files them into Yggdrasil | implementation |
+| worker | cheapest capable (Haiku with a checker, Sonnet with a spec) | one ticket, one worktree, one branch | implementation detail | contracts, decisions, other branches |
+| verifier | never the author; ideally another model; fresh context | the evidence | reproducible / not | fixing |
+| auditor | Opus, once per wave | one merged ticket, re-verified as the hub would | a process verdict | — |
+| counsel | Opus subagent (Fable only when the user names it) | one opinion on the director's question | nothing | implementation, scouting |
+
+Depth is not configured; it follows the graph. A node with children and many tickets gets an owner who
+is a steward for its subtree. The same skill runs one level down: director : mission :: owner : node.
+
+## Context is the currency
+
+The hierarchy routes context, not authority. Each role has a declared reading set — a filter on the
+graph — and reads nothing outside it:
+
+- director: the mission node and its edges, escalations, dissents, wave closes, audit samples;
+- steward: its queue, its branch, tickets and their verdicts, the roster of its team;
+- owner: its node's subtree, the contracts on its boundary, its log;
+- worker: the ticket, the node charter, the evidence it must produce;
+- verifier: the evidence and the acceptance criteria — never the author's reasoning.
+
+Briefs are rendered by a tool from these sets. Nobody gets the history. A steward is refreshed by
+respawn from files. The director reads only what comes up.
+
+## Trust is manufactured in one place
+
+Agents are biased towards their own work, and no prompt fixes that. The structure routes around it:
+
+- author ≠ verifier, always a fresh context, preferably another model;
+- evidence over report: a ticket is done when its evidence exists and a verifier reproduced it;
+  red-green proof: new tests fail before, pass after;
+- contracts are tests: a contract change is a red test in the neighbour, which escalates by itself;
+- two keys and one approval on every merge: author, verifier, and the owner of every node the ticket
+  names (the architect when the owner is the author), recorded on the ticket;
+- an Opus auditor redoes one merged ticket per wave in full; the director reads the verdict;
+- dissent is a channel, not an argument: an owner may file a dissent against a ruling; it is
+  recorded, answered once by whoever made the ruling, and never blocks.
+
+Trust in an agent is a function of the evidence it left in files, not of the reports it sent.
+
+## Flows
+
+1. **Framing** — director and user; charter, node map, decision rights, evidence catalogue, cost
+   policy, base branch. Linear, interactive, the only phase with the user in the loop.
+2. **Staffing** — steward, owners, architect spawned from rendered briefs; owners refresh charters,
+   propose tickets and contracts.
+3. **Planning as negotiation** — the steward composes a DAG; disputed contracts escalate with the
+   owners' opinions; the architect rules on graph changes; the director rules on the rest. Bounded:
+   three rounds, then escalate.
+4. **Waves** — the steward dispatches by DAG readiness and cost class; workers in worktrees; owners
+   review changes in their nodes; verifiers reproduce evidence; the steward merges with two keys;
+   phases overlap.
+5. **Wave close** — a cheap post-mortem writes lessons to decisions; the auditor re-verifies a sample;
+   the director corrects charter and plan; cost is reported.
+6. **Completion** — evidence catalogue green, full gate green on the trunk, audit clean, cost report
+   written; the director presents; the user pushes.
+
+## Invariants
+
+- Every change belongs to exactly one ticket; a ticket names one node, or two when it carries a
+  contract between them, and then both owners approve.
+- Nothing lands without evidence, a second key and the owner's approval.
+- Every decision that changes structure is in the graph's log, not in a conversation.
+- The truth about who works on what is in files. Liveness is judged by branches and state changes.
+- The model class of a task is the cheapest that passes verification, and is written on the ticket.
+- The director's context holds intent, escalations, dissents, wave closes and audit samples — nothing else.
+- Operational state is uncommitted and dies with the horde; durable knowledge is committed to the
+  graph and outlives it.
+
+## Hard places, named
+
+- Planning can loop: cap rounds, escalate.
+- A contract change propagates: know who has a red test before it lands (`node.mjs contracts`).
+- Cost must be counted even roughly (runs × class), or "cheapest capable" is a wish.
+- The first cut of the graph is a judgement the director makes with the user, not alone.

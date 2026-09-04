@@ -1,0 +1,17 @@
+{
+  "name": "horde-marketplace",
+  "owner": {
+    "name": "Krzysztof Dudek"
+  },
+  "plugins": [
+    {
+      "name": "horde",
+      "source": "./",
+      "description": "Run a mission too big for one agent: turns your coding agent into a director that raises a horde — a steward per branch, an owner per node, workers in worktrees, verifiers who never verify their own work, an architect with veto over the graph.",
+      "version": "0.1.0",
+      "skills": [
+        "./skills/horde"
+      ]
+    }
+  ]
+}

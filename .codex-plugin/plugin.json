@@ -1,0 +1,24 @@
+{
+  "name": "horde",
+  "version": "0.1.0",
+  "description": "Run a mission too big for one agent: turns your coding agent into a director that raises a horde — a steward per branch, an owner per node, workers in worktrees, verifiers who never verify their own work, an architect with veto over the graph.",
+  "author": {
+    "name": "Krzysztof Dudek",
+    "url": "https://github.com/krzysztofdudek"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/krzysztofdudek/Horde",
+  "repository": "https://github.com/krzysztofdudek/Horde.git",
+  "keywords": [
+    "horde",
+    "codex",
+    "codex-plugin",
+    "multi-agent",
+    "agent-orchestration",
+    "subagents",
+    "director-agent",
+    "evidence-based-verification",
+    "agentic-guardrails"
+  ],
+  "skills": "./skills/"
+}
