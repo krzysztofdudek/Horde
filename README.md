@@ -9,9 +9,25 @@
 /plugin install horde@horde-marketplace
 ```
 
-Run both, then `/reload-plugins` to activate it in this session (or restart Claude Code). Requires Node.js on your `PATH` (any recent version), since the skill's tools are plain ES modules with zero dependencies. Invoke it by handing over a mission: `/horde <mission>`, or your own words for it ("let's run this as a horde").
+Run both, then `/reload-plugins` to activate it in this session (or restart Claude Code). Requires Node.js on your `PATH` (any recent version), since the skill's tools are plain ES modules with zero dependencies. It also needs Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams) turned on, an experimental feature that is off by default; see [Requirements](#requirements) below before you invoke it. Invoke it by handing over a mission: `/horde <mission>`, or your own words for it ("let's run this as a horde").
 
 > MIT licensed · Node scripts, zero dependencies · works with or without [Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil) · part of the [Yggdrasil family](#the-yggdrasil-family) · [full skill body](skills/horde/SKILL.md)
+
+---
+
+## Requirements
+
+Turn on Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams) before you hand over a mission. It's off by default and still experimental. Add this to your `settings.json`:
+
+```json
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  }
+}
+```
+
+Without it, Claude Code never raises a steward that stays alive and addressable for the length of a mission, so the skill has nothing to direct. It also needs an interactive session; headless mode (`-p`) won't spawn a team at all.
 
 ---
 
@@ -72,7 +88,7 @@ Two slash commands. The first registers this repo as a marketplace; the second i
 /plugin install horde@horde-marketplace
 ```
 
-Then run `/reload-plugins` to activate it in the current session (or restart Claude Code). Requires Node.js on `PATH`; no other config, no API key.
+Then run `/reload-plugins` to activate it in the current session (or restart Claude Code). Requires Node.js on `PATH` and Claude Code's Agent Teams turned on, see [Requirements](#requirements). No API key.
 
 To upgrade later, refresh the marketplace and reinstall:
 
@@ -129,7 +145,7 @@ Nothing else in this repo affects behavior, all of it lives in that one director
 
 It's not free. Every spawned agent is a real run on your account, at whatever cost class its ticket carries (Haiku, Sonnet, or Opus for the hard nodes and the rulings). The horde reports cost every wave rather than hiding it, and a charter can carry a cost limit that stops it after the running tickets land.
 
-The multi-agent mechanics (the director spawning a steward, a steward spawning its own owners and workers, per-role model selection) are Claude Code's own tooling today. The skill installs the same way on Codex, Cursor, and Copilot, and the discipline travels with it (evidence over reports, escalate rather than guess, nothing merges without two keys), but whether those hosts can actually raise a steward and its owners the way Claude Code does hasn't been verified. Try it there and watch whether the spawning holds before trusting it with something you can't easily undo.
+The multi-agent mechanics run on Claude Code's own Agent Teams, see [Requirements](#requirements). The skill installs the same way on Codex, Cursor, and Copilot, and the discipline travels with it (evidence over reports, escalate rather than guess, nothing merges without two keys), but whether those hosts have anything equivalent to Agent Teams hasn't been checked at all. Try it there and watch whether the spawning holds before trusting it with something you can't easily undo.
 
 It's not a substitute for reading the result. You get the final branch, the evidence catalogue, and the cost report; whether the mission actually did what you meant is still your call, not the auditor's.
 
