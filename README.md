@@ -181,7 +181,7 @@ Not a Norse name, unlike Ratatoskr and Urd. It says what it does: raise many che
 
 ## The Yggdrasil family
 
-Four tools, one thesis: **make an AI coding agent prove correctness, stage by stage.** Because "done" isn't done. Each of the first four is a checkpoint at a different point in the pipeline, where the agent has to show its work before it continues. Horde doesn't own a stage; it's what you add when a mission needs more than one agent to move through all four at once, and it holds every agent it raises to the same standards.
+Four tools, one thesis: **make an AI coding agent prove correctness, stage by stage.** Because "done" isn't done. Each of the first four is a checkpoint at a different point in the pipeline, where the agent has to show its work before it continues.
 
 | Tool | Stage | What it makes the agent prove |
 |---|---|---|
@@ -189,7 +189,8 @@ Four tools, one thesis: **make an AI coding agent prove correctness, stage by st
 | **[Urd](https://github.com/krzysztofdudek/UrdSkill)** | intent → code | When the spec is ambiguous, it consults the source of truth and asks, it doesn't guess. |
 | **[Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil)** | code → architecture | Every change satisfies the rules that govern it, checked before the agent moves on. |
 | **[Researcher](https://github.com/krzysztofdudek/ResearcherSkill)** | code → measured result | Point it at a metric and it runs experiments, hypotheses kept and discarded. |
-| **Horde** (this one) | when one agent isn't enough | Raises a steward, owners, an architect, workers and verifiers, and holds all of them to the other three tools' standards at once. |
+
+Two more sit alongside the chain rather than inside it. **Horde** (this one) doesn't own a stage, it's what you add when a mission needs more than one agent to move through all four at once, holding every agent it raises to the same standards. **[Grain](https://github.com/krzysztofdudek/Grain)** reads the conventions a codebase actually practices instead of the ones someone declared, the same seam as Yggdrasil from the other side. Paused since 2026-09-02: the engine works, but the question that decides whether it's worth using, does it change what an agent ships, came back not demonstrated.
 
 ## License
 
