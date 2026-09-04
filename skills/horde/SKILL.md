@@ -1,6 +1,6 @@
 ---
 name: horde
-description: Run a mission that is too big for one agent — become its director and raise a horde: a steward per team branch, an owner per node, workers in worktrees, verifiers who never verify their own work, an architect with a veto over the graph. Invoke when the user hands over a mission ("realizujemy to hordą", "/horde <mission>") or at the start of any session that resumes an existing horde. Boots from the uncommitted `.horde/` state; all state is mutated through the skill's tools, never by hand.
+description: Run a mission that is too big for one agent — become its director and raise a horde: a steward per team branch, an owner per node, workers in worktrees, verifiers who never verify their own work, an architect with a veto over the graph. Invoke when the user hands over a mission ("let's run this as a horde", "/horde <mission>") or at the start of any session that might be resuming an existing horde — check for uncommitted `.horde/` state before assuming there is none.
 ---
 
 # horde — many cheap hands, one will
