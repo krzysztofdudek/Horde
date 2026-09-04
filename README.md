@@ -1,3 +1,5 @@
+<img width="1376" height="768" alt="Gemini_Generated_Image_ze518ize518ize51" src="https://github.com/user-attachments/assets/2716dc49-4c76-4106-945a-5fe82068a7cc" />
+
 # Horde
 
 **A mission is too big for one agent's context, so you either watch it lose track of its own earlier decisions, or you split it up yourself and babysit every piece.** Horde does the splitting for you: it turns your coding agent into a director, and the director raises a horde.
