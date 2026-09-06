@@ -33,6 +33,7 @@ import { join } from 'node:path';
 import {
   hordePath, teamPath, repoRoot, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, git, patchIdOf,
+  parentBranchOf,
 } from './_lib.mjs';
 import { trace as traceRoster, ownerNameForNode, architectIsLive } from './roster.mjs';
 import {
@@ -697,8 +698,11 @@ function ticketBranchKey(horde, ticket) {
   const item = items.find((i) => i.ticket === ticket.id);
   if (!item || !item.branch) return { sha: null, patchId: null };
   const cfg = readConfig();
-  const teamLeaf = String(ticket.team).split('/').pop();
-  const parentBranch = `${horde}/${teamLeaf}`;
+  // Against the branch's own parent — its team's, or the unmerged ticket it was started from —
+  // so the diff an approval is bound to is the ticket's own work and nothing underneath it. Bind
+  // a stacked ticket against the team branch instead and the approval would name its parent's
+  // change too, and die the moment that parent merged: exactly the wave a stack is meant to save.
+  const parentBranch = parentBranchOf(horde, ticket.team, item).branch;
   return {
     sha: git(['rev-parse', '--short', item.branch]),
     patchId: patchIdOf(item.branch, parentBranch, { context: cfg && cfg.keyContext }),

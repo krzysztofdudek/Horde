@@ -295,3 +295,158 @@ test('queue.mjs set merged: the merge is recorded in the wave journal by the sam
   const planAfter = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
   assert.equal(planAfter.match(/merged: 001 abc1234/g).length, 1);
 });
+
+// ---- a ticket started from an unmerged dependency (a stack) ---------------------------------
+//
+// A chain of three tickets used to cost three waves of wall-clock: each one waited for the one
+// before it to be merged before it could even be cut. Started from the dependency's own tip
+// instead, the second is written and reviewed while the first is still in flight, and only the
+// merge order still waits.
+
+function keysFor(dir, ticket, { author = 'worker1', owner = 'owner1', verifier = 'verifier1', branch }) {
+  run('tk.mjs', ['key', ticket, 'author', '--by', author], dir);
+  const tip = git(['rev-parse', '--short', branch], dir);
+  run('verify.mjs', ['record', ticket, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', verifier, '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', tip], dir);
+  run('tk.mjs', ['review', ticket, 'approve', '--by', owner], dir);
+}
+
+test('queue.mjs: a ticket started from an unmerged dependency (a stack)', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const first = readyTicket(dir, 'first-link');
+  const second = readyTicket(dir, 'second-link');
+  const loose = readyTicket(dir, 'loose-end');
+  run('queue.mjs', ['add', first], dir);
+  run('queue.mjs', ['add', second, '--depends', first], dir);
+  run('queue.mjs', ['add', loose], dir);
+
+  await t.test('--on refuses a dependency that has not started — there is no tip to start from', () => {
+    const r = run('queue.mjs', ['set', second, 'running', '--on', first], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /is queued — only a running or landed ticket has a tip to start from/);
+  });
+
+  const parent = run('queue.mjs', ['set', first, 'running', '--agent', 'w1'], dir);
+  git(['-C', parent.json.worktree, 'commit', '--allow-empty', '-qm', 'the first link'], dir);
+
+  await t.test('a fully ready ticket is still offered first; --stack offers the dependent one after it', () => {
+    assert.equal(run('queue.mjs', ['next'], dir).json.ticket, loose);
+    const withReady = run('queue.mjs', ['next', '--stack'], dir);
+    assert.equal(withReady.json.ticket, loose);
+    assert.equal(withReady.json.stackReady, false);
+
+    run('queue.mjs', ['set', loose, 'running', '--agent', 'w0'], dir);
+    assert.equal(run('queue.mjs', ['next'], dir).json, null);
+
+    const offered = run('queue.mjs', ['next', '--stack'], dir);
+    assert.equal(offered.json.ticket, second);
+    assert.equal(offered.json.stackReady, true);
+    assert.deepEqual(offered.json.stackOn, [first]);
+    const printed = run('queue.mjs', ['next', '--stack'], dir, { json: false });
+    assert.match(printed.stdout, new RegExp(`stack-ready on ${first}`));
+  });
+
+  await t.test('--on refuses a ticket in another team, and one this ticket does not depend on', () => {
+    run('roster.mjs', ['spawn', 'steward', '--team', 'allies', '--parent', 'trunk', '--class', 'sonnet'], dir);
+    const away = run('tk.mjs', ['new', 'away-ticket', '--title', 'Away', '--node', 'core', '--class', 'sonnet', '--team', 'allies'], dir).json.id;
+    run('queue.mjs', ['add', away, '--team', 'allies'], dir);
+    const otherTeam = run('queue.mjs', ['set', second, 'running', '--on', `allies:${away}`], dir);
+    assert.equal(otherTeam.code, 1);
+    assert.match(otherTeam.stderr, /belongs to team allies, not trunk/);
+
+    const notADep = run('queue.mjs', ['set', loose, 'running', '--on', first], dir);
+    assert.equal(notADep.code, 1);
+    assert.match(notADep.stderr, new RegExp(`${loose} does not depend on ${first}`));
+  });
+
+  await t.test('--on outside "running" is refused — nothing else cuts a branch', () => {
+    const r = run('queue.mjs', ['set', second, 'landed', '--on', first], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--on only goes with "set <ticket> running"/);
+  });
+
+  let child = null;
+  await t.test('running --on cuts the branch from the dependency\'s tip, not the team\'s, and records it', () => {
+    const r = run('queue.mjs', ['set', second, 'running', '--agent', 'w2', '--on', first], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.stackedOn, first);
+    child = r.json;
+
+    const parentTip = git(['rev-parse', parent.json.branch], dir);
+    assert.equal(git(['merge-base', parentTip, r.json.branch], dir), parentTip);
+    assert.notEqual(git(['rev-parse', 'mission1/trunk'], dir), parentTip);
+    assert.ok(r.json.notes.some((n) => new RegExp(`stacked on ${first}`).test(n.text)));
+
+    const md = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.md'), 'utf8');
+    assert.match(md, new RegExp(`stacked on ${first}`));
+  });
+
+  await t.test('merged is refused while the dependency has not merged, keys or no keys', () => {
+    keysFor(dir, second, { author: 'w2', branch: child.branch });
+    const r = run('queue.mjs', ['set', second, 'merged', '--sha', 'abc1234'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, new RegExp(`${second} depends on ${first}, still unmerged`));
+  });
+
+  await t.test('the dependency merging clears the stack, by the same write', () => {
+    keysFor(dir, first, { author: 'w1', branch: parent.json.branch });
+    git(['checkout', 'mission1/trunk'], dir);
+    git(['merge', '--no-ff', parent.json.branch, '-m', `merge ${first}`], dir);
+    const sha = git(['rev-parse', '--short', 'mission1/trunk'], dir);
+    const merged = run('queue.mjs', ['set', first, 'merged', '--sha', sha], dir);
+    assert.equal(merged.code, 0, merged.stderr);
+
+    const item = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === second);
+    assert.equal(item.stackedOn, null);
+    assert.ok(item.notes.some((n) => /merged — base is mission1\/trunk from now on/.test(n.text)));
+  });
+
+  await t.test('--on refuses a dependency that has already merged — its work is on the team branch', () => {
+    const third = readyTicket(dir, 'third-link');
+    run('queue.mjs', ['add', third, '--depends', first], dir);
+    const r = run('queue.mjs', ['set', third, 'running', '--on', first], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /is already merged/);
+  });
+
+  await t.test('and then the stacked ticket merges in its turn', () => {
+    const sha = git(['rev-parse', '--short', child.branch], dir);
+    const r = run('queue.mjs', ['set', second, 'merged', '--sha', sha], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.state, 'merged');
+  });
+});
+
+test('queue.mjs reconcile: a stacked ticket carrying only its parent\'s commits is not mistaken for landed', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const first = readyTicket(dir, 'the-base');
+  const second = readyTicket(dir, 'the-stack');
+  run('queue.mjs', ['add', first], dir);
+  run('queue.mjs', ['add', second, '--depends', first], dir);
+
+  const parent = run('queue.mjs', ['set', first, 'running', '--agent', 'w1'], dir);
+  git(['-C', parent.json.worktree, 'commit', '--allow-empty', '-qm', 'the parent works'], dir);
+  const stacked = run('queue.mjs', ['set', second, 'running', '--agent', 'w2', '--on', first], dir);
+  assert.equal(stacked.code, 0, stacked.stderr);
+
+  // Two commits beyond the team branch, both the parent's. Measured against the team branch this
+  // reads as work done; measured against the branch it was actually cut from, as the empty start
+  // it is — so the ticket goes back on the queue instead of being reported landed.
+  const r = run('queue.mjs', ['reconcile'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const states = Object.fromEntries(r.json.map((x) => [x.ticket, x.state]));
+  assert.equal(states[first], 'landed');
+  assert.equal(states[second], 'queued');
+
+  // …and its own commit does land it.
+  const back = run('queue.mjs', ['set', second, 'running', '--agent', 'w2', '--on', first], dir);
+  assert.equal(back.code, 0, back.stderr);
+  git(['-C', back.json.worktree, 'commit', '--allow-empty', '-qm', 'the stack works'], dir);
+  const after = run('queue.mjs', ['reconcile'], dir);
+  assert.equal(after.json.find((x) => x.ticket === second).state, 'landed');
+});

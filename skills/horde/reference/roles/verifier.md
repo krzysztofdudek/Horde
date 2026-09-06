@@ -42,8 +42,9 @@ if it cannot be judged without reading the whole change, say that instead of gue
 You are held to two disciplines — **verification** and **review**. Both are printed in full under
 `## Law` at the end of this brief; read them before you record anything.
 
-1. `git merge-base --is-ancestor {{teamBranch}} HEAD` — a branch not rooted at the team tip is
-   `--verdict stale`.
+1. `git merge-base --is-ancestor {{parentBranch}} HEAD` — a branch not rooted at that tip is
+   `--verdict stale`. That ref is what this ticket is measured against: its team's branch, or —
+   when it was started on top of a ticket that has not merged yet — that ticket's branch.
 2. Reproduce every evidence item exactly as the acceptance names it, in the order the checklist lists
    it (line 1, line 2, …): run the test, open the scenario, watch the film, take the screenshot.
    Record what you ran and what you saw for each line — you will pass one `--item` per line below.

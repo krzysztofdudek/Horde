@@ -172,6 +172,34 @@ export function resolveHorde(args) {
   fail(`multiple hordes exist (${hordes.join(', ')}) — pass --horde <name>`);
 }
 
+// parentBranchOf(horde, team, item) — the branch a queue item's own branch is rooted on, merges
+// into, and is measured against. Normally the team's branch. A ticket the steward started from an
+// unmerged dependency's tip (`queue.mjs set NNN running --on MMM`, recorded as `stackedOn`) is
+// rooted on that dependency's branch instead, so a chain of three tickets does not cost three
+// waves. The stack lasts exactly as long as the dependency is unmerged: once it merges, its work
+// is on the team branch, `stackedOn` is cleared by the write that recorded the merge, its branch
+// is gone, and the parent is the team branch again. The state and branch are checked here as well
+// as cleared there, so a `stackedOn` left behind by anything resolves to the team branch — the
+// answer that is at worst stale, never one naming a branch that no longer exists.
+//
+// One function, because everything measured against a parent has to name the same one: how fresh
+// the base is, what the diff contains, the identity a key binds to, what a new test is reverted
+// onto, and what the range-diff of a moved diff is taken against. Two answers here would be a
+// ticket whose keys are recorded against one branch and checked against another.
+export function parentBranchOf(horde, team, item, { cwd } = {}) {
+  const teamBranch = `${horde}/${String(team).split('/').pop()}`;
+  const stackedOn = item && item.stackedOn ? String(item.stackedOn) : null;
+  const out = {
+    branch: teamBranch, teamBranch, stackedOn, stacked: false,
+  };
+  if (!stackedOn) return out;
+  const queue = readJSON(teamPath(horde, team, 'queue.json'), { items: [] });
+  const parent = asArray(queue.items).find((i) => String(i.ticket) === stackedOn);
+  if (!parent || parent.state === 'merged' || !parent.branch) return out;
+  if (git(['rev-parse', '--verify', parent.branch], cwd || repoRoot()) === null) return out;
+  return { ...out, branch: parent.branch, stacked: true };
+}
+
 export function readJSON(file, fallback) {
   if (!existsSync(file)) return fallback;
   const raw = readFileSync(file, 'utf8');

@@ -7,9 +7,11 @@
 // A branch is found by locating the queue item that names it (searched across every team, since
 // the caller only supplies the branch name): an ordinary ticket branch `<horde>/t-NNN` lives in
 // its own team's queue; a sub-team's merge-up lives in its *parent* team's queue as a `team:<name>`
-// item, `branch` pointing at the child team's own branch. Either way the branch's parent (the
-// branch it must be rooted on, and will merge into) is exactly `<horde>/<team>` — the team whose
-// queue.json named it — so no separate parent-resolution step is needed.
+// item, `branch` pointing at the child team's own branch. The branch it must be rooted on, and
+// will merge into, is normally `<horde>/<team>` — the team whose queue.json named it — and, for a
+// ticket the steward started from an unmerged dependency's tip, that dependency's branch until it
+// merges. `parentBranchOf` answers that once, and every item below is measured against its
+// answer: the base, the diff, what the keys are bound to, the tree a new test is reverted onto.
 
 import {
   existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync,
@@ -19,7 +21,7 @@ import { dirname, join, relative } from 'node:path';
 import { execFileSync, execSync } from 'node:child_process';
 import {
   repoRoot, hordePath, readJSON, writeJSON, readText, writeText, readConfig, git, fail, parseArgs,
-  asArray, emit, isMain, resolveHorde, patchIdOf,
+  asArray, emit, isMain, resolveHorde, patchIdOf, parentBranchOf,
 } from './_lib.mjs';
 import {
   ticketNodes, graphIsLaw, runYgCheck, ygCommand,
@@ -591,7 +593,8 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
   const found = findQueueItemByBranch(horde, branch);
   if (!found) fail(`no queue item names branch ${branch} — is it tracked by queue.mjs?`);
   const { team, teamDir, item } = found;
-  const parentBranch = `${horde}/${team}`;
+  const parent = parentBranchOf(horde, team, item, { cwd: root });
+  const parentBranch = parent.branch;
 
   const isTeamMergeUp = typeof item.ticket === 'string' && item.ticket.startsWith('team:');
   const changedFiles = (git(['diff', '--name-only', `${parentBranch}...${branch}`]) || '').split('\n').filter(Boolean);
@@ -664,9 +667,18 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
   checks.push({ name: 'journal', ...checkJournal(logText, branch) });
 
   const allOk = checks.every((c) => c.ok);
-  const result = { branch, level, ticket: ticketId, team, checks, ok: allOk };
+  const result = {
+    branch,
+    level,
+    ticket: ticketId,
+    team,
+    parent: parentBranch,
+    stackedOn: parent.stacked ? parent.stackedOn : null,
+    checks,
+    ok: allOk,
+  };
   emit(result, flags, () => [
-    `premerge ${branch} (level: ${level})`,
+    `premerge ${branch} (level: ${level})${parent.stacked ? ` · stacked on ${parent.stackedOn}` : ''}`,
     ...checks.map((c) => `${c.ok ? '✓' : '✗'} ${c.name} — ${c.note}`),
     allOk ? 'READY' : 'NOT READY',
   ].join('\n'));

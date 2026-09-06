@@ -1034,3 +1034,159 @@ test('premerge.mjs: item 2 — an approval given from the verifier seat is read 
   assert.match(keys.note, /keys bound to diff [0-9a-f]{7}/);
   assert.match(keys.note, /\(verifier-seat\)/);
 });
+
+// ---- a ticket started from an unmerged dependency's tip (a stack) --------------------------
+//
+// The second ticket of a chain, written and reviewed while the first is still in flight. Every
+// question with the word "parent" in it — where the base is, what the diff contains, what the
+// keys are bound to, what a moved diff is compared against — has to be answered with the first
+// ticket's branch until it merges, and with the team branch from the moment it does. If it is
+// not, the keys die on the catch-up that follows the parent's merge, and the stack has bought
+// nothing: the second ticket pays for a second review exactly as if it had waited a wave.
+
+function libWithLines(changes) {
+  const lines = [...LIB_LINES];
+  for (const [line, value] of Object.entries(changes)) lines[Number(line) - 1] = `export const v${line} = ${value};`;
+  return `${lines.join('\n')}\n`;
+}
+
+// The parent ticket running on its own branch with one line of the file changed, and the child
+// queued behind it — dependency recorded, so the stack can follow it.
+function chainOfTwo(dir, { parentLine = 5, childLine = 30 } = {}) {
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+  run('node.mjs', ['new', 'feature', '--boundary', 'lib.mjs,other.mjs'], dir);
+
+  git(['checkout', 'mission1/trunk'], dir);
+  writeFileSync(join(dir, 'lib.mjs'), `${LIB_LINES.join('\n')}\n`);
+  git(['add', 'lib.mjs'], dir);
+  git(['commit', '-qm', 'the file both tickets change'], dir);
+
+  const parentId = run('tk.mjs', ['new', 'the-first-link', '--title', 'First link', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
+  run('queue.mjs', ['add', parentId], dir);
+  const parent = run('queue.mjs', ['set', parentId, 'running', '--agent', 'worker1'], dir).json;
+  writeFileSync(join(parent.worktree, 'lib.mjs'), libWithLines({ [parentLine]: 500 }));
+  git(['add', 'lib.mjs'], parent.worktree);
+  git(['commit', '-qm', `ticket ${parentId}`], parent.worktree);
+
+  const childId = run('tk.mjs', ['new', 'the-second-link', '--title', 'Second link', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
+  run('queue.mjs', ['add', childId, '--depends', parentId], dir);
+  const started = run('queue.mjs', ['set', childId, 'running', '--agent', 'worker2', '--on', parentId], dir);
+  assert.equal(started.code, 0, started.stderr);
+  const child = started.json;
+
+  // The child's own line, on top of what the parent already changed under it.
+  writeFileSync(join(child.worktree, 'lib.mjs'), libWithLines({ [parentLine]: 500, [childLine]: 3000 }));
+  git(['add', 'lib.mjs'], child.worktree);
+  git(['commit', '-qm', `ticket ${childId}`], child.worktree);
+
+  run('tk.mjs', ['key', childId, 'author', '--by', 'worker2'], dir);
+  const approve = run('tk.mjs', ['review', childId, 'approve', '--by', 'owner1'], dir);
+  assert.equal(approve.code, 0, approve.stderr);
+  const childTip = git(['rev-parse', '--short', child.branch], dir);
+  const verdict = run('verify.mjs', ['record', childId, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1', '--gate', 'green', '--sha', childTip], dir);
+  assert.equal(verdict.code, 0, verdict.stderr);
+
+  return { parentId, parent, childId, child };
+}
+
+// The parent keyed, merged into the team branch and recorded as merged — the moment the stack ends.
+function landTheParent(dir, parentId, parentBranch) {
+  run('tk.mjs', ['key', parentId, 'author', '--by', 'worker1'], dir);
+  run('tk.mjs', ['review', parentId, 'approve', '--by', 'owner1'], dir);
+  const tip = git(['rev-parse', '--short', parentBranch], dir);
+  run('verify.mjs', ['record', parentId, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1', '--gate', 'green', '--sha', tip], dir);
+  git(['checkout', 'mission1/trunk'], dir);
+  git(['merge', '--no-ff', parentBranch, '-m', `merge ${parentId}`], dir);
+  const sha = git(['rev-parse', '--short', 'mission1/trunk'], dir);
+  const merged = run('queue.mjs', ['set', parentId, 'merged', '--sha', sha], dir);
+  assert.equal(merged.code, 0, merged.stderr);
+  return merged;
+}
+
+test('premerge.mjs: a stacked ticket is measured against its parent, and its keys survive the parent landing', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const {
+    parentId, parent, childId, child,
+  } = chainOfTwo(dir);
+
+  await t.test('while the parent is unmerged, every item reads against the parent\'s branch', () => {
+    const r = run('premerge.mjs', [child.branch], dir);
+    assert.equal(r.code, 0, JSON.stringify(r.json && r.json.checks));
+    assert.equal(r.json.parent, parent.branch);
+    assert.equal(r.json.stackedOn, parentId);
+    const base = r.json.checks.find((c) => c.name === 'base freshness');
+    assert.equal(base.ok, true, base.note);
+    assert.match(base.note, new RegExp(`rooted at ${parent.branch} tip`));
+    const keys = r.json.checks.find((c) => c.name === 'keys');
+    assert.equal(keys.ok, true, keys.note);
+    assert.match(keys.note, /keys bound to diff [0-9a-f]{7}/);
+  });
+
+  await t.test('the parent lands: the stack is cleared and the child catches up with the team', () => {
+    landTheParent(dir, parentId, parent.branch);
+    const item = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === childId);
+    assert.equal(item.stackedOn, null);
+
+    const merge = tryMerge(child.worktree, 'mission1/trunk');
+    assert.equal(merge.ok, true, merge.output);
+    run('tk.mjs', ['log', childId, 'caught the team branch up'], dir);
+  });
+
+  await t.test('and the keys hold: the parent is the team branch now, the diff is the same one', () => {
+    const r = run('premerge.mjs', [child.branch], dir);
+    assert.equal(r.code, 0, JSON.stringify(r.json && r.json.checks));
+    assert.equal(r.json.parent, 'mission1/trunk');
+    assert.equal(r.json.stackedOn, null);
+
+    const base = r.json.checks.find((c) => c.name === 'base freshness');
+    assert.equal(base.ok, true, base.note);
+    assert.match(base.note, /rooted at mission1\/trunk tip/);
+    const keys = r.json.checks.find((c) => c.name === 'keys');
+    assert.equal(keys.ok, true, keys.note);
+    assert.match(keys.note, /keys bound to diff [0-9a-f]{7}/);
+    assert.doesNotMatch(keys.note, /re-review/);
+    // The gate is tied to the tree, so it runs again on the merged one — nothing is carried over
+    // but the human judgement.
+    const gate = r.json.checks.find((c) => c.name === 'gate');
+    assert.equal(gate.ok, true, gate.note);
+    assert.match(gate.note, /green \(true\)/);
+  });
+
+  await t.test('the child then merges in its turn', () => {
+    git(['checkout', 'mission1/trunk'], dir);
+    git(['merge', '--no-ff', child.branch, '-m', `merge ${childId}`], dir);
+    const sha = git(['rev-parse', '--short', 'mission1/trunk'], dir);
+    const merged = run('queue.mjs', ['set', childId, 'merged', '--sha', sha], dir);
+    assert.equal(merged.code, 0, merged.stderr);
+  });
+});
+
+test('premerge.mjs: a parent amended inside the stacked ticket\'s own context sends its keys to a scoped re-review', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { parent, childId, child } = chainOfTwo(dir);
+
+  // The parent changes a line two below the child's own, before landing: the merge is clean, but
+  // what the owner and the verifier read on the child's branch is not what is on it any more.
+  writeFileSync(join(parent.worktree, 'lib.mjs'), libWithLines({ 5: 500, 32: 999 }));
+  git(['add', 'lib.mjs'], parent.worktree);
+  git(['commit', '-qm', 'the parent takes another line'], parent.worktree);
+
+  const merge = tryMerge(child.worktree, parent.branch);
+  assert.equal(merge.ok, true, merge.output);
+  run('tk.mjs', ['log', childId, 'caught the parent up'], dir);
+
+  const r = run('premerge.mjs', [child.branch], dir);
+  assert.equal(r.code, 1);
+  assert.equal(r.json.parent, parent.branch);
+  const keys = r.json.checks.find((c) => c.name === 'keys');
+  assert.equal(keys.ok, false);
+  assert.match(keys.note, /diff changed since review at [0-9a-f]{7} — scoped re-review: \S+/);
+
+  const path = /scoped re-review: (\S+)/.exec(keys.note)[1];
+  assert.match(path, /rereview-[0-9a-f]{7}\.\.[0-9a-f]{7}\.diff$/);
+  const delta = readFileSync(join(dir, path), 'utf8');
+  assert.match(delta, new RegExp(`ticket ${childId}`));
+});
