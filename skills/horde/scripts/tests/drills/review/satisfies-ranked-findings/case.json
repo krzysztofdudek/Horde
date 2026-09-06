@@ -7,13 +7,13 @@
   "ticket": "001",
   "branch": "m1/t-001",
   "parentBranch": "m1/trunk",
-  "tip": "d882c11796d9c956d973b0948b0bd2d9cd2d7e36",
+  "tip": "43baa9fa789507aba106b9991e3af5b50f77688d",
   "refs": [
     "m1/t-001",
     "m1/trunk",
     "develop"
   ],
-  "recordedAt": "2026-09-06T15:40:14.691Z",
+  "recordedAt": "2026-09-06T20:37:07.388Z",
   "note": "the change request names Important; the Minor finding went to the log",
   "saw": [
     {

@@ -45,7 +45,7 @@ rule you cannot satisfy is a report, never a rule you quietly break.
 Contracts on this node's border (each is a test; if your change turns one red, the change is wrong or the
 contract must be re-negotiated by the owner — you do not decide which):
 
-{{nodeContracts}}
+{{nodePorts}}
 
 ## Rules
 
@@ -63,11 +63,11 @@ at the end of this brief; read them before your first commit.
   or plans; protected paths are untouched (`{{protectedPaths}}`).
 - Never `git push`, `git stash`, checkout another branch, or restore a file from a whole-file backup.
   Under `.horde/` you write only `{{issueDir}}/log.md`, and only through `tk.mjs log`.
-- The repository's own instructions (its CLAUDE.md and AGENTS.md) apply to you in full; where the
-  repository runs Yggdrasil, run `yg check --approve --only-deterministic` in your worktree first (the
-  deterministic cache is not committed and starts empty here; rebuilding it is free), follow the
-  `yg prime` protocol for anything else, and never approve a nondeterministic pair or write a
-  suppression.
+- The repository's own instructions (its CLAUDE.md and AGENTS.md) apply to you in full. Run
+  `yg check --approve --only-deterministic` in your worktree first — the deterministic cache is not
+  committed and starts empty here, and rebuilding it is free and needs no key. Follow the `yg prime`
+  protocol for anything else. What is left after that free run is the prose rules, which the
+  verifier judges: never approve a nondeterministic pair yourself, never write a suppression.
 - Commit on your branch `{{branch}}` with the repository's commit hooks passing. **Your last action** is
   `node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tk.mjs log {{ticketId}} "landed <sha> — <one line>"` after the
   commit; the merge checklist requires a log entry newer than the last commit. Your final report

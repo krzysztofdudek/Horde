@@ -2,8 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  makeRepo, rmRepo, run, initHorde, addNode,
+} from './helpers.mjs';
+
+const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 function writeRoster(dir, horde, entries) {
   const path = join(dir, '.horde', 'hordes', horde, 'roster.json');
@@ -27,12 +32,21 @@ function seedTicket(dir, horde, team, id, {
   writeFileSync(queuePath, JSON.stringify(existing, null, 2));
 }
 
+// A component in the real graph, with the charter the horde seeds beside it — `node.mjs charter
+// edit` with nothing on stdin writes the template, which is what a brief then quotes.
+function seedNode(dir, node, mapping, ports) {
+  addNode(dir, node, ports ? { mapping, ports } : { mapping });
+  execFileSync('node', [join(SCRIPTS_DIR, 'node.mjs'), 'charter', 'edit', node, '--json'], {
+    cwd: dir, input: '', encoding: 'utf8',
+  });
+}
+
 test('brief.mjs: renders every role from a seeded charter/ticket/queue/roster', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
 
-  run('node.mjs', ['new', 'nodeA', '--boundary', 'src/a/**'], dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
 
   const charterPath = join(dir, '.horde', 'hordes', 'mission1', 'charter.md');
   const charter = readFileSync(charterPath, 'utf8');
@@ -68,7 +82,7 @@ test('brief.mjs: renders every role from a seeded charter/ticket/queue/roster', 
   });
 
   await t.test('owner — leaseScope falls back to the default rule for a node the charter never names', () => {
-    run('node.mjs', ['new', 'nodeB', '--boundary', 'src/b/**'], dir);
+    seedNode(dir, 'nodeB', ['src/b/**']);
     const r = run('brief.mjs', ['owner', 'nodeB', '--name', 'mission1-owner-nodeA-1'], dir);
     assert.equal(r.code, 0);
     assert.match(r.json.brief, /mission when the node has three or more tickets, wave otherwise/);
@@ -145,7 +159,7 @@ test('brief.mjs worker --takeover: renders the prior worker\'s log and how many 
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'nodeA', '--boundary', 'src/a/**'], dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
 
   const ticket = run('tk.mjs', ['new', 'takeover-thing', '--title', 'Needs a takeover', '--node', 'nodeA', '--class', 'sonnet'], dir);
   const id = ticket.json.id;
@@ -182,7 +196,7 @@ test('brief.mjs: refuses with the unfilled placeholder(s) rather than print "{{�
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'nodeA', '--boundary', 'src/a/**'], dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
 
   // A malformed ticket with no "# id · title" header — ticketTitle can't be read from it.
   seedTicket(dir, 'mission1', 'trunk', '002', {
@@ -199,7 +213,7 @@ test('brief.mjs: every role held to a discipline carries it under "## Law"', asy
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'nodeA', '--boundary', 'src/a/**'], dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
   writeRoster(dir, 'mission1', [
     { name: 'mission1-steward-trunk-1', role: 'steward', team: 'trunk', parent: null },
   ]);
@@ -254,7 +268,7 @@ test('brief.mjs verifier --delta: a scoped re-review names the delta and the fin
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'nodeA', '--boundary', 'src/a/**'], dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
 
   seedTicket(dir, 'mission1', 'trunk', '001', {
     branch: 'mission1/t-001', worktree: '.horde/worktrees/mission1/t-001',
@@ -316,7 +330,7 @@ test('brief.mjs: a stacked ticket\'s brief names the branch it was started from,
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'lib.mjs'], dir);
+  seedNode(dir, 'feature', ['lib.mjs']);
 
   const first = run('tk.mjs', ['new', 'first-link', '--title', 'First link', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
   const second = run('tk.mjs', ['new', 'second-link', '--title', 'Second link', '--node', 'feature', '--class', 'sonnet'], dir).json.id;

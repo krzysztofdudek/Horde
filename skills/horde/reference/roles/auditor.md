@@ -21,7 +21,7 @@ Repository root: `{{repoRoot}}` — every command runs from there, every relativ
 3. Compare what you saw with what was claimed. A claim you could not reproduce is a finding, however
    small. A verifier who accepted a description instead of a run is a finding. A review that approved a
    change outside the node is a finding.
-4. Read the diff against the node's charter and the contracts. A change the charter forbids that nobody
+4. Read the diff against the node's charter and the ports on its border. A change the charter forbids that nobody
    caught is a finding.
 5. Record: `node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/wave.mjs audit {{ticketId}} clean|findings "<what>"`, then
    for each finding that the process should learn from, `decide.mjs add <slug> "<lesson>" --ticket

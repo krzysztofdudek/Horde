@@ -18,7 +18,7 @@ import {
 import { appendDecision } from './decide.mjs';
 import { trace as traceRoster } from './roster.mjs';
 import { findTicket, nodesOf } from './tk.mjs';
-import { graphIsLaw, ygCommand } from './node.mjs';
+import { ygCommand } from './node.mjs';
 
 // "adjudicate" is not a finding to rule on so much as a ticket the fix-loop breaker gave up on:
 // tk.mjs status <ticket> changes refuses past config.fixRounds' cap and names this exact command
@@ -214,14 +214,14 @@ function nodeOfEscalation(horde, it) {
   return nodes.length ? nodes[0] : NO_NODE;
 }
 
-// The command that files the proposal. Where the graph is the law and the group has a node, the
-// graph's own log is the place a rule's reasoning belongs (the same redirect decide.mjs already
-// makes for a node-tied decision) — through config.ygCommand, so a checkout running a local build
-// gets its own binary named. Otherwise there is no graph to file into and the horde's own
-// decision record is the honest target.
+// The command that files the proposal. Where the group has a node, the graph's own log is the
+// place a rule's reasoning belongs (the same redirect decide.mjs already makes for a node-tied
+// decision) — through config.ygCommand, so a checkout running a local build gets its own binary
+// named. A group with no node has nowhere in the graph to go, and the horde's own decision record
+// is the honest target.
 function fileItCommand(cfg, node, rule) {
   const quoted = rule.replace(/"/g, '\\"');
-  if (graphIsLaw(cfg) && node !== NO_NODE) {
+  if (node !== NO_NODE) {
     return `${ygCommand(cfg).display} log add --node ${node} --reason "${quoted}"`;
   }
   return `decide.mjs add <slug> "${quoted}"`;

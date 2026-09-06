@@ -7,13 +7,13 @@
   "ticket": "001",
   "branch": "m1/t-001",
   "parentBranch": "m1/trunk",
-  "tip": "3b62eb34b9d7bc27abbdec568df883c384f9d20d",
+  "tip": "bb528c057bd98fd11fde8a95b6aa9c0d3883f56d",
   "refs": [
     "m1/t-001",
     "m1/trunk",
     "develop"
   ],
-  "recordedAt": "2026-09-06T15:40:12.148Z",
+  "recordedAt": "2026-09-06T20:37:04.428Z",
   "note": "every row carries the command and its output, and the gate names the tip",
   "saw": [
     {
@@ -29,7 +29,7 @@
     {
       "name": "gate at the tip",
       "ok": true,
-      "note": "green at 3b62eb3, the tip of m1/t-001"
+      "note": "green at bb528c0, the tip of m1/t-001"
     }
   ]
 }

@@ -24,7 +24,7 @@ import {
   asArray, emit, isMain, resolveHorde, patchIdOf, parentBranchOf,
 } from './_lib.mjs';
 import {
-  ticketNodes, graphIsLaw, runYgCheck, ygCommand,
+  ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs,
   globToRegExp, pathInBoundary, ticketBoundary, consumersOf,
 } from './node.mjs';
 import { ticketFiles, ticketPorts } from './tk.mjs';
@@ -43,8 +43,9 @@ The checks, in order — ✓/✗ per line, non-zero exit on any ✗:
   4. revert test    — new test files (named by config.testGlobs), extracted onto the parent's
                       tree, fail there; ✗ when this repository's test patterns are unknown
   5. gate           — green at this SHA (a verifier's recorded green gate, or a fresh run)
-  6. graph          — "yg check" green on this branch's tree (only when the horde's nodes come
-                      from a Yggdrasil graph; it runs whatever config.gates holds)
+  6. graph          — the free deterministic verdicts recorded, every prose rule still waiting
+                      on a judgement named, and a full "yg check" green on this branch's tree
+                      (it runs whatever config.gates holds)
   7. journal        — a log entry newer than the last commit
 
 --level selects the gate command (config.gates.team or .trunk; default team — "trunk" is only for
@@ -352,7 +353,7 @@ function checkKeysForTeamMergeUp(childTeamDir) {
 
 // A ticket's scope is what it declared it would touch — the `**Files:**` field — and, when it
 // declared nothing, its named node(s)' own code boundary plus each node's own graph files
-// (yg-node.yaml/node.json, charter.md, contracts.md, log.md), since the owner charters its node
+// (yg-node.yaml, charter.md, log.md), since the owner charters its node
 // and logs decisions as part of the same change that touches the code. Nothing else under
 // .yggdrasil/ (yg-architecture.yaml, aspects, config) is any node's own files, so no ticket's
 // scope reaches those by way of this. Yggdrasil's committed lock files are neither in nor out of
@@ -551,11 +552,19 @@ function checkGate(horde, root, cfg, level, branch, branchSha, logText, ticketId
   };
 }
 
-// The graph gate. Where the node map IS the Yggdrasil graph, the graph is what says the code is
-// right, and `yg check` is the only thing that reads it — so it runs on every premerge whatever
+// The graph gate. The node map IS the Yggdrasil graph, so the graph is what says the code is
+// right and `yg check` is the only thing that reads it — it runs on every premerge whatever
 // `config.gates` holds, and a graph that refuses the tree is a refused merge. Without this the
 // level's gate can be green on a tree `yg check` exits 1 on, which is exactly the state a
 // repository whose own gate command doesn't call `yg` is in by default.
+//
+// The item runs in two halves, because the two costs are different. The free half —
+// `yg check --approve --only-deterministic` — records every verdict a script can reach, in any
+// worktree, with no key and no judgement, and is always allowed. What it leaves is the prose
+// rules, which a reader has to judge; verifier-is-yggdrasil-reviewer says that reader is the
+// ticket's verifier, judging under its own name through `yg verdict`. So the item names those
+// pairs rather than approving them, and it is ✓ only when a full `yg check` is green — every
+// script verdict recorded AND every prose verdict judged and bound to this code.
 function checkGraph(root, cfg, branch, noGate) {
   const display = ygCommand(cfg).display;
   if (noGate) return { ok: true, note: `skipped (--no-gate) — \`${display} check\` was not run` };
@@ -566,14 +575,40 @@ function checkGraph(root, cfg, branch, noGate) {
       note: `no worktree checked out for ${branch} — \`${display} check\` reads a tree, so it cannot judge this branch; check it out (queue.mjs set <t> running does) and run premerge again`,
     };
   }
-  const res = runYgCheck(cfg, worktree);
-  if (!res.available) {
+
+  const filled = fillDeterministic(cfg, worktree);
+  if (!filled.available) {
     return {
       ok: false,
-      note: `cannot run \`${res.command}\` — this horde's nodes come from the Yggdrasil graph, so the graph's own verdict is part of the gate; install the Yggdrasil CLI, or point config.ygCommand at it (horde.mjs config set ygCommand "node path/to/bin.js")`,
+      note: `cannot run \`${filled.command}\` — the graph's own verdict is part of the gate; install the Yggdrasil CLI, or point config.ygCommand at it (horde.mjs config set ygCommand "node path/to/bin.js")`,
     };
   }
+
+  const res = runYgCheck(cfg, worktree);
   if (res.ok) return { ok: true, note: `${res.command} green${res.summary ? ` — ${res.summary}` : ''}` };
+
+  const pending = pendingProsePairs(cfg, worktree);
+  if (pending.scriptPending.length) {
+    // The free half did not take — a graph the CLI refuses to fill at all, most often because a
+    // judgement rule has no judge configured. Nobody should be sent to read a script rule, so the
+    // item hands over the CLI's own words instead of naming pairs it cannot classify.
+    return {
+      ok: false,
+      note: `${filled.command} left ${pending.scriptPending.length} script rule(s) with no verdict — `
+        + `the free half did not take, and until it does nothing else about the graph can be judged:\n${filled.out.trim()}`,
+    };
+  }
+  if (pending.pairs.length) {
+    const named = pending.pairs.map((p) => `${p.aspect} on ${p.unitKind}:${p.unit}`);
+    return {
+      ok: false,
+      pending: pending.pairs,
+      note: `${res.command} exited ${res.exit} — the script rules are recorded (free, no key), and `
+        + `${named.length} prose rule(s) still wait on a judgement: ${named.join(' · ')}. `
+        + 'The verifier judges them under its own name; its brief carries the exact package/record '
+        + `commands, or list them with: node.mjs verdicts --at ${worktree}`,
+    };
+  }
   return {
     ok: false,
     note: `${res.command} exited ${res.exit} — the graph refuses this tree${res.summary ? `: ${res.summary}` : ''}; a red graph is a red gate, whatever the level's gate command said`,
@@ -679,7 +714,7 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
     saveGateCache(horde, cache);
   }
 
-  if (graphIsLaw(cfg)) checks.push({ name: 'graph', ...checkGraph(root, cfg, branch, noGate) });
+  checks.push({ name: 'graph', ...checkGraph(root, cfg, branch, noGate) });
 
   checks.push({ name: 'journal', ...checkJournal(logText, branch) });
 

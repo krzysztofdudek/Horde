@@ -31,7 +31,7 @@ import { readCostLimit, sumEntries } from './cost.mjs';
 // avoiding: the parallelism a wave close reports as "planned" has to be the plan's own layers.
 import { buildPlan } from './queue.mjs';
 import { addEscalation } from './escalate.mjs';
-import { graphIsLaw, ygQualityIndex } from './node.mjs';
+import { ygQualityIndex } from './node.mjs';
 
 const START_RE = /^# Wave (\S+) — start \d{4}-\d{2}-\d{2}$/;
 const CLOSE_RE = /^# Wave (\S+) — close \d{4}-\d{2}-\d{2}$/;
@@ -733,9 +733,6 @@ function coverageRatio(q) {
 }
 
 function measureQuality(cfg) {
-  if (!graphIsLaw(cfg)) {
-    return { measured: false, why: "this horde's nodes do not come from a graph" };
-  }
   let cwd;
   try { cwd = repoRoot(); } catch { return { measured: false, why: 'no repository to measure' }; }
   const idx = ygQualityIndex(cfg, cwd);

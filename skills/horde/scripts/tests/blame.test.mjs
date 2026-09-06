@@ -1,6 +1,6 @@
 // blame.mjs: git blame -> commit -> the ticket whose recorded branch tip contains it -> keys,
-// approvals, evidence and (when the repository has a graph) the rule verdicts standing against
-// the file's owning node. Every scenario here is driven through the real tools against a real
+// approvals, evidence and the rule verdicts standing against the component the graph says owns
+// the file. Every scenario here is driven through the real tools against a real
 // temporary git repository — no fixture is hand-typed into ticket/log files — and the merge
 // itself is a real `git merge --no-ff`, exactly as a steward would do it.
 
@@ -12,25 +12,19 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, requireYg, MARKER_CHECK,
 } from './helpers.mjs';
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-// A real yg-node.yaml at .yggdrasil/model/<node>/yg-node.yaml, one node, one aspect declared on
-// it directly — enough for horde.mjs init to auto-detect nodeSource "yggdrasil" and for
-// node.mjs's graph-files fallback (no yg CLI needed) to resolve the aspect's status.
+// One real component with one real rule attached to it. Which component owns a file, and which
+// rules reach it, is the graph's own answer (`yg context --file … --json`); what verdict stands
+// against each is the lock's.
 function writeGraph(dir, { node, mapping, aspectId }) {
-  const nodeDir = join(dir, '.yggdrasil', 'model', node);
-  mkdirSync(nodeDir, { recursive: true });
-  writeFileSync(join(nodeDir, 'yg-node.yaml'), [
-    `name: ${node}`, 'type: domain', `description: "node ${node}"`, '',
-    'mapping:', ...mapping.map((m) => `  - ${m}`), '',
-    'aspects:', `  - id: ${aspectId}`, '    status: enforced', '',
-    'relations: []', '',
-  ].join('\n'));
+  addAspect(dir, aspectId, { status: 'enforced', description: 'No console in shipped code.', check: MARKER_CHECK });
+  addNode(dir, node, { mapping, aspects: [aspectId] });
 }
 
 // The lock's own entries (yg-lock.nondeterministic.json), written directly — this is what
@@ -94,13 +88,12 @@ test('blame.mjs: E15 — full custody chain for a line a merged ticket introduce
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
 
+  initHorde(dir);
   writeGraph(dir, { node: 'model', mapping: ['src/model/**'], aspectId: 'house/no-console' });
-  writeLockVerdict(dir, 'house/no-console', 'node:model', 'approved');
-
-  initHorde(dir); // .yggdrasil/ exists -> nodeSource auto-detects "yggdrasil"
-  run('horde.mjs', ['config', 'set', 'ygCommand', join(dir, 'no-such-yg')], dir); // force the graph-files fallback, no CLI needed
 
   const { id } = landOneTicket(dir, 'mission1');
+  // The verdict blame reports is the one the lock holds against the code that was judged.
+  writeLockVerdict(dir, 'house/no-console', 'node:model', 'approved');
 
   const blame = run('blame.mjs', ['src/model/hook.mjs:1'], dir);
   assert.equal(blame.code, 0, blame.stderr);
@@ -148,31 +141,30 @@ test('blame.mjs: E15 — full custody chain for a line a merged ticket introduce
 test('blame.mjs: a pre-horde line reports plainly that no ticket owns it', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  initHorde(dir); // no .yggdrasil/ at all -> manual mode, no graph
+  initHorde(dir);
 
   const blame = run('blame.mjs', ['README.md:1'], dir);
   assert.equal(blame.code, 0, blame.stderr);
   assert.equal(blame.json.ticket, null);
   assert.equal(blame.json.commit.summary, 'init');
-  assert.equal(blame.json.rules.available, false);
-  assert.match(blame.json.rules.reason, /manual/);
 
   const human = run('blame.mjs', ['README.md:1'], dir, { json: false });
   assert.equal(human.code, 0, human.stderr);
   assert.match(human.stdout, /pre-horde: no ticket .* owns commit/);
 });
 
-test('blame.mjs: a repository with no graph at all says so plainly instead of guessing', async (t) => {
+test('blame.mjs: a file no component owns says so plainly instead of guessing at rules', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
   const { id } = landOneTicket(dir, 'mission1');
 
+  // The graph is real and empty of components, so the file the ticket wrote belongs to none.
   const blame = run('blame.mjs', ['src/model/hook.mjs:1'], dir);
   assert.equal(blame.code, 0, blame.stderr);
   assert.equal(blame.json.ticket.id, id);
   assert.equal(blame.json.rules.available, false);
-  assert.match(blame.json.rules.reason, /nodeSource is manual/);
+  assert.match(blame.json.rules.reason, /not mapped to any component/);
 });
 
 test('blame.mjs: an archived horde is still searched — its branches and tickets outlive the archive move', async (t) => {
@@ -199,7 +191,7 @@ test('blame.mjs: --horde narrows the search to one horde', async (t) => {
 
   // A second, unrelated horde on the same repository — once it exists, --horde is the only way
   // to say which one's tickets should be searched.
-  run('horde.mjs', ['init', 'other', '--base', 'develop', '--test-globs', '**/*.test.*'], dir);
+  run('horde.mjs', ['init', 'other', '--base', 'develop', '--yg', requireYg(), '--test-globs', '**/*.test.*'], dir);
 
   const found = run('blame.mjs', ['src/model/hook.mjs:1', '--horde', 'mission1'], dir);
   assert.equal(found.code, 0, found.stderr);

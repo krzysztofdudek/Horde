@@ -19,14 +19,20 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
 
 ## horde.mjs — hordes
 
-- `init <name> --base <branch> [--title "…"] [--graph-dir <dir>] [--test-globs <glob>[,glob…]]
+- `init <name> --base <branch> [--title "…"] [--test-globs <glob>[,glob…]]
   [--nodes <node>[,node…]]` —
-  creates `.horde/` if missing (with
+  **the graph first.** horde-requires-yggdrasil: on a repository with no `.yggdrasil/` it runs
+  `<ygCommand> init` from the repository root (never a subdirectory — Yggdrasil's own rule) and then,
+  when `config.grainCommand` names a Grain CLI or a bare `grain` resolves on PATH, `grain propose
+  .yggdrasil-proposal` followed by `<ygCommand> adopt .yggdrasil-proposal --replace`, whose own report
+  — components, rules by status, and how many sites in the code already here the new rules refuse —
+  is printed verbatim. With no graph and no Yggdrasil CLI it refuses outright, naming the install
+  step, **before** `.horde/` or anything else of this horde exists. With Grain absent the graph is
+  created empty and the result says how to name a Grain command and what that would add.
+  Then: creates `.horde/` if missing (with
   `.gitignore` = `*` and a default `config.json`), `hordes/<name>/` with `charter.md` from the template,
   empty roster, journals, `teams/trunk/`, and the branch `<name>/trunk` off `<base>` (no checkout of the
-  main tree). Sets `config.nodeSource` to `yggdrasil` when `.yggdrasil/` exists, else `manual` with
-  `config.graphDir` = `--graph-dir` (default `architecture/`), creating `<graphDir>/nodes/` and a README
-  that says what the directory is. On a repository with a Yggdrasil graph the result also says that
+  main tree). The result also says that
   `yg check` is now part of every merge check. It also reads the repository's build files for two
   things it must not invent — the command that proves the repository still works, and the patterns
   its tests are named under (`package.json`, `pom.xml`, `build.gradle`, `Cargo.toml`, `go.mod`, a
@@ -41,9 +47,10 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
 - `list` — hordes with trunk, base, wave, open tickets, leased nodes, last activity.
 - `config get|set <key> [value]` — `.horde/config.json`: `base`, `gates.commit|team|trunk` (commands),
   `testGlobs[]` (the patterns this repository's tests are named under — the merge checklist refuses
-  rather than guess when it is empty), `nodeSource` (`yggdrasil` | `manual`), `ygCommand` (how this
+  rather than guess when it is empty), `ygCommand` (how this
   repository invokes the Yggdrasil CLI
-  — default `yg` on PATH; set it to e.g. `node path/to/bin.js` for a local build),
+  — default `yg` on PATH; set it to e.g. `node path/to/bin.js` for a local build), `grainCommand`
+  (how it invokes Grain, when it has one — default none, and `init` says what naming one would add),
   `keyContext` (how many lines of surrounding code a review's key is bound to — default 3; see
   "keys are bound to the diff" below), `protectedPaths[]`, `fixRounds.resume|fresh` (the fix-loop
   breaker `tk.mjs status <ticket> changes` reads: rounds 1..`resume` resume the same worker, the
@@ -173,8 +180,7 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
   approval (`review NNN approve --by <owner> --node <consumer>`). A version bump changes somebody
   else's contract and only they can say the new version is usable; `queue.mjs plan` prints who is
   owed one and `premerge` item 2 requires it. Who consumes a port is derived in one function
-  (`node.mjs`'s `consumersOf`), from `yg impact --node <n> --json` when the installed Yggdrasil CLI
-  produces a `yg-impact/1` document, and from the relations in the graph files otherwise.
+  (`node.mjs`'s `consumersOf`), from `yg impact --node <n> --json`.
 - `--node` on `new` is repeatable; two nodes mark a contract ticket.
 - `move NNN --team t` — relocates the issue folder (used when a sub-team takes it over).
 - `edit NNN --by <name>` — rewrites the body (everything from `## What` on) from stdin, leaving the
@@ -304,7 +310,7 @@ respawn after a reclaim).
   once none of them are. An owner is dead when the most recent `review-request` on a ticket naming its
   node has gone unanswered (no `review` by that owner since) for longer than `ownerMinutes`, unless
   `lastTrace` is newer than that. An architect (mission-scoped) is judged the same way, against its
-  open graph proposals/pending contracts (`hordes/<horde>/graph.json`) instead of a review window;
+  open graph-change and port proposals (`hordes/<horde>/graph.json`) instead of a review window;
   with nothing open, it's always alive. Auditor and counsel (one-shot roles) are never dead.
   `stewardMinutes`/`ownerMinutes` also accept a `stewardSeconds`/`ownerSeconds` sibling key, which wins
   when set — for tests and fast-loop tuning, where a whole minute isn't practical to wait out.
@@ -327,11 +333,20 @@ scoped re-review: the subject is the delta file `premerge.mjs` wrote, plus every
 review left open (read from the ticket's own log — the last verdict's "what failed" and each owner's
 changes-request), and the rule that what was already reproduced is not proved twice. A path naming no
 readable file is refused rather than rendered around. Without `--delta` the brief is the full
-verification, as before. Fills `{{…}}` from the charter, the config (`fastCheck` = `gates.commit`,
-`gateCommand` = the level's gate, `graphDir`, `protectedPaths`, `parallelism`,
+verification, as before.
+
+The verifier's brief also carries **the prose rules waiting on a judgement in that ticket's own
+worktree**, each with the exact `yg verdict package` and `yg verdict record` commands that answer it
+and the verifier's own name already filled in (verifier-is-yggdrasil-reviewer). The list is read
+live, because a pair is pending against a tree and not against a ticket; a tree with nothing pending
+says so instead of printing an empty block, and a CLI that cannot be started says that.
+
+Fills `{{…}}` from the charter, the config (`fastCheck` = `gates.commit`,
+`gateCommand` = the level's gate, `protectedPaths`, `parallelism`,
 `fixRoundsResume|Fresh` for the steward brief), the
 cache (`fastCheckCount` from `cache/last-gate.json`, or "unknown — report the count you get"), the
-node (`node.mjs`), the ticket (`worktree` and `branch` from the queue item), and the roster
+component (`node.mjs`: its charter, and the ports on its border with version, test and consumers —
+what the worker must not break and the verifier is holding it to), the ticket (`worktree` and `branch` from the queue item), and the roster
 (`reportsTo`, `parentTeam`) — `reportsTo` renders as `"<name> (agent id <id>)"` once `roster.mjs` has
 recorded that agent's id, so a report can reach it from outside the spawning session; refuses to
 render with an unfilled placeholder. After the role's own text it appends a `## Law` section: the
@@ -343,25 +358,29 @@ verbatim.
 
 ## node.mjs — nodes and the graph
 
-The only tool that knows which graph mode is on. `nodeSource=yggdrasil`: node ids, boundaries and
-descriptions are read from `.yggdrasil/model/**/yg-node.yaml`; `charter.md` and `contracts.md` live
-beside it; log entries go through `yg log add --reason`; stamps come from the graph's verification
-status. `nodeSource=manual`: everything lives committed under `<graphDir>/nodes/<node>/` —
-`node.json` (id, boundary globs, dependsOn[], verifiedAt), `charter.md`, `contracts.md`, `log.md` —
-and the tool is the only writer. Every command below behaves identically in both modes; `new <node>
---boundary <glob>… [--depends n…]` and `apply <proposal-id>` exist only in manual mode (in Yggdrasil
-mode they print the `yg` commands the architect must run instead).
+The only tool that speaks to the graph, and it speaks to it only through the Yggdrasil CLI's own
+versioned machine documents: `yg node <path> --json` (`yg-node/1` — mapping, relations, ports, kin),
+`yg context --node|--file <path> --json` (`yg-context/1` — the rules in force, with each one's
+effective status and the channel it arrives by, plus, for a file, the component that owns it), and
+`yg impact --node <path> --json` (`yg-impact/1` — who consumes each port, and what depends on the
+node). Nothing here parses a file the layer below owns. A CLI that cannot be started, and one that
+answers those calls with anything but the document, are both refusals that name what to do —
+install the CLI, point `config.ygCommand` at a build, or upgrade past 5.8.0, which is the release
+those documents arrived after. There is no second graph and no manual mode to fall back to.
+
+The one thing read off disk is the list of node ids: the directory names under `.yggdrasil/model/`,
+which is what node identity IS in all three layers. Every fact about a node still comes from the
+documents.
+
 It is also where the other tools read the graph from, so there is one reading of it and not four:
 the boundary of a ticket's nodes and the glob matching over it (`tk.mjs`'s file validation and
-`premerge`'s scope item), the ports a node offers (`tk.mjs`'s refusal of a consumed port nothing
+`premerge`'s scope item), the ports a node publishes (`tk.mjs`'s refusal of a consumed port nothing
 produces), and `consumersOf(node, port)` — every node that consumes one node's port, from
-`<ygCommand> impact --node <n> --json` when the installed Yggdrasil CLI answers with a document
-whose `schema` is `yg-impact/1`, and from the relations in the graph files (`yg-node.yaml`'s
-`relations:`, or `node.json`'s `dependsOn` in manual mode) when it does not. A document of any other
-shape or schema is ignored rather than half-read. `consumersOf` is what decides a version bump's
-order in the plan and whose approval the merge checklist then requires — one derivation, three
-users.
-- `bind` (no node) — verifies the graph is readable and lists nodes.
+`yg impact`. `consumersOf` is what decides a version bump's order in the plan and whose approval the
+merge checklist then requires — one derivation, three users.
+
+- `bind` (no node) — verifies the graph is readable **through the CLI** (it asks the documents about
+  a real node, so "readable" is not merely "a directory exists") and lists nodes.
   `bind <node> [--horde h] [--take --escalation <id>]` — node-lease-across-hordes: leases `<node>`
   to this horde in `.horde/leases.json` (node -> `{horde, since}`, shared across every horde on the
   repository, not per-horde). Binding a node this horde already holds is a no-op (`status: held`).
@@ -370,30 +389,41 @@ users.
   overrides the refusal but only with `--escalation <id>` naming an escalation on this horde that
   has actually been **ruled** (`escalate.mjs rule`) — a missing or unruled id is refused just like
   no `--take` (`status: taken` on success, with `from` and `escalation` in the result). A take-over
-  is written to the node's own log (manual mode: appended; Yggdrasil mode: `yg log add --reason`
-  run for real, not merely printed) as well as to `leases.json`'s own append-only history; `logged`
-  in the result says whether the node log write happened (it is skipped, never refused, when the
-  node's own graph object doesn't exist yet to log against). `horde.mjs archive` is the only place
-  a lease is released outright. `map [--horde h]` — the mission's nodes with
-  owners, stamps (verified against sha), open proposals.
-- `show <node>` — boundary, **the rules in force on the node**, charter, contracts, last log entries,
-  stamp. The rules are every aspect the graph attaches to this node — its own, those cascading from
-  the nodes above it, and those on its type and its ancestors' types — each with the status word that
-  says what a refusal costs (`enforced` blocks a merge, `advisory` warns, `draft` is inert). They come
-  from `yg context --node` when the Yggdrasil CLI is installed (its machine-readable form when it has
-  one, its text form otherwise); when it is not, they are read from the graph files directly, and the
-  reading says so, since flows, ports and implied aspects are not resolved that way. The node
-  charter's own "Rules inherited from above" section, when it has one, is reproduced under them.
-  `nodeSource=manual` has no aspects at all, and says that instead of showing an empty list.
+  is written to the node's own log (`yg log add --reason`, run for real, not merely printed) as well
+  as to `leases.json`'s own append-only history; `logged` in the result says whether the node log
+  write happened (it is skipped, never refused, when the node's own graph object doesn't exist yet
+  to log against). `horde.mjs archive` is the only place a lease is released outright.
+- `map [--horde h]` — the mission's nodes with owner, the ports each publishes (`name@version`), and
+  how many port proposals are open on it. There is no currency stamp: the lock binds every verdict
+  to the hash of the code it judged, so `yg check` is the one answer to "is this current", and a
+  second one kept here could only disagree.
+- `show <node>` — boundary, **the rules in force on the node**, its ports, charter, last log entries.
+  The rules come from `yg context --node <n> --json`: every aspect the graph attaches to this node
+  through any channel, each with the status word that says what a refusal costs (`enforced` blocks a
+  merge, `advisory` warns, `draft` is inert) and the channel it arrives by. The node charter's own
+  "Rules inherited from above" section, when it has one, is reproduced under them.
 - `charter edit <node>` (opens from template if missing; the caller writes the content via stdin),
-  `log <node> "…"`, `stamp <node> <sha>`.
-- `boundary set <node> --boundary <glob>[,glob…]` replaces the boundary, `boundary add …` extends it
-  (manual mode: rewrites `node.json` and logs; Yggdrasil mode: prints the `yg-node.yaml` edit to make).
-- `contract propose <a> <b> --as <test-or-scenario-path> "…"`, `contracts [--pending] [--node n]`,
-  `contract approve|veto <id> ["why"] --by architect`.
+  `log <node> "…" [--run]` (prints the `yg log add` command; `--run` runs it).
+- **Ports are the contracts** (port-is-contract). `contract propose <node> <port> "<why>" --as
+  <test-path> [--version <n>] --by <owner>` proposes adding a port or bumping the version of one the
+  node already publishes; `--version` defaults to one above what the graph declares today, and a
+  version that does not raise it is refused. The result names every node that consumes the old
+  version. `contracts [--pending] [--node n]` lists the ports the mission's nodes declare — name,
+  version, test, consumers — read from `yg-node/1`, plus this horde's own open proposals;
+  `--pending` shows only the proposals. `contract approve|veto <id> ["why"] --by architect` rules on
+  one, and an approval prints the filing the architect makes by hand: the `yg-node.yaml` edit, the
+  `yg log add`, and the free run that records the contract baseline.
+- `verdicts [--at <path>] [--by <name>]` — verifier-is-yggdrasil-reviewer: the prose rules over a
+  tree that no judge has answered yet, each with the exact `yg verdict package` and
+  `yg verdict record` commands that answer it. `--at` names the worktree to read (default: this
+  one). Read-only. Which pending pairs are prose is the graph's own word — each unit's context
+  document names the reviewer kind of every rule reaching it — never "whatever is left over", which
+  would call a script rule a prose one on any tree where the free run had not happened and send a
+  verifier off to judge what a command answers for nothing. Script rules still without a verdict are
+  reported separately, with the free command that settles them.
 - `propose <kind> "…" --by <owner>` (kinds: new-node, move-boundary, rename, rule), `proposals
-  [--open]`, `approve|veto <id> ["why"] --by architect`. Approval records; filing into Yggdrasil is the
-  architect's own `yg` calls, and the tool prints the exact commands to run.
+  [--open]`, `approve|veto <id> ["why"] --by architect`, `apply <id>`. Approval and apply record;
+  filing into the graph is the architect's own `yg` calls, and `apply` prints the exact edit.
 
 ## verify.mjs — the second key
 
@@ -415,9 +445,10 @@ verdict is bound to its sha alone. `--runs <n> --results <r1,r2,…> --test "<wh
 once — `--results` must list exactly `--runs` results; two that disagree force the verdict to
 `flaky` regardless of `--verdict` (none of `--item`/`--gate`/`--revert` is then needed), name the
 test in the verdict block, send the ticket to `changes` ("flaky: <what>") counting one round of
-`config.fixRounds` like any other, and file the flake as an incident — through this repository's
-Yggdrasil CLI (`config.ygCommand`) when its graph is the law, else a journal note in
-`hordes/<horde>/incidents.md`. `show NNN`.
+`config.fixRounds` like any other, and file the flake as an incident in the one incident ledger
+there is — through this repository's Yggdrasil CLI (`config.ygCommand`); when that call fails the
+flake is written to `hordes/<horde>/incidents.md` instead so it is not lost, and the result says the
+ledger did not take it. `show NNN`.
 
 ## escalate.mjs — the channel up
 
@@ -450,7 +481,7 @@ answer is also appended to `decisions.md`).
 `add <slug> "<ruling>" [--ticket NNN] [--node n]`, `list [--grep re] [--node n]`, `show <slug>`.
 Appends to `hordes/<horde>/decisions.md` (`## <date> · <slug> [· ticket NNN] [· node n]`); refuses a
 duplicate slug. Architectural decisions belong in the graph's own log and are not stored here; the tool
-says so when `--node` is given with `nodeSource=yggdrasil` and prints the `yg log add` command instead.
+says so whenever `--node` is given, and prints the `yg log add` command instead.
 
 ## wave.mjs — the journal
 
@@ -490,7 +521,7 @@ Beyond the counts it always carried, `close` states five figures the chairman re
   it merged, with the trend across the closes before it. It is meant to fall: a horde needing as
   many rulings per ticket in wave six as in wave one has learned nothing.
 - **the quality index** — read from the graph's own CLI (`config.ygCommand`) on the tree the close
-  runs on, when the horde's nodes come from a graph: enforced rules, advisory rules with nothing
+  runs on: enforced rules, advisory rules with nothing
   reported against them, blocking violations, the standing noise floor, and file coverage, each
   with its delta from the previous wave. There is no `--json` on `yg check` or `yg aspects` — the
   installed CLI has no such flag, verified against its own `--help` — so the index is read from
@@ -528,11 +559,19 @@ the JSON, and every item below is measured against it:
 4. revert test — new test files in the diff, extracted onto the parent's tree, show at least one failure;
 5. gate — green at the branch's SHA: taken from the verifier's verdict when it names this SHA with a
    green gate, otherwise the level's gate command from `config.gates` run in the branch's worktree;
-6. graph — `yg check` green on the branch's own worktree. Only when `nodeSource` is `yggdrasil`, and
-   then on every run whatever `config.gates` holds: where the graph is the node map, the graph is what
-   says the code is right, and a repository whose own gate command never calls `yg` would otherwise
-   show a green gate over a tree `yg check` exits 1 on. A red graph is a red gate. When the CLI cannot
-   be started at all the item is ✗ (never a quiet ✓) and names `config.ygCommand`;
+6. graph — the graph's own verdict on the branch's worktree, on every run whatever `config.gates`
+   holds: the graph is the node map, so it is what says the code is right there, and a repository
+   whose own gate command never calls `yg` would otherwise show a green gate over a tree `yg check`
+   exits 1 on. Two halves. The free one runs here: `yg check --approve --only-deterministic` records
+   every rule a script can decide, at no cost and with no key. What that leaves is the prose rules,
+   which a reader has to judge — the item names each pending pair rather than approving it, and the
+   ticket's verifier judges them under its own name (`yg verdict package` / `yg verdict record`; the
+   verifier's brief carries the exact commands, and `node.mjs verdicts --at <worktree>` lists them
+   again). The item is ✓ only when a full `yg check` is green: every script verdict recorded AND
+   every prose verdict judged and bound to this code. A red graph is a red gate. When the CLI cannot
+   be started at all the item is ✗ (never a quiet ✓) and names `config.ygCommand`; when the free run
+   itself did not take — a judgement rule with no judge configured refuses it outright — the item
+   hands over the CLI's own words rather than naming pairs it cannot classify;
 7. journal — `tk log` has an entry newer than the last commit.
 
 For a team branch (`<horde>/<team>`, the item `team:<name>` in the parent's queue) the same items
@@ -559,8 +598,11 @@ merge carries every earlier one in its history too) — the one actually reporte
 recorded sha sits closest to the commit (`git rev-list --count` between them, smallest wins).
 Prints the commit, the ticket's id and title, its node(s), the author key, the verifier key with
 its class, the owner approvals, the evidence rows the ticket named and what its own verdict
-recorded for each, and — only on a repository whose `nodeSource` is `yggdrasil` — the rule
-verdicts standing against the file's owning node. Those verdicts come from the lock's own entries
+recorded for each, and the rule
+verdicts standing against the component the graph says owns the file. Which component that is, and
+which rules reach it, comes from `yg context --file <path> --json` — the graph's own resolution,
+which accounts for overlapping mappings and every cascade channel a glob match here would get wrong.
+The verdicts themselves come from the lock's own entries
 (`.yggdrasil/yg-lock.nondeterministic.json`, `.yggdrasil/.yg-lock.deterministic.json`), read
 directly: the installed Yggdrasil CLI's `check` has neither `--json` nor any way to scope to one
 file (verified against its own `--help` rather than assumed), so the lock — the same
@@ -590,12 +632,15 @@ agent's prose.
     ticket declared in `**Files:**`, or inside the boundaries of the nodes it names when it declared
     none, and touches no protected path. The same two-step bound `premerge`'s own scope item uses:
     a drill that judged scope by another rule would pass work the checklist refuses.
-- `run <drill> [--corpus <dir>]` — restores every corpus case into a temporary repository and checks
-  it: a `violates-` case must come out red, a `satisfies-` case green. Non-zero when any case says
-  otherwise.
+- `run <drill> [--corpus <dir>] [--yg <command>]` — restores every corpus case into a temporary
+  repository and checks it: a `violates-` case must come out red, a `satisfies-` case green.
+  Non-zero when any case says otherwise. A case carries no way of invoking the Yggdrasil CLI — that
+  is a property of the machine running the drill, never of the recorded state, and a case that
+  carried one would run nowhere but the laptop it was recorded on — so it is taken from `--yg`,
+  else from this repository's own `config.ygCommand`, else the bare `yg` on `PATH`.
 - `record <name> --discipline <d> --expect violates|satisfies [--ticket NNN] [--corpus <dir>]
-  [--note "…"]` — snapshots this repository's `.horde/` state (minus the worktrees and the gate
-  cache) and bundles the ticket's branch, its team branch and the base into a new case
+  [--note "…"]` — snapshots this repository's `.horde/` state (minus the worktrees, the gate cache
+  and this machine's own `ygCommand`) and bundles the ticket's branch, its team branch and the base into a new case
   `<corpus>/<drill>/<expect>-<name>/`. It runs the check first and refuses when the outcome
   contradicts `--expect`, so a recorded case is always one `run` accepts. This is how a real
   mission's hard moment becomes a fixture: record it while it is on disk.
@@ -624,10 +669,12 @@ scripts are not done until these pass. `scripts/tests/drills/` is not a test fil
 corpus: every case in it was written by `drill.mjs record` from a repository the tools built, and
 the suite runs each drill over it.
 
-The quality-index tests measure a real graph: they build one with the installed Yggdrasil CLI's own
-`init` and read it back with its own `check` and `aspects`. They find that CLI in `HORDE_TEST_YG`,
-on `PATH` as `yg`, or as a sibling checkout's build; with none of those they assert the honest
-"not measured" answer the tools give without a CLI, and never a fabricated report.
+Every fixture repository has a real graph, made by the real Yggdrasil CLI: `horde.mjs init` creates
+one where there is none, and the suite tells it how to invoke that CLI the same way an adopter
+would. The suite finds it in `HORDE_TEST_YG`, on `PATH` as `yg`, or as a sibling checkout's build,
+and refuses to run with none of those — Horde requires Yggdrasil, and a suite measuring a stand-in
+instead would be proving something no adopter ever runs. Rules, ports, refusals and the verdicts
+that clear a prose rule are all the CLI's own; nothing about the graph is stood in for.
 
 ## premerge.mjs's revert test — how a new test file is found and run
 

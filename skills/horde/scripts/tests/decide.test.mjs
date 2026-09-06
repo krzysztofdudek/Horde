@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
+import { makeRepo, rmRepo, run, initHorde, requireYg } from './helpers.mjs';
 
 test('decide.mjs: add, list, show, refusals', async (t) => {
   const dir = makeRepo();
@@ -23,11 +23,7 @@ test('decide.mjs: add, list, show, refusals', async (t) => {
     assert.match(r.stderr, /duplicate slug: lesson-1/);
   });
 
-  await t.test('list finds entries and supports --grep and --node', () => {
-    run('decide.mjs', ['add', 'node-decision', 'boundary is fixed', '--node', 'auth'], dir);
-    const byNode = run('decide.mjs', ['list', '--node', 'auth'], dir);
-    assert.equal(byNode.json.length, 1);
-    assert.equal(byNode.json[0].slug, 'node-decision');
+  await t.test('list supports --grep', () => {
     const byGrep = run('decide.mjs', ['list', '--grep', 'freshness'], dir);
     assert.equal(byGrep.json.length, 1);
     assert.equal(byGrep.json[0].slug, 'lesson-1');
@@ -40,17 +36,20 @@ test('decide.mjs: add, list, show, refusals', async (t) => {
   });
 });
 
-test('decide.mjs: --node redirects to yg log add when nodeSource is yggdrasil', async (t) => {
+// A node's decisions belong in the graph's own log, and there is only one graph — so this redirect
+// is unconditional now, not a mode. The command it prints names the CLI this repository actually
+// invokes, not a bare `yg` it might not have.
+test('decide.mjs: --node always redirects to the graph\'s own log', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  // Fake a Yggdrasil repository: horde.mjs init auto-detects nodeSource from .yggdrasil/'s presence.
-  const { mkdirSync } = await import('node:fs');
-  const { join } = await import('node:path');
-  mkdirSync(join(dir, '.yggdrasil'), { recursive: true });
   initHorde(dir);
 
   const r = run('decide.mjs', ['add', 'arch-1', 'move the boundary', '--node', 'auth'], dir);
   assert.equal(r.code, 1);
   assert.match(r.stderr, /graph's own log/);
-  assert.match(r.stderr, /yg log add/);
+  assert.match(r.stderr, /log add --node auth/);
+  assert.ok(
+    r.stderr.includes(`${requireYg()} log add`),
+    `the redirect names this repository's own CLI: ${r.stderr}`,
+  );
 });

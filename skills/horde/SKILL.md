@@ -67,11 +67,14 @@ with an id — E1, E2, E3 … — because a ticket says which rows it earns by t
 reports every row no ticket has taken; the nodes
 the mission touches and the nodes it creates; the decision-rights table (what beyond the standard list
 must come to you or the user); the cost policy and the optional cost limit; the base branch. Then the
-node map. The skill works with and without Yggdrasil: `.yggdrasil/` present → `node.mjs bind` reads the
-graph and the horde never edits it except through `yg`; absent → `horde init --graph-dir <dir>` starts a
-committed node map of the same shape, and you cut the nodes with the user by one rule — *a node is
-right-sized when its charter, its contracts and its code fit one Sonnet context with room to work*.
-Cutting the graph the first time is a decision you make **with** the user, not alone.
+node map. The node map is the repository's Yggdrasil graph and nothing else: `node.mjs bind` reads it,
+the horde never edits it except through `yg`. A repository that has no graph gets one at `horde init`
+— created with `yg`, and where a Grain CLI is available, proposed from the repository's own code and
+accepted, which is the only way a first graph arrives with rules describing how the code is already
+written. Without Yggdrasil `init` refuses and names the install step. Then you cut or refine the nodes
+with the user by one rule — *a node is right-sized when its charter, its ports and its code fit one
+Sonnet context with room to work*. Cutting the graph the first time is a decision you make **with**
+the user, not alone.
 
 ## Staffing and planning — recursive, not linear
 
@@ -84,7 +87,7 @@ Cutting the graph the first time is a decision you make **with** the user, not a
   tickets, wave otherwise).
 - Spawn the **architect** (Opus, cross-cutting, no node of its own; `brief.mjs architect`). The
   architect approves or vetoes every change to the graph — new nodes, moved boundaries, new or changed
-  contracts — and files graph changes into the graph. The user sees them at wave close.
+  ports — and files graph changes into the graph. The user sees them at wave close.
 
 **Who holds the Agent tool.** You spawn the trunk steward, the architect, the auditor and counsel.
 A steward spawns its owners, workers, verifiers and sub-stewards. Nobody else spawns. A reclaim is
@@ -164,7 +167,7 @@ acts alone and does not ask):
 
 Items 1, 5, 6 and 10 go on to the user. Everything else you rule on yourself, and the ruling is recorded.
 A ruling is complete when the steward can execute it without coming back: before approving a mapping
-under Yggdrasil, read the node's type in `yg-architecture.yaml` and check the file against the
+read the node's type in `yg-architecture.yaml` and check the file against the
 type's `when:` globs — under a strict type a mapping the globs do not admit is refused, and that
 `when:` line is the user's, so ask for it in the same breath instead of a second round trip.
 A team branch ready to merge up is **not** an escalation: the sub-steward marks it landed in the parent
@@ -182,8 +185,9 @@ team's queue and doorbells the parent steward, who merges it like a ticket.
 - **Two keys and one approval on every merge**: the author's key, the verifier's key, and the owner's
   review of every node the ticket names, all recorded on the ticket. A steward merges nothing short of
   that; when the owner authored the ticket, the architect reviews in the owner's place.
-- **Contracts are tests.** A contract between nodes exists as a test or a scenario; breaking it is a red
-  test in the neighbour's node, which escalates by itself.
+- **Contracts are ports, and a port is a test.** A promise between nodes is one object in the graph,
+  carrying its version and the test that proves it; breaking it is a red test in the neighbour's node,
+  which escalates by itself, and changing that test without raising the version is refused outright.
 - **Nothing lives in an agent's head.** An owner is a lease on a node's context; a dead owner is replaced
   from the node's charter and log at the cost of one brief.
 - **Measure before deciding**; "not doing it, with numbers" is a full result.
@@ -217,5 +221,5 @@ own text names the row — a promise made to the chairman does not quietly disap
 - `templates/` — charter, node charter, ticket, verdict, wave close.
 - `scripts/` — the tools; every one has `--help` and `--json`. `scripts/README.md` is their contract.
 - `.horde/` — uncommitted state, one per repository, shared by every worktree. The graph — committed,
-  durable knowledge: node charters, contracts, logs, architectural decisions — lives in `.yggdrasil/`
-  when the repository has Yggdrasil, else in the directory `horde init` was given.
+  durable knowledge: components, ports, rules, node charters, logs, architectural decisions — is
+  Yggdrasil's, in `.yggdrasil/`, read only through `yg` and written only through it.

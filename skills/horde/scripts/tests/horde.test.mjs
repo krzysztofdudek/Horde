@@ -4,7 +4,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { makeRepo, rmRepo, run, initHorde, writeCostRuns } from './helpers.mjs';
+import {
+  makeRepo, rmRepo, run, initHorde, writeCostRuns, requireYg, addNode,
+} from './helpers.mjs';
+
+// Horde requires Yggdrasil: `init` creates the graph when a repository has none, so every direct
+// call to it here names the real build the same way `initHorde` does.
+const YG = ['--yg', requireYg()];
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -116,7 +122,7 @@ for (const [label, files, gate, glob] of ECOSYSTEMS) {
   test(`horde.mjs init: works the gate out of a ${label} repository`, async (t) => {
     const dir = ecoRepo(files);
     t.after(() => rmRepo(dir));
-    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop'], dir);
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.gates.team, gate);
     assert.equal(r.json.gates.trunk, gate);
@@ -127,7 +133,7 @@ for (const [label, files, gate, glob] of ECOSYSTEMS) {
 test('horde.mjs init: an unrecognised repository is told so, and asked, rather than left with an empty gate', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop'], dir, { json: false });
+  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG], dir, { json: false });
   assert.equal(r.code, 0);
   assert.match(r.stdout, /no gate command could be worked out/);
   assert.match(r.stdout, /What proves this repository still works\?/);
@@ -138,7 +144,7 @@ test('horde.mjs init: an unrecognised repository is told so, and asked, rather t
 test('horde.mjs init: --test-globs names the test patterns outright', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--test-globs', '**/*Tests.java,**/*Test.java'], dir);
+  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG, '--test-globs', '**/*Tests.java,**/*Test.java'], dir);
   assert.deepEqual(r.json.testGlobs, ['**/*Tests.java', '**/*Test.java']);
 });
 
@@ -428,5 +434,133 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
     const r = run('status.mjs', ['--horde', 'mission1'], dir);
     assert.equal(r.json.hordes[0].evidence.rows[0].state, 'reproduced');
     assert.equal(r.json.hordes[0].evidence.rows[0].reproducedBy, 'verifier-1');
+  });
+});
+
+// ---- E10: the graph is Yggdrasil's, and init makes one where there is none -------------------
+//
+// horde-requires-yggdrasil. Three cases, all on real temporary repositories against the real
+// Yggdrasil build: no CLI at all (a refusal that names the install step, leaving nothing behind),
+// a CLI (a real graph, made by `yg init`), and a Grain command as well (a proposal mined from the
+// repository and accepted by `yg adopt`, with the baseline of what the new rules already refuse).
+
+// A stand-in for Grain that is a real program: it records the argv it was called with and writes a
+// real `grain-proposal/1` staging tree — the scaffold this repository already has, plus one
+// component and one rule, with the per-rule count of what that rule already refuses. `yg adopt`
+// accepts it or does not; nothing here fakes that answer.
+const GRAIN_STUB = [
+  "import { cpSync, mkdirSync, writeFileSync, appendFileSync } from 'node:fs';",
+  "import { join } from 'node:path';",
+  'const argv = process.argv.slice(2);',
+  "if (argv[0] === '--version') { console.log('0.0.0-stub'); process.exit(0); }",
+  "appendFileSync('grain-calls.log', `${JSON.stringify(argv)}\\n`);",
+  "if (argv[0] !== 'propose') process.exit(2);",
+  "const out = argv[1] || '.yggdrasil-proposal';",
+  'mkdirSync(out, { recursive: true });',
+  "cpSync('.yggdrasil', join(out, '.yggdrasil'), { recursive: true });",
+  "const model = join(out, '.yggdrasil', 'model', 'lib');",
+  'mkdirSync(model, { recursive: true });',
+  "writeFileSync(join(model, 'yg-node.yaml'), [",
+  "  'name: lib', 'type: module', 'description: The library this repository is.',",
+  "  'aspects:', '  - no-marker',",
+  "  'mapping:', '  - \"src/**\"', 'relations: []', '',",
+  "].join('\\n'));",
+  "const aspect = join(out, '.yggdrasil', 'aspects', 'no-marker');",
+  'mkdirSync(aspect, { recursive: true });',
+  "writeFileSync(join(aspect, 'yg-aspect.yaml'), [",
+  "  'name: NoMarker', 'description: Source files must not carry an unfinished-work marker.',",
+  "  'errs: under', 'status: enforced', 'review_by: 2099-01-01', '',",
+  "].join('\\n'));",
+  "writeFileSync(join(aspect, 'check.mjs'), [",
+  "  'export function check(ctx) {',",
+  "  '  const out = [];',",
+  "  '  for (const file of ctx.files) {',",
+  '  "    const lines = file.content.split(String.fromCharCode(10));",',
+  "  '    for (let i = 0; i < lines.length; i++) {',",
+  '  "      if (lines[i].includes(\'UNFINISHED\')) out.push({ file: file.path, line: i + 1, column: 0, message: \'marker\' });",',
+  "  '    }',",
+  "  '  }',",
+  "  '  return out;',",
+  "  '}',",
+  "  '',",
+  "].join('\\n'));",
+  "writeFileSync(join(aspect, 'provenance.json'), `${JSON.stringify({ existingViolations: 1 }, null, 2)}\\n`);",
+  "writeFileSync(join(out, 'proposal.json'), `${JSON.stringify({",
+  "  schema: 'grain-proposal/1', engine: 'grain-stub', asOf: 'stubbed', files: 1,",
+  '}, null, 2)}\\n`);',
+  "console.log('proposal written to ' + out);",
+  '',
+].join('\n');
+
+test('E10 — init refuses without Yggdrasil, creates the graph with it, and mines one with Grain', async (t) => {
+  await t.test('no graph and no Yggdrasil: it refuses, names the install step, and leaves nothing behind', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', join(dir, 'no-such-yg')], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /this repository has no architecture graph/);
+    assert.match(r.stderr, /npm i -g @chrisdudek\/yg/);
+    assert.match(r.stderr, /init --yg "node path\/to\/bin\.js"/);
+    // nothing of this horde exists: the refusal came before any state was created
+    assert.equal(existsSync(join(dir, '.horde')), false);
+    assert.equal(existsSync(join(dir, '.yggdrasil')), false);
+    assert.equal(execFileSync('git', ['branch', '--list', 'mission1/trunk'], { cwd: dir, encoding: 'utf8' }).trim(), '');
+  });
+
+  await t.test('with Yggdrasil and no Grain: the graph is created, empty, and says what naming Grain would add', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.graph.created, true);
+    assert.equal(r.json.graph.mined, false);
+    assert.equal(existsSync(join(dir, '.yggdrasil', 'yg-architecture.yaml')), true);
+    assert.ok(r.json.graph.notes.some((n) => /the graph is empty/.test(n)), r.json.graph.notes.join('\n'));
+    assert.ok(r.json.graph.notes.some((n) => /--grain/.test(n)));
+    // and it is really readable through the CLI, which is the only way the horde ever reads it
+    assert.equal(run('node.mjs', ['bind'], dir).code, 0);
+  });
+
+  await t.test('with Grain as well: propose is called, the proposal is adopted, and the baseline is reported', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src', 'lib.mjs'), 'export const lib = 1; // UNFINISHED\n');
+    execFileSync('git', ['add', 'src/lib.mjs'], { cwd: dir });
+    execFileSync('git', ['commit', '-qm', 'the code the graph will describe'], { cwd: dir });
+
+    const stub = join(dir, 'grain-stub.mjs');
+    writeFileSync(stub, GRAIN_STUB);
+
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG, '--grain', `node ${stub}`], dir, { json: false });
+    assert.equal(r.code, 0, r.stderr);
+
+    // Grain was really called, with the staging directory as its argument.
+    const calls = readFileSync(join(dir, 'grain-calls.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(calls[calls.length - 1], ['propose', '.yggdrasil-proposal']);
+
+    // …and what it proposed is the repository's graph now.
+    assert.equal(existsSync(join(dir, '.yggdrasil', 'model', 'lib', 'yg-node.yaml')), true);
+    assert.match(r.stdout, /accepted/);
+    assert.match(r.stdout, /Already broken/);
+
+    // read back the only way the horde ever reads it
+    const bind = run('node.mjs', ['bind'], dir);
+    assert.deepEqual(bind.json.nodes, ['lib']);
+    const show = run('node.mjs', ['show', 'lib'], dir);
+    assert.deepEqual(show.json.boundary, ['src/**']);
+    assert.deepEqual(show.json.rules.aspects.map((a) => a.id), ['no-marker']);
+  });
+
+  await t.test('a repository that already has a graph keeps it, untouched', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    initHorde(dir, 'first');
+    addNode(dir, 'kept', { mapping: ['src/**'] });
+
+    const again = run('horde.mjs', ['init', 'second', '--base', 'develop'], dir);
+    assert.equal(again.code, 0, again.stderr);
+    assert.equal(again.json.graph.created, false);
+    assert.deepEqual(run('node.mjs', ['bind', '--horde', 'second'], dir).json.nodes, ['kept']);
   });
 });

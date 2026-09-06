@@ -58,7 +58,7 @@ commands:
       branch and queue.json (a "team:<t>" running item never counts as work of the steward's
       own — a steward whose only running items are those is alive as long as any of those
       sub-teams' stewards is alive), an owner from its node's review windows, an architect from
-      open graph proposals/pending contracts, lastTrace as a rescuing signal throughout. Auditor
+      open graph proposals/port proposals, lastTrace as a rescuing signal throughout. Auditor
       and counsel (one-shot roles) are never dead.
   reclaim <name> ["why"] [--lesson] [--by director] [--horde h]
       marks the lease reclaimed; the next spawn for the same team or node gets N+1. Appends
@@ -477,19 +477,19 @@ function ownerLivenessVerdict(horde, entry, cfg) {
 }
 
 // The architect is mission-scoped, with no branch or queue of its own — its "open work" is
-// whatever it has left un-ruled in the graph: an open proposal (node.mjs propose) or a pending
-// contract (node.mjs contract propose), both in hordes/<horde>/graph.json. With nothing open, an
+// whatever it has left un-ruled: an open graph-change proposal (node.mjs propose) or a port
+// waiting to be added or bumped (node.mjs contract propose), both in hordes/<horde>/graph.json. With nothing open, an
 // architect is always alive (nothing to be silent about); with something open, the same
 // oldest-open-plus-lastTrace-rescue shape as an owner's review window, against the same
 // ownerMinutes|Seconds threshold — an architect ruling on the graph is not a different kind of
 // waiting from an owner reviewing a ticket.
 function architectLivenessVerdict(horde, entry, cfg) {
-  const graph = readJSON(hordePath(horde, 'graph.json'), { proposals: [], contracts: [] });
+  const graph = readJSON(hordePath(horde, 'graph.json'), { proposals: [], ports: [] });
   const proposals = Array.isArray(graph.proposals) ? graph.proposals : [];
-  const contracts = Array.isArray(graph.contracts) ? graph.contracts : [];
+  const ports = Array.isArray(graph.ports) ? graph.ports : [];
   const openTimes = [
     ...proposals.filter((p) => p.status === 'open').map((p) => p.at),
-    ...contracts.filter((c) => c.status === 'proposed').map((c) => c.at),
+    ...ports.filter((p) => p.status === 'proposed').map((p) => p.at),
   ].filter(Boolean);
   if (openTimes.length === 0) return 'alive';
   const oldestOpenAt = [...openTimes].sort()[0];

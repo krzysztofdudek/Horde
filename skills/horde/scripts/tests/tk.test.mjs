@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde,
+  makeRepo, rmRepo, run, initHorde, addNode,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -519,8 +519,8 @@ test('tk.mjs: Files, Consumes, Produces and Evidence on the ticket', async (t) =
   t.after(() => rmRepo(dir));
   initHorde(dir);
   seedCharterEvidence(dir, 'mission1', [['E1', 'the engine denies by default', 'auth'], ['E2', 'the guard asks the engine', 'api']]);
-  run('node.mjs', ['new', 'auth', '--boundary', 'src/auth/'], dir);
-  run('node.mjs', ['new', 'api', '--boundary', 'src/api/', '--depends', 'auth'], dir);
+  addNode(dir, 'auth', { mapping: ['src/auth/**'] });
+  addNode(dir, 'api', { mapping: ['src/api/**'], relations: [{ target: 'auth', type: 'uses' }] });
 
   let producer;
   await t.test('new writes the four fields into the header', () => {
@@ -540,7 +540,7 @@ test('tk.mjs: Files, Consumes, Produces and Evidence on the ticket', async (t) =
       '--class', 'sonnet', '--files', 'src/api/guard.ts'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /outside the boundary of auth: src\/api\/guard\.ts/);
-    assert.match(r.stderr, /the boundary is src\/auth\//);
+    assert.match(r.stderr, /the boundary is src\/auth\/\*\*/);
   });
 
   await t.test('a port that is not <node>/<port>@<version> is refused', () => {

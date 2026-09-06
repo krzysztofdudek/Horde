@@ -7,7 +7,9 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
+import {
+  makeRepo, rmRepo, run, initHorde, addNode, requireYg,
+} from './helpers.mjs';
 
 const COMMITTED_CORPUS = join(dirname(fileURLToPath(import.meta.url)), 'drills');
 
@@ -51,10 +53,10 @@ function missionRepo(t, { files } = {}) {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir, 'mission1');
-  assert.equal(run('node.mjs', ['new', 'core', '--boundary', 'src/**'], dir).code, 0);
+  addNode(dir, 'core', { mapping: ['src/**'] });
   git(['checkout', '-q', 'mission1/trunk'], dir);
-  git(['add', 'architecture'], dir);
-  git(['commit', '-qm', 'graph: the core node and its boundary'], dir);
+  git(['add', '.yggdrasil'], dir);
+  git(['commit', '-qm', 'graph: the core component and its boundary'], dir);
 
   const created = run('tk.mjs', ['new', 'retry', '--title', 'Retry a failed call three times',
     '--node', 'core', '--class', 'sonnet',
@@ -339,8 +341,10 @@ test('drill.mjs run: every drill is red on its violates case and green on its sa
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
 
+  // The corpus carries no way of invoking the Yggdrasil CLI — that is the machine's, not the
+  // case's — so the drill is told how, exactly as an adopter's own config would tell it.
   for (const drill of ['tdd', 'verification', 'review', 'scope']) {
-    const r = run('drill.mjs', ['run', drill], dir);
+    const r = run('drill.mjs', ['run', drill, '--yg', requireYg()], dir);
     assert.equal(r.code, 0, `${drill}: ${r.stdout}${r.stderr}`);
     assert.ok(r.json.cases.length >= 2, `${drill} has fewer than two cases`);
     assert.ok(r.json.cases.some((c) => c.expect === 'violates' && c.actual === 'violates'), `${drill}: no case comes out red`);

@@ -25,7 +25,8 @@ import {
   isMain, resolveHorde, parentBranchOf,
 } from './_lib.mjs';
 import {
-  nodeExists, readNodeCharterText, readNodeContractsText, ticketNodes,
+  nodeExists, readNodeCharterText, readNodePortsText, ticketNodes,
+  pendingProsePairs, verdictCommandsFor, ygCommand,
 } from './node.mjs';
 
 const ROLES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'roles');
@@ -447,7 +448,6 @@ function cmdArchitect(horde, root, cfg, flags) {
     repoRoot: root,
     name, horde,
     charterPath: charterPath(root, horde),
-    graphDir: String(cfg.graphDir || 'architecture/').replace(/\/+$/, '') || 'architecture/',
     reportsTo: reportsToFor('architect', horde),
   };
   const brief = renderRole('architect', vars);
@@ -494,7 +494,7 @@ function cmdWorker(horde, root, cfg, positional, flags) {
     fastCheckCount: fastCheckCount(horde),
     ticketBody: ticketBody(t.issueText),
     nodeCharter: nodesText(root, cfg, nodes, readNodeCharterText, '(no charter yet)'),
-    nodeContracts: nodesText(root, cfg, nodes, readNodeContractsText, '(no contracts yet)'),
+    nodePorts: nodesText(root, cfg, nodes, readNodePortsText, '(this ticket names no component the graph knows)'),
     protectedPaths: (cfg.protectedPaths || []).join(', ') || '(none)',
     issueDir: `teams/${t.team}/issues/${t.issueDirName}`,
     reportsTo: reportsToFor('worker', horde, { team: t.team }),
@@ -504,6 +504,46 @@ function cmdWorker(horde, root, cfg, positional, flags) {
   emit({
     role: 'worker', ticket: rawId, name, takeover: !!flags.takeover, brief,
   }, flags, () => brief);
+}
+
+// verifier-is-yggdrasil-reviewer: the prose rules standing over this ticket's tree that no judge
+// has answered yet, with the two commands that answer each one. The free half of the graph gate —
+// every rule a script can decide — the verifier runs itself; what is left is judgement, and in a
+// horde the judge is the verifier, recording under its own name so `yg check` re-proves it in CI
+// without a key and says whose judgement it rests on. Read live from the ticket's own worktree,
+// because a pair is pending against a tree, not against a ticket.
+function proseVerdictsFor(cfg, worktree, judge) {
+  const { display } = ygCommand(cfg);
+  if (!worktree) {
+    return 'No worktree is recorded for this ticket yet, so the pending prose rules could not be listed. '
+      + `Once you are in yours, run: ${display} check --approve --only-deterministic, then `
+      + `${display} check --details.`;
+  }
+  const res = pendingProsePairs(cfg, worktree);
+  if (!res.available) {
+    return `\`${res.command}\` could not be started — the Yggdrasil CLI is how the graph is read, and `
+      + 'without it this ticket cannot be verified at all. Tell the steward.';
+  }
+  if (res.pairs.length === 0) {
+    return res.green
+      ? 'None. Every rule over this tree already holds a verdict bound to this code — run the graph '
+        + 'command in step 5 anyway, because the tree moves under you.'
+      : 'None waiting on a judgement. The graph is still red for a reason no judgement fixes — read '
+        + `\`${display} check\` in your worktree and record what you see.`;
+  }
+  const lines = [
+    `${res.pairs.length} prose rule(s) over this tree have no verdict yet. You are the judge. For each:`,
+    'read the package, decide, and record under your own name — the hash in the package is what the',
+    'verdict binds to, so it is copied, never composed.',
+    '',
+    '```',
+  ];
+  for (const pair of res.pairs) {
+    const cmds = verdictCommandsFor(cfg, pair, judge);
+    lines.push(`# ${pair.aspect} on ${pair.unitKind}:${pair.unit}`, cmds.package, cmds.record, '');
+  }
+  lines.push('```');
+  return lines.join('\n');
 }
 
 function cmdVerifier(horde, root, cfg, positional, flags) {
@@ -525,9 +565,10 @@ function cmdVerifier(horde, root, cfg, positional, flags) {
     worktree: t.queueItem.worktree,
     parentBranch: parent.branch,
     gateCommand: cfg.gates && cfg.gates.team,
-    nodeContracts: nodesText(root, cfg, nodes, readNodeContractsText, '(no contracts yet)'),
+    nodePorts: nodesText(root, cfg, nodes, readNodePortsText, '(this ticket names no component the graph knows)'),
     reportsTo: reportsToFor('verifier', horde, { team: t.team }),
     scope: verdictScope(root, t, flags.delta, parent.branch),
+    proseVerdicts: proseVerdictsFor(cfg, t.queueItem.worktree, name),
   };
   const brief = renderRole('verifier', vars);
   emit({

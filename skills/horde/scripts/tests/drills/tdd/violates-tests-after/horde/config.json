@@ -5,12 +5,12 @@
     "team": "",
     "trunk": ""
   },
-  "nodeSource": "manual",
   "ygCommand": null,
-  "graphDir": "architecture/",
+  "grainCommand": null,
   "testGlobs": [
     "**/*.test.mjs"
   ],
+  "keyContext": 3,
   "protectedPaths": [],
   "liveness": {
     "stewardMinutes": 60,
@@ -22,5 +22,9 @@
     "opus": 10,
     "fable": 30
   },
-  "parallelism": 6
+  "parallelism": 6,
+  "fixRounds": {
+    "resume": 3,
+    "fresh": 2
+  }
 }

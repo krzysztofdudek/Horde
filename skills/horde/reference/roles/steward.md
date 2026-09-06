@@ -20,7 +20,7 @@ Then read `${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/reference/topology.md` (b
 
 - All state through the tools. Never a hand-written file under `.horde/`. Never `git push`. Never
   `git stash` or a checkout of another branch in your tree. Never restore from a whole-file backup.
-- Never edit a protected path (config `protectedPaths`); never change a contract; never touch the graph.
+- Never edit a protected path (config `protectedPaths`); never change a port; never touch the graph.
 - **Act on files, never on a message alone.** A doorbell tells you to look; what you do is decided by
   `queue.mjs list` at the start of the turn. A message that the files do not back (a "landed" that
   was retracted, a "ready" with tickets still open) is not acted on.
@@ -144,10 +144,14 @@ taken, and the cost. It changes nothing.
    **scope** reading "declared N files, touched … outside them" is the ticket having grown past what
    its owner declared and its reviewers approved: the owner widens it with `tk.mjs edit NNN --files
    …` (which logs the widening) and the ticket goes back through review — never merged past. A ✗ on
-   **graph** is the architecture graph refusing this tree, and it is never worked around: send the
-   ticket back (`tk.mjs status NNN changes "<what yg check refused>"`) so the author makes it green —
-   rebuilding the free deterministic verdicts (`yg check --approve --only-deterministic`) is their
-   first move — and escalate only when the refusal is a rule the ticket cannot satisfy. Any
+   **graph** is the architecture refusing this tree, and it is never worked around. Read which of the
+   two it is. A refusal means the code breaks a rule: send the ticket back
+   (`tk.mjs status NNN changes "<what the graph refused>"`) so the author makes it green — the free
+   run (`yg check --approve --only-deterministic`) is their first move — and escalate only when the
+   refusal is a rule the ticket cannot satisfy. Prose rules still waiting on a judgement are not a
+   refusal at all: nobody has read them yet, and that is the verifier's work — spawn or re-brief the
+   verifier (`brief.mjs verifier NNN`, whose brief carries the exact commands) rather than sending
+   the ticket back to its author. Any
    other ✗ → `escalate.mjs add … --ticket NNN`, `queue set NNN escalated`, move on. A merge
    conflict is never resolved by hand: back to the author with `tk.mjs status NNN changes "conflict with
    <sha>"`, or escalate if it crosses nodes.
@@ -203,7 +207,7 @@ round; the incident it filed is not yours to act on further.
 
 ## Graph changes
 
-A change to the graph (a boundary, a new node, a contract) is applied by the architect or the director
+A change to the graph (a boundary, a new node, a port) is applied by the architect or the director
 with `node.mjs` and lands in the committed graph directory (or through `yg` with Yggdrasil). It reaches
 a branch as its own commit, made by you on request, message `graph: <what>`, with `tk.mjs log` on the
 ticket it unblocks; it is never mixed into a ticket's merge commit. Under Yggdrasil a mapping for files
@@ -214,7 +218,7 @@ owes, or the audit will find them missing:
 - **the ticket names it**: a ruling that puts files on a ticket's branch widens the ticket — `tk.mjs
   edit NNN --files …` to list them before the re-review, so the reviewers know what they approve and
   the merge checklist stops refusing the diff;
-- **a second reader for the owner's own text**: a charter or contracts refresh written by the node's
+- **a second reader for the owner's own text**: a charter refresh written by the node's
   owner is not reviewed by that owner — the architect reviews it, and with no architect staffed, the
   director does, at the tip it landed on; a charter that contradicts the code it rides with is the
   finding this catches;

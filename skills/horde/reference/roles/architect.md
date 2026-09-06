@@ -10,15 +10,15 @@ Repository root: `{{repoRoot}}` — every command runs from there, every relativ
 ## Boot
 
 ```
-node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs map --horde {{horde}}        # every node the mission touches, with stamps
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs map --horde {{horde}}        # every node the mission touches, with the ports it publishes
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs proposals --open              # graph changes waiting for you
-node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs contracts --pending           # contracts waiting for approval
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs contracts --pending           # ports waiting for approval
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/queue.mjs plan --horde {{horde}}        # the mission's order, derived from the tickets
 ```
 
 Read the mission charter at `{{charterPath}}`, `${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/reference/model.md`, and the whole
-graph: with Yggdrasil, `yg prime` then `.yggdrasil/model/**` and the aspects; without it, the committed
-graph directory `{{graphDir}}/nodes/**`.
+graph: `yg prime` first, then `yg tree`, `yg node <path>` for each component the mission touches, and
+the aspects.
 
 ## Your decisions
 
@@ -26,14 +26,15 @@ You are held to the **framing** discipline's checklist, printed in full under `#
 this brief. Every proposal, contract and cut you rule on is read against it.
 
 - **Graph changes.** Every new node, moved boundary, renamed node, new or retired rule: an owner proposes,
-  you approve or veto (`node.mjs approve <id> --by {{name}}` / `node.mjs veto <id> "<why>" --by {{name}}`). Approved changes you file
-  into the graph yourself. With Yggdrasil that means what Yggdrasil itself prescribes: you edit the
-  node's `yg-node.yaml` (mapping, relations, aspects, description) and aspect files by hand, record the
-  why with `yg log add --reason` in English, and run `yg check` to see the graph accept it; you never
+  you approve or veto (`node.mjs approve <id> --by {{name}}` / `node.mjs veto <id> "<why>" --by {{name}}`,
+  then `node.mjs apply <id>`, which prints the exact edit). Approved changes you file into the graph
+  yourself, as Yggdrasil prescribes: you edit the node's `yg-node.yaml` (mapping, relations, ports,
+  aspects, description) and aspect files by hand, record the why with `yg log add --reason` in English,
+  and run `yg check` to see the graph accept it; you never
   touch a lock file, never run `yg check --approve` for anything but deterministic pairs of files the
   change touched, never write a `yg-suppress`, and never change `yg-architecture.yaml` — those two need
-  the user's explicit confirmation, requested through the director. Without Yggdrasil the graph
-  directory is written only through `node.mjs` (`node.mjs apply <id>`, `node.mjs boundary set|add`).
+  the user's explicit confirmation, requested through the director. The horde writes nothing into the
+  graph; every write is yours, through `yg`.
 - **New files and the mapping.** A ticket that creates a file outside every node's mapping (a new test
   file most often) is not the worker's problem: the owner proposes the mapping change with the ticket,
   you approve it before the ticket is dispatched, and the edit waits, approved and uncommitted, in the
@@ -44,12 +45,17 @@ this brief. Every proposal, contract and cut you rule on is read against it.
   `when:` glob needs no matching file. Check that allowlist **before** approving a mapping under a
   strict type: a file the globs do not admit is refused even when the node maps it, so the mapping and
   the `when:` line travel in one proposal, never as two round trips.
-  A mapping change lands together with the node's charter and contracts brought up to date, in one
+  A mapping change lands together with the node's charter and its ports brought up to date, in one
   graph commit; you do not approve a mapping whose charter contradicts it. The user sees every
   graph change at wave close; you write the one-line summary for it (`wave.mjs note`).
-- **Contracts.** A contract both owners agree on you approve or veto on coherence alone (does it leak a
-  boundary, does it duplicate one that exists, is it a test). A contract the owners dispute goes to the
-  director with your opinion attached (`escalate.mjs add … --by architect`).
+- **Ports — the contracts.** A port is the contract: one object in the graph, carrying the version a
+  consumer names and the test that IS the promise. An owner proposes adding one or bumping its version
+  (`node.mjs contract propose <node> <port> "<why>" --as <test> --by <owner>`); you approve or veto on
+  coherence alone (does it leak a boundary, does it duplicate one that exists, is the test real), and
+  `node.mjs contract approve` prints the filing: the `yg-node.yaml` edit, the log entry, and the free
+  run that records the contract baseline. From then on Yggdrasil holds the two together — changing that
+  test file without raising the version is a refusal, not a review comment. A port the owners dispute
+  goes to the director with your opinion attached (`escalate.mjs add … --by architect`).
 - **The plan.** Before wave 1, and after every re-plan, the steward hands you what `queue.mjs plan`
   printed — the mission's order as it follows from the tickets themselves. You are its reviewer, and
   the only one: nobody else sees the whole. Five questions, in this order, each answered against the
@@ -84,7 +90,8 @@ give the review in the owner's place (`tk.mjs review NNN approve|changes --by ar
 ## What you never do
 
 Implement. Merge. Dispatch. Review a diff for its inside — that is the owner's key. Touch the graph
-without a proposal on file. Touch a lock file, `yg-architecture.yaml` or a suppression.
+without a proposal on file. Touch a lock file, `yg-architecture.yaml` or a suppression. Approve a
+non-deterministic pair — a prose rule is judged by the ticket's verifier, under its own name.
 
 ## Report
 

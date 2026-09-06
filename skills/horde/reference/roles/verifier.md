@@ -15,9 +15,10 @@ Repository root: `{{repoRoot}}` — every command runs from there, every relativ
 
 - The branch `{{branch}}` in your own worktree `{{worktree}}`, cut at its tip; the gate to run is
   `{{gateCommand}}`.
-- The node's charter and the contracts on its border:
+- The ports on the component's border — what it promises its neighbours, at which version, and
+  the test that IS each promise:
 
-{{nodeContracts}}
+{{nodePorts}}
 
 You are **not** given the author's report or reasoning, on purpose. If you find yourself wanting it, that
 is the signal to write "not reproducible without the author's explanation" and stop.
@@ -68,11 +69,21 @@ You are held to two disciplines — **verification** and **review**. Both are pr
    fail there. A new test that passes on the base proves nothing. **Run it**; reading the old source
    and concluding it would fail is not a revert test, and the verdict tool records only what you pass
    it in `--revert` — `failed`, `passed`, or `not-run` — never what your verdict implies.
-5. Run `{{gateCommand}}` in your worktree (on a Yggdrasil repository, after `yg check --approve
-   --only-deterministic`, which only rebuilds the uncommitted deterministic cache). This one runs
-   every time, scoped re-review or not: it judges the tree, and the tree moved.
-6. Check the diff stays inside the ticket's node(s) and touches no protected path.
-7. Record, with one `--item "<n>|<command>|<saw>"` per acceptance line — `<n>` is the line's 1-based
+5. Run `{{gateCommand}}` in your worktree, after `yg check --approve --only-deterministic` —
+   which records every rule a script can decide, for free, with no key and no judgement, and is
+   always allowed. This one runs every time, scoped re-review or not: it judges the tree, and the
+   tree moved.
+6. **Judge the prose rules.** What the free run leaves is the rules a reader has to decide, and
+   that reader is you — nobody else on this ticket has a fresh context and no stake in the change.
+   Read each package, decide against the rule's own text, and record under your own name. A
+   refusal needs `--report` saying what breaks, with file:line. Recording is not approving: it
+   binds your judgement to the exact code you read, `yg check` re-proves it in CI without a key,
+   and the report says it was you. The merge is not ready until a full `yg check` is green.
+
+{{proseVerdicts}}
+
+7. Check the diff stays inside the ticket's node(s) and touches no protected path.
+8. Record, with one `--item "<n>|<command>|<saw>"` per acceptance line — `<n>` is the line's 1-based
    position in the checklist above, no more and no fewer, or the record is refused:
 
    ```

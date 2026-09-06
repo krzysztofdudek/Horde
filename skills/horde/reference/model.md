@@ -10,17 +10,17 @@ META       the graph: nodes · charters · contracts · rules · log     owners,
 CODE       worktrees · branches · tests · scenarios         workers, verifiers
 ```
 
-The meta plane is the memory of the organisation. In a repository with Yggdrasil it already exists:
+The meta plane is the memory of the organisation, and it is Yggdrasil's:
 `.yggdrasil/model/<node>/yg-node.yaml`, aspects with rules, `yg check` (the loop downwards: does the
-code respect the graph?), the verification status (the loop upwards: does the graph still describe
-the code?). The horde invents no meta level; it is the organisation that keeps both loops closed when
-the work is too large for one agent. Where there is no Yggdrasil the horde keeps its own committed node
-map (`config.nodeSource = manual`, a plain directory of node folders with the same shape: boundary,
-charter, contracts, log, stamp). Every role sees the same commands in both modes; only the enforcement
-loop downwards is weaker without Yggdrasil — contract tests instead of a rule checker.
+code respect the graph?), the lock (the loop upwards: is each verdict still bound to the code it
+judged?). The horde invents no meta level and keeps no second copy of one; it is the organisation
+that keeps both loops closed when the work is too large for one agent. A repository without a graph
+gets one at `horde init` — created through `yg`, and where a Grain CLI is available, proposed from
+the repository's own code and accepted.
 
-Versioning of the meta plane needs two axes, not one: git for content, and per node a stamp
-"verified against code at SHA X". A node's charter is current only where its stamp matches HEAD.
+Versioning of the meta plane needs two axes, not one: git for content, and per verdict the hash of
+what it judged. A node's charter is current only where the graph still verifies against the code —
+which is the question `yg check` answers, and nothing else does.
 
 ## The node
 
@@ -31,14 +31,16 @@ that has:
 - a **charter**: why it exists, its constraints, the decisions in force;
 - an **owner**: a role leased while work touches the node;
 - a **log**: decisions and history — why things are as they are;
-- **contracts** with neighbours: what it promises other nodes, each expressed as a test or scenario;
+- **ports**: what it promises its neighbours, each carrying a version and the test that IS the
+  promise — the port is the contract, one object in the graph, and changing that test without
+  raising the version is a refusal;
 - **evidence**: tests and scenarios that prove it does what it claims.
 
 Why a node and not a team: a team is people who must know each other; a node is context that can be
 loaded. An agent has no memory between sessions, but a node has a log. Owners are replaceable; the
 context stays.
 
-**Right size.** A node is cut correctly when its charter, its contracts and its code fit one Sonnet
+**Right size.** A node is cut correctly when its charter, its ports and its code fit one Sonnet
 context with room to work. Finer costs coordination; coarser overflows context. This is the only
 cutting rule. The first cut of a graph is made with the user.
 
@@ -65,7 +67,7 @@ graph — and reads nothing outside it:
 
 - director: the mission node and its edges, escalations, dissents, wave closes, audit samples;
 - steward: its queue, its branch, tickets and their verdicts, the roster of its team;
-- owner: its node's subtree, the contracts on its boundary, its log;
+- owner: its node's subtree, the ports on its boundary, its log;
 - worker: the ticket, the node charter, the evidence it must produce;
 - verifier: the evidence and the acceptance criteria — never the author's reasoning.
 
@@ -79,7 +81,8 @@ Agents are biased towards their own work, and no prompt fixes that. The structur
 - author ≠ verifier, always a fresh context, preferably another model;
 - evidence over report: a ticket is done when its evidence exists and a verifier reproduced it;
   red-green proof: new tests fail before, pass after;
-- contracts are tests: a contract change is a red test in the neighbour, which escalates by itself;
+- contracts are tests: a port names the test that is its promise, so a contract change is a red test
+  in the neighbour, which escalates by itself;
 - two keys and one approval on every merge: author, verifier, and the owner of every node the ticket
   names (the architect when the owner is the author), recorded on the ticket;
 - an Opus auditor redoes one merged ticket per wave in full; the director reads the verdict;
@@ -120,6 +123,6 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
 ## Hard places, named
 
 - Planning can loop: cap rounds, escalate.
-- A contract change propagates: know who has a red test before it lands (`node.mjs contracts`).
+- A port version bump propagates: know who has a red test before it lands (`node.mjs contracts`).
 - Cost must be counted even roughly (runs × class), or "cheapest capable" is a wish.
 - The first cut of the graph is a judgement the director makes with the user, not alone.

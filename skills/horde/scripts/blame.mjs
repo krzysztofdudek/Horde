@@ -32,15 +32,13 @@ import {
   allTickets, parseKeys, nodesOf, parseField,
 } from './tk.mjs';
 import { parseEvidenceRows } from './wave.mjs';
-import {
-  graphIsLaw, listAllNodes, nodeBoundary, pathInBoundary, nodeRules,
-} from './node.mjs';
+import { fileRules } from './node.mjs';
 
 const USAGE = `usage: blame.mjs <file>:<line> [--horde h] [--json]
 
 git blame -> commit -> the ticket whose recorded branch tip contains that commit -> its keys,
-approvals, evidence and, when this repository has a graph, the rule verdicts standing against the
-file's owning node. Searches every horde on the repository, live and archived. --horde narrows the
+approvals, evidence and the rule verdicts standing against the component the graph says owns the
+file. Searches every horde on the repository, live and archived. --horde narrows the
 search to one horde (and its own archived copies); a line no ticket owns reports so plainly.
 
 options: --json  --help`;
@@ -259,21 +257,14 @@ function evidenceRows(hordeId, ticket, logText) {
 
 // ---- rule verdicts against the file's owning node ---------------------------
 //
+// Two questions, two sources, each the only one that can answer its own. WHICH component owns
+// this file and WHICH rules reach it is `yg context --file <path> --json` — the graph's own
+// resolution, which accounts for overlapping mappings, type coverage and every cascade channel a
+// glob match here would get wrong. WHAT VERDICT stands against each of those rules is the lock:
 // `yg check` has no --json and no per-file scope (verified against the installed CLI's own
-// --help: check offers --aspect, --top, --summary, --details, none of them a file filter) — so
-// the honest source for "what does the graph say about this file" is the lock's own entries,
-// read directly, the same content-addressed record `yg check` itself re-hashes against rather
-// than a fabricated flag this CLI does not have. `yg context --file <path> --json` would resolve
-// the node and list which aspects reach it, but not carry a verdict at all — the lock is where
-// verdicts live (`yg knowledge read verification-and-lock`), so this reads it in one place rather
-// than calling out to a command that could not answer the question.
-
-function findOwningNode(root, cfg, relFile) {
-  for (const node of listAllNodes(root, cfg)) {
-    if (pathInBoundary(relFile, nodeBoundary(root, cfg, node))) return node;
-  }
-  return null;
-}
+// --help: check offers --aspect, --top, --summary, --details, none of them a file filter), and
+// the context document carries which rules apply but never a verdict, so the honest source is the
+// lock's own entries — the same content-addressed record `yg check` itself re-hashes against.
 
 // The lock is a triad on disk (`yg knowledge read verification-and-lock`): two committed files
 // split by aspect kind, plus a gitignored local cache for deterministic verdicts — any of the
@@ -292,12 +283,12 @@ function readLockVerdicts(root) {
 }
 
 function ruleVerdictsForFile(root, cfg, relFile) {
-  if (!graphIsLaw(cfg)) {
-    return { available: false, reason: 'no graph — nodeSource is manual; this repository has no rule verdicts to show' };
+  const rules = fileRules(root, cfg, relFile);
+  if (!rules.available) {
+    return { available: false, reason: `${rules.reason} — no rule verdicts for ${relFile}` };
   }
-  const node = findOwningNode(root, cfg, relFile);
-  if (!node) return { available: false, reason: `${relFile} is not mapped to any node — no rule verdicts` };
-  const rules = nodeRules(root, cfg, node);
+  const node = rules.node;
+  if (!node) return { available: false, reason: `${relFile} is not mapped to any component — no rule verdicts` };
   const lock = readLockVerdicts(root);
   const nodeKey = `node:${node}`;
   const fileKey = `file:${relFile}`;

@@ -22,7 +22,7 @@ import {
   findTicket, parseField, parseKeys, setVerifierKey, changesRoundInfo, transitionStatus,
 } from './tk.mjs';
 import { trace as traceRoster, rosterEntry } from './roster.mjs';
-import { graphIsLaw, ygCommand } from './node.mjs';
+import { ygCommand } from './node.mjs';
 
 const VERDICTS = ['reproduced', 'not-reproduced', 'stale', 'out-of-scope', 'flaky'];
 
@@ -56,7 +56,7 @@ commands:
       the verdict is forced to "flaky" regardless of --verdict, --test names what flaked in the
       block, the ticket goes to "changes" ("flaky: <what>") counting one round of config.fixRounds
       the same as any other, and the flake is filed as an incident: through this repository's
-      Yggdrasil CLI (config.ygCommand) when its graph is the law, else a journal note. A flaky
+      Yggdrasil CLI (config.ygCommand); when that fails, a journal note instead. A flaky
       verdict needs none of --item/--gate/--revert.
   show <ticket> [--horde h]
       the ticket's recorded verdicts, most recent last.
@@ -179,27 +179,28 @@ function parseFlakeFlags(flags) {
   return { runs, results, test: flags.test };
 }
 
-// The flake becomes an incident: through this repository's own Yggdrasil CLI (config.ygCommand
-// names how to invoke it; the exact subcommand — "incident add --tag <cause> --reason <text>" —
-// comes from that CLI's own --help, never assumed) when its graph is the law, else a journal note
-// beside the horde's other journals. Filing failing never blocks the changes transition it rides
-// with — a flake that could not be filed anywhere is still a flake.
+// The flake becomes an incident in the one incident ledger there is: this repository's own
+// Yggdrasil CLI (config.ygCommand names how to invoke it; the exact subcommand — "incident add
+// --tag <cause> --reason <text>" — comes from that CLI's own --help, never assumed). Filing
+// failing never blocks the changes transition it rides with — a flake that could not be filed is
+// still a flake, and then it is written to the horde's own journal so it is not lost.
 function recordFlakeIncident(horde, cfg, ticket, flake) {
   const reason = `flaky test on ticket ${ticket.id}: ${flake.test} — runs: ${flake.results.join(', ')}`;
-  if (graphIsLaw(cfg)) {
-    const { cmd, prefix, display } = ygCommand(cfg);
-    try {
-      execFileSync(cmd, [...prefix, 'incident', 'add', '--tag', 'not-enforcement', '--reason', reason], {
-        cwd: repoRoot(), stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      return { recorded: true, via: `${display} incident add`, reason };
-    } catch (e) {
-      const detail = ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || '') || e.message;
-      return { recorded: false, via: `${display} incident add`, reason: `could not record: ${detail.trim()}` };
-    }
+  const { cmd, prefix, display } = ygCommand(cfg);
+  try {
+    execFileSync(cmd, [...prefix, 'incident', 'add', '--tag', 'not-enforcement', '--reason', reason], {
+      cwd: repoRoot(), stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { recorded: true, via: `${display} incident add`, reason };
+  } catch (e) {
+    const detail = ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || '') || e.message;
+    appendText(hordePath(horde, 'incidents.md'), `- ${nowIso()} ticket ${ticket.id} — ${reason}\n`);
+    return {
+      recorded: false,
+      via: `${display} incident add`,
+      reason: `could not record in the incident ledger (${detail.trim()}) — written to the horde's own journal instead`,
+    };
   }
-  appendText(hordePath(horde, 'incidents.md'), `- ${nowIso()} ticket ${ticket.id} — ${reason}\n`);
-  return { recorded: true, via: 'journal note (hordes/<horde>/incidents.md)', reason };
 }
 
 function cmdRecord(horde, positional, flags) {

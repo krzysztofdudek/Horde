@@ -3,10 +3,21 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
+import {
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, yg, requireYg, MARKER_CHECK,
+} from './helpers.mjs';
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+// The graph rides on the branch. `yg check` reads the tree it is run in, and the merge checklist
+// runs it in the branch's own worktree — so a component has to be committed before a ticket
+// branches off it, exactly as the architect files one on a real mission.
+function commitGraph(dir) {
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  git(['add', '.yggdrasil'], dir);
+  git(['commit', '-qm', 'graph: the components this mission touches'], dir);
 }
 
 function issueDir(dir, team, id) {
@@ -68,9 +79,9 @@ function makeTicketBranch(dir, id, { fromRef = 'mission1/trunk', extraFiles = {}
   ].join('\n'));
   const paths = [`feature-${id}.mjs`, `feature-${id}.test.mjs`];
   for (const [path, content] of Object.entries(extraFiles)) { writeFileSync(join(dir, path), content); paths.push(path); }
-  // Add only this ticket's own files — the working tree also holds node.mjs's untracked
-  // architecture/ fixtures (created once, outside any branch), which `git add -A` would sweep
-  // into the commit and make the diff look like it left the ticket's node boundary.
+  // Add only this ticket's own files — the working tree also holds the untracked graph the
+  // fixture wrote (outside any branch), which `git add -A` would sweep into the commit and make
+  // the diff look like it left the ticket's node boundary.
   git(['add', ...paths], dir);
   git(['commit', '-qm', `ticket ${id}`], dir);
   git(['checkout', 'mission1/trunk'], dir);
@@ -81,7 +92,8 @@ test('premerge.mjs: all six checks pass', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-001.mjs,feature-001.test.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-001.mjs', 'feature-001.test.mjs'] });
+  commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '001');
   const dst = writeIssue(dir, 'trunk', '001');
@@ -94,7 +106,7 @@ test('premerge.mjs: all six checks pass', async (t) => {
   assert.equal(r.json.ok, true);
   for (const c of r.json.checks) assert.equal(c.ok, true, `${c.name}: ${c.note}`);
   const names = r.json.checks.map((c) => c.name);
-  assert.deepEqual(names, ['base freshness', 'keys', 'scope', 'revert test', 'gate', 'journal']);
+  assert.deepEqual(names, ['base freshness', 'keys', 'scope', 'revert test', 'gate', 'graph', 'journal']);
 
   // A real revert test ran (this whole run happens inside our own `node --test`, so a false pass
   // via NODE_TEST_CONTEXT leaking into the nested run would show up as "no new test files").
@@ -107,7 +119,8 @@ test('premerge.mjs: item 1 fails — branch not rooted at the current team tip',
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-002.mjs,feature-002.test.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-002.mjs', 'feature-002.test.mjs'] });
+  commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '002');
   // Advance trunk after the ticket branched off it, so the ticket's merge-base is now stale.
@@ -131,7 +144,8 @@ test('premerge.mjs: item 2 fails — keys missing (no verifier, no node approval
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-003.mjs,feature-003.test.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-003.mjs', 'feature-003.test.mjs'] });
+  commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '003');
   const dst = writeIssue(dir, 'trunk', '003', { keysLine: '**Keys:** author worker1 · verifier —' });
@@ -149,7 +163,8 @@ test('premerge.mjs: item 2 fails — a node approval\'s sha (tk.mjs review\'s "n
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-009.mjs,feature-009.test.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-009.mjs', 'feature-009.test.mjs'] });
+  commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '009');
   const dst = writeIssue(dir, 'trunk', '009', {
@@ -169,7 +184,8 @@ test('premerge.mjs: item 2 — a real tk.mjs review approval records the tip and
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-010.mjs,feature-010.test.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-010.mjs', 'feature-010.test.mjs'] });
+  commitGraph(dir);
 
   const ticket = run('tk.mjs', ['new', 'sha-bound', '--title', 'Sha bound', '--node', 'feature', '--class', 'sonnet'], dir);
   const id = ticket.json.id;
@@ -214,7 +230,8 @@ test('premerge.mjs: item 3 fails — diff touches a file outside the node bounda
   t.after(() => rmRepo(dir));
   initHorde(dir);
   // Boundary deliberately excludes the test file the branch also adds.
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-004.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-004.mjs'] });
+  commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '004', { extraFiles: { 'outside-file.txt': 'not in the node\n' } });
   const dst = writeIssue(dir, 'trunk', '004');
@@ -237,6 +254,8 @@ function makeContractRevertFixture(dir, id) {
   git(['add', `surface-${id}.mjs`], dir);
   git(['commit', '-qm', 'old surface'], dir);
   initHorde(dir); // mission1/trunk branches off this develop tip — inherits getValue() === 0
+  addNode(dir, 'feature', { mapping: [`surface-${id}.mjs`, `surface-${id}.test.mjs`] });
+  commitGraph(dir);
 
   git(['checkout', 'mission1/trunk'], dir);
   writeFileSync(join(dir, `surface-${id}.mjs`), 'export function getValue() { return 42; }\n');
@@ -254,7 +273,6 @@ function makeContractRevertFixture(dir, id) {
   git(['add', `surface-${id}.test.mjs`], dir);
   git(['commit', '-qm', `ticket ${id}`], dir);
   git(['checkout', 'mission1/trunk'], dir);
-  run('node.mjs', ['new', 'feature', '--boundary', `surface-${id}.mjs,surface-${id}.test.mjs`], dir);
   return `mission1/t-${id}`;
 }
 
@@ -311,7 +329,8 @@ test('premerge.mjs: item 6 fails — no log entry newer than the last commit', a
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-005.mjs,feature-005.test.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-005.mjs', 'feature-005.test.mjs'] });
+  commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '005');
   const dst = writeIssue(dir, 'trunk', '005');
@@ -331,7 +350,8 @@ test('premerge.mjs: --no-gate skips item 5; a stubbed gates.team runs and caches
   t.after(() => rmRepo(dir));
   initHorde(dir);
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-006.mjs,feature-006.test.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-006.mjs', 'feature-006.test.mjs'] });
+  commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '006');
   const dst = writeIssue(dir, 'trunk', '006');
@@ -357,13 +377,15 @@ test('premerge.mjs: item 5 accepts a verifier\'s green gate only when its sha ma
   initHorde(dir);
   // A gate that would fail if actually run, so "accepted without running" is unambiguous.
   run('horde.mjs', ['config', 'set', 'gates.team', 'false'], dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-007.mjs,feature-007.test.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-007.mjs', 'feature-007.test.mjs'] });
+  commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '007');
   const branchSha = git(['rev-parse', branch], dir);
   const dst = writeIssue(dir, 'trunk', '007');
   writeVerdictLog(dst, { gateLine: `**Gate:** \`true\` — green at sha ${branchSha}` });
   seedQueueItem(dir, 'trunk', '007', branch);
+  git(['worktree', 'add', join(dir, '.horde', 'worktrees', 'mission1', 't-007'), branch], dir);
 
   const r = run('premerge.mjs', [branch], dir); // no --no-gate: must not need to run gates.team="false"
   if (r.code !== 0) console.error(r.stdout, r.stderr);
@@ -377,7 +399,8 @@ test('premerge.mjs: item 5 re-runs the gate when the verifier\'s recorded sha do
   t.after(() => rmRepo(dir));
   initHorde(dir);
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-008.mjs,feature-008.test.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-008.mjs', 'feature-008.test.mjs'] });
+  commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '008');
   const dst = writeIssue(dir, 'trunk', '008');
@@ -402,36 +425,12 @@ test('premerge.mjs: item 5 re-runs the gate when the verifier\'s recorded sha do
   assert.match(keys.note, /approval\/verdict predates .+ — re-review/);
 });
 
-test('premerge.mjs: item 3 scope — manual mode counts a node\'s own graph files as inside its boundary', async (t) => {
+test('premerge.mjs: item 3 scope — a component\'s own graph files are inside its boundary, but the rest of the graph is not', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-009.mjs,feature-009.test.mjs'], dir);
-
-  const branch = makeTicketBranch(dir, '009', {
-    extraFiles: { 'architecture/nodes/feature/charter.md': '# Node · feature\n\nrefreshed by the owner\n' },
-  });
-  const dst = writeIssue(dir, 'trunk', '009');
-  writeVerdictLog(dst);
-  seedQueueItem(dir, 'trunk', '009', branch);
-
-  const r = run('premerge.mjs', [branch, '--no-gate'], dir);
-  if (r.code !== 0) console.error(r.stdout, r.stderr);
-  assert.equal(r.code, 0);
-  const scope = r.json.checks.find((c) => c.name === 'scope');
-  assert.equal(scope.ok, true);
-});
-
-test('premerge.mjs: item 3 scope — Yggdrasil mode counts a node\'s own graph files, but not the rest of .yggdrasil/', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  mkdirSync(join(dir, '.yggdrasil', 'model', 'feature'), { recursive: true });
-  writeFileSync(join(dir, '.yggdrasil', 'model', 'feature', 'yg-node.yaml'), [
-    'name: feature', 'type: domain', 'description: "fixture"', '',
-    'mapping:', '  - src/feature/', '',
-  ].join('\n'));
-  writeFileSync(join(dir, '.yggdrasil', 'yg-architecture.yaml'), 'placeholder: true\n');
-  initHorde(dir); // .yggdrasil/ exists -> nodeSource auto-detects "yggdrasil"
+  addNode(dir, 'feature', { mapping: ['src/feature/**'] });
+  commitGraph(dir);
 
   git(['checkout', 'mission1/trunk'], dir);
   git(['checkout', '-b', 'mission1/t-010'], dir);
@@ -451,13 +450,13 @@ test('premerge.mjs: item 3 scope — Yggdrasil mode counts a node\'s own graph f
   const okScope = ok.json.checks.find((c) => c.name === 'scope');
   assert.equal(okScope.ok, true, okScope.note);
 
-  // A second ticket branch that also edits yg-architecture.yaml — not any node's own files —
+  // A second ticket branch that also edits yg-architecture.yaml — not any component's own files —
   // must stay out of scope.
   git(['checkout', 'mission1/trunk'], dir);
   git(['checkout', '-b', 'mission1/t-011'], dir);
   mkdirSync(join(dir, 'src', 'feature'), { recursive: true });
   writeFileSync(join(dir, 'src', 'feature', 'b.mjs'), 'export const b = 2;\n');
-  writeFileSync(join(dir, '.yggdrasil', 'yg-architecture.yaml'), 'placeholder: changed\n');
+  writeFileSync(join(dir, '.yggdrasil', 'yg-architecture.yaml'), 'node_types: {}\n# widened\n');
   git(['add', join('src', 'feature', 'b.mjs'), join('.yggdrasil', 'yg-architecture.yaml')], dir);
   git(['commit', '-qm', 'ticket 011'], dir);
   git(['checkout', 'mission1/trunk'], dir);
@@ -473,16 +472,12 @@ test('premerge.mjs: item 3 scope — Yggdrasil mode counts a node\'s own graph f
   assert.match(badScope.note, /yg-architecture\.yaml/);
 });
 
-test('premerge.mjs: item 3 scope — Yggdrasil mode treats yg\'s committed lock files as derived, not out of scope', async (t) => {
+test('premerge.mjs: item 3 scope — yg\'s committed lock files are derived, not out of scope', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  mkdirSync(join(dir, '.yggdrasil', 'model', 'feature'), { recursive: true });
-  writeFileSync(join(dir, '.yggdrasil', 'model', 'feature', 'yg-node.yaml'), [
-    'name: feature', 'type: domain', 'description: "fixture"', '',
-    'mapping:', '  - src/feature/', '',
-  ].join('\n'));
-  writeFileSync(join(dir, '.yggdrasil', 'yg-architecture.yaml'), 'placeholder: true\n');
   initHorde(dir);
+  addNode(dir, 'feature', { mapping: ['src/feature/**'] });
+  commitGraph(dir);
 
   git(['checkout', 'mission1/trunk'], dir);
   git(['checkout', '-b', 'mission1/t-012'], dir);
@@ -527,7 +522,8 @@ function writeIssueAt(teamDir, id, {
 function setupTeamMergeUp(dir, { ticketMerged = true, ticketState } = {}) {
   const resolvedState = ticketState || (ticketMerged ? 'merged' : 'running');
   initHorde(dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-101.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-101.mjs'] });
+  commitGraph(dir);
 
   const childTeamDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'teams', 'goblins');
   mkdirSync(join(childTeamDir, 'issues'), { recursive: true });
@@ -537,8 +533,8 @@ function setupTeamMergeUp(dir, { ticketMerged = true, ticketState } = {}) {
   writeFileSync(join(dir, 'feature-101.mjs'), 'export const flag = true;\n');
   // Also touches the node's own graph file — proves the team-mode scope union (over the team's
   // tickets' nodes) counts a node's graph files as in scope too, the same as ticket mode.
-  writeFileSync(join(dir, 'architecture', 'nodes', 'feature', 'charter.md'), '# Node · feature\n\nrefreshed\n');
-  git(['add', 'feature-101.mjs', join('architecture', 'nodes', 'feature', 'charter.md')], dir);
+  writeFileSync(join(dir, '.yggdrasil', 'model', 'feature', 'charter.md'), '# Node · feature\n\nrefreshed\n');
+  git(['add', 'feature-101.mjs', join('.yggdrasil', 'model', 'feature', 'charter.md')], dir);
   git(['commit', '-qm', 'ticket 101'], dir);
   git(['checkout', 'mission1/goblins'], dir);
   git(['merge', '--no-ff', 'mission1/t-101', '-m', 'merge ticket 101'], dir);
@@ -606,58 +602,58 @@ for (const state of ['queued', 'waiting']) {
   });
 }
 
-// ---- the graph gate (nodeSource: yggdrasil) ----------------------------------------
+// ---- the graph gate ----------------------------------------------------------------
 //
-// A stand-in for the Yggdrasil CLI: a real program, invoked exactly as the real one is (through
-// config.ygCommand, in the branch's own worktree), that prints what `yg check` prints and exits
-// with its exit code. The point under test is that premerge runs it at all and believes its
-// exit code — not anything about Yggdrasil's own internals.
-function writeFakeYg(dir, name, { exit = 0, line = 'yg check: PASS  1 nodes · 1 aspects' } = {}) {
-  const path = join(dir, name);
-  writeFileSync(path, [
-    "if (process.argv[2] !== 'check') { console.error('unexpected: ' + process.argv.slice(2).join(' ')); process.exit(2); }",
-    `console.log(${JSON.stringify(line)});`,
-    `process.exit(${exit});`,
-    '',
-  ].join('\n'));
-  return path;
-}
-
-function setupGraphGateRepo(dir, id) {
-  mkdirSync(join(dir, '.yggdrasil', 'model', 'feature'), { recursive: true });
-  writeFileSync(join(dir, '.yggdrasil', 'model', 'feature', 'yg-node.yaml'), [
-    'name: feature', 'type: domain', 'description: "the node"', '',
-    'mapping:', `  - feature-${id}.mjs`, `  - feature-${id}.test.mjs`, '', 'relations: []', '',
-  ].join('\n'));
-  initHorde(dir); // .yggdrasil/ exists -> nodeSource auto-detects "yggdrasil"
+// The real Yggdrasil CLI on a real graph, in the branch's own worktree. Nothing is stood in for:
+// the rule is a check.mjs the CLI runs, the refusal is one it produces, and the verdict that
+// clears a prose rule is one the external-judge channel records. What is under test is that the
+// merge checklist runs the free half itself, names what is left for a judge, and ticks only when
+// a full `yg check` is green.
+function setupGraphGateRepo(dir, id, { marker = false, prose = false, judge = true, files = null } = {}) {
+  initHorde(dir);
+  if (prose) {
+    // A reviewer tier gives the graph an identity a verdict can bind to — no key, no judge.
+    if (judge) assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
+    addAspect(dir, 'reads-well', {
+      description: 'Every exported name reads as a sentence a stranger understands.',
+      content: '# Reads well\n\nAn exported name must read as something a stranger understands.\n',
+    });
+  }
+  addAspect(dir, 'no-marker', {
+    description: 'Source files must not carry an unfinished-work marker.',
+    check: MARKER_CHECK,
+  });
+  addNode(dir, 'feature', {
+    mapping: [`feature-${id}.mjs`, `feature-${id}.test.mjs`],
+    aspects: prose ? ['no-marker', 'reads-well'] : ['no-marker'],
+  });
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir); // the level's gate is green
 
-  const branch = makeTicketBranch(dir, id);
-  const dst = writeIssue(dir, 'trunk', id);
+  commitGraph(dir);
+
+  const branch = makeTicketBranch(dir, id, marker
+    ? { extraFiles: { [`feature-${id}.mjs`]: 'export function add(a, b) { return a + b; } // UNFINISHED\n' } }
+    : {});
+  const dst = writeIssue(dir, 'trunk', id, files ? { files } : {});
   writeVerdictLog(dst);
   seedQueueItem(dir, 'trunk', id, branch);
   const wt = join(dir, '.horde', 'worktrees', 'mission1', `t-${id}`);
   git(['worktree', 'add', wt, branch], dir);
-  return branch;
+  return { branch, worktree: wt };
 }
 
-test('premerge.mjs: horde.mjs init says the graph check is in the merge gate on a repository with a graph', async (t) => {
+test('premerge.mjs: horde.mjs init says the graph check is in the merge gate', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  mkdirSync(join(dir, '.yggdrasil', 'model', 'feature'), { recursive: true });
-  writeFileSync(join(dir, '.yggdrasil', 'model', 'feature', 'yg-node.yaml'), 'name: feature\ntype: domain\ndescription: "d"\nmapping:\n  - src/\nrelations: []\n');
-
-  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop'], dir, { json: false });
-  assert.equal(r.code, 0);
-  assert.match(r.stdout, /yg check` is part of every merge check/);
+  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /check` is part of every merge check/);
 });
 
-test('premerge.mjs: the graph gate is red when yg check refuses the tree, even with a green level gate', async (t) => {
+test('premerge.mjs: the graph gate is red when the graph refuses the tree, even with a green level gate', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  const branch = setupGraphGateRepo(dir, '020');
-  const fake = writeFakeYg(dir, 'fake-yg-red.mjs', { exit: 1, line: 'yg check: FAIL  1 nodes · Errors (1): enforced 1 pairs' });
-  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${fake}`], dir);
+  const { branch } = setupGraphGateRepo(dir, '020', { marker: true });
 
   const r = run('premerge.mjs', [branch], dir);
   assert.equal(r.code, 1);
@@ -666,16 +662,16 @@ test('premerge.mjs: the graph gate is red when yg check refuses the tree, even w
   const graph = r.json.checks.find((c) => c.name === 'graph');
   assert.equal(graph.ok, false);
   assert.match(graph.note, /the graph refuses this tree/);
-  assert.match(graph.note, /yg check: FAIL/);
   assert.equal(r.json.ok, false);
 });
 
-test('premerge.mjs: the graph gate is green when yg check accepts the tree', async (t) => {
+test('premerge.mjs: the graph gate is green once the free deterministic verdicts are recorded', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  const branch = setupGraphGateRepo(dir, '021');
-  const fake = writeFakeYg(dir, 'fake-yg-green.mjs');
-  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${fake}`], dir);
+  const { branch, worktree } = setupGraphGateRepo(dir, '021');
+
+  // Nothing has been recorded yet — the item runs the free half itself, which is the point.
+  assert.equal(yg(worktree, ['check']).code, 1, 'a fresh worktree starts with every pair unverified');
 
   const r = run('premerge.mjs', [branch], dir);
   if (r.code !== 0) console.error(r.stdout, r.stderr);
@@ -685,10 +681,55 @@ test('premerge.mjs: the graph gate is green when yg check accepts the tree', asy
   assert.match(graph.note, /green/);
 });
 
+test('premerge.mjs: the graph item names the prose rules a judge still owes a verdict on, and ticks once they are judged', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, worktree } = setupGraphGateRepo(dir, '024', { prose: true });
+
+  const pending = run('premerge.mjs', [branch], dir);
+  assert.equal(pending.code, 1);
+  const graph = pending.json.checks.find((c) => c.name === 'graph');
+  assert.equal(graph.ok, false);
+  assert.deepEqual(graph.pending.map((p) => `${p.aspect} ${p.unitKind}:${p.unit}`), ['reads-well node:feature']);
+  assert.match(graph.note, /script rules are recorded/);
+  assert.match(graph.note, /reads-well on node:feature/);
+  assert.match(graph.note, /node\.mjs verdicts --at/);
+
+  // The verifier judges it under its own name, through the channel the brief names.
+  const pkg = JSON.parse(yg(worktree, ['verdict', 'package', '--aspect', 'reads-well', '--node', 'feature']).out);
+  const recorded = yg(worktree, ['verdict', 'record', '--aspect', 'reads-well', '--node', 'feature',
+    '--by', 'verifier1', '--verdict', 'pass', '--hash', pkg.hashes.pass]);
+  assert.equal(recorded.code, 0, recorded.out);
+
+  const after = run('premerge.mjs', [branch], dir);
+  if (after.code !== 0) console.error(after.stdout, after.stderr);
+  assert.equal(after.code, 0);
+  assert.equal(after.json.checks.find((c) => c.name === 'graph').ok, true);
+});
+
+test('premerge.mjs: a graph whose free run will not even start hands over what it said, and names no pairs', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // A judgement rule with nowhere to judge from: the CLI refuses to record anything at all, so
+  // not even the script rules get their free verdicts. Naming pairs here would send the verifier
+  // off to read a rule a command answers for nothing.
+  const { branch } = setupGraphGateRepo(dir, '025', { prose: true, judge: false });
+
+  const r = run('premerge.mjs', [branch], dir);
+  assert.equal(r.code, 1);
+  const graph = r.json.checks.find((c) => c.name === 'graph');
+  assert.equal(graph.ok, false);
+  assert.equal(graph.pending, undefined, 'nothing is named as prose until the free half has run');
+  assert.match(graph.note, /the free half did not take/);
+  assert.match(graph.note, /has no judge/);
+});
+
 test('premerge.mjs: the graph gate refuses rather than passes when the Yggdrasil CLI cannot be run', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  const branch = setupGraphGateRepo(dir, '022');
+  // The ticket declares its own files, so the scope item never asks the graph for a boundary —
+  // which leaves the graph item as the one place a CLI that cannot start has to show up.
+  const { branch } = setupGraphGateRepo(dir, '022', { files: ['feature-022.mjs', 'feature-022.test.mjs'] });
   run('horde.mjs', ['config', 'set', 'ygCommand', join(dir, 'no-such-yg-binary')], dir);
 
   const r = run('premerge.mjs', [branch], dir);
@@ -699,19 +740,22 @@ test('premerge.mjs: the graph gate refuses rather than passes when the Yggdrasil
   assert.match(graph.note, /config\.ygCommand/);
 });
 
-test('premerge.mjs: a manual node map has no graph item at all', async (t) => {
+test('premerge.mjs: --no-gate says the graph was not judged, rather than ticking it quietly', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-023.mjs,feature-023.test.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-023.mjs', 'feature-023.test.mjs'] });
   const branch = makeTicketBranch(dir, '023');
   const dst = writeIssue(dir, 'trunk', '023');
   writeVerdictLog(dst);
   seedQueueItem(dir, 'trunk', '023', branch);
 
   const r = run('premerge.mjs', [branch, '--no-gate'], dir);
-  assert.equal(r.code, 0);
-  assert.equal(r.json.checks.some((c) => c.name === 'graph'), false);
+  assert.equal(r.code, 0, r.stderr);
+  const graph = r.json.checks.find((c) => c.name === 'graph');
+  assert.ok(graph, 'the graph item is always on the checklist');
+  assert.equal(graph.ok, true);
+  assert.match(graph.note, /skipped \(--no-gate\)/);
 });
 
 test('premerge.mjs: item 4 refuses when this repository\'s test convention is unknown', async (t) => {
@@ -719,8 +763,8 @@ test('premerge.mjs: item 4 refuses when this repository\'s test convention is un
   t.after(() => rmRepo(dir));
   // No --test-globs, and a fixture repo with no build files: nothing tells the checklist what a
   // test file is called here.
-  run('horde.mjs', ['init', 'mission1', '--base', 'develop'], dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-030.mjs,feature-030.test.mjs'], dir);
+  run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir);
+  addNode(dir, 'feature', { mapping: ['feature-030.mjs', 'feature-030.test.mjs'] });
 
   const branch = makeTicketBranch(dir, '030');
   const dst = writeIssue(dir, 'trunk', '030');
@@ -739,7 +783,8 @@ test('premerge.mjs: item 4 says what it looked for when a diff really carries no
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir, 'mission1', ['--test-globs', '**/*Tests.java']);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-031.mjs,feature-031.test.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-031.mjs', 'feature-031.test.mjs'] });
+  commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '031');
   const dst = writeIssue(dir, 'trunk', '031');
@@ -759,7 +804,8 @@ test('premerge.mjs: item 3 scope — a diff outside the files the ticket declare
   t.after(() => rmRepo(dir));
   initHorde(dir);
   // The node's boundary is wide enough for all three files; the ticket declared only two of them.
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-040.mjs,feature-040.test.mjs,extra-040.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-040.mjs', 'feature-040.test.mjs', 'extra-040.mjs'] });
+  commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '040', { extraFiles: { 'extra-040.mjs': 'export const x = 1;\n' } });
   const dst = writeIssue(dir, 'trunk', '040', { files: ['feature-040.mjs', 'feature-040.test.mjs'] });
@@ -778,7 +824,8 @@ test('premerge.mjs: item 3 scope — declaring the file the diff touches makes i
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-041.mjs,feature-041.test.mjs,extra-041.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-041.mjs', 'feature-041.test.mjs', 'extra-041.mjs'] });
+  commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '041', { extraFiles: { 'extra-041.mjs': 'export const x = 1;\n' } });
   const dst = writeIssue(dir, 'trunk', '041', {
@@ -806,8 +853,12 @@ test('premerge.mjs: item 2 keys — a ticket that raises a port\'s version owes 
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-042.mjs,feature-042.test.mjs'], dir);
-  run('node.mjs', ['new', 'downstream', '--boundary', 'src/downstream/', '--depends', 'feature'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-042.mjs', 'feature-042.test.mjs'] });
+  commitGraph(dir);
+  addNode(dir, 'downstream', {
+    mapping: ['src/downstream/**'],
+    relations: [{ target: 'feature', type: 'uses' }],
+  });
 
   const branch = makeTicketBranch(dir, '042');
   const dst = writeIssue(dir, 'trunk', '042', { produces: 'feature/api@2' });
@@ -853,12 +904,13 @@ function libWith(line, value) {
 function reviewedTicket(dir, slug) {
   initHorde(dir);
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'lib.mjs,other.mjs'], dir);
-
   git(['checkout', 'mission1/trunk'], dir);
   writeFileSync(join(dir, 'lib.mjs'), `${LIB_LINES.join('\n')}\n`);
-  git(['add', 'lib.mjs'], dir);
-  git(['commit', '-qm', 'the file the ticket will change'], dir);
+  writeFileSync(join(dir, 'other.mjs'), 'export const other = 0;\n');
+  git(['add', 'lib.mjs', 'other.mjs'], dir);
+  git(['commit', '-qm', 'the files the ticket will change'], dir);
+  addNode(dir, 'feature', { mapping: ['lib.mjs', 'other.mjs'] });
+  commitGraph(dir);
 
   const created = run('tk.mjs', ['new', slug, '--title', 'One line in the middle', '--node', 'feature', '--class', 'sonnet'], dir);
   const id = created.json.id;
@@ -981,7 +1033,8 @@ test('premerge.mjs: item 2 — an approval recorded with a sha alone stays bound
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-040.mjs,feature-040.test.mjs,other-040.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-040.mjs', 'feature-040.test.mjs', 'other-040.mjs'] });
+  commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '040');
   const tip = git(['rev-parse', '--short', branch], dir);
@@ -1080,12 +1133,13 @@ function libWithLines(changes) {
 function chainOfTwo(dir, { parentLine = 5, childLine = 30 } = {}) {
   initHorde(dir);
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
-  run('node.mjs', ['new', 'feature', '--boundary', 'lib.mjs,other.mjs'], dir);
-
   git(['checkout', 'mission1/trunk'], dir);
   writeFileSync(join(dir, 'lib.mjs'), `${LIB_LINES.join('\n')}\n`);
-  git(['add', 'lib.mjs'], dir);
-  git(['commit', '-qm', 'the file both tickets change'], dir);
+  writeFileSync(join(dir, 'other.mjs'), 'export const other = 0;\n');
+  git(['add', 'lib.mjs', 'other.mjs'], dir);
+  git(['commit', '-qm', 'the files both tickets change'], dir);
+  addNode(dir, 'feature', { mapping: ['lib.mjs', 'other.mjs'] });
+  commitGraph(dir);
 
   const parentId = run('tk.mjs', ['new', 'the-first-link', '--title', 'First link', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
   run('queue.mjs', ['add', parentId], dir);
