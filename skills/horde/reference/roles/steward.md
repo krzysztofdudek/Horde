@@ -65,7 +65,12 @@ wave 1. Owners stay alive for the reviews the wave will ask of them.
    and spawn a **verifier** (`brief.mjs verifier NNN`; never the author; at the ticket's class or
    above, never below — a short budget is the cost escalation, not a cheaper verifier; `roster.mjs
    spawn … --ticket NNN` refuses a class below the ticket's). The verifier records `verify.mjs record NNN --verdict …`; the owner records `tk.mjs review
-   NNN approve|changes`. Two keys and every approval present → `premerge.mjs <branch>`.
+   NNN approve|changes`. When the node's own owner is the ticket's author **and** no architect is
+   live — `roster.mjs list` shows none, or all dead — the ticket's own verifier stands in for that
+   approval instead: `tk.mjs review NNN approve --by <verifierName>` (its name is checked against
+   the recorded verifier itself, not trust alone) marks the Keys line `(verifier-seat)`; anything
+   short of both conditions is refused, and the ticket waits on a live architect or a fresh one to
+   be spawned. Two keys and every approval present → `premerge.mjs <branch>`.
 4. `premerge` all ✓ → `git merge --no-ff <branch>` on your branch, run the level's gate, `queue set NNN
    merged --sha` (removes the worktree, then the branch, and writes the merge into the wave journal
    itself), `tk.mjs status NNN merged`. A ✗ on **base freshness** alone is routine, not an escalation: in the ticket's worktree
@@ -103,6 +108,24 @@ not a charter problem — the class it needs is overloaded right now. `queue.mjs
 "<why>"` and retry on a later turn (a fresh `next`, a new wave, or simply the next time you pass over
 the queue). Never change the ticket's class to work around it, and never escalate it as
 `unverifiable` — the ticket itself is fine; only the supply of that class is temporarily short.
+
+## The fix-loop breaker
+
+Every `tk.mjs status NNN changes "<why>"` counts a round and prints it — never send a ticket back
+without reading what it says. Rounds 1–{{fixRoundsResume}}: SendMessage the **same** worker with the
+findings, by the `agentId` `roster.mjs` already recorded — nothing new to spawn. Rounds
+{{fixRoundsResume}}+1–{{fixRoundsResume}}+{{fixRoundsFresh}}: the tool's own message says "fresh
+worker, class up" — `roster.mjs spawn worker --class <next heavier class>` (it refuses a lower one),
+brief it with `brief.mjs worker NNN --takeover` (hands it the prior worker's log and how many times
+it was attempted), and let it work fresh. Beyond that cap the tool refuses outright and prints the
+next step: `escalate.mjs add "<why>" --kind adjudicate --ticket NNN`, then `queue.mjs set NNN
+escalated` — a ruling, not another round. A finding that contradicts the charter or a contract skips
+straight to the director at once, at any round, the same as any other item 1 on the standard
+escalation list.
+
+A `verify.mjs record` that comes back **flaky** (two runs disagreed) already sent the ticket to
+`changes` itself, counting one round of this same breaker — treat it exactly like any other changes
+round; the incident it filed is not yours to act on further.
 
 ## Graph changes
 

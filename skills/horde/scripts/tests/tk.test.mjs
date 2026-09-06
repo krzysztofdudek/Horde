@@ -341,6 +341,137 @@ test('tk.mjs: new --revert-base sets the header; omitted, it renders empty (defa
   });
 });
 
+test('tk.mjs status changes: the fix-loop breaker counts rounds, then refuses past the cap', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const created = newTicket(dir);
+  const id = created.json.id;
+  assert.equal(run('queue.mjs', ['add', id], dir).code, 0);
+
+  await t.test('rounds 1-3 resume the same worker', () => {
+    for (let i = 1; i <= 3; i++) {
+      const r = run('tk.mjs', ['status', id, 'changes', `attempt ${i}`], dir);
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(r.json.round, i);
+      assert.equal(r.json.phase, 'resume same worker');
+    }
+  });
+
+  await t.test('round 4 says "fresh worker, class up"', () => {
+    const r = run('tk.mjs', ['status', id, 'changes', 'attempt 4'], dir, { json: false });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /fresh worker, class up/);
+    assert.match(r.stdout, /round 4\/5/);
+  });
+
+  await t.test('round 5 is still a fresh round', () => {
+    const r = run('tk.mjs', ['status', id, 'changes', 'attempt 5'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.round, 5);
+    assert.equal(r.json.phase, 'fresh worker, class up');
+  });
+
+  await t.test('round 6 refuses, naming the escalate command as the next step', () => {
+    const r = run('tk.mjs', ['status', id, 'changes', 'attempt 6'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /escalate\.mjs add/);
+    assert.match(r.stderr, /--kind adjudicate/);
+    assert.match(r.stderr, new RegExp(`--ticket ${id}`));
+    assert.match(r.stderr, /queue\.mjs set/);
+    assert.match(r.stderr, /escalated/);
+  });
+
+  await t.test('the ticket never actually advanced past round 5', () => {
+    const show = run('tk.mjs', ['show', id, '--log'], dir);
+    const rounds = [...show.json.log.matchAll(/round (\d+)\/5/g)].map((m) => Number(m[1]));
+    assert.equal(Math.max(...rounds), 5);
+  });
+
+  await t.test('the named next step actually works: escalate add --kind adjudicate, then queue set escalated', () => {
+    const esc = run('escalate.mjs', ['add', 'stuck in the fix loop', '--kind', 'adjudicate', '--ticket', id], dir);
+    assert.equal(esc.code, 0, esc.stderr);
+    assert.equal(esc.json.kind, 'adjudicate');
+    const q = run('queue.mjs', ['set', id, 'escalated'], dir);
+    assert.equal(q.code, 0, q.stderr);
+    assert.equal(q.json.state, 'escalated');
+  });
+});
+
+test("tk.mjs review: the approval seat — a ticket's own verifier may approve only when its author owns the node and no architect is live", async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const owner = run('roster.mjs', ['spawn', 'owner', '--node', 'core', '--class', 'sonnet'], dir);
+  assert.equal(owner.code, 0, owner.stderr);
+  const ownerName = owner.json.name;
+  const verifier = run('roster.mjs', ['spawn', 'verifier', '--team', 'trunk', '--class', 'sonnet'], dir);
+  assert.equal(verifier.code, 0, verifier.stderr);
+  const verifierName = verifier.json.name;
+
+  function selfAuthoredTicket(slug) {
+    const created = run('tk.mjs', ['new', slug, '--title', 'Self authored', '--node', 'core', '--class', 'sonnet'], dir);
+    const id = created.json.id;
+    run('tk.mjs', ['key', id, 'author', '--by', ownerName], dir);
+    const rec = run('verify.mjs', [
+      'record', id, '--verdict', 'reproduced', '--by', verifierName,
+      '--revert', 'no-new-tests', '--gate', 'green', '--sha', 'abc1234',
+    ], dir);
+    assert.equal(rec.code, 0, rec.stderr);
+    return id;
+  }
+
+  await t.test('accepted: the author owns the node and no architect is live', () => {
+    const id = selfAuthoredTicket('self-1');
+    const r = run('tk.mjs', ['review', id, 'approve', '--by', verifierName], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.verifierSeat, true);
+    const show = run('tk.mjs', ['show', id], dir);
+    assert.match(show.json.text, new RegExp(`core ${verifierName}\\(verifier-seat\\)`));
+    assert.match(show.json.text, /\*\*Status:\*\* verified/);
+    const log = run('tk.mjs', ['show', id, '--log'], dir);
+    assert.match(log.json.log, /\(verifier-seat\)/);
+  });
+
+  await t.test('refused: a live architect is on the roster', () => {
+    const architect = run('roster.mjs', ['spawn', 'architect', '--class', 'opus'], dir);
+    assert.equal(architect.code, 0, architect.stderr);
+    const id = selfAuthoredTicket('self-2');
+    const r = run('tk.mjs', ['review', id, 'approve', '--by', verifierName], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /live architect/);
+
+    // stand the architect back down so later subtests see none live again
+    run('roster.mjs', ['reclaim', architect.json.name, 'done', '--by', 'director'], dir);
+  });
+
+  await t.test("refused: the ticket's author does not own the node", () => {
+    const other = run('tk.mjs', ['new', 'other-authored', '--title', 'Someone else wrote it', '--node', 'core', '--class', 'sonnet'], dir);
+    const id = other.json.id;
+    run('tk.mjs', ['key', id, 'author', '--by', 'someone-else'], dir);
+    const rec = run('verify.mjs', [
+      'record', id, '--verdict', 'reproduced', '--by', verifierName,
+      '--revert', 'no-new-tests', '--gate', 'green', '--sha', 'abc1234',
+    ], dir);
+    assert.equal(rec.code, 0, rec.stderr);
+    const r = run('tk.mjs', ['review', id, 'approve', '--by', verifierName], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /does not own/);
+  });
+
+  await t.test('a normal owner approval is never marked with the seat', () => {
+    const id = selfAuthoredTicket('self-3');
+    // the architect stands in for the self-authored case, ordinarily
+    const r = run('tk.mjs', ['review', id, 'approve', '--by', 'architect'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.verifierSeat, false);
+    const show = run('tk.mjs', ['show', id], dir);
+    assert.doesNotMatch(show.json.text, /verifier-seat/);
+  });
+});
+
 test('tk.mjs new: a ticket names one node, or two — never three', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
