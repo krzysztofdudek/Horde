@@ -78,17 +78,20 @@ gate result per level, cost to date and limit. `--horde`, `--team` narrow it. `-
 Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (counter in
 `hordes/<horde>/counter.json`).
 - `new <slug> --title "…" --node n --class haiku|sonnet|opus [--severity high|medium|low]
-  [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…] [--produces <node>/<port>@<v>,…]
-  [--evidence "…"]… [--revert-base <ref>]` — from `templates/ticket.md`; status
-  `proposed`. `--node` takes one node, or two when the ticket carries a contract between them;
-  three or more is refused — no owner holds the whole of such a diff. `--revert-base` names the ref where the ticket's new tests must fail (a contract test
+  [--kind work|quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
+  [--produces <node>/<port>@<v>,…] [--evidence "…"]… [--revert-base <ref>]` — from
+  `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries
+  a contract between them; three or more is refused — no owner holds the whole of such a diff.
+  `--revert-base` names the ref where the ticket's new tests must fail (a contract test
   is green on the team tip by design; its red base is e.g. `develop`); `premerge` item 4 reads it, or
   a "red on <ref>" phrase in the acceptance lines. An
   `--evidence` value that is nothing but catalogue ids (`E2,E5`) fills the ticket's `**Evidence:**`
   field; any other value becomes its own `- [ ] …` line in the `## Acceptance — evidence`
   checklist, and any id cited inside it fills the field too. A catalogue id (`E1`, `E2`, …) must
   already be a row in the horde's `charter.md` evidence table — refuses otherwise, listing the
-  unknown ids.
+  unknown ids. `--kind` defaults to `work`; `quality` marks a self-filed improvement outside a
+  wave's assigned scope (a better graph, normalization, tidy-up after green) — `queue.mjs next`
+  always ranks a `quality` ticket after every `work` ticket, whatever its severity.
 - The four structural fields — `**Files:**`, `**Consumes:**`/`**Produces:**`, `**Evidence:**` — are
   what `queue.mjs plan` computes the mission's order from, and they are validated where they are
   written: every path in `--files` must lie inside the boundary of a node the ticket names (the same
@@ -156,8 +159,17 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
 `teams/<team>/queue.json`: items `{ticket, state, class, branch, worktree, dependsOn[], agent, sha, notes[]}`.
 States: `queued waiting running landed merged escalated dropped`.
 - `list [--state s]`, `add NNN [--depends dep,…]`, `set NNN <state> [--sha x] [--agent name] [--note "…"]`,
-  `next [--class c]` (ready = queued and every dependency merged; severity read from the ticket on
-  every call, high first; FIFO within by array order; a `waiting` item is never a candidate),
+  `next [--class c] [--why]` — ready = queued, every dependency merged, and clear of every
+  `running` ticket's own lock: a ticket declaring `**Files:**` collides only on an overlapping
+  path or glob; a ticket with none (or a `running` item whose ticket can no longer be read) locks
+  every file of every node it names instead — the safe degradation for a ticket that never said
+  which files it touches. Ranked: a `quality`-kind ticket (`tk.mjs new --kind quality`) always
+  last, whatever its severity; then severity (read live from the ticket on every call, high
+  first); then the longer remaining critical path through the ticket wins — `queue.mjs plan`'s own
+  DAG, read straight off one in-process `buildPlan()` call, never a second, shelled-out `plan`;
+  then a ticket whose nodes hold no `running` ticket; then FIFO by queue order. `--why` prints
+  every `queued` item: its rank if it qualified, or the reason it didn't (an unmet dependency, the
+  file lock naming the `running` ticket and the file(s) it shares, or the `--class` filter).
   `rm NNN`, `move NNN --team t`, `render`, `reconcile` (every `running` item: a commit beyond the team
   tip → `landed`; a dirty worktree → `git add -A && git commit -m "wip: reclaimed"` on the ticket branch,
   then `queued` with a note; a clean worktree and no commit → `queued`, worktree removed. A `waiting`

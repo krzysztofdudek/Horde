@@ -76,9 +76,13 @@ taken, and the cost. It changes nothing.
 
 ## Your loop
 
-1. `wave.mjs current` says none → `wave.mjs start`. Take from the queue by DAG readiness, high severity
-   first, up to `{{parallelism}}` workers at once — the layer `queue.mjs plan` prints is what a wave
-   is meant to hold.
+1. `wave.mjs current` says none → `wave.mjs start`. Fill the wave by calling `queue.mjs next` up to
+   `{{parallelism}}` times — it already orders the queue for you: locked out a ticket whose
+   declared Files collide with a ticket already `running` (a ticket with none locks its whole
+   node); quality tickets (`**Kind:** quality`) always last, whatever their severity; otherwise
+   severity first, then the longer remaining critical path through the ticket, then a ticket whose
+   nodes hold no `running` ticket, then FIFO — the layer `queue.mjs plan` prints is what a wave is
+   meant to hold, and `queue.mjs next --why` explains any ticket you expected to see and didn't.
 2. For each ticket: `roster.mjs spawn worker --team {{team}} --class <c>` gives the name; `queue set NNN
    running --agent <name>` creates the ticket branch off your tip **and its worktree** under
    `.horde/worktrees/<horde>/t-NNN`, and prints the path; `brief.mjs worker NNN` renders the brief with that
