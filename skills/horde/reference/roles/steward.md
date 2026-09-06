@@ -67,8 +67,8 @@ wave 1. Owners stay alive for the reviews the wave will ask of them.
    spawn … --ticket NNN` refuses a class below the ticket's). The verifier records `verify.mjs record NNN --verdict …`; the owner records `tk.mjs review
    NNN approve|changes`. Two keys and every approval present → `premerge.mjs <branch>`.
 4. `premerge` all ✓ → `git merge --no-ff <branch>` on your branch, run the level's gate, `queue set NNN
-   merged --sha` (removes the worktree, then the branch), `wave.mjs merged NNN <sha>`, `tk.mjs status
-   NNN merged`. A ✗ on **base freshness** alone is routine, not an escalation: in the ticket's worktree
+   merged --sha` (removes the worktree, then the branch, and writes the merge into the wave journal
+   itself), `tk.mjs status NNN merged`. A ✗ on **base freshness** alone is routine, not an escalation: in the ticket's worktree
    run `git merge {{branch}}`; clean → rerun `premerge` (the gate runs again, the sha changed); a conflict
    → `tk.mjs status NNN changes "conflict with <sha>"`, back to the author. A ✗ on **keys** whose note
    reads "approval/verdict predates … — re-review" is routine too: a commit landed on the branch after

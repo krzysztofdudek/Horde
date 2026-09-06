@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   makeRepo, rmRepo, run, initHorde,
 } from './helpers.mjs';
@@ -235,4 +236,62 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
     const log = git(['-C', runningEighth.json.worktree, 'log', '-1', '--format=%s'], dir);
     assert.equal(log, 'wip: reclaimed');
   });
+});
+
+// ---- one write per merge -------------------------------------------------------------
+//
+// A merge is one event. The queue holds the state; the wave journal is what `wave.mjs close`
+// reads to work out which evidence rows this wave turned green. Setting the item merged writes
+// both, so the catalogue cannot sit at zero because a second, separate command was forgotten.
+
+function writeMergeableTicket(dir, ticket, { evidenceId = 'E1', verifier = 'verifier-1' } = {}) {
+  const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${ticket}-slug`);
+  mkdirSync(ticketDir, { recursive: true });
+  writeFileSync(join(ticketDir, 'issue.md'), [
+    `# ${ticket} · slug`, '',
+    '**Status:** landed',
+    '**Node:** auth · **Class:** sonnet · **Severity:** medium · **Team:** trunk',
+    `**Depends on:** none · **Branch:** mission1/t-${ticket}`,
+    `**Keys:** author worker-1 · verifier ${verifier} · auth owner-1`, '',
+    '## Acceptance — evidence', '', `- [x] covers ${evidenceId}`, '',
+  ].join('\n'));
+  writeFileSync(
+    join(ticketDir, 'log.md'),
+    `## Verdict · ${ticket} · 2026-01-01 · by ${verifier} (sonnet)\n\n**Result:** reproduced\n`,
+  );
+}
+
+test('queue.mjs set merged: the merge is recorded in the wave journal by the same write', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const charterPath = join(dir, '.horde', 'hordes', 'mission1', 'charter.md');
+  writeFileSync(charterPath, readFileSync(charterPath, 'utf8').replace('| | | | |', '| E1 | some check | auth | |'));
+  writeMergeableTicket(dir, '001');
+
+  const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
+  const doc = JSON.parse(readFileSync(queuePath, 'utf8'));
+  doc.items.push({
+    ticket: '001', state: 'landed', class: 'sonnet', branch: null, worktree: null, dependsOn: [], agent: 'worker-1', sha: null, notes: [],
+  });
+  writeFileSync(queuePath, JSON.stringify(doc, null, 2));
+
+  run('wave.mjs', ['start'], dir);
+  const merged = run('queue.mjs', ['set', '001', 'merged', '--sha', 'abc1234'], dir);
+  assert.equal(merged.code, 0, merged.stderr);
+  assert.equal(merged.json.journal.appended, true);
+
+  const plan = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
+  assert.match(plan, /merged: 001 abc1234/);
+
+  // …and that one write is enough for the catalogue to go green at wave close.
+  const closed = run('wave.mjs', ['close', '--gate', 'green'], dir);
+  assert.equal(closed.json.green, 1);
+  assert.equal(closed.json.total, 1);
+
+  // The older habit of also calling wave.mjs merged records nothing twice.
+  const again = run('wave.mjs', ['merged', '001', 'abc1234'], dir);
+  assert.equal(again.json.appended, false);
+  const planAfter = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
+  assert.equal(planAfter.match(/merged: 001 abc1234/g).length, 1);
 });

@@ -27,7 +27,8 @@ commands:
   note "<text>" [--team t] [--horde h]
       appends a dated bullet.
   merged <ticket> <sha> [--team t] [--horde h]
-      appends a dated "merged: <ticket> <sha>" bullet.
+      appends a dated "merged: <ticket> <sha>" bullet. "queue.mjs set <ticket> merged --sha" does
+      this itself, so this is only for a merge the queue never saw; it never records one twice.
   audit <ticket> clean|findings "<text>" [--team t] [--horde h]
       appends a dated "audit: <ticket> <verdict> — <text>" bullet.
   close [--gate green|red] [--sha <sha>] [--evidence E5[,E6]] [--team t] [--horde h]
@@ -100,11 +101,27 @@ function cmdNote(horde, positional, flags) {
   emit({ note: text }, flags, () => 'note added');
 }
 
+// The journal bullet that says a ticket merged. Exported because a merge is one event and must
+// cost one write: `queue.mjs set <t> merged` calls this itself, so the evidence catalogue — which
+// reads the journal to find what this wave merged — turns green without the caller having to
+// remember a second, independent command. Idempotent, so the older two-call habit still works and
+// records the merge once.
+export function noteMerged(horde, team, ticket, sha) {
+  const path = journalPath(horde, team);
+  const bullet = `merged: ${ticket} ${sha}`;
+  const existing = readText(path) || '';
+  if (existing.includes(bullet)) return { path, bullet, appended: false };
+  append(path, `- ${today()} ${bullet}\n`);
+  return { path, bullet, appended: true };
+}
+
 function cmdMerged(horde, positional, flags) {
   const [ticket, sha] = positional;
   if (!ticket || !sha) fail('merged requires <ticket> <sha>');
-  append(journalPath(horde, flags.team), `- ${today()} merged: ${ticket} ${sha}\n`);
-  emit({ ticket, sha }, flags, () => `merged noted: ${ticket} ${sha}`);
+  const { appended } = noteMerged(horde, flags.team, ticket, sha);
+  emit({ ticket, sha, appended }, flags, () => (appended
+    ? `merged noted: ${ticket} ${sha}`
+    : `merged already noted: ${ticket} ${sha} — the queue records it when the ticket is set merged`));
 }
 
 function cmdAudit(horde, positional, flags) {

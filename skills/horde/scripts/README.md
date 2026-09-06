@@ -133,7 +133,11 @@ States: `queued waiting running landed merged escalated dropped`.
   `<hordeRoot>/worktrees/<horde>/t-NNN` on it (per horde, so two hordes never collide on a ticket
   number), records the path as `worktree` on the item, and prints it. `set NNN merged --sha` removes
   the worktree first, then deletes the branch. Items named `team:<name>` stand for a sub-team's branch
-  and skip branch creation.
+  and skip branch creation. `set NNN merged --sha x` also appends the merge's bullet to the team's
+  wave journal, so a merge costs one write and not two: `wave.mjs close` reads that journal to work
+  out which evidence rows the wave turned green, and the catalogue used to sit at zero whenever the
+  second command was forgotten. `wave.mjs merged` remains, for a merge the queue never saw, and
+  never records one twice.
 - Refuses `set NNN merged` when the ticket's `**Keys:**` field lacks the author key, the verifier key
   (a `verify` record with verdict `reproduced`), or an approval for every node it names.
 

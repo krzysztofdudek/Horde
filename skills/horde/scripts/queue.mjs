@@ -21,6 +21,7 @@ import {
 import {
   findTicket, parseField, padId, parseKeys, hasAuthor, hasVerifier, allNodesApproved,
 } from './tk.mjs';
+import { noteMerged } from './wave.mjs';
 
 const STATES = ['queued', 'waiting', 'running', 'landed', 'merged', 'escalated', 'dropped'];
 const SEVERITY_RANK = { high: 0, medium: 1, low: 2 };
@@ -43,7 +44,8 @@ commands:
       the state, keeping class, branch and worktree exactly as they were; "next" never offers a
       waiting item, and "reconcile" leaves it alone. "set <ticket> queued" brings it back.
       Items named "team:<name>" skip all of the running/merged branch and worktree work — the
-      sub-team's branch already exists.
+      sub-team's branch already exists. "merged" also appends the merge's bullet to the team's
+      wave journal, so the evidence catalogue sees it without a second command.
   dep <ticket> --on <dep> [--team t] [--horde h]
       adds a dependency to an existing item — --on takes the same NNN / <team>:NNN /
       <team>:team:<name> forms as add's --depends. A "running" item that gains one goes back to
@@ -253,7 +255,20 @@ function cmdSet(horde, positional, flags) {
   if (flags.sha && state !== 'merged') item.sha = flags.sha;
   if (flags.note) item.notes.push({ at: nowIso(), text: flags.note });
   save(horde, team, doc);
-  emit(item, flags, () => `${item.ticket} -> ${item.state}${item.worktree ? ` worktree=${item.worktree}` : ''}`);
+
+  // A merge is one event, so it costs one write. The queue is where the state lives; the journal
+  // is where the wave close reads from when it works out which evidence rows this wave turned
+  // green. Writing only the first left the catalogue at 0 until somebody remembered a second,
+  // independent command — so the state change writes the journal bullet itself.
+  let journal = null;
+  if (state === 'merged' && flags.sha) journal = noteMerged(horde, team, key, String(flags.sha));
+
+  emit(
+    { ...item, journal },
+    flags,
+    () => `${item.ticket} -> ${item.state}${item.worktree ? ` worktree=${item.worktree}` : ''}`
+      + (journal && journal.appended ? ` · journal: ${journal.bullet}` : ''),
+  );
 }
 
 // True when `from` already (transitively) depends on `target` — adding target as a dependency
