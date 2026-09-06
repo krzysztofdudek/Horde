@@ -704,11 +704,14 @@ function decisionsKpi(horde, journalText, openedAt, mergedThisWave) {
 // ---- the quality index (ruling quality-always-authorised) ------------------------------------
 //
 // Five numbers read from the graph's own CLI at the tree this close is run on, printed with the
-// delta from the wave before. The ruling says the index must not fall: raising enforcement is
-// the horde's to do on its own, lowering it is the chairman's call — so a fall is not something
-// this tool argues with, it is something it escalates.
+// delta from the wave before, plus a sixth (judges) shown for the record but never part of what
+// "fell" means. The ruling says the index must not fall: raising enforcement is the horde's to do
+// on its own, lowering it is the chairman's call — so a fall is not something this tool argues
+// with, it is something it escalates.
 
-const QUALITY_RE = /\*\*Quality index:\*\* enforced (\d+) · advisory clean (\d+)\/(\d+) · baseline (\d+) · noise floor (\d+) · coverage (\d+)\/(\d+)/g;
+// The trailing "· judges N" is optional in the pattern: a journal entry a close wrote before this
+// figure existed has none, and that is a missing delta to fall back on, not a parse failure.
+const QUALITY_RE = /\*\*Quality index:\*\* enforced (\d+) · advisory clean (\d+)\/(\d+) · baseline (\d+) · noise floor (\d+) · coverage (\d+)\/(\d+)(?: · judges (\d+))?/g;
 
 function previousQuality(journalText) {
   QUALITY_RE.lastIndex = 0;
@@ -723,6 +726,7 @@ function previousQuality(journalText) {
       noiseFloor: Number(m[5]),
       coveredFiles: Number(m[6]),
       totalFiles: Number(m[7]),
+      judges: m[8] !== undefined ? Number(m[8]) : null,
     };
   }
   return last;
@@ -765,7 +769,7 @@ function qualityLine(now, prev) {
   if (!now.measured) return `not measured — ${now.why}`;
   const coverage = now.totalFiles === null ? '0/0' : `${now.coveredFiles}/${now.totalFiles}`;
   const base = `enforced ${now.enforced} · advisory clean ${now.advisoryClean}/${now.advisoryTotal}`
-    + ` · baseline ${now.baseline} · noise floor ${now.noiseFloor} · coverage ${coverage}`;
+    + ` · baseline ${now.baseline} · noise floor ${now.noiseFloor} · coverage ${coverage} · judges ${now.judges}`;
   if (!prev) return `${base} (first reading)`;
   const sign = (d) => (d >= 0 ? `+${d}` : String(d));
   const deltas = [
@@ -775,6 +779,7 @@ function qualityLine(now, prev) {
     `noise floor ${sign(now.noiseFloor - prev.noiseFloor)}`,
     `coverage ${sign((now.coveredFiles || 0) - prev.coveredFiles)}`,
   ];
+  if (prev.judges !== null && prev.judges !== undefined) deltas.push(`judges ${sign(now.judges - prev.judges)}`);
   return `${base} (Δ ${deltas.join(' · ')})`;
 }
 

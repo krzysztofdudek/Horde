@@ -521,12 +521,15 @@ Beyond the counts it always carried, `close` states five figures the chairman re
   it merged, with the trend across the closes before it. It is meant to fall: a horde needing as
   many rulings per ticket in wave six as in wave one has learned nothing.
 - **the quality index** — read from the graph's own CLI (`config.ygCommand`) on the tree the close
-  runs on: enforced rules, advisory rules with nothing
-  reported against them, blocking violations, the standing noise floor, and file coverage, each
-  with its delta from the previous wave. There is no `--json` on `yg check` or `yg aspects` — the
-  installed CLI has no such flag, verified against its own `--help` — so the index is read from
-  what those two read-only, keyless commands print, and a figure they do not state is reported as
-  unknown rather than invented. A fall in any of the five opens a `quality` escalation by itself:
+  runs on, through its two machine documents: `check --json` (`yg-check/1`, for `totals.errors`,
+  `totals.warnings`, `coverage` and `judges`) and `aspects --json` (`yg-aspects/1`, for each rule's
+  status). Five figures — enforced rules, advisory rules with nothing recorded against them,
+  blocking violations, the standing noise floor, and file coverage — each print with their delta
+  from the previous wave, plus a sixth, the number of distinct external judges a verdict in force
+  rests on, shown for the record but never part of what "fell" means. A CLI that runs but does not
+  answer with `schema: "yg-check/1"` (or `"yg-aspects/1"`) — too old, or answering something else
+  — is refused with the release to install, never read as text: the exact fragility these
+  documents exist to remove. A fall in any of the five opens a `quality` escalation by itself:
   raising enforcement is the horde's own call, lowering it is the chairman's.
 
 ## premerge.mjs — the mechanical checklist
