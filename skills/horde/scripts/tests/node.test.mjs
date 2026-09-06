@@ -350,3 +350,233 @@ test('node.mjs: Yggdrasil mode — read-only against a fixture .yggdrasil/model/
   });
 });
 
+
+// ---- node.mjs show: the rules in force on a node ------------------------------------
+//
+// A real graph on disk, in the shape Yggdrasil documents: aspects declared on the node itself
+// (channel 1, cascading to its children), on the node's own type and on an ancestor's type
+// (channels 3 and 4), each with its own default status in its own yg-aspect.yaml.
+
+function writeAspect(dir, id, { status = 'enforced', description = 'what it says' } = {}) {
+  const aspectDir = join(dir, '.yggdrasil', 'aspects', ...id.split('/'));
+  mkdirSync(aspectDir, { recursive: true });
+  writeFileSync(join(aspectDir, 'yg-aspect.yaml'), [
+    `name: "${description}"`, `description: "${description}"`, `status: ${status}`, '',
+  ].join('\n'));
+}
+
+function writeNodeWithAspects(dir, node, { type, mapping = [], aspects = [] }) {
+  const nodeDir = join(dir, '.yggdrasil', 'model', node);
+  mkdirSync(nodeDir, { recursive: true });
+  const lines = [`name: ${node}`, `type: ${type}`, `description: "node ${node}"`, '', 'mapping:'];
+  for (const m of mapping) lines.push(`  - ${m}`);
+  if (aspects.length) {
+    lines.push('', 'aspects:');
+    for (const a of aspects) {
+      if (typeof a === 'string') lines.push(`  - ${a}`);
+      else { lines.push(`  - id: ${a.id}`); lines.push(`    status: ${a.status}`); }
+    }
+  }
+  lines.push('', 'relations: []', '');
+  writeFileSync(join(nodeDir, 'yg-node.yaml'), lines.join('\n'));
+}
+
+// src (type: source-set, one aspect on the type) > src/api (type: service, one aspect on the type
+// and one on the node itself). Everything the reader has to get right is in here: the ancestor
+// type's aspect must reach src/api, the node's own must be marked as its own, and a status
+// declared at the attachment site must beat the aspect's own weaker default.
+function writeRuleGraph(dir) {
+  writeAspect(dir, 'house/no-console', { status: 'enforced', description: 'No console in shipped code.' });
+  writeAspect(dir, 'house/named-exports', { status: 'advisory', description: 'Exports are named.' });
+  writeAspect(dir, 'api/errors-are-typed', { status: 'draft', description: 'Errors carry a type.' });
+  writeFileSync(join(dir, '.yggdrasil', 'yg-architecture.yaml'), [
+    'node_types:',
+    '  source-set:',
+    '    description: "the whole source tree"',
+    '    aspects:',
+    '      - house/no-console',
+    '  service:',
+    '    description: "one service"',
+    '    aspects:',
+    '      - house/named-exports',
+    '', '',
+  ].join('\n'));
+  writeNodeWithAspects(dir, 'src', { type: 'source-set', mapping: ['src/'] });
+  writeNodeWithAspects(dir, 'src/api', {
+    type: 'service',
+    mapping: ['src/api/'],
+    aspects: [{ id: 'api/errors-are-typed', status: 'advisory' }],
+  });
+}
+
+function writeFakeYgContext(dir, name, body) {
+  const path = join(dir, name);
+  writeFileSync(path, body);
+  return `node ${path}`;
+}
+
+test('node.mjs show: the rules in force on a node, read from the graph files when no CLI is installed', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  mkdirSync(join(dir, '.yggdrasil'), { recursive: true });
+  writeRuleGraph(dir);
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'ygCommand', join(dir, 'no-such-yg')], dir);
+
+  const r = run('node.mjs', ['show', 'src/api'], dir);
+  assert.equal(r.code, 0);
+  const byId = Object.fromEntries(r.json.rules.aspects.map((a) => [a.id, a]));
+  assert.match(r.json.rules.source, /the graph files/);
+
+  // channel 4 — the ancestor node's type
+  assert.equal(byId['house/no-console'].status, 'enforced');
+  assert.match(byId['house/no-console'].via, /type source-set, on node src/);
+  // channel 3 — this node's own type
+  assert.equal(byId['house/named-exports'].status, 'advisory');
+  assert.match(byId['house/named-exports'].via, /type service/);
+  // channel 1 — attached to the node, and bumped above the aspect's own draft default there
+  assert.equal(byId['api/errors-are-typed'].status, 'advisory');
+  assert.equal(byId['api/errors-are-typed'].via, 'this node');
+  assert.equal(byId['api/errors-are-typed'].description, 'Errors carry a type.');
+});
+
+test('node.mjs show: a node above does not inherit the rules of a node below it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  mkdirSync(join(dir, '.yggdrasil'), { recursive: true });
+  writeRuleGraph(dir);
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'ygCommand', join(dir, 'no-such-yg')], dir);
+
+  const r = run('node.mjs', ['show', 'src'], dir);
+  const ids = r.json.rules.aspects.map((a) => a.id);
+  assert.deepEqual(ids, ['house/no-console']);
+});
+
+test('node.mjs show: the status word beside each rule says what a refusal costs', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  mkdirSync(join(dir, '.yggdrasil'), { recursive: true });
+  writeRuleGraph(dir);
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'ygCommand', join(dir, 'no-such-yg')], dir);
+
+  const r = run('node.mjs', ['show', 'src/api'], dir, { json: false });
+  assert.match(r.stdout, /## Rules — what this node's code must satisfy/);
+  assert.match(r.stdout, /\[enforced\] — blocks the merge/);
+  assert.match(r.stdout, /\[advisory\] — warns, does not block/);
+});
+
+test('node.mjs show: a draft rule is named as inert, not left out', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  mkdirSync(join(dir, '.yggdrasil'), { recursive: true });
+  writeAspect(dir, 'house/someday', { status: 'draft', description: 'A rule nobody enforces yet.' });
+  writeFileSync(join(dir, '.yggdrasil', 'yg-architecture.yaml'), [
+    'node_types:', '  service:', '    description: "one service"', '    aspects:', '      - house/someday', '', '',
+  ].join('\n'));
+  writeNodeWithAspects(dir, 'src', { type: 'service', mapping: ['src/'] });
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'ygCommand', join(dir, 'no-such-yg')], dir);
+
+  const r = run('node.mjs', ['show', 'src'], dir, { json: false });
+  assert.match(r.stdout, /house\/someday\*\* \[draft\] — not in force yet/);
+});
+
+test('node.mjs show: the Yggdrasil CLI is preferred over reading the files — text form', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  mkdirSync(join(dir, '.yggdrasil'), { recursive: true });
+  writeRuleGraph(dir);
+  initHorde(dir);
+  // An older CLI: it refuses --json, and prints the human form the tool then parses.
+  const yg = writeFakeYgContext(dir, 'fake-yg-text.mjs', [
+    "if (process.argv.includes('--json')) { console.error(\"error: unknown option '--json'\"); process.exit(1); }",
+    "console.log('src/api — a service (service)');",
+    "console.log('');",
+    "console.log('Must satisfy (2 aspects):');",
+    "console.log('');",
+    "console.log('  house/from-the-cli [enforced] — Only the CLI knows this one. This rule is enforced: it blocks.');",
+    "console.log('    Source: architecture (type: service)');",
+    "console.log('');",
+    "console.log('  house/second [advisory] — And this one.');",
+    "console.log('    Source: inherited from parent (type: source-set)');",
+    '',
+  ].join('\n'));
+  run('horde.mjs', ['config', 'set', 'ygCommand', yg], dir);
+
+  const r = run('node.mjs', ['show', 'src/api'], dir);
+  assert.equal(r.code, 0);
+  assert.match(r.json.rules.source, /context --node src\/api$/);
+  assert.deepEqual(r.json.rules.aspects.map((a) => a.id), ['house/from-the-cli', 'house/second']);
+  assert.equal(r.json.rules.aspects[0].status, 'enforced');
+  assert.equal(r.json.rules.aspects[0].description, 'Only the CLI knows this one.');
+  assert.match(r.json.rules.aspects[0].via, /architecture \(type: service\)/);
+  assert.equal(r.json.rules.aspects[1].status, 'advisory');
+});
+
+test('node.mjs show: a CLI with a machine-readable form is read that way', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  mkdirSync(join(dir, '.yggdrasil'), { recursive: true });
+  writeRuleGraph(dir);
+  initHorde(dir);
+  const yg = writeFakeYgContext(dir, 'fake-yg-json.mjs', [
+    "if (!process.argv.includes('--json')) { console.log('text form'); process.exit(0); }",
+    'console.log(JSON.stringify({',
+    "  schema: 'yg-context/1',",
+    '  aspects: [{',
+    "    id: 'house/from-json', status: 'advisory', name: 'The machine-readable one.',",
+    "    channels: [{ number: 4, kind: 'ancestor-type', origin: 'ancestor-type:source-set@src' }],",
+    '  }],',
+    '}));',
+    '',
+  ].join('\n'));
+  run('horde.mjs', ['config', 'set', 'ygCommand', yg], dir);
+
+  const r = run('node.mjs', ['show', 'src/api'], dir);
+  assert.equal(r.code, 0);
+  assert.match(r.json.rules.source, /--json$/);
+  assert.deepEqual(r.json.rules.aspects, [{
+    id: 'house/from-json',
+    status: 'advisory',
+    description: 'The machine-readable one.',
+    via: 'ancestor-type:source-set@src',
+  }]);
+});
+
+test('node.mjs show: the charter\'s inherited-rules section is shown with the rules', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  mkdirSync(join(dir, '.yggdrasil'), { recursive: true });
+  writeRuleGraph(dir);
+  writeFileSync(join(dir, '.yggdrasil', 'model', 'src', 'api', 'charter.md'), [
+    '# src/api', '', '## What lives here', '', 'the api', '',
+    '## Rules inherited from above', '',
+    '- No console in shipped code. — inherited from type `source-set`, on ancestor node `src` · status `enforced`',
+    '', '## Sizing', '', 'small', '',
+  ].join('\n'));
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'ygCommand', join(dir, 'no-such-yg')], dir);
+
+  const r = run('node.mjs', ['show', 'src/api'], dir);
+  assert.match(r.json.rules.charterInherited, /^## Rules inherited from above/);
+  assert.match(r.json.rules.charterInherited, /No console in shipped code/);
+  assert.doesNotMatch(r.json.rules.charterInherited, /Sizing/);
+
+  const human = run('node.mjs', ['show', 'src/api'], dir, { json: false });
+  const rulesSection = human.stdout.slice(human.stdout.indexOf('## Rules —'), human.stdout.indexOf('## Charter'));
+  assert.match(rulesSection, /Rules inherited from above/);
+});
+
+test('node.mjs show: a manual node map says it carries no rules rather than showing none', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  run('node.mjs', ['new', 'feature', '--boundary', 'src/feature/**'], dir);
+
+  const r = run('node.mjs', ['show', 'feature'], dir);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.json.rules.aspects, []);
+  assert.match(r.json.rules.source, /carries no rules/);
+});

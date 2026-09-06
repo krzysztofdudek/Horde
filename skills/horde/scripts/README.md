@@ -194,7 +194,15 @@ and the tool is the only writer. Every command below behaves identically in both
 mode they print the `yg` commands the architect must run instead).
 - `bind` — verifies the graph is readable and lists nodes; `map [--horde h]` — the mission's nodes with
   owners, stamps (verified against sha), open proposals.
-- `show <node>` — boundary, charter, contracts, last log entries, stamp.
+- `show <node>` — boundary, **the rules in force on the node**, charter, contracts, last log entries,
+  stamp. The rules are every aspect the graph attaches to this node — its own, those cascading from
+  the nodes above it, and those on its type and its ancestors' types — each with the status word that
+  says what a refusal costs (`enforced` blocks a merge, `advisory` warns, `draft` is inert). They come
+  from `yg context --node` when the Yggdrasil CLI is installed (its machine-readable form when it has
+  one, its text form otherwise); when it is not, they are read from the graph files directly, and the
+  reading says so, since flows, ports and implied aspects are not resolved that way. The node
+  charter's own "Rules inherited from above" section, when it has one, is reproduced under them.
+  `nodeSource=manual` has no aspects at all, and says that instead of showing an empty list.
 - `charter edit <node>` (opens from template if missing; the caller writes the content via stdin),
   `log <node> "…"`, `stamp <node> <sha>`.
 - `boundary set <node> --boundary <glob>[,glob…]` replaces the boundary, `boundary add …` extends it

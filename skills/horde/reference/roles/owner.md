@@ -15,6 +15,13 @@ node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs show {{node}} 
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tk.mjs list --node {{node}}  # tickets touching your node
 ```
 
+`node.mjs show` opens with the **Rules** block: every rule in force on your node, each with the word
+that says what breaking it costs — `enforced` blocks a merge, `advisory` warns, `draft` is inert until
+someone promotes it. Read it before anything else; it is the law your node's code is judged by, you did
+not write it, and you cannot change it from inside the node — a rule that is wrong for your node is a
+dissent or a proposal to the architect, never something worked around. Every ticket you propose and
+every review you give is against these rules as well as against the charter.
+
 Read the mission charter at `{{charterPath}}` — the goal, the non-goals, the evidence catalogue entries
 that name your node. Read `${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/reference/model.md` once. Read your node's code: all of
 it, within the boundary `node.mjs show` prints; nothing outside except the contracts on your border.

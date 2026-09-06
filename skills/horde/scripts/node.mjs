@@ -29,7 +29,8 @@ commands:
       this mission's nodes (named by an owner in the roster or by a ticket) with owner, stamp,
       open contract proposals.
   show <node> [--horde h]
-      boundary, charter, contracts, last log entries, stamp.
+      boundary, the rules in force on the node (with the status word that says what a refusal
+      costs), charter, contracts, last log entries, stamp.
   charter edit <node> [--horde h]
       writes charter.md from stdin; seeds it from the template first when the node has none yet
       and stdin is empty.
@@ -146,7 +147,9 @@ function readManualNode(root, cfg, node) {
 // correct for the one shape it actually has to handle.
 function parseYgNodeYaml(text) {
   const lines = text.split('\n');
-  const result = { name: null, type: null, description: null, mapping: [], relations: [] };
+  const result = {
+    name: null, type: null, description: null, mapping: [], relations: [], aspects: [],
+  };
   let section = null;
   let pendingRelation = null;
   const flushRelation = () => {
@@ -169,6 +172,23 @@ function parseYgNodeYaml(text) {
     if (section === 'mapping') {
       const m = /^\s*-\s*(.+)$/.exec(line);
       if (m) result.mapping.push(unquote(m[1].trim()));
+      continue;
+    }
+    // The aspects attached to the node itself (channel 1) — and, because a node's aspects cascade
+    // to every node below it, to its descendants too (channel 2). Each entry is either a bare id
+    // or an `- id: <id>` block whose `status:` (and `when:`) lines follow it, indented further.
+    if (section === 'aspects') {
+      const dash = /^\s*-\s*(.+)$/.exec(line);
+      const kv = /^\s+([A-Za-z_-]+):\s*(.*)$/.exec(line);
+      if (dash) {
+        const body = dash[1].trim();
+        const inline = /^id:\s*(.+)$/.exec(body);
+        result.aspects.push(inline
+          ? { id: unquote(inline[1].trim()), status: null }
+          : { id: unquote(body), status: null });
+      } else if (kv && kv[1] === 'status' && result.aspects.length) {
+        result.aspects[result.aspects.length - 1].status = unquote(kv[2].trim());
+      }
       continue;
     }
     if (section === 'relations') {
@@ -262,6 +282,249 @@ export function readNodeCharterText(root, cfg, node) {
 
 export function readNodeContractsText(root, cfg, node) {
   return readText(nodeContractsPath(root, cfg, node));
+}
+
+// ---- the node's rules ------------------------------------------------------
+//
+// What the graph forbids and requires of this node's code, with the word that says what a refusal
+// costs. Three statuses, and the difference between them is the whole point of showing them:
+// `enforced` blocks a merge, `advisory` warns and lets it through, `draft` is inert until someone
+// promotes it. Two ways of getting them, in order of authority:
+//
+//   1. `yg <sub> context --node <node>` — Yggdrasil's own resolution, the only one that accounts
+//      for every channel (node, cascade, type, ancestor type, flow, port, implies) and for `when:`
+//      filters. Its JSON form is used when the installed CLI has one, its text form otherwise.
+//   2. the graph files, read directly, when the CLI is not installed at all — the node's and its
+//      ancestors' own `aspects:`, plus the aspects on their types in `yg-architecture.yaml`,
+//      resolved to an effective status the way the graph documents it (highest wins). Flows,
+//      ports and implied aspects are not resolved this way, and the reading says so rather than
+//      letting a short list read as a complete one.
+
+const STATUS_MEANING = {
+  enforced: 'blocks the merge',
+  advisory: 'warns, does not block',
+  draft: 'not in force yet — inert until promoted',
+};
+const STATUS_RANK = { draft: 0, advisory: 1, enforced: 2 };
+
+function strongerStatus(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return (STATUS_RANK[a] ?? 0) >= (STATUS_RANK[b] ?? 0) ? a : b;
+}
+
+// `Must satisfy (N aspects):` followed by one indented block per aspect:
+//   "  <id> [<status>] — <description>" then "    Source: <where it comes from>".
+function parseYgContextText(text) {
+  const aspects = [];
+  let current = null;
+  for (const raw of text.split('\n')) {
+    const head = /^\s{1,3}(\S+)\s+\[(\w+)\]\s+—\s+(.*)$/.exec(raw);
+    if (head) {
+      current = { id: head[1], status: head[2], description: trimStatusSentence(head[3]), via: null };
+      aspects.push(current);
+      continue;
+    }
+    const src = /^\s{3,}Source:\s*(.+)$/.exec(raw);
+    if (src && current) current.via = src[1].trim();
+  }
+  return aspects;
+}
+
+// The JSON form of the same thing, whatever the installed CLI happens to call the fields — this
+// tool reads it defensively (id/status/description under any of a few plausible names) and falls
+// back to the text form when it recognizes nothing, so a CLI that grows `--json` later is picked
+// up without a release here, and one that never does keeps working.
+function parseYgContextJson(doc) {
+  const list = [doc && doc.aspects, doc && doc.mustSatisfy, doc && doc.must_satisfy]
+    .find((x) => Array.isArray(x));
+  if (!list) return null;
+  const out = [];
+  for (const a of list) {
+    if (!a || typeof a !== 'object') continue;
+    const id = a.id || a.aspect;
+    if (!id) continue;
+    const channels = Array.isArray(a.channels)
+      ? a.channels.map((c) => (typeof c === 'string' ? c : c.origin || c.kind)).filter(Boolean)
+      : [];
+    out.push({
+      id: String(id),
+      status: String(a.status || a.effectiveStatus || 'enforced'),
+      description: trimStatusSentence(String(a.name || a.description || a.summary || '')),
+      via: channels.length ? channels.join(' · ') : (a.source || a.via || null),
+    });
+  }
+  return out.length ? out : null;
+}
+
+// Yggdrasil's own rendering of an aspect ends with a sentence restating what its status means
+// ("This rule is advisory: `yg check` reports …"). The status word is printed beside the rule
+// here already, so that sentence is dropped rather than said twice.
+function trimStatusSentence(text) {
+  return text.replace(/\s*This rule is (?:not in force yet|advisory|enforced)[^]*$/, '').trim();
+}
+
+function rulesFromYg(root, cfg, node) {
+  const { cmd, prefix, display } = ygCommand(cfg);
+  const call = (extra) => {
+    try {
+      return execFileSync(cmd, [...prefix, 'context', '--node', node, ...extra], {
+        cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    } catch (e) {
+      if (e.code === 'ENOENT') return null;
+      return e.stdout ? e.stdout.toString() : '';
+    }
+  };
+  const asJson = call(['--json']);
+  if (asJson === null) return null; // no CLI at all — the caller reads the graph files instead
+  if (asJson.trim().startsWith('{')) {
+    try {
+      const parsed = parseYgContextJson(JSON.parse(asJson));
+      if (parsed) return { source: `${display} context --node ${node} --json`, aspects: parsed };
+    } catch { /* not the JSON this reads — fall through to the text form */ }
+  }
+  const text = call([]);
+  if (text === null) return null;
+  return { source: `${display} context --node ${node}`, aspects: parseYgContextText(text) };
+}
+
+// ---- reading the graph files directly (no CLI installed) --------------------
+
+function aspectDefaults(root, id) {
+  const text = readText(join(root, '.yggdrasil', 'aspects', ...String(id).split('/'), 'yg-aspect.yaml'));
+  if (!text) return { status: 'enforced', description: null };
+  let status = null;
+  let description = null;
+  let name = null;
+  for (const raw of text.split('\n')) {
+    if (raw.startsWith(' ') || raw.trim().startsWith('#')) continue;
+    const m = /^([A-Za-z_-]+):\s*(.*)$/.exec(raw);
+    if (!m) continue;
+    if (m[1] === 'status') status = unquote(m[2].trim());
+    else if (m[1] === 'description') description = unquote(m[2].trim());
+    else if (m[1] === 'name') name = unquote(m[2].trim());
+  }
+  return { status: status || 'enforced', description: description || name };
+}
+
+// node_types.<type>.aspects from yg-architecture.yaml, as {type: [{id, status}]}. Indentation is
+// the only structure this needs: types are the keys two spaces in under `node_types:`, their
+// `aspects:` four in, its entries six in.
+function parseArchitectureTypeAspects(text) {
+  const byType = {};
+  if (!text) return byType;
+  let inNodeTypes = false;
+  let type = null;
+  let inAspects = false;
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    if (!line.trim() || line.trim().startsWith('#')) continue;
+    const indent = line.length - line.trimStart().length;
+    if (indent === 0) { inNodeTypes = /^node_types:/.test(line); type = null; inAspects = false; continue; }
+    if (!inNodeTypes) continue;
+    if (indent === 2) {
+      const m = /^\s{2}([^\s:]+):\s*$/.exec(line);
+      type = m ? unquote(m[1]) : null;
+      inAspects = false;
+      continue;
+    }
+    if (!type) continue;
+    if (indent === 4) { inAspects = /^\s{4}aspects:\s*$/.test(line); continue; }
+    if (!inAspects || indent < 6) continue;
+    const dash = /^\s*-\s*(.+)$/.exec(line);
+    const kv = /^\s*([A-Za-z_-]+):\s*(.*)$/.exec(line);
+    byType[type] = byType[type] || [];
+    if (dash) {
+      const body = dash[1].trim();
+      const inline = /^id:\s*(.+)$/.exec(body);
+      byType[type].push(inline ? { id: unquote(inline[1].trim()), status: null } : { id: unquote(body), status: null });
+    } else if (kv && kv[1] === 'status' && byType[type].length) {
+      byType[type][byType[type].length - 1].status = unquote(kv[2].trim());
+    }
+  }
+  return byType;
+}
+
+// The node itself and every node above it, nearest last — the chain an aspect cascades down.
+function nodeAncestry(root, node) {
+  const parts = String(node).split('/').filter(Boolean);
+  const chain = [];
+  for (let i = 1; i <= parts.length; i++) {
+    const path = parts.slice(0, i).join('/');
+    if (existsSync(join(yggdrasilNodeDir(root, path), 'yg-node.yaml'))) chain.push(path);
+  }
+  return chain;
+}
+
+function rulesFromGraphFiles(root, cfg, node) {
+  const typeAspects = parseArchitectureTypeAspects(readText(join(root, '.yggdrasil', 'yg-architecture.yaml')));
+  const found = new Map();
+  const attach = (id, declaredStatus, via) => {
+    const defaults = aspectDefaults(root, id);
+    const status = strongerStatus(declaredStatus || null, defaults.status);
+    const existing = found.get(id);
+    if (existing) {
+      existing.status = strongerStatus(existing.status, status);
+      if (!existing.via.includes(via)) existing.via.push(via);
+      return;
+    }
+    found.set(id, {
+      id, status, description: defaults.description || '', via: [via],
+    });
+  };
+  for (const ancestor of nodeAncestry(root, node)) {
+    const y = readYggdrasilNode(root, ancestor);
+    if (!y) continue;
+    const here = ancestor === node;
+    for (const a of y.aspects) {
+      attach(a.id, a.status, here ? 'this node' : `cascades from node ${ancestor}`);
+    }
+    for (const a of typeAspects[y.type] || []) {
+      attach(a.id, a.status, here ? `type ${y.type}` : `type ${y.type}, on node ${ancestor}`);
+    }
+  }
+  return {
+    source: 'the graph files (no Yggdrasil CLI on this machine — flows, ports and implied aspects are not resolved here)',
+    aspects: [...found.values()].map((a) => ({ ...a, via: a.via.join(' · ') })),
+  };
+}
+
+// The section a node's charter carries naming the rules that reach its files from above — written
+// by whoever generated the graph, not by this tool, and reproduced verbatim when it is there.
+export function charterInheritedRules(charterText) {
+  if (!charterText) return null;
+  const idx = charterText.search(/^##\s+Rules inherited from above\s*$/m);
+  if (idx === -1) return null;
+  const rest = charterText.slice(idx);
+  const next = rest.indexOf('\n## ', 1);
+  return (next === -1 ? rest : rest.slice(0, next)).trim();
+}
+
+// The rules in force on one node, however they can be got at. Manual mode has no aspects at all —
+// the node map carries no rules, and saying so is the honest answer, not an empty list.
+export function nodeRules(root, cfg, node) {
+  if (mode(cfg) !== 'yggdrasil') {
+    return {
+      source: 'the horde\'s own node map, which carries no rules — this node\'s charter and its contracts are its law',
+      aspects: [],
+    };
+  }
+  return rulesFromYg(root, cfg, node) || rulesFromGraphFiles(root, cfg, node);
+}
+
+export function renderRules(rules, inherited) {
+  const lines = [`_Resolved from: ${rules.source}_`, ''];
+  if (rules.aspects.length === 0) {
+    lines.push('- (no rule reaches this node)');
+  } else {
+    for (const a of rules.aspects) {
+      const meaning = STATUS_MEANING[a.status] || 'unknown status';
+      lines.push(`- **${a.id}** [${a.status}] — ${meaning}${a.description ? `. ${a.description}` : ''}${a.via ? ` _(${a.via})_` : ''}`);
+    }
+  }
+  if (inherited) lines.push('', inherited);
+  return lines.join('\n');
 }
 
 // ---- operational graph.json: proposals + contracts + stamps ---------------
@@ -408,11 +671,17 @@ function cmdShow(horde, root, cfg, positional, flags) {
     if (text) log = text.trim();
   }
   const stamp = stampOf(root, cfg, horde, node);
-  const result = { node, boundary, charter, contracts, log, stamp };
+  const rules = nodeRules(root, cfg, node);
+  const inherited = charterInheritedRules(readNodeCharterText(root, cfg, node));
+  const result = {
+    node, boundary, stamp, rules: { ...rules, charterInherited: inherited }, charter, contracts, log,
+  };
   emit(result, flags, () => [
     `# ${node}`, '',
     `**Boundary:** ${boundary.join(', ') || '(none)'}`,
     `**Stamp:** ${stamp}`, '',
+    '## Rules — what this node\'s code must satisfy', '',
+    renderRules(rules, inherited), '',
     '## Charter', charter, '',
     '## Contracts', contracts, '',
     '## Log', log,

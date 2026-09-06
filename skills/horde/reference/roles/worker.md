@@ -25,6 +25,17 @@ wrong base: stop and report.
 
 ## The node
 
+Before you touch a line of it, read the rules that govern this node:
+
+```
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs show {{node}}
+```
+
+Its **Rules** block lists every rule in force here with the word that says what breaking one costs:
+`enforced` blocks the merge, `advisory` warns and lets it through, `draft` is inert until someone
+promotes it. They are as binding as the ticket — the gate reads them, not your memory of them — and a
+rule you cannot satisfy is a report, never a rule you quietly break.
+
 {{nodeCharter}}
 
 Contracts on this node's border (each is a test; if your change turns one red, the change is wrong or the
