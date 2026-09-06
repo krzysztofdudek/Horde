@@ -424,8 +424,9 @@ Yggdrasil CLI (`config.ygCommand`) when its graph is the law, else a journal not
 `add "<why>" --kind charter|contract|claim|conflict|boundary|cost|unverifiable|rules|structure|adjudicate|quality
 [--ticket NNN] [--by steward|architect|owner]` (`adjudicate` is the kind `tk.mjs status NNN
 changes` itself names as the next step once a ticket has spent every round `config.fixRounds`
-allows — a ruling to make, not another round; `quality` is the kind a wave close opens by itself
-when the graph came out of the wave weaker than it went in), `list [--open]`, `show <id>`, `rule <id> "<ruling>"
+allows — a ruling to make, not another round; `quality` is the one kind nobody files by hand —
+`wave.mjs close` opens it when the wave's quality index came out lower than the wave before it),
+`list [--open]`, `show <id>`, `rule <id> "<ruling>"
 [--by <name>] [--to-user]` (`--by` leaves a roster trace for the ruler) (records the ruling as a decision, slug `esc-<id>`; `--to-user` marks it as forwarded to
 the chairman and leaves it open until `rule` is called again with the answer).
 
@@ -454,7 +455,8 @@ says so when `--node` is given with `nodeSource=yggdrasil` and prints the `yg lo
 ## wave.mjs — the journal
 
 Appends to `hordes/<horde>/plan.md` (team waves to `teams/<team>/plan.md`): `start [n] [--team t]`,
-`note "…"`, `merged NNN <sha>`, `audit NNN clean|findings "…"`, `close [--gate green|red] [--sha <tip>]
+`note "…"`, `merged NNN <sha>`, `audit NNN clean|findings "…"`, `audit-plan [--seed <n>] [--team t]`,
+`close [--gate green|red] [--sha <tip>]
 [--evidence E5,…] [--team t]` (renders `templates/wave-close.md` with counts from the queue, the
 evidence catalogue and `cost`; `--gate` with `--sha` records the level's gate at that tip in
 `cache/last-gate.json`; `--evidence` fills catalogue rows the green wave gate itself proves),
@@ -463,6 +465,38 @@ evidence catalogue and `cost`; `--gate` with `--sha` records the level's gate at
 exported (`evidenceCoverage`, `stampMissionEvidence`) stretched mission-wide — every team, every
 wave — for `status.mjs`'s five-state evidence digest and `horde.mjs done`'s gate, so the two never
 re-derive it independently.
+
+`start` also writes the wave's own plan bullet: the layer sizes `queue.mjs plan` derives from the
+tickets at that moment (imported, never a second derivation of the DAG), the parallelism the first
+layer allows within `config.parallelism`, and the instant the wave opened — the three things the
+close reads back to say what the wave planned, and to know which rulings belong to it.
+
+Beyond the counts it always carried, `close` states five figures the chairman reads:
+
+- **parallelism** — planned (the bullet above) against achieved (the most tickets this wave landed
+  on any one day; a journal bullet is dated, not stamped, so the day is the grain the record has);
+- **keys transferred** — the reviews this wave did not have to buy twice, summed from the bullets
+  `premerge.mjs` writes when a ticket's keys survive a catch-up;
+- **the audit** as a sample, not a ritual: `hordes/<horde>/audit.json` holds every audited ticket
+  with its verdict plus the current rate. The close turns this wave's `audit` bullets into samples
+  (once per wave and ticket, so re-closing never double-counts), then lets the samples set the
+  rate: a refutation among the last five doubles it, up to auditing every merged ticket; fifty
+  clean samples in a row halve it, never below one per wave. It publishes refutations over samples
+  with a Wilson 95% interval — because "0 of 3 refuted" and "0 of 300 refuted" are the same
+  percentage and nothing like the same evidence.
+  `audit-plan` prints how many of the last wave's merged tickets to audit next and draws them from
+  those merges at random; `--seed` makes the draw reproducible.
+- **decisions per merged ticket** — the escalations ruled since this wave opened, over the tickets
+  it merged, with the trend across the closes before it. It is meant to fall: a horde needing as
+  many rulings per ticket in wave six as in wave one has learned nothing.
+- **the quality index** — read from the graph's own CLI (`config.ygCommand`) on the tree the close
+  runs on, when the horde's nodes come from a graph: enforced rules, advisory rules with nothing
+  reported against them, blocking violations, the standing noise floor, and file coverage, each
+  with its delta from the previous wave. There is no `--json` on `yg check` or `yg aspects` — the
+  installed CLI has no such flag, verified against its own `--help` — so the index is read from
+  what those two read-only, keyless commands print, and a figure they do not state is reported as
+  unknown rather than invented. A fall in any of the five opens a `quality` escalation by itself:
+  raising enforcement is the horde's own call, lowering it is the chairman's.
 
 ## premerge.mjs — the mechanical checklist
 
@@ -477,7 +511,10 @@ the JSON, and every item below is measured against it:
    produces, since a version bump is a change to their contract — and every approval and the verdict
    itself still hold:
    one that recorded a diff is valid while the branch still carries that diff (✓ "keys bound to diff
-   `<id>`"), whatever the tip has done since; when the diff moved, ✗ "diff changed since review at
+   `<id>`"), whatever the tip has done since — and a key that was given at a tip the branch has
+   since moved past is a key that **travelled**, which premerge writes into the team's wave journal
+   as `keys transferred: <ticket> <n> at diff <id>` (once per ticket and diff) for the wave close
+   to count; when the diff moved, ✗ "diff changed since review at
    `<sha>` — scoped re-review: `<path>`" and the file at that path is written for the re-review; a
    key that recorded a sha alone stays bound to that one commit and goes ✗ "approval/verdict
    predates `<sha>` — re-review" on any new tip, as before;
@@ -586,6 +623,11 @@ on a temporary git repository created by the test itself. `npm test` in `scripts
 scripts are not done until these pass. `scripts/tests/drills/` is not a test file but the drill
 corpus: every case in it was written by `drill.mjs record` from a repository the tools built, and
 the suite runs each drill over it.
+
+The quality-index tests measure a real graph: they build one with the installed Yggdrasil CLI's own
+`init` and read it back with its own `check` and `aspects`. They find that CLI in `HORDE_TEST_YG`,
+on `PATH` as `yg`, or as a sibling checkout's build; with none of those they assert the honest
+"not measured" answer the tools give without a CLI, and never a fabricated report.
 
 ## premerge.mjs's revert test — how a new test file is found and run
 

@@ -102,9 +102,28 @@ a subagent, and that is fine.
 
 You do: rule on escalations (`escalate.mjs rule <id> "…" --by director`), answer the dissents against your own rulings once
 (`dissent.mjs answer --by director`), replace a steward the roster shows dead (`roster.mjs reclaim`,
-then re-brief), close waves (`wave.mjs close`), pick one merged ticket at random per wave and spawn the
-**auditor** on it (Opus, `brief.mjs auditor NNN --wave n`; you read its verdict, you do not redo it),
+then re-brief), close waves (`wave.mjs close`), audit the sample `wave.mjs audit-plan` names and spawn the
+**auditor** on each (Opus, `brief.mjs auditor NNN --wave n`; you read its verdict, you do not redo it),
+record each verdict with `wave.mjs audit NNN clean|findings "…"`,
 keep the charter current, and keep the horde alive (below).
+
+**The audit is a sample, not a ritual.** How many tickets to redo is not yours to pick and not a
+fixed one: `wave.mjs audit-plan` says how many and which, drawn from the wave's own merges. The
+number answers the evidence — a refutation among the last five doubles it, a long clean run thins
+it, and it never falls below one a wave. Every close publishes the refutation rate with its
+interval, which is the horde's own honesty number: what fraction of what it called done did not
+survive a second look, and how much that fraction is worth knowing at this sample size.
+
+**Rulings that recur are law you have not written down yet.** Run `escalate.mjs recurring` at each
+close. Three rulings of the same kind on the same node is not a fourth decision waiting to happen —
+it is a rule, and the tool hands the architect the proposal with the rulings as its evidence and
+the command that files it in the graph. The KPI on the wave close is the same claim in a number:
+human decisions per merged ticket, which should fall wave after wave.
+
+**A wave close that shows the graph weaker files its own escalation.** Every close reads the
+quality index — enforced rules, advisory rules with nothing against them, blocking violations, the
+noise floor, coverage — and compares it with the wave before. Raising it is the horde's own call
+and needs nobody. A fall is not: it opens a `quality` escalation, and that one goes to the user.
 
 You do not: merge, run suites, dispatch, read worker reports, write briefs by hand, verify or audit
 anything yourself. If a steward is dead, respawn it — do not become it. A steward is dead when its
@@ -140,9 +159,10 @@ acts alone and does not ask):
 6. a deviation from the cost class, or the cost limit reached;
 7. a report no verifier could reproduce;
 8. a change to the rules, this skill, or the process;
-9. a change of structure — a sub-team proposed, a team dissolved, an owner's lease changed.
+9. a change of structure — a sub-team proposed, a team dissolved, an owner's lease changed;
+10. a quality index that fell over a wave — the close files this one itself, nobody files it by hand.
 
-Items 1, 5 and 6 go on to the user. Everything else you rule on yourself, and the ruling is recorded.
+Items 1, 5, 6 and 10 go on to the user. Everything else you rule on yourself, and the ruling is recorded.
 A ruling is complete when the steward can execute it without coming back: before approving a mapping
 under Yggdrasil, read the node's type in `yg-architecture.yaml` and check the file against the
 type's `when:` globs — under a strict type a mapping the globs do not admit is refused, and that
@@ -153,7 +173,12 @@ team's queue and doorbells the parent steward, who merges it like a ticket.
 ## Standards you do not give away
 
 - **A report is a hypothesis** until a verifier who is not its author reproduced the evidence. The
-  hub is never weaker than what it verifies: the auditor redoes one merged ticket per wave in full.
+  hub is never weaker than what it verifies: the auditor redoes merged tickets in full, as many
+  per wave as the sample rate says, and the refutation rate is published at every close.
+- **The horde leaves the graph no weaker than it found it.** Better rules, raised statuses, new
+  relations and tidying after green are the horde's own to do, without asking. Anything that
+  lowers enforcement is the user's call, and the wave close catches it whether or not anyone
+  meant it.
 - **Two keys and one approval on every merge**: the author's key, the verifier's key, and the owner's
   review of every node the ticket names, all recorded on the ticket. A steward merges nothing short of
   that; when the owner authored the ticket, the architect reviews in the owner's place.
@@ -167,7 +192,7 @@ team's queue and doorbells the parent steward, who merges it like a ticket.
 ## Done
 
 A mission is done when every item in the evidence catalogue is green, the repo's full gate is green on
-the horde's trunk, the wave's audit sample raised nothing, and the cost report is written. "The queue is
+the horde's trunk, the last wave's audit sample raised nothing, and the cost report is written. "The queue is
 empty" is never "done" — `status.mjs` shows every charter row's own coverage (no ticket / queued /
 running / merged / reproduced) so you see what still stands in the way before you ask. `horde.mjs done`
 is the gate itself: it refuses, listing every reason, until all four hold, then stamps the charter,

@@ -925,6 +925,31 @@ test('premerge.mjs: item 2 — a landing in another file moves the tip, not the 
   assert.doesNotMatch(gate.note, /accepted the verifier's recorded/);
 });
 
+test('premerge.mjs: item 2 — a transfer of keys is written into the wave journal, once', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ticket = reviewedTicket(dir, 'transfer-noted');
+  const journal = join(dir, '.horde', 'hordes', 'mission1', 'plan.md');
+
+  // Before any catch-up the keys were given at the tip they are still on: nothing travelled.
+  run('premerge.mjs', [ticket.branch], dir);
+  assert.doesNotMatch(readFileSync(journal, 'utf8'), /keys transferred/);
+
+  landOnTeamBranch(dir, { 'other.mjs': 'export const other = 1;\n' });
+  assert.equal(tryMerge(ticket.worktree, 'mission1/trunk').ok, true);
+  run('tk.mjs', ['log', ticket.id, 'caught the team branch up'], dir);
+
+  const r = run('premerge.mjs', [ticket.branch], dir);
+  assert.equal(r.code, 0, JSON.stringify(r.json && r.json.checks));
+  // Both keys — the owner's approval and the verifier's verdict — survived the catch-up.
+  const bullet = new RegExp(`^- \\S+ keys transferred: ${ticket.id} 2 at diff [0-9a-f]{7}$`, 'm');
+  assert.match(readFileSync(journal, 'utf8'), bullet);
+
+  run('premerge.mjs', [ticket.branch], dir);
+  const lines = readFileSync(journal, 'utf8').split('\n').filter((l) => l.includes('keys transferred'));
+  assert.equal(lines.length, 1, 'a transfer is one event and costs one journal line');
+});
+
 test('premerge.mjs: item 2 — a landing inside the reviewed hunk\'s context changes the diff and asks for a scoped re-review', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

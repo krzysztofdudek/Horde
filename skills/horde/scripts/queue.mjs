@@ -629,7 +629,10 @@ function manualDeps(ticketText, item) {
   return out;
 }
 
-function buildPlan(horde, team, cfg) {
+// Exported so `wave.mjs start` can record the plan's own layers in the journal at the moment a
+// wave opens — the planned parallelism a wave close is later measured against has to be the
+// number this DAG actually produced, not a second derivation of it.
+export function buildPlan(horde, team, cfg) {
   const root = repoRoot();
   const queue = load(horde, team);
   const items = new Map(queue.items.map((i) => [i.ticket, i]));
