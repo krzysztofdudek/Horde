@@ -16,7 +16,10 @@ import { hordePath, readJSON, writeJSON, nowIso, fail, parseArgs, emit, isMain, 
 import { appendDecision } from './decide.mjs';
 import { trace as traceRoster } from './roster.mjs';
 
-const KINDS = ['charter', 'contract', 'claim', 'conflict', 'boundary', 'cost', 'unverifiable', 'rules', 'structure'];
+// "adjudicate" is not a finding to rule on so much as a ticket the fix-loop breaker gave up on:
+// tk.mjs status <ticket> changes refuses past config.fixRounds' cap and names this exact command
+// as the next step, so the director rules a way forward instead of another round.
+const KINDS = ['charter', 'contract', 'claim', 'conflict', 'boundary', 'cost', 'unverifiable', 'rules', 'structure', 'adjudicate'];
 
 const USAGE = `usage: escalate.mjs <command> [options]
 

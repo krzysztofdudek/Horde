@@ -68,6 +68,13 @@ test('escalate.mjs: add, list, rule (direct and via --to-user), show, refusals',
     assert.match(r.stderr, /no such escalation/);
   });
 
+  await t.test('add accepts kind "adjudicate" — the fix-loop breaker\'s own next step past its cap', () => {
+    const r = run('escalate.mjs', ['add', 'ticket stuck past the fix-loop cap', '--kind', 'adjudicate', '--ticket', '7'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.kind, 'adjudicate');
+    assert.equal(r.json.ticket, '7');
+  });
+
   await t.test('rule --by traces that name in the roster when it is one', () => {
     const architect = run('roster.mjs', ['spawn', 'architect', '--class', 'opus'], dir);
     assert.equal(architect.code, 0, architect.stderr);

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Sending a change back for fixes no longer loops forever. The first few rounds go back to the same worker; after that, a fresh, more capable one takes over with the full history handed to it; past a further, small number of rounds it stops asking and tells you a decision is needed instead.
+- A test that passes once and fails the next time is no longer treated as an ordinary failure or silently escalated to a person. Running it again catches the flake, sends the change back with an instruction to make the test reliable, and records what happened.
+- A part of the system that only its own author can review — nobody else assigned to judge it — is no longer stuck waiting forever. Whoever independently verified the change can approve it too, but only when there truly is no one else able to.
 - On a repository whose architecture graph Yggdrasil holds, the merge checklist now runs `yg check` on the branch itself, whatever else the gate runs. A graph that refuses the change refuses the merge. Starting a horde on such a repository says so.
 - Showing a node now lists the rules its code must satisfy, each with what breaking it costs: one blocks the merge, one only warns, one is not in force yet. Owners and workers are told to read them before they touch the node.
 - Starting a horde now works out how this repository runs its tests — npm, Maven, Gradle, Cargo, Go, Python, Make — and what its tests are named, and says what it found. Where it can work out neither, it says that too and asks, instead of leaving a merge check that quietly passes on everything.
