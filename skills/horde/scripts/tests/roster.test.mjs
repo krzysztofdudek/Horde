@@ -323,6 +323,12 @@ test('roster.mjs: spawn, steward team creation, trace, list --dead, reclaim, sta
     assert.equal(beforeList.json.find((e) => e.name === parent.json.name).verdict, 'alive');
     assert.equal(beforeList.json.find((e) => e.name === child.json.name).verdict, 'alive');
 
+    // An earlier test in this file left liveness.stewardSeconds at 1, and the fallthrough below
+    // judges heron by its own spawn-time signals — which every child process run since has aged.
+    // Widen the window first, so what this asserts is the fallthrough's logic and not how fast
+    // this machine spawns node.
+    run('horde.mjs', ['config', 'set', 'liveness.stewardSeconds', '600'], dir);
+
     // knock egret's subtree dead directly (its own liveness signals are exercised elsewhere) and
     // confirm heron, with nothing else to point to, falls through to its own (untouched, but
     // real) signals — a fresh spawn's branch/queue/lastTrace are all "now", so it stays alive
@@ -335,8 +341,8 @@ test('roster.mjs: spawn, steward team creation, trace, list --dead, reclaim, sta
     assert.equal(afterList.json.find((e) => e.name === parent.json.name).verdict, 'alive');
 
     // now also make heron's own signals stale, so the fallthrough actually bites — stewardSeconds
-    // (set by an earlier test in this file) wins over stewardMinutes once it exists, so it, not
-    // stewardMinutes, is what has to go to zero here.
+    // wins over stewardMinutes once it exists, so it, not stewardMinutes, is what has to go to
+    // zero here.
     run('horde.mjs', ['config', 'set', 'liveness.stewardSeconds', '0'], dir);
     const staleList = run('roster.mjs', ['list'], dir);
     assert.equal(staleList.json.find((e) => e.name === parent.json.name).verdict, 'dead');

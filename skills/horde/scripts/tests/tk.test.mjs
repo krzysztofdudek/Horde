@@ -340,3 +340,17 @@ test('tk.mjs: new --revert-base sets the header; omitted, it renders empty (defa
     assert.match(shown.json.text, /\*\*Revert base:\*\* *\n/);
   });
 });
+
+test('tk.mjs new: a ticket names one node, or two — never three', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const two = run('tk.mjs', ['new', 'contract-ticket', '--title', 'A contract', '--node', 'a', '--node', 'b', '--class', 'sonnet'], dir);
+  assert.equal(two.code, 0, two.stderr);
+
+  const three = run('tk.mjs', ['new', 'sprawling', '--title', 'Too much', '--node', 'a', '--node', 'b', '--node', 'c', '--class', 'sonnet'], dir);
+  assert.equal(three.code, 1);
+  assert.match(three.stderr, /names one node, or two/);
+  assert.match(three.stderr, /Split it into one ticket per node/);
+});

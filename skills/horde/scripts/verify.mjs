@@ -28,7 +28,8 @@ const USAGE = `usage: verify.mjs <command> [options]
 commands:
   record <ticket> --verdict <${VERDICTS.join('|')}> --by <name>
       --item "<n>|<command>|<saw>" [--item "<n2>|<command>|<saw>" …]
-      [--ran "<…>" --saw "<…>"] [--gate green|red --sha <sha>] --revert failed|passed|not-run [--horde h]
+      [--ran "<…>" --saw "<…>"] [--gate green|red --sha <sha>]
+      --revert failed|passed|not-run|no-new-tests [--horde h]
       appends a verdict block to the ticket's log; sets the verifier key when the verdict is
       "reproduced". <n> is the 1-based line number of the ticket's own "## Acceptance —
       evidence" checklist ("- [ ]"/"- [x]" lines) — one --item is required per acceptance line,
@@ -39,8 +40,10 @@ commands:
       "reproduced" verdict requires --gate (the gate result is part of reproduction) and refuses
       --gate red (a red gate cannot be reproduced — record not-reproduced instead). --revert is
       what the verifier saw when the new tests ran on the revert base: "reproduced" requires
-      --revert failed (a revert test that was not run, or passed, is not a reproduction); the
-      tool never fills that line from the verdict.
+      --revert failed (a revert test that was not run, or passed, is not a reproduction), or
+      --revert no-new-tests for a change that adds none — a refactor, a rename, a configuration
+      change — which would otherwise be impossible to verify at all; the tool never fills that
+      line from the verdict.
   show <ticket> [--horde h]
       the ticket's recorded verdicts, most recent last.
 
@@ -125,10 +128,14 @@ function cmdRecord(horde, positional, flags) {
   // A red gate is not a reproduction, no matter what the rest of the checklist showed — and a
   // "reproduced" verdict with no --gate at all leaves premerge.mjs's own gate check unable to
   // trust it either, so the gate result is required as part of reproduction, not an add-on.
-  const REVERTS = ['failed', 'passed', 'not-run'];
+  // "no-new-tests" is the one other way a reproduced verdict is honest: a refactor, a rename or a
+  // configuration change adds no test to run on the revert base, and without this such a ticket
+  // could never be verified at all. It is a claim about the change, and premerge's own revert
+  // check reads the diff independently — a ticket that did add a test is still held to it there.
+  const REVERTS = ['failed', 'passed', 'not-run', 'no-new-tests'];
   if (flags.revert !== undefined && !REVERTS.includes(flags.revert)) fail(`--revert must be one of ${REVERTS.join('|')}`);
-  if (flags.verdict === 'reproduced' && flags.revert !== 'failed') {
-    fail('a "reproduced" verdict requires --revert failed — the new tests were run on the revert base and failed there; a revert test that was not run or passed is not a reproduction (record not-reproduced)');
+  if (flags.verdict === 'reproduced' && flags.revert !== 'failed' && flags.revert !== 'no-new-tests') {
+    fail('a "reproduced" verdict requires --revert failed — the new tests were run on the revert base and failed there; a revert test that was not run or passed is not a reproduction (record not-reproduced). A ticket that adds no test at all — a refactor, a rename, a configuration change — records --revert no-new-tests instead');
   }
   if (flags.verdict === 'reproduced' && flags.gate === undefined) {
     fail('--verdict reproduced requires --gate green|red --sha <sha> — the gate result is part of reproduction');
@@ -156,7 +163,10 @@ function cmdRecord(horde, positional, flags) {
     reproduced: flags.verdict,
     teamBranch: teamBranchName(horde, ticket.team),
     yes: isRepro ? 'yes' : `no: ${flags.verdict}`,
-    'failed as expected': flags.revert === 'failed' ? 'failed as expected' : flags.revert === 'passed' ? 'passed (proves nothing)' : 'not run',
+    'failed as expected': flags.revert === 'failed' ? 'failed as expected'
+      : flags.revert === 'passed' ? 'passed (proves nothing)'
+        : flags.revert === 'no-new-tests' ? 'none — this change adds no test; its evidence is the items above'
+          : 'not run',
 
     gateCommand,
     green: flags.gate === 'green' ? `green at sha ${flags.sha}` : flags.gate === 'red' ? `red at sha ${flags.sha}` : 'not run',

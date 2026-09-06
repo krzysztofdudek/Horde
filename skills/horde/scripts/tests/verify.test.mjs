@@ -204,3 +204,32 @@ test('verify.mjs: record (one --item per acceptance line, a reproduced verdict n
     assert.match(log, new RegExp(`by ${verifier.json.name} \\(opus\\)`));
   });
 });
+
+test('verify.mjs record: a change that adds no test can still be verified', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  run('tk.mjs', ['new', 'rename-it', '--title', 'Rename the thing', '--node', 'auth', '--class', 'sonnet', '--evidence', 'the suite is still green'], dir);
+  run('tk.mjs', ['key', '001', 'author', '--by', 'worker-1'], dir);
+
+  // The refactor case: nothing new to run on the revert base, and until now that meant the ticket
+  // could not be verified at all.
+  const refused = run('verify.mjs', [
+    'record', '001', '--verdict', 'reproduced', '--by', 'verifier-1',
+    '--item', '1|npm test|green', '--gate', 'green', '--sha', 'abc1234', '--revert', 'not-run',
+  ], dir);
+  assert.equal(refused.code, 1);
+  assert.match(refused.stderr, /--revert no-new-tests/);
+
+  const ok = run('verify.mjs', [
+    'record', '001', '--verdict', 'reproduced', '--by', 'verifier-1',
+    '--item', '1|npm test|green', '--gate', 'green', '--sha', 'abc1234', '--revert', 'no-new-tests',
+  ], dir);
+  assert.equal(ok.code, 0, ok.stderr);
+
+  const shown = run('verify.mjs', ['show', '001'], dir, { json: false });
+  assert.match(shown.stdout, /this change adds no test/);
+
+  const ticket = run('tk.mjs', ['show', '001'], dir);
+  assert.match(ticket.json.text, /verifier verifier-1/);
+});

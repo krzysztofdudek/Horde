@@ -38,8 +38,9 @@ const USAGE = `usage: tk.mjs <command> [options]
 commands:
   new <slug> --title "<t>" --node <n> [--node <n2> …] --class <c> [--severity high|medium|low]
       [--depends NNN,…] [--evidence "<…>"]… [--revert-base <ref>] [--team t] [--horde h]
-      renders templates/ticket.md; status starts "proposed". --node is repeatable — two nodes
-      mark a contract ticket, and both get their own approval slot in the Keys line.
+      renders templates/ticket.md; status starts "proposed". --node is repeatable, up to two —
+      two nodes mark a contract ticket, and both get their own approval slot in the Keys line;
+      three or more is refused, since no owner holds the whole of such a diff.
       --revert-base names the ref premerge.mjs's revert test should use instead of the parent
       branch's tip (for a test meant to already be green there, e.g. a contract test). Each
       --evidence value becomes its own "- [ ] …" line in the ticket's Acceptance — evidence
@@ -274,6 +275,12 @@ function cmdNew(horde, positional, flags) {
   if (!flags.title) fail('new requires --title "<t>"');
   const nodes = asArray(flags.node);
   if (nodes.length === 0) fail('new requires --node <n> (repeatable)');
+  // The model allows a ticket one node, or two when the ticket carries a contract between them —
+  // and no more, because a ticket spanning three nodes needs three owners' approval for one diff
+  // and no owner holds the whole of it. Three were being accepted in silence.
+  if (nodes.length > 2) {
+    fail(`a ticket names one node, or two when it carries a contract between them — this one names ${nodes.length} (${nodes.join(', ')}). Split it into one ticket per node, with the contract between them on its own ticket if they need one`);
+  }
   const cfg = readConfig();
   const classes = (cfg && cfg.classes) || {};
   if (Object.keys(classes).length && !Object.prototype.hasOwnProperty.call(classes, flags.class)) {

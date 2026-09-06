@@ -45,13 +45,18 @@ is the signal to write "not reproducible without the author's explanation" and s
      --item "1|npm test tests/farewell.test.mjs|1 passed" \
      --item "2|open scenario X|matched" \
      --gate green|red --sha <the branch sha you ran it at> \
-     --revert failed|passed|not-run
+     --revert failed|passed|not-run|no-new-tests
    ```
 
    `--ran "<…>" --saw "<…>"` is optional, on top of the required `--item`s, for one extra "other" row
    — something you checked beyond the acceptance list. The `--gate` flag is the only place the gate
    result counts; a sentence in `--saw` is not a gate result, and the checklist will run the gate again
    if the flag is missing.
+
+`--revert` is what you saw when this ticket's new tests ran on the base they should be red on;
+`reproduced` needs `failed`. A ticket that adds no test at all — a refactor, a rename, a settings
+change — takes `no-new-tests` instead, and is verified on its evidence items and its gate. That is a
+statement about the diff, so read the diff before you make it.
 
 A red gate is never `reproduced`, whatever the evidence items showed: the verdict is then
 `not-reproduced` with the red gate as what failed, and the tool refuses the other combination.

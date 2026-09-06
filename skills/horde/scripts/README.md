@@ -75,7 +75,8 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
 `hordes/<horde>/counter.json`).
 - `new <slug> --title "…" --node n --class haiku|sonnet|opus [--severity high|medium|low]
   [--depends NNN,…] [--evidence "…"]… [--revert-base <ref>]` — from `templates/ticket.md`; status
-  `proposed`. `--revert-base` names the ref where the ticket's new tests must fail (a contract test
+  `proposed`. `--node` takes one node, or two when the ticket carries a contract between them;
+  three or more is refused — no owner holds the whole of such a diff. `--revert-base` names the ref where the ticket's new tests must fail (a contract test
   is green on the team tip by design; its red base is e.g. `develop`); `premerge` item 4 reads it, or
   a "red on <ref>" phrase in the acceptance lines. Each
   `--evidence` value becomes its own `- [ ] …` line in the ticket's `## Acceptance — evidence`
@@ -238,7 +239,7 @@ mode they print the `yg` commands the architect must run instead).
 
 `record NNN --verdict reproduced|not-reproduced|stale|out-of-scope --by <name>
 --item "<n>|<command>|<saw>"… [--ran "…" --saw "…"] [--gate green|red --sha <sha>] --revert
-failed|passed|not-run` appends a verdict
+failed|passed|not-run|no-new-tests` appends a verdict
 block (template `verdict.md`) to the ticket's log and sets the verifier key in the `**Keys:**` field
 when the verdict is `reproduced`. `<n>` is the 1-based line number of the ticket's own `## Acceptance —
 evidence` checklist (`- [ ]`/`- [x]` lines) — one `--item` is required per acceptance line, no more, no
@@ -336,8 +337,10 @@ can run directly is extracted and run that way; anything else falls back to runn
 `config.gates.commit` command in the scratch worktree, treating any red as "this file's a failure" —
 isolating just one file's test lane out of an arbitrary configured command isn't possible in general.
 
-Also worth knowing: `reproduced` requires `--revert failed` (the tool never infers the revert line
-from the verdict), and `verify.mjs record --gate green|red` requires `--sha <sha>` and writes it on the
+Also worth knowing: `reproduced` requires `--revert failed` — or `--revert no-new-tests` for a
+change that adds none (a refactor, a rename, a configuration change), which would otherwise be
+impossible to verify at all; premerge's item 4 reads the diff itself, so a ticket that did add a
+test is still held to it there. The tool never infers the revert line from the verdict, and `verify.mjs record --gate green|red` requires `--sha <sha>` and writes it on the
 Gate line for either result ("green at sha …" / "red at sha …"). Premerge's gate check (item 5)
 accepts a verifier's recorded green gate only when that sha equals the branch's current tip —
 otherwise it runs the level's gate fresh. A team merge-up (no single ticket, so no verifier verdict

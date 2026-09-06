@@ -139,6 +139,15 @@ Copy the whole `skills/horde/` directory (`SKILL.md`, `reference/`, `templates/`
 
 Nothing else in this repo affects behavior, all of it lives in that one directory.
 
+### If your repository has an architecture graph
+
+Dropping a skill into a repository adds several dozen files to it, and a repository under Yggdrasil
+counts every file: the new ones land outside every node's mapping and show up as uncovered, which
+drops the coverage figure without anything having gone wrong. Two ways to settle it — map the skill's
+directory to a node of its own, if you want the graph to hold your tooling to rules as well, or
+exclude it in `yg-config.yaml` if you don't. Either is a deliberate answer; leaving it is a number
+that quietly reads worse than the repository deserves.
+
 ---
 
 ## What it doesn't claim
