@@ -39,7 +39,10 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   repository invokes the Yggdrasil CLI
   — default `yg` on PATH; set it to e.g. `node path/to/bin.js` for a local build),
   `keyContext` (how many lines of surrounding code a review's key is bound to — default 3; see
-  "keys are bound to the diff" below), `protectedPaths[]`, `liveness.stewardMinutes|ownerMinutes`
+  "keys are bound to the diff" below), `protectedPaths[]`, `fixRounds.resume|fresh` (the fix-loop
+  breaker `tk.mjs status <ticket> changes` reads: rounds 1..`resume` resume the same worker, the
+  next `fresh` rounds spawn a fresh one a class up, beyond that the command refuses — defaults 3
+  and 2), `liveness.stewardMinutes|ownerMinutes`
   (also accepts `liveness.stewardSeconds|ownerSeconds` — a `*Seconds` key wins over its `*Minutes`
   counterpart when both are set; useful for tests and fast-loop tuning where a whole minute isn't
   practical), `classes` (weights: haiku 1, sonnet 3, opus 10, fable 30 — defaults), `parallelism`.
@@ -85,7 +88,14 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
   in the horde's `charter.md` evidence table — refuses otherwise, listing the unknown ids.
 - `list [--state s] [--node n] [--team t] [--review-pending] [--open]`, `show NNN [--log]`,
   `status NNN <state> ["note"]` (states: proposed queued running landed changes verified merged
-  escalated dropped), `log NNN "text"`, `grep <re>`.
+  escalated dropped) — `changes` is the fix-loop breaker: it counts the round in the ticket's log
+  and prints it (`config.fixRounds`, defaults `resume` 3, `fresh` 2). Rounds 1..`resume`: the
+  steward resumes the same worker with the findings, by the `agentId` `roster.mjs` already
+  recorded. Rounds `resume`+1..`resume`+`fresh`: the result says "fresh worker, class up" — a new
+  one, one class heavier (`config.classes`; `roster.mjs spawn` already refuses a lower one),
+  briefed with `brief.mjs worker NNN --takeover`. Beyond that cap the command refuses outright and
+  names the next step: `escalate.mjs add "<why>" --kind adjudicate --ticket NNN`, then
+  `queue.mjs set NNN escalated` — a ruling, not another round. `log NNN "text"`, `grep <re>`.
 - `review-request NNN [--delta <path>]` (steward; appends to the log with a timestamp, starts the
   owner's liveness window; `--delta` names the file `premerge.mjs` wrote for a scoped re-review, so
   the log records which kind of review was asked for and the owner reads the delta instead of the
@@ -96,7 +106,10 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
   tip sha and the identity of its diff against the team branch (`<name>@<sha>+<patch-id>`) —
   `premerge.mjs` item 2 holds the approval to the diff, and to the sha alone for an older
   `<name>@<sha>` record. No queue item or no branch yet (a ticket approved before ever being queued)
-  records the name alone, same as before.
+  records the name alone, same as before. The ticket's own verifier may approve in an owner's place
+  — marked `<name>(verifier-seat)` in the Keys line — only when the ticket's author is that node's
+  own owner (roster) and the roster carries no live architect; otherwise a verifier approving is
+  refused.
 - `key NNN author --by <name>` — sets the author key in the `**Keys:**` field (the steward, when the
   branch lands). `key NNN author --from-queue` sets it instead from the ticket's own queue item's
   recorded `agent` — for a successor steward recovering a ticket `queue.mjs reconcile` marked
@@ -197,14 +210,19 @@ respawn after a reclaim).
 ## brief.mjs — rendered briefs
 
 `brief.mjs <role> [args]` prints the brief for a role, filled from `reference/roles/<role>.md`:
-`steward <team>`, `owner <node>`, `architect`, `worker NNN`, `verifier NNN [--delta <path>]`,
-`auditor NNN --wave n`, `counsel --question "…" [--attach file]…`. `verifier --delta <path>` renders
-the brief for a scoped re-review: the subject is the delta file `premerge.mjs` wrote, plus every
-finding the last review left open (read from the ticket's own log — the last verdict's "what failed"
-and each owner's changes-request), and the rule that what was already reproduced is not proved twice.
-A path naming no readable file is refused rather than rendered around. Without `--delta` the brief is
-the full verification, as before. Fills `{{…}}` from the charter, the config (`fastCheck` =
-`gates.commit`, `gateCommand` = the level's gate, `graphDir`, `protectedPaths`, `parallelism`), the
+`steward <team>`, `owner <node>`, `architect`, `worker NNN [--takeover]`, `verifier NNN [--delta
+<path>]`, `auditor NNN --wave n`, `counsel --question "…" [--attach file]…`. `worker --takeover`
+renders a takeover section — a prior worker attempted this ticket N times, the ticket is yours, here
+is its log — for the fresh, one-class-up worker `tk.mjs status NNN changes` hands a ticket to once
+its resume rounds (`config.fixRounds`) are spent; N and the log come from the ticket's own log, the
+same "round N/cap" line `tk.mjs` itself wrote. `verifier --delta <path>` renders the brief for a
+scoped re-review: the subject is the delta file `premerge.mjs` wrote, plus every finding the last
+review left open (read from the ticket's own log — the last verdict's "what failed" and each owner's
+changes-request), and the rule that what was already reproduced is not proved twice. A path naming no
+readable file is refused rather than rendered around. Without `--delta` the brief is the full
+verification, as before. Fills `{{…}}` from the charter, the config (`fastCheck` = `gates.commit`,
+`gateCommand` = the level's gate, `graphDir`, `protectedPaths`, `parallelism`,
+`fixRoundsResume|Fresh` for the steward brief), the
 cache (`fastCheckCount` from `cache/last-gate.json`, or "unknown — report the count you get"), the
 node (`node.mjs`), the ticket (`worktree` and `branch` from the queue item), and the roster
 (`reportsTo`, `parentTeam`) — `reportsTo` renders as `"<name> (agent id <id>)"` once `roster.mjs` has
@@ -260,12 +278,20 @@ result is part of reproduction) and refuses `--gate red` — a red gate cannot b
 `not-reproduced` instead. The block also carries a `**Diff:**` line: the identity of the ticket's
 diff against its team branch at record time (the branch from the ticket's queue item, or `--branch`),
 which is what `premerge.mjs` item 2 holds the verdict to; with no branch to read, the line says the
-verdict is bound to its sha alone. `show NNN`.
+verdict is bound to its sha alone. `--runs <n> --results <r1,r2,…> --test "<what>"` is a check run more than
+once — `--results` must list exactly `--runs` results; two that disagree force the verdict to
+`flaky` regardless of `--verdict` (none of `--item`/`--gate`/`--revert` is then needed), name the
+test in the verdict block, send the ticket to `changes` ("flaky: <what>") counting one round of
+`config.fixRounds` like any other, and file the flake as an incident — through this repository's
+Yggdrasil CLI (`config.ygCommand`) when its graph is the law, else a journal note in
+`hordes/<horde>/incidents.md`. `show NNN`.
 
 ## escalate.mjs — the channel up
 
-`add "<why>" --kind charter|contract|claim|conflict|boundary|cost|unverifiable|rules|structure
-[--ticket NNN] [--by steward|architect|owner]`, `list [--open]`, `show <id>`, `rule <id> "<ruling>"
+`add "<why>" --kind charter|contract|claim|conflict|boundary|cost|unverifiable|rules|structure|adjudicate
+[--ticket NNN] [--by steward|architect|owner]` (`adjudicate` is the kind `tk.mjs status NNN
+changes` itself names as the next step once a ticket has spent every round `config.fixRounds`
+allows — a ruling to make, not another round), `list [--open]`, `show <id>`, `rule <id> "<ruling>"
 [--by <name>] [--to-user]` (`--by` leaves a roster trace for the ruler) (records the ruling as a decision, slug `esc-<id>`; `--to-user` marks it as forwarded to
 the chairman and leaves it open until `rule` is called again with the answer).
 

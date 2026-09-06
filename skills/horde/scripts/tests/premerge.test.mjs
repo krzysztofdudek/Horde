@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
 
@@ -926,4 +926,30 @@ test('premerge.mjs: item 2 — a landing on the adjacent line conflicts, and the
   const keys = r.json.checks.find((c) => c.name === 'keys');
   assert.equal(keys.ok, true, keys.note);
   assert.match(keys.note, /keys bound to diff [0-9a-f]{7}/);
+});
+
+test('premerge.mjs: item 2 — an approval given from the verifier seat is read like any other, and travels with the diff', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ticket = reviewedTicket(dir, 'seat-travels');
+
+  // The same recorded approval, given from the verifier's seat: the marker sits in the name, so
+  // what item 2 holds it to is still the diff after it.
+  const issueDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues');
+  const dirName = readdirSync(issueDir).find((n) => n.startsWith(ticket.id));
+  const issuePath = join(issueDir, dirName, 'issue.md');
+  const seated = readFileSync(issuePath, 'utf8').replace(/(feature )([^\s@]+)@/, '$1$2(verifier-seat)@');
+  writeFileSync(issuePath, seated);
+  assert.match(seated, /feature \S+\(verifier-seat\)@[0-9a-f]+\+[0-9a-f]{40}/);
+
+  landOnTeamBranch(dir, { 'other.mjs': 'export const other = 1;\n' });
+  const merge = tryMerge(ticket.worktree, 'mission1/trunk');
+  assert.equal(merge.ok, true, merge.output);
+  run('tk.mjs', ['log', ticket.id, 'caught the team branch up'], dir);
+
+  const r = run('premerge.mjs', [ticket.branch, '--no-gate'], dir);
+  const keys = r.json.checks.find((c) => c.name === 'keys');
+  assert.equal(keys.ok, true, keys.note);
+  assert.match(keys.note, /keys bound to diff [0-9a-f]{7}/);
+  assert.match(keys.note, /\(verifier-seat\)/);
 });

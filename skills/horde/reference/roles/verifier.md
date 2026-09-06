@@ -46,15 +46,29 @@ if it cannot be judged without reading the whole change, say that instead of gue
    Record what you ran and what you saw for each line — you will pass one `--item` per line below.
    In a scoped re-review, only the lines the delta touches; for the rest the item is the earlier
    reproduction, recorded as unchanged by the delta.
-3. **Revert test.** Check the new tests out onto the team branch's tree without the change: they must
+3. **On a failure, run it once more before recording anything.** One red run is not "a report no
+   verifier could reproduce" (escalation item 7) — it might be a flake. If the second run agrees
+   with the first, record normally (`not-reproduced`, with what you saw twice). If it disagrees,
+   record the flake instead of either verdict:
+
+   ```
+   node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/verify.mjs record {{ticketId}} --by {{name}} \
+     --runs 2 --results red,green --test "<the test or check that disagreed>"
+   ```
+
+   the tool computes the verdict itself (`flaky`), sends the ticket back with an instruction to make
+   the test deterministic, and files the flake as an incident — none of `--item`/`--gate`/`--revert`
+   is needed for this call. Never escalate item 7 on a first failure; a genuine `not-reproduced` is
+   one that fails the same way twice.
+4. **Revert test.** Check the new tests out onto the team branch's tree without the change: they must
    fail there. A new test that passes on the base proves nothing. **Run it**; reading the old source
    and concluding it would fail is not a revert test, and the verdict tool records only what you pass
    it in `--revert` — `failed`, `passed`, or `not-run` — never what your verdict implies.
-4. Run `{{gateCommand}}` in your worktree (on a Yggdrasil repository, after `yg check --approve
+5. Run `{{gateCommand}}` in your worktree (on a Yggdrasil repository, after `yg check --approve
    --only-deterministic`, which only rebuilds the uncommitted deterministic cache). This one runs
    every time, scoped re-review or not: it judges the tree, and the tree moved.
-5. Check the diff stays inside the ticket's node(s) and touches no protected path.
-6. Record, with one `--item "<n>|<command>|<saw>"` per acceptance line — `<n>` is the line's 1-based
+6. Check the diff stays inside the ticket's node(s) and touches no protected path.
+7. Record, with one `--item "<n>|<command>|<saw>"` per acceptance line — `<n>` is the line's 1-based
    position in the checklist above, no more and no fewer, or the record is refused:
 
    ```

@@ -29,8 +29,8 @@ commands:
       hordes on this repository: trunk, base, wave, open tickets, last activity.
   config get <key>
   config set <key> <value>
-      dotted paths into .horde/config.json, e.g. "gates.trunk", "liveness.stewardMinutes". A
-      list-valued key takes a comma-separated list or a JSON array.
+      dotted paths into .horde/config.json, e.g. "gates.trunk", "liveness.stewardMinutes",
+      "fixRounds.resume". A list-valued key takes a comma-separated list or a JSON array.
       "keyContext" (default 3) is how much surrounding code a review's key is bound to: an
       owner's approval and a verifier's verdict survive a branch catching up with the team as
       long as nothing landed within this many lines of the ticket's own change. Raise it to send
@@ -138,6 +138,10 @@ function defaultConfig(root) {
     liveness: { stewardMinutes: 60, ownerMinutes: 45 },
     classes: { ...DEFAULT_CLASSES },
     parallelism: 6,
+    // The fix-loop breaker (tk.mjs status <ticket> changes): rounds 1..resume ask the steward to
+    // resume the same worker; the next "fresh" rounds ask for a new one, one class heavier;
+    // beyond resume+fresh the command refuses and names the ruling to make instead.
+    fixRounds: { resume: 3, fresh: 2 },
   };
 }
 
