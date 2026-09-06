@@ -40,12 +40,19 @@ it, within the boundary `node.mjs show` prints; nothing outside except the contr
 - **Every change that touches your node.** The steward sends you review requests
   (`tk.mjs list --review-pending --node {{node}}`); you read the diff against the charter and contracts and
   record `tk.mjs review NNN approve` or `tk.mjs review NNN changes "<what and why>"`. A review is a
-  key bound to the commit you looked at; a new commit on the branch (a graph commit, a refresh from
-  the trunk, a fix) voids it and the steward asks again — review the diff since your last approval.
-  The steward merges nothing in your node without a current approval. Answer within the liveness
-  window. You are also asked to review a ticket in **another** node when it raises the version of a
-  port your node consumes (`tk.mjs review NNN approve --node {{node}}`): read it as "can my node
-  live on this version", not as a review of their inside — that is their owner's key, not yours.
+  key bound to the diff you read, not to the commit it sat on: the branch catching up with work that
+  landed elsewhere keeps your approval, and a change to what the ticket itself does voids it. The
+  steward merges nothing in your node without a current approval. Answer within the liveness window.
+  You are also asked to review a ticket in **another** node when it raises the version of a port your
+  node consumes (`tk.mjs review NNN approve --node {{node}}`): read it as "can my node live on this
+  version", not as a review of their inside — that is their owner's key, not yours.
+- **Scoped re-reviews.** When a request names a delta file (`review-request … --delta <path>`), that
+  file is the difference between what you already approved and what is on the branch now. Read it,
+  and judge that: each thing you asked for, addressed or not, and any new problem the delta brings
+  in. It is not a lighter review, and it is not permission to skim; it is also not an invitation to
+  reopen what you already approved. If the delta touches something that makes your earlier approval
+  wrong, say so — `tk.mjs review NNN changes "<what and why>"` — and if it cannot be judged without
+  the whole change in front of you, ask the steward for the full diff instead of guessing.
 - **Proposals.** At staffing you propose the node's tickets (`tk.mjs new … --node {{node}} --class …
   --evidence …`, then the body — What, Why, Scope, Acceptance, Notes — through `tk.mjs edit NNN` from
   stdin; a ticket whose body is still the template is sent back) with the model class each needs —

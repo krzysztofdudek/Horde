@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import {
   existsSync, readFileSync, writeFileSync, mkdirSync,
 } from 'node:fs';
@@ -103,5 +104,76 @@ test('_lib.mjs: hordeRoot, parseArgs, renderTemplate, appendText', async (t) => 
         return true;
       },
     );
+  });
+});
+
+// The measurement the whole key-transfer rests on, made a test: what a landing on the base does
+// to the identity of a branch's diff, at the default sensitivity and at a lower one.
+test('_lib.mjs patchIdOf: a landing outside the change\'s own context leaves its identity alone', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { patchIdOf } = await import('../_lib.mjs');
+  const g = (args, cwd = dir) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+
+  const lines = Array.from({ length: 40 }, (_, i) => `export const v${i + 1} = ${i + 1};`);
+  const withLine = (n, value) => {
+    const out = [...lines];
+    out[n - 1] = `export const v${n} = ${value};`;
+    return `${out.join('\n')}\n`;
+  };
+
+  g(['checkout', '-qb', 'base']);
+  writeFileSync(join(dir, 'lib.mjs'), `${lines.join('\n')}\n`);
+  g(['add', 'lib.mjs']);
+  g(['commit', '-qm', 'the file']);
+  g(['checkout', '-qb', 'ticket']);
+  writeFileSync(join(dir, 'lib.mjs'), withLine(20, 2000));
+  g(['commit', '-qam', 'the ticket changes line 20']);
+  g(['checkout', '-q', 'base']);
+
+  const original = patchIdOf('ticket', 'base', { cwd: dir });
+  const originalTight = patchIdOf('ticket', 'base', { cwd: dir, context: 1 });
+  assert.match(original, /^[0-9a-f]{40}$/);
+  assert.match(originalTight, /^[0-9a-f]{40}$/);
+
+  const land = (name, files) => {
+    g(['checkout', '-q', 'base']);
+    for (const [path, content] of Object.entries(files)) writeFileSync(join(dir, path), content);
+    g(['add', '-A']);
+    g(['commit', '-qm', name]);
+    g(['checkout', '-q', 'ticket']);
+    g(['merge', '-q', 'base', '-m', `catch up: ${name}`]);
+    const id = patchIdOf('ticket', 'base', { cwd: dir });
+    g(['checkout', '-q', 'base']);
+    return id;
+  };
+
+  await t.test('another file entirely: unchanged', () => {
+    assert.equal(land('another file', { 'other.mjs': 'export const other = 1;\n' }), original);
+  });
+
+  await t.test('the same file, fifteen lines away: unchanged', () => {
+    assert.equal(land('line 35', { 'lib.mjs': withLine(35, 999) }), original);
+  });
+
+  await t.test('the same file, inside the change\'s own three lines of context: changed', () => {
+    const moved = land('line 22', { 'lib.mjs': withLine(22, 999) });
+    assert.match(moved, /^[0-9a-f]{40}$/);
+    assert.notEqual(moved, original);
+  });
+
+  await t.test('keyContext is the knob: at one line of context, that same landing is nothing', () => {
+    // Every landing so far left lines 19 and 21 alone, so a key taken with one line of context
+    // still holds — the cost of that being a key that survives a change two lines away.
+    assert.equal(patchIdOf('ticket', 'base', { cwd: dir, context: 1 }), originalTight);
+    assert.notEqual(patchIdOf('ticket', 'base', { cwd: dir }), original);
+    // Zero is not offered: it reads as the default, so it can never be set as a way of ignoring
+    // a change on the very next line.
+    assert.equal(patchIdOf('ticket', 'base', { cwd: dir, context: 0 }), patchIdOf('ticket', 'base', { cwd: dir }));
+  });
+
+  await t.test('nothing to identify: an unknown ref, or a branch with no diff of its own', () => {
+    assert.equal(patchIdOf('no-such-branch', 'base', { cwd: dir }), null);
+    assert.equal(patchIdOf('base', 'base', { cwd: dir }), null);
   });
 });

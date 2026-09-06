@@ -16,6 +16,8 @@
 
 **Gate:** `{{gateCommand}}` — {{green | red: …}}
 
+**Diff:** {{patchId | not recorded — this verdict is bound to its sha alone}}
+
 **Scope:** diff inside {{node}} — {{yes | no: …}} · protected paths — {{untouched | touched: …}}
 
 **What failed, if anything** (what, not what to do):

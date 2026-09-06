@@ -36,12 +36,17 @@ roles:
       --takeover renders a takeover section — a prior worker attempted this ticket N times; the
       ticket is yours; here is its log — for the fresh, one-class-up worker tk.mjs status <ticket>
       changes hands a ticket to once its resume rounds are spent.
-  verifier <ticket> --name <n>
+  verifier <ticket> --name <n> [--delta <path>]
   auditor <ticket> --wave <n> --name <n>
   counsel --question "<q>" [--attach <file>]… --name <n>
 
 Prints the rendered brief for the Agent tool's prompt, verbatim. Refuses — listing every unfilled
 placeholder — rather than print one with "{{…}}" left in it.
+
+--delta <path> renders the verifier's brief for a scoped re-review: the subject is the difference
+between what was already approved and what is on the branch now (the file the merge checklist
+writes when a ticket's diff moved), together with every finding the last review left open. Without
+it the brief is the full verification, as before.
 
 options: --json  --help`;
 
@@ -156,11 +161,12 @@ function findTicket(horde, rawId) {
         .find((e) => e.isDirectory() && e.name.startsWith(`${id}-`));
       if (!match) return;
       const issueText = readText(join(issuesDir, match.name, 'issue.md'));
+      const logText = readText(join(issuesDir, match.name, 'log.md'));
       const queue = readJSON(join(teamDir, 'queue.json'), { items: [] });
       const canonicalId = match.name.split('-')[0];
       const queueItem = asArray(queue.items).find((it) => String(it.ticket) === canonicalId) || null;
       found = {
-        team: teamName, id: canonicalId, issueDirName: match.name, issueText, queueItem,
+        team: teamName, id: canonicalId, issueDirName: match.name, issueText, logText, queueItem,
       };
     });
     if (found) return found;
@@ -200,6 +206,66 @@ function ticketSha(horde, team, ticket, queueItem) {
   const re = new RegExp(`^- \\S+ merged: ${ticket} (\\S+)`, 'm');
   const m = re.exec(journal);
   return m ? m[1] : null;
+}
+
+// ---- previous findings, for a scoped re-review ---------------------------------------
+//
+// What the last look at this ticket left open, read from the ticket's own log: the "What failed"
+// prose of the most recent verdict, and every changes-request an owner recorded. Nothing else is
+// carried over — an approval or a reproduction needs no answer, only a finding does. Read from the
+// files rather than passed in, so a scoped brief cannot be rendered with a friendlier list of
+// findings than the record actually holds.
+function previousFindings(logText) {
+  const out = [];
+  if (!logText) return out;
+  const verdicts = logText.split(/\n(?=## Verdict)/).filter((b) => b.trim().startsWith('## Verdict'));
+  const last = verdicts.length ? verdicts[verdicts.length - 1] : null;
+  if (last) {
+    const idx = last.indexOf('**What failed, if anything**');
+    if (idx !== -1) {
+      const after = last.slice(idx).split('\n').slice(1);
+      for (const line of after) {
+        const t = line.replace(/^[-*]\s*/, '').trim();
+        if (t && !t.startsWith('<!--')) out.push(t);
+      }
+    }
+  }
+  for (const m of logText.matchAll(/^- \S+ review: (\S+) changes by (\S+)[^—\n]*— (.+)$/gm)) {
+    out.push(`${m[3]} (${m[1]}, asked by ${m[2]})`);
+  }
+  return out;
+}
+
+// The one paragraph that says what this verdict is about: the whole change, or — when the steward
+// passes the delta file the merge checklist wrote — only what moved since the last review, with
+// the open findings to answer one by one. Everything about HOW a scoped re-review is judged lives
+// in the role brief itself; this fills in which one it is and what it is about.
+function verdictScope(root, t, delta) {
+  if (delta === true) fail('--delta requires the path of the file to re-review (the merge checklist prints it)');
+  const deltaPath = typeof delta === 'string' ? delta : null;
+  if (!deltaPath) {
+    return `Full verification: every acceptance line above, over the whole of \`${t.queueItem.branch}\` `
+      + 'against the team branch.';
+  }
+  if (readText(join(root, deltaPath)) === null && readText(deltaPath) === null) {
+    fail(`--delta names no readable file: ${deltaPath} — run the merge checklist on the branch again to have it written, or drop --delta for a full re-review`);
+  }
+  const findings = previousFindings(t.logText);
+  const lines = [
+    `**Scoped re-review.** This ticket was reviewed once already. Since then its branch caught up with`,
+    `the team and its own diff moved, so what you judge is the difference — recorded in \`${deltaPath}\`.`,
+    'Read that file first: it is the subject of this verdict. Everything the earlier review already',
+    'reproduced stands; you do not prove it a second time, and for an acceptance line the delta does',
+    'not touch, the record is that line, reproduced earlier and unchanged by the delta (the tool still',
+    'takes one item per acceptance line).',
+    '',
+    'Findings left open by the last review, each needing its own verdict — addressed, or not addressed:',
+    '',
+  ];
+  lines.push(...(findings.length
+    ? findings.map((f) => `- ${f}`)
+    : ['- (none recorded — the last review left nothing open; then judge the delta alone)']));
+  return lines.join('\n');
 }
 
 // ---- node text, joined across every node a ticket names -----------------------------
@@ -369,9 +435,12 @@ function cmdVerifier(horde, root, cfg, positional, flags) {
     gateCommand: cfg.gates && cfg.gates.team,
     nodeContracts: nodesText(root, cfg, nodes, readNodeContractsText, '(no contracts yet)'),
     reportsTo: reportsToFor('verifier', horde, { team: t.team }),
+    scope: verdictScope(root, t, flags.delta),
   };
   const brief = renderRole('verifier', vars);
-  emit({ role: 'verifier', ticket: rawId, name, brief }, flags, () => brief);
+  emit({
+    role: 'verifier', ticket: rawId, name, delta: typeof flags.delta === 'string' ? flags.delta : null, brief,
+  }, flags, () => brief);
 }
 
 function cmdAuditor(horde, root, cfg, positional, flags) {

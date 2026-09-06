@@ -22,6 +22,21 @@ Repository root: `{{repoRoot}}` — every command runs from there, every relativ
 You are **not** given the author's report or reasoning, on purpose. If you find yourself wanting it, that
 is the signal to write "not reproducible without the author's explanation" and stop.
 
+## What this verdict covers
+
+{{scope}}
+
+A **scoped re-review** is what you are asked for when a ticket you or another verifier already
+judged has moved: its branch caught up with the team, and this time the catch-up reached into the
+change itself. It is not a lighter verification — it is the same standard on a smaller subject.
+You judge three things and nothing else: each open finding, addressed or not addressed, one line
+each; the delta itself, read in full; and any new breakage the delta introduces. What was already
+reproduced stays reproduced — you do not re-run the whole acceptance list to prove it again, and
+you do not reopen a question the earlier verdict settled. Two things are not a scoped re-review:
+skimming the delta because it is short, and widening it back out into a full one because the delta
+made you curious. If the delta makes an earlier item doubtful, say so and record `not-reproduced`;
+if it cannot be judged without reading the whole change, say that instead of guessing.
+
 ## What you do
 
 1. `git merge-base --is-ancestor {{teamBranch}} HEAD` — a branch not rooted at the team tip is
@@ -29,6 +44,8 @@ is the signal to write "not reproducible without the author's explanation" and s
 2. Reproduce every evidence item exactly as the acceptance names it, in the order the checklist lists
    it (line 1, line 2, …): run the test, open the scenario, watch the film, take the screenshot.
    Record what you ran and what you saw for each line — you will pass one `--item` per line below.
+   In a scoped re-review, only the lines the delta touches; for the rest the item is the earlier
+   reproduction, recorded as unchanged by the delta.
 3. **On a failure, run it once more before recording anything.** One red run is not "a report no
    verifier could reproduce" (escalation item 7) — it might be a flake. If the second run agrees
    with the first, record normally (`not-reproduced`, with what you saw twice). If it disagrees,
@@ -48,7 +65,8 @@ is the signal to write "not reproducible without the author's explanation" and s
    and concluding it would fail is not a revert test, and the verdict tool records only what you pass
    it in `--revert` — `failed`, `passed`, or `not-run` — never what your verdict implies.
 5. Run `{{gateCommand}}` in your worktree (on a Yggdrasil repository, after `yg check --approve
-   --only-deterministic`, which only rebuilds the uncommitted deterministic cache).
+   --only-deterministic`, which only rebuilds the uncommitted deterministic cache). This one runs
+   every time, scoped re-review or not: it judges the tree, and the tree moved.
 6. Check the diff stays inside the ticket's node(s) and touches no protected path.
 7. Record, with one `--item "<n>|<command>|<saw>"` per acceptance line — `<n>` is the line's 1-based
    position in the checklist above, no more and no fewer, or the record is refused:

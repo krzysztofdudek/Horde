@@ -32,7 +32,7 @@ import {
 import { join } from 'node:path';
 import {
   hordePath, teamPath, repoRoot, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
-  parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, git,
+  parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, git, patchIdOf,
 } from './_lib.mjs';
 import { trace as traceRoster, ownerNameForNode, architectIsLive } from './roster.mjs';
 import {
@@ -79,8 +79,11 @@ commands:
       "agent" instead — for a successor steward recovering a ticket that "queue.mjs reconcile"
       marked landed after the original steward died before it could set the key by hand. The
       verifier key is set only by verify.mjs.
-  review-request <ticket> [--horde h]
-      appends a timestamped log entry; starts the owner's liveness window.
+  review-request <ticket> [--delta <path>] [--horde h]
+      appends a timestamped log entry; starts the owner's liveness window. --delta names the
+      file holding the difference between what was approved before and what is on the branch
+      now (the merge checklist writes it and prints its path), so the owner reads that instead
+      of the whole change again.
   review <ticket> approve|changes ["why"] --by <name> [--node n] [--horde h]
       records an approval or a changes-request for one node in the Keys line. Pass --node when
       the ticket names more than one, or when it produces a port other nodes consume — those
@@ -88,9 +91,10 @@ commands:
       they can say the new version is usable. --by architect with no --node approves every node
       the ticket names at once (the case where a node's own owner is the ticket's author and so
       cannot review it). Refuses --by equal to the ticket's author. An "approve" also binds to
-      the ticket's branch's current tip sha (read from its queue item), so a later commit on the
-      branch makes the approval stale — premerge.mjs's item 2 (keys) refuses a stale one and asks
-      for review again. The ticket's own verifier may approve in an owner's place (marked
+      what was read: the ticket's branch's current tip sha and the identity of its diff against
+      the team branch (both from its queue item). The branch catching up with the team keeps the
+      approval; a change to the ticket's own diff voids it and premerge.mjs's item 2 (keys) asks
+      for the review again. The ticket's own verifier may approve in an owner's place (marked
       "<name>(verifier-seat)" in the Keys line) only when the ticket's author is that node's own
       owner and the roster has no live architect — refused otherwise.
   move <ticket> --team t [--horde h]
@@ -679,19 +683,35 @@ function authorFromQueue(horde, ticket) {
   return item.agent;
 }
 
-// The current tip of the ticket's own branch, from its queue item's recorded "branch" — read
-// directly off queue.json the same way authorFromQueue does, for the same reason (queue.mjs
-// already imports this module; importing back would be a cycle). Binds an approval to the
-// commit it was actually given for: a later commit on the branch makes the approval stale, which
-// is premerge.mjs's job to notice and refuse. null when there's no queue item or branch to read
-// yet (a ticket approved before ever being queued) — the approval is then recorded without a
-// sha, exactly as it always was.
-function ticketBranchSha(horde, ticket) {
+// What an approval is bound to: the ticket's own branch, from its queue item's recorded "branch"
+// — read directly off queue.json the same way authorFromQueue does, for the same reason (queue.mjs
+// already imports this module; importing back would be a cycle) — as both the tip sha the review
+// was given at (provenance) and the identity of the diff that was read (the binding). A branch
+// that only catches up with its team keeps the same diff, so the approval stands; a change to what
+// the ticket actually does gives a different one, and premerge.mjs asks for the review again.
+// Both null when there's no queue item or branch to read yet (a ticket approved before ever being
+// queued) — the approval is then recorded as the bare name, exactly as it always was.
+function ticketBranchKey(horde, ticket) {
   const queue = readJSON(teamPath(horde, ticket.team, 'queue.json'), { items: [] });
   const items = Array.isArray(queue.items) ? queue.items : [];
   const item = items.find((i) => i.ticket === ticket.id);
-  if (!item || !item.branch) return null;
-  return git(['rev-parse', '--short', item.branch]);
+  if (!item || !item.branch) return { sha: null, patchId: null };
+  const cfg = readConfig();
+  const teamLeaf = String(ticket.team).split('/').pop();
+  const parentBranch = `${horde}/${teamLeaf}`;
+  return {
+    sha: git(['rev-parse', '--short', item.branch]),
+    patchId: patchIdOf(item.branch, parentBranch, { context: cfg && cfg.keyContext }),
+  };
+}
+
+// The recorded form of an approval: "<name>" alone, "<name>@<sha>" when only the branch tip is
+// known (and the approval is then good for that one commit only, as it always was), or
+// "<name>@<sha>+<patch-id>" when the diff's identity is known too — the sha stays readable and
+// stays the provenance; the patch-id after the "+" is what the approval is actually held to.
+function approvalValue(name, { sha, patchId }) {
+  if (!sha) return name;
+  return patchId ? `${name}@${sha}+${patchId}` : `${name}@${sha}`;
 }
 
 function cmdKey(horde, positional, flags) {
@@ -721,10 +741,20 @@ export function consumerNodesOf(text, nodes = nodesOf(text)) {
   return [...out].sort();
 }
 
+// --delta <path> — the file holding the difference between what the owner already approved and
+// what is on the branch now, written by premerge.mjs when a ticket's diff moved after the review.
+// Logged by path rather than by content: the owner reads the file, and the log keeps the record of
+// which re-review this request was, so a later reader can tell a scoped one from a full one.
 function cmdReviewRequest(horde, positional, flags) {
   const ticket = requireTicket(horde, positional[0]);
-  appendLog(ticket, 'review requested');
-  emit({ id: ticket.id }, flags, () => `review requested: ${ticket.id}`);
+  if (flags.delta === true) fail('--delta requires the path of the file to re-review (the merge checklist prints it)');
+  const delta = typeof flags.delta === 'string' ? flags.delta : null;
+  appendLog(ticket, delta ? `review requested — scoped re-review: ${delta}` : 'review requested');
+  emit(
+    { id: ticket.id, delta },
+    flags,
+    () => `review requested: ${ticket.id}${delta ? ` — scoped re-review: ${delta}` : ''}`,
+  );
 }
 
 function cmdReview(horde, positional, flags) {
@@ -778,10 +808,10 @@ function cmdReview(horde, positional, flags) {
     verifierSeat = true;
   }
 
-  const branchSha = verdict === 'approve' ? ticketBranchSha(horde, ticket) : null;
+  const key = verdict === 'approve' ? ticketBranchKey(horde, ticket) : { sha: null, patchId: null };
   const seatTag = verifierSeat ? '(verifier-seat)' : '';
   const value = verdict === 'approve'
-    ? (branchSha ? `${flags.by}${seatTag}@${branchSha}` : `${flags.by}${seatTag}`)
+    ? approvalValue(`${flags.by}${seatTag}`, key)
     : `changes:${flags.by}`;
   let text = ticket.text;
   for (const n of targets) text = setNodeApproval(text, n, value, { allowNew: consumers.includes(n) });
@@ -792,16 +822,23 @@ function cmdReview(horde, positional, flags) {
     text = setStatus(text, 'verified');
   }
   writeText(ticket.issuePath, text);
-  const shaNote = branchSha ? ` at ${branchSha}` : '';
+  const shaNote = key.sha ? ` at ${key.sha}` : '';
+  const diffNote = key.patchId ? ` (diff ${key.patchId.slice(0, 7)})` : '';
   const seatNote = verifierSeat ? ' (verifier-seat)' : '';
-  for (const n of targets) appendLog(ticket, `review: ${n} ${verdict} by ${flags.by}${seatNote}${shaNote}${why ? ` — ${why}` : ''}`);
+  for (const n of targets) appendLog(ticket, `review: ${n} ${verdict} by ${flags.by}${seatNote}${shaNote}${diffNote}${why ? ` — ${why}` : ''}`);
   traceRoster(horde, flags.by);
   emit(
     {
-      id: ticket.id, verdict, by: flags.by, nodes: targets, verifierSeat,
+      id: ticket.id,
+      verdict,
+      by: flags.by,
+      nodes: targets,
+      verifierSeat,
+      sha: key.sha,
+      diff: key.patchId,
     },
     flags,
-    () => `${ticket.id}: ${verdict} by ${flags.by}${seatNote} (${targets.join(', ')})`,
+    () => `${ticket.id}: ${verdict} by ${flags.by}${seatNote} (${targets.join(', ')})${diffNote}`,
   );
 }
 

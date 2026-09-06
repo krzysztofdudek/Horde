@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -332,4 +333,51 @@ test('verify.mjs record: a change that adds no test can still be verified', asyn
 
   const ticket = run('tk.mjs', ['show', '001'], dir);
   assert.match(ticket.json.text, /verifier verifier-1/);
+});
+
+test('verify.mjs record: the verdict is bound to the diff it judged', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const created = run('tk.mjs', ['new', 'bound', '--title', 'Bound to its diff', '--node', 'core', '--class', 'sonnet'], dir);
+  const id = created.json.id;
+  run('queue.mjs', ['add', id], dir);
+  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir);
+  const { branch, worktree } = running.json;
+  writeFileSync(join(worktree, 'thing.mjs'), 'export const thing = 1;\n');
+  execFileSync('git', ['add', '-A'], { cwd: worktree, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-qm', `ticket ${id}`], { cwd: worktree, stdio: 'ignore' });
+
+  await t.test('the branch comes from the ticket\'s own queue item, and the diff goes on the verdict', () => {
+    const r = run('verify.mjs', [
+      'record', id, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1',
+      '--gate', 'green', '--sha', 'abc1234',
+    ], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.diff, /^[0-9a-f]{40}$/);
+    const log = run('verify.mjs', ['show', id], dir);
+    assert.match(log.json.verdicts.join('\n'), new RegExp(`\\*\\*Diff:\\*\\* ${r.json.diff}`));
+    // The sha stays where it was: it is the tree the gate ran on, not the binding.
+    assert.match(log.json.verdicts.join('\n'), /\*\*Gate:\*\*.*green at sha abc1234/);
+  });
+
+  await t.test('--branch names the branch when the ticket has no queue item to read it from', () => {
+    const other = run('tk.mjs', ['new', 'no-queue', '--title', 'Never queued', '--node', 'core', '--class', 'sonnet'], dir);
+    const noItem = run('verify.mjs', [
+      'record', other.json.id, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1',
+      '--gate', 'green', '--sha', 'abc1234',
+    ], dir);
+    assert.equal(noItem.code, 0, noItem.stderr);
+    assert.equal(noItem.json.diff, null);
+    const shown = run('verify.mjs', ['show', other.json.id], dir);
+    assert.match(shown.json.verdicts.join('\n'), /\*\*Diff:\*\* not recorded — this verdict is bound to its sha alone/);
+
+    const named = run('verify.mjs', [
+      'record', other.json.id, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1',
+      '--gate', 'green', '--sha', 'abc1234', '--branch', branch,
+    ], dir);
+    assert.equal(named.code, 0, named.stderr);
+    assert.match(named.json.diff, /^[0-9a-f]{40}$/);
+  });
 });
