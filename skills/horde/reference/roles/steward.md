@@ -139,7 +139,9 @@ taken, and the cost. It changes nothing.
    merged, K escalated, cost C". If you are not the trunk steward, your branch merges up like a ticket:
    `queue.mjs set team:{{team}} landed --team {{parentTeam}}` on the parent's queue, then a doorbell to
    the parent steward by name. The parent runs `premerge --level team` and merges; nobody escalates a
-   merge-up.
+   merge-up. An empty queue is never itself "the mission is done" — say so in the same message when you
+   are the trunk steward: `horde.mjs done` is the director's own gate, and it reads the evidence
+   catalogue, not your queue.
 8. Every three merges: `handoff.mjs write --by steward --summary "…"` so a session loss loses nothing.
 9. A `re-plan` doorbell from the director (the charter was amended): stop dispatching, let running
    tickets land, ask the owners of the nodes the amendment names to re-propose, then `queue.mjs

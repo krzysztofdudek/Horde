@@ -6,13 +6,22 @@
 // horde on it, and archiving a finished one. `.horde/` itself is created here and nowhere else —
 // every other tool assumes it already exists.
 
-import { existsSync, mkdirSync, writeFileSync, readFileSync, renameSync, readdirSync, statSync } from 'node:fs';
+import {
+  existsSync, mkdirSync, writeFileSync, readFileSync, renameSync, readdirSync, statSync,
+  mkdtempSync, rmSync,
+} from 'node:fs';
 import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
+import { execFileSync, execSync } from 'node:child_process';
 import {
   repoRoot, hordeRoot, hordePath, readConfig, writeConfig, listHordes, readJSON,
-  writeJSON, readText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
+  writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
 } from './_lib.mjs';
-import { currentWaveNumber, parseEvidenceRows } from './wave.mjs';
+import {
+  currentWaveNumber, parseEvidenceRows, mentionsEvidenceId, wave1Started, lastWaveSpan, hasAuditIn,
+  stampMissionEvidence,
+} from './wave.mjs';
+import { sumEntries, readCostLimit } from './cost.mjs';
 
 const DEFAULT_CLASSES = { haiku: 1, sonnet: 3, opus: 10, fable: 30 };
 
@@ -36,11 +45,19 @@ commands:
       long as nothing landed within this many lines of the ticket's own change. Raise it to send
       more tickets back for a re-review, lower it to send fewer; 1 is the lowest offered.
   charter show [--horde h]
-  charter edit [--horde h]
+  charter edit [--escalation id] [--horde h]
       the mission charter: "show" prints it, "edit" replaces it with what arrives on stdin and
-      reports what that did to the evidence catalogue.
+      reports what that did to the evidence catalogue. Dropping a row is free before the mission's
+      wave 1 has started; after it, dropping one refuses unless --escalation names a ruled
+      escalation whose own text mentions the row's id.
   archive <name>
       moves hordes/<name> to hordes/_archive/<name>-<date>. Branches are untouched.
+  done [--horde h]
+      the mission's final gate. Refuses, listing every reason, when any evidence row is not
+      reproduced, the trunk gate (config.gates.trunk) is not green at the trunk tip, no audit
+      verdict was recorded for the mission's last wave, or no cost has ever been recorded.
+      Otherwise stamps the charter, appends the completion block to the mission journal, and
+      prints what to do next (push — that decision is the chairman's, never this tool's).
 
 options: --json  --help`;
 
@@ -399,9 +416,40 @@ function cmdCharter(positional, flags) {
   const content = readStdin();
   if (!content.trim()) fail('charter edit requires content on stdin');
 
-  const filledBefore = parseEvidenceRows(before).filter((r) => r.reproducedBy);
+  const rowsBefore = parseEvidenceRows(before);
   const rowsAfter = parseEvidenceRows(content);
   const afterById = new Map(rowsAfter.map((r) => [r.id, r]));
+
+  // A row dropped outright (present before, gone from this text entirely) is free before the
+  // mission's wave 1 has started — nothing has been built against it yet — and after it needs a
+  // ruled escalation whose own text names every id being dropped, so the reason survives in the
+  // log the escalation already writes (decide.mjs's esc-<id> entry), not just in this command's
+  // own stdout.
+  const droppedIds = rowsBefore.filter((r) => !afterById.has(r.id)).map((r) => r.id);
+  if (droppedIds.length && wave1Started(readText(hordePath(horde, 'plan.md')) || '')) {
+    if (!flags.escalation) {
+      fail(
+        `this rewrite drops evidence row(s) ${droppedIds.join(', ')} after the mission's wave 1 started — that `
+        + `needs a ruled escalation naming them: escalate.mjs add "<why>" --kind charter, escalate.mjs rule <id> `
+        + `"<ruling mentioning ${droppedIds.join(', ')}>", then retry with --escalation <id>`,
+      );
+    }
+    const escId = String(flags.escalation);
+    const doc = readJSON(hordePath(horde, 'escalations.json'), { items: [] });
+    const esc = (Array.isArray(doc.items) ? doc.items : []).find((it) => it.id === escId);
+    if (!esc) fail(`no such escalation: ${escId}`);
+    if (esc.state !== 'ruled') fail(`escalation ${escId} is not ruled yet (state: ${esc.state}) — rule it first: escalate.mjs rule ${escId} "<ruling>"`);
+    const escText = `${esc.why}\n${esc.ruling || ''}`;
+    const notMentioned = droppedIds.filter((id) => !mentionsEvidenceId(escText, id));
+    if (notMentioned.length) {
+      fail(`escalation ${escId}'s text does not mention dropped row(s): ${notMentioned.join(', ')} — rule a new escalation that names them, or keep the row(s)`);
+    }
+  }
+
+  // Separately: a row still present but whose already-recorded "reproduced by" this text erases
+  // (kept in the table, cell blanked) loses a verifier's work silently unless flagged — worth a
+  // warning on every edit, drop-refusal or not.
+  const filledBefore = rowsBefore.filter((r) => r.reproducedBy);
   const dropped = filledBefore
     .filter((r) => !afterById.has(r.id) || !afterById.get(r.id).reproducedBy)
     .map((r) => ({ id: r.id, was: r.reproducedBy }));
@@ -432,6 +480,158 @@ function cmdArchive(positional, flags) {
   emit({ from: src, to: dest }, flags, () => `archived: ${name} -> ${dest}`);
 }
 
+// ---- done — the mission's final gate -----------------------------------------------
+//
+// evidence-is-the-plan: "done" is never "the queue is empty" — it is every promised proof
+// reproduced, the trunk gate green at the trunk tip, the mission's last wave audited, and a cost
+// report on file. Refuses listing every reason at once (never one at a time, forcing a retry
+// loop); on success it stamps the charter (via stampMissionEvidence, already called for the
+// evidence check itself), appends the completion block to the mission journal, and prints what
+// the chairman does next.
+
+function short(sha) { return sha ? sha.slice(0, 7) : '(none)'; }
+
+// Tolerant the same way premerge.mjs's own gate/key comparisons are: a short sha, a full sha, or
+// either shortened to the other's length all count as the same commit.
+function shaMatchesTolerant(a, b) {
+  if (!a || !b) return false;
+  return a === b || a === short(b) || short(a) === short(b) || String(b).startsWith(a) || String(a).startsWith(b);
+}
+
+// Runs `cmd` against the trunk branch's own tree, in a scratch worktree that never touches the
+// caller's — the same shape premerge.mjs's own revert test and gate checks use, since "done" has
+// no ticket branch worktree of its own to run in.
+function runGateAt(root, cmd, branch) {
+  const tmp = mkdtempSync(join(tmpdir(), 'horde-done-gate-'));
+  let ok = false;
+  try {
+    execFileSync('git', ['worktree', 'add', '--detach', '--force', tmp, branch], { cwd: root, stdio: 'pipe' });
+    try {
+      execSync(cmd, { cwd: tmp, stdio: 'pipe' });
+      ok = true;
+    } catch {
+      ok = false;
+    }
+  } finally {
+    try { execFileSync('git', ['worktree', 'remove', tmp, '--force'], { cwd: root, stdio: 'pipe' }); } catch { rmSync(tmp, { recursive: true, force: true }); }
+  }
+  return { ok };
+}
+
+// The verdict word of the last "audit: <ticket> clean|findings — …" bullet in a wave's span —
+// "pending" when hasAuditIn already refused (never reached from cmdDone in that case, but kept
+// honest rather than assuming).
+function lastAuditVerdict(spanText) {
+  const matches = [...spanText.matchAll(/^- \S+ audit: \S+ (clean|findings) — /gm)];
+  return matches.length ? matches[matches.length - 1][1] : 'pending';
+}
+
+function cmdDone(positional, flags) {
+  const horde = resolveHorde(flags);
+  const cfg = readConfig() || {};
+  const root = repoRoot();
+  const reasons = [];
+
+  // 1. Every promised proof, reproduced. stampMissionEvidence promotes whatever a merged ticket
+  // already proved into the charter's own cell (mission-wide, not scoped to one wave) before the
+  // check, so "done" never depends on a wave close the director forgot to run.
+  const coverage = stampMissionEvidence(horde);
+  if (coverage.length === 0) {
+    reasons.push('the charter\'s evidence catalogue is empty — nothing to reproduce is not the same as done; add rows with horde.mjs charter edit');
+  }
+  const red = coverage.filter((r) => r.state !== 'reproduced');
+  if (red.length) {
+    reasons.push(`evidence row(s) not reproduced: ${red.map((r) => `${r.id} (${r.state})`).join(', ')} — see status.mjs --horde ${horde} for what each is waiting on`);
+  }
+
+  // 2. The trunk gate green at the trunk tip — a matching recorded green is accepted, anything
+  // else is run fresh (config.gates.trunk, in a scratch worktree of the trunk branch).
+  const trunkBranch = `${horde}/trunk`;
+  const trunkSha = git(['rev-parse', trunkBranch]);
+  let gateGreen = false;
+  if (!trunkSha) {
+    reasons.push(`no such branch: ${trunkBranch}`);
+  } else {
+    const gateCmd = cfg.gates && cfg.gates.trunk;
+    if (!gateCmd) {
+      reasons.push('no config.gates.trunk configured — set it: horde.mjs config set gates.trunk "<command>"');
+    } else {
+      const gateCache = readJSON(hordePath(horde, 'cache', 'last-gate.json'), {});
+      const cached = gateCache.trunk;
+      if (cached && cached.result === 'green' && shaMatchesTolerant(cached.sha, trunkSha)) {
+        gateGreen = true;
+      } else {
+        const ran = runGateAt(root, gateCmd, trunkBranch);
+        gateGreen = ran.ok;
+        writeJSON(hordePath(horde, 'cache', 'last-gate.json'), {
+          ...gateCache,
+          trunk: {
+            sha: trunkSha, result: gateGreen ? 'green' : 'red', count: null, at: new Date().toISOString(), by: 'horde done',
+          },
+        });
+        if (!gateGreen) reasons.push(`trunk gate red at ${short(trunkSha)} (${gateCmd})`);
+      }
+    }
+  }
+
+  // 3. An audit verdict for the mission's last wave — "current" once the final wave is closed
+  // means "the last one", not "none open".
+  const missionPlan = readText(hordePath(horde, 'plan.md')) || '';
+  const span = lastWaveSpan(missionPlan);
+  let auditVerdict = null;
+  if (!span) {
+    reasons.push('no wave has ever been started for this mission — wave.mjs start');
+  } else if (!hasAuditIn(span.text)) {
+    reasons.push(`no audit verdict recorded for wave ${span.n} — wave.mjs audit <ticket> clean|findings "<text>"`);
+  } else {
+    auditVerdict = lastAuditVerdict(span.text);
+  }
+
+  // 4. A cost report on file — cost.json always exists once a horde is init'd, so "missing" here
+  // means nobody has ever spawned an agent against it.
+  const costDoc = readJSON(hordePath(horde, 'cost.json'), { runs: [] });
+  const runsArr = Array.isArray(costDoc.runs) ? costDoc.runs : [];
+  if (runsArr.length === 0) {
+    reasons.push('no cost has ever been recorded for this mission — nothing has run, so there is nothing to report (cost.mjs report)');
+  }
+
+  if (reasons.length) {
+    fail(`mission "${horde}" is not done — ${reasons.length} reason(s):\n- ${reasons.join('\n- ')}`);
+  }
+
+  const weights = cfg.classes || {};
+  const { runs, weighted } = sumEntries(runsArr, weights);
+  const limit = readCostLimit(horde);
+
+  const rendered = renderTemplate('mission-close', {
+    date: today(),
+    green: coverage.length,
+    total: coverage.length,
+    gate: 'green',
+    sha: short(trunkSha),
+    auditWave: span.n,
+    auditVerdict,
+    runs,
+    weighted,
+    horde,
+    'of limit': limit === null ? '' : ` of ${limit}`,
+  });
+  appendText(hordePath(horde, 'plan.md'), `\n${rendered}`);
+
+  const result = {
+    horde,
+    evidence: { green: coverage.length, total: coverage.length },
+    gate: { level: 'trunk', sha: trunkSha, result: 'green' },
+    audit: { wave: String(span.n), verdict: auditVerdict },
+    cost: { runs, weighted, limit },
+  };
+  emit(result, flags, () => [
+    `mission "${horde}" is done — evidence ${coverage.length}/${coverage.length} green, trunk gate green at ${short(trunkSha)}, `
+      + `wave ${span.n} audit ${auditVerdict}, cost ${runs} runs (weighted ${weighted}).`,
+    `Push when ready: git push <remote> ${trunkBranch} — and open the pull request. That decision is the chairman's, never this tool's.`,
+  ].join('\n'));
+}
+
 function main() {
   const { positional: allPositional, flags } = parseArgs(process.argv.slice(2));
   const [cmd, ...positional] = allPositional;
@@ -445,6 +645,7 @@ function main() {
     case 'config': return cmdConfig(positional, flags);
     case 'charter': return cmdCharter(positional, flags);
     case 'archive': return cmdArchive(positional, flags);
+    case 'done': return cmdDone(positional, flags);
     default: fail(`unknown command: ${cmd} (see --help)`);
   }
 }
