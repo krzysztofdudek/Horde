@@ -7,24 +7,24 @@
   "ticket": "001",
   "branch": "m1/t-001",
   "parentBranch": "m1/trunk",
-  "tip": "c4cd3263a0aa01c129b5ff838dda786f8672e931",
+  "tip": "f1215e24d151ce95f0ef561aac5d879d027614e9",
   "refs": [
     "m1/t-001",
     "m1/trunk",
     "develop"
   ],
-  "recordedAt": "2026-09-06T15:40:18.254Z",
-  "note": "the diff carries a file no node of this ticket maps",
+  "recordedAt": "2026-09-06T19:54:32.791Z",
+  "note": "the diff carries a file no component of this ticket maps",
   "saw": [
     {
-      "name": "nodes named",
+      "name": "scope declared",
       "ok": true,
-      "note": "core"
+      "note": "no files declared; bounded by the node(s) core"
     },
     {
       "name": "diff inside the boundary",
       "ok": false,
-      "note": "outside the ticket's nodes: docs/release-notes.md"
+      "note": "outside core: docs/release-notes.md"
     },
     {
       "name": "no protected path",

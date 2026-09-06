@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde,
+  makeRepo, rmRepo, run, initHorde, addNode,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -42,7 +42,7 @@ function tk(dir, args) {
 
 // The six tickets of the worked example: 101 produces the engine's contract, 102/103/104 consume
 // it, 105 waits on all three by hand, 106 is unrelated web work whose files are disjoint from
-// 103's. Node boundaries are the horde's own committed node map (no Yggdrasil in this fixture).
+// 103's. Node boundaries come from the repository's graph, which `horde init` created.
 function makeSixTicketFixture(dir) {
   initHorde(dir);
   startTicketsAt(dir, 'mission1', 101);
@@ -52,10 +52,10 @@ function makeSixTicketFixture(dir) {
     { id: 'E3', text: 'the cli asks the engine', node: 'cli' },
     { id: 'E4', text: 'the role tables are gone from the schema', node: 'auth' },
   ]);
-  run('node.mjs', ['new', 'auth', '--boundary', 'src/auth/'], dir);
-  run('node.mjs', ['new', 'api', '--boundary', 'src/api/', '--depends', 'auth'], dir);
-  run('node.mjs', ['new', 'web', '--boundary', 'src/web/', '--depends', 'auth'], dir);
-  run('node.mjs', ['new', 'cli', '--boundary', 'src/cli/', '--depends', 'auth'], dir);
+  addNode(dir, 'auth', { mapping: ['src/auth/**'] });
+  addNode(dir, 'api', { mapping: ['src/api/**'], relations: [{ target: 'auth', type: 'uses' }] });
+  addNode(dir, 'web', { mapping: ['src/web/**'], relations: [{ target: 'auth', type: 'uses' }] });
+  addNode(dir, 'cli', { mapping: ['src/cli/**'], relations: [{ target: 'auth', type: 'uses' }] });
 
   tk(dir, ['policy-engine', '--title', 'policy engine', '--node', 'auth', '--class', 'sonnet',
     '--files', 'src/auth/policy.ts,src/auth/policy.test.ts', '--produces', 'auth/policy@2', '--evidence', 'E1']);
@@ -268,52 +268,27 @@ test('queue.mjs plan: a producer in another team resolves, and the edge points o
 
 // --- the graph's own edge, both ways of reading it ---------------------------------
 //
-// With Yggdrasil the question "who consumes this port" has an authority — `yg impact --node
-// <p> --json`, the yg-impact/1 document. Without a CLI that produces it, the same question is
-// answered from the relations in the graph files. Both are exercised here against one fixture,
-// with a stand-in `yg` that prints a document of the agreed shape.
-function makeYggdrasilFixture(dir) {
-  const model = join(dir, '.yggdrasil', 'model');
-  mkdirSync(join(model, 'auth'), { recursive: true });
-  writeFileSync(join(model, 'auth', 'yg-node.yaml'), [
-    'name: auth', 'type: domain', 'description: "authorisation"', '',
-    'mapping:', '  - src/auth/', '',
-    'ports:', '  policy:', '    description: "the policy engine"', '    version: 1',
-    '    test: tests/contracts/policy.test.mjs', '',
-  ].join('\n'));
-  mkdirSync(join(model, 'api'), { recursive: true });
-  writeFileSync(join(model, 'api', 'yg-node.yaml'), [
-    'name: api', 'type: service', 'description: "the http surface"', '',
-    'mapping:', '  - src/api/', '',
-    'relations:', '  - target: auth', '    type: uses', '    consumes:', '      - policy', '',
-  ].join('\n'));
-  mkdirSync(join(model, 'mobile'), { recursive: true });
-  writeFileSync(join(model, 'mobile', 'yg-node.yaml'), [
-    'name: mobile', 'type: client', 'description: "the app"', '',
-    'mapping:', '  - src/mobile/', '',
-  ].join('\n'));
-  writeFileSync(join(dir, '.yggdrasil', 'yg-architecture.yaml'), 'placeholder: true\n');
-
-  // A stand-in for the Yggdrasil CLI: `impact --node auth --json` answers with the document the
-  // layers agreed on, naming one consumer the graph files here do not — mobile — so which of the
-  // two readings the plan used is visible in its output.
-  writeFileSync(join(dir, 'fake-yg.mjs'), `
-const args = process.argv.slice(2);
-const schema = process.env.FAKE_YG_SCHEMA || 'yg-impact/1';
-if (args[0] === 'impact' && args[2] === 'auth') {
-  process.stdout.write(JSON.stringify({
-    schema,
-    subject: { kind: 'node', path: 'auth' },
-    ports: [{ name: 'policy', version: 1, test: 'tests/contracts/policy.test.mjs',
-      consumers: [{ node: 'api', relation: 'uses' }, { node: 'mobile', relation: 'uses' }] }],
-    dependents: [{ node: 'api', direct: true, relations: [{ type: 'uses', ports: ['policy'] }] }],
-    transitive: [],
-  }));
-  process.exit(0);
-}
-process.stdout.write(JSON.stringify({ schema, ports: [], dependents: [], transitive: [] }));
-`);
+// "Who consumes this port" has exactly one authority — `yg impact --node <p> --json`, the
+// yg-impact/1 document — and no second reading to fall back to. Two consumers here, reached two
+// different ways by the graph itself: `api` names the port it consumes, `mobile` names only the
+// component, which consumes it whole. Both must land in the plan, and a CLI that cannot answer
+// must stop the plan rather than quietly produce a smaller one.
+function makeConsumerFixture(dir) {
   initHorde(dir);
+  addNode(dir, 'auth', {
+    type: 'module',
+    mapping: ['src/auth/**'],
+    ports: { policy: { version: 1, test: 'tests/contracts/policy.test.mjs' } },
+  });
+  addNode(dir, 'api', {
+    mapping: ['src/api/**'],
+    relations: [{ target: 'auth', type: 'uses', consumes: ['policy'] }],
+  });
+  addNode(dir, 'mobile', {
+    mapping: ['src/mobile/**'],
+    relations: [{ target: 'auth', type: 'uses' }],
+  });
+
   const producer = tk(dir, ['engine', '--title', 'policy engine', '--node', 'auth', '--class', 'sonnet',
     '--files', 'src/auth/policy.ts', '--produces', 'auth/policy@2']);
   const apiTicket = tk(dir, ['guard', '--title', 'api guard', '--node', 'api', '--class', 'sonnet',
@@ -324,14 +299,12 @@ process.stdout.write(JSON.stringify({ schema, ports: [], dependents: [], transit
   return { producer, apiTicket, mobileTicket };
 }
 
-test('queue.mjs plan: the graph edge from yg-impact/1 when the CLI produces it, from the graph files when it does not', async (t) => {
+test('queue.mjs plan: the graph edge comes from yg-impact/1, and a CLI that cannot answer stops the plan', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  const { producer, apiTicket, mobileTicket } = makeYggdrasilFixture(dir);
+  const { producer, apiTicket, mobileTicket } = makeConsumerFixture(dir);
 
-  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${join(dir, 'fake-yg.mjs')}`], dir);
-
-  await t.test('with yg-impact/1 the plan orders every consumer the document names', () => {
+  await t.test('every consumer the document names is ordered after the version bump', () => {
     const plan = run('queue.mjs', ['plan'], dir).json;
     const edges = plan.edges.filter((e) => e.why.includes('raises')).map((e) => `${e.from}->${e.on}`).sort();
     assert.deepEqual(edges, [`${apiTicket}->${producer}`, `${mobileTicket}->${producer}`]);
@@ -339,21 +312,12 @@ test('queue.mjs plan: the graph edge from yg-impact/1 when the CLI produces it, 
     assert.deepEqual(plan.layers, [[producer], [apiTicket, mobileTicket].sort()]);
   });
 
-  await t.test('a CLI whose document says another schema is ignored — the graph files are read', () => {
-    const wrongSchema = execFileSync('node', [join(SCRIPTS_DIR, 'queue.mjs'), 'plan', '--json'], {
-      cwd: dir, encoding: 'utf8', env: { ...process.env, FAKE_YG_SCHEMA: 'yg-impact/0' },
-    });
-    const plan = JSON.parse(wrongSchema);
-    const edges = plan.edges.filter((e) => e.why.includes('raises')).map((e) => `${e.from}->${e.on}`);
-    assert.deepEqual(edges, [`${apiTicket}->${producer}`]);
-    assert.deepEqual(plan.tickets.find((x) => x.id === producer).approvals, ['auth', 'api']);
-    assert.deepEqual(plan.layers, [[producer, mobileTicket].sort(), [apiTicket]]);
-  });
-
-  await t.test('no CLI at all falls back the same way', () => {
+  await t.test('a CLI that cannot be started is a refusal naming what to install, not a smaller plan', () => {
     run('horde.mjs', ['config', 'set', 'ygCommand', 'definitely-not-installed-yg'], dir);
-    const plan = run('queue.mjs', ['plan'], dir).json;
-    const edges = plan.edges.filter((e) => e.why.includes('raises')).map((e) => `${e.from}->${e.on}`);
-    assert.deepEqual(edges, [`${apiTicket}->${producer}`]);
+    const r = run('queue.mjs', ['plan'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /could not be started/);
+    assert.match(r.stderr, /@chrisdudek\/yg/);
+    assert.match(r.stderr, /config set ygCommand/);
   });
 });

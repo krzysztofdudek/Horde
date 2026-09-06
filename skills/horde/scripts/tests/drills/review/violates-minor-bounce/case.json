@@ -7,13 +7,13 @@
   "ticket": "001",
   "branch": "m1/t-001",
   "parentBranch": "m1/trunk",
-  "tip": "e41540f4fe5ee6be8e4ac5336dd488e41990213c",
+  "tip": "2d34ce12922f2646cd3b9e41b358d3b558404ca4",
   "refs": [
     "m1/t-001",
     "m1/trunk",
     "develop"
   ],
-  "recordedAt": "2026-09-06T15:40:15.939Z",
+  "recordedAt": "2026-09-06T20:37:09.111Z",
   "note": "the ticket went back over a Minor finding alone",
   "saw": [
     {

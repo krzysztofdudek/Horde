@@ -61,12 +61,147 @@ export function run(toolName, args, cwd, { json = true } = {}) {
 // fixture repository is a bare git repo with no build files at all, so nothing tells `init` what
 // its tests are called; every test that reaches the merge checklist declares it here the way a
 // real adopter would, unless it passes its own --test-globs to exercise the detection itself.
+//
+// `--yg` names the real Yggdrasil build on this machine, because Horde requires Yggdrasil: on a
+// repository with no graph `init` creates one through that CLI, so every fixture below gets a real
+// `.yggdrasil/` made by the real thing, never a hand-written stand-in.
 export function initHorde(dir, name = 'mission1', extra = []) {
   const globs = extra.includes('--test-globs') ? [] : ['--test-globs', '**/*.test.*,**/*.spec.*'];
-  const r = run('horde.mjs', ['init', name, '--base', 'develop', ...globs, ...extra], dir);
+  const ygFlag = extra.includes('--yg') ? [] : ['--yg', requireYg()];
+  const r = run('horde.mjs', ['init', name, '--base', 'develop', ...globs, ...ygFlag, ...extra], dir);
   if (r.code !== 0) throw new Error(`initHorde failed: ${r.stderr}`);
   return r.json;
 }
+
+// requireYg() — the real Yggdrasil CLI, or a refusal that says why the suite cannot run without
+// one. Horde requires Yggdrasil; a suite that quietly measured a stand-in instead would be proving
+// something no adopter ever runs.
+export function requireYg() {
+  const found = findRealYg();
+  if (!found) {
+    throw new Error(
+      'no Yggdrasil CLI on this machine — Horde requires it, and so does this suite. Put `yg` on '
+      + 'PATH, set HORDE_TEST_YG to a command line, or check out Yggdrasil beside this repository.',
+    );
+  }
+  return found;
+}
+
+// yg(dir, args) — run the real CLI in a fixture and hand back what it said, exit code included.
+export function yg(dir, args) {
+  const parts = requireYg().split(/\s+/);
+  try {
+    return {
+      code: 0,
+      out: execFileSync(parts[0], [...parts.slice(1), ...args], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
+    };
+  } catch (e) {
+    return {
+      code: e.status ?? 1,
+      out: (e.stdout ? e.stdout.toString() : '') + (e.stderr ? e.stderr.toString() : ''),
+    };
+  }
+}
+
+// ygInit(dir) — the real `yg init`, for a fixture that needs a graph in place before
+// `horde.mjs init` ever runs.
+export function ygInit(dir) {
+  const r = yg(dir, ['init']);
+  if (r.code !== 0) throw new Error(`yg init failed: ${r.out}`);
+  return dir;
+}
+
+// addNode(dir, path, spec) — a real component in the real graph: the `yg-node.yaml` Yggdrasil
+// itself reads, at the path that IS the node's identity. Written by hand because no `yg` command
+// authors a component; every tool under test then reads it back through `yg node --json`, which is
+// the only way any of them sees a node at all.
+export function addNode(dir, path, spec = {}) {
+  const {
+    type = 'module',
+    description = `Fixture component ${path}.`,
+    mapping = [],
+    relations = [],
+    aspects = [],
+    ports = {},
+  } = spec;
+  const lines = [
+    `name: ${path.split('/').pop()}`,
+    `type: ${type}`,
+    `description: ${description}`,
+  ];
+  if (aspects.length) {
+    lines.push('aspects:');
+    for (const a of aspects) lines.push(`  - ${a}`);
+  }
+  lines.push('mapping:');
+  if (mapping.length) for (const m of mapping) lines.push(`  - "${m}"`);
+  else lines.push('  []');
+  if (relations.length) {
+    lines.push('relations:');
+    for (const r of relations) {
+      lines.push(`  - target: ${r.target}`);
+      lines.push(`    type: ${r.type || 'uses'}`);
+      if (r.consumes && r.consumes.length) {
+        lines.push('    consumes:');
+        for (const c of r.consumes) lines.push(`      - ${c}`);
+      }
+    }
+  } else {
+    lines.push('relations: []');
+  }
+  const portNames = Object.keys(ports);
+  if (portNames.length) {
+    lines.push('ports:');
+    for (const name of portNames) {
+      const p = ports[name] || {};
+      lines.push(`  ${name}:`);
+      lines.push(`    description: ${p.description || `The ${name} promise.`}`);
+      if (p.version !== undefined) lines.push(`    version: ${p.version}`);
+      if (p.test !== undefined) lines.push(`    test: ${p.test}`);
+      lines.push('    aspects: []');
+    }
+  }
+  const dest = join(dir, '.yggdrasil', 'model', path);
+  mkdirSync(dest, { recursive: true });
+  writeFileSync(join(dest, 'yg-node.yaml'), `${lines.join('\n')}\n`);
+  return dest;
+}
+
+// addAspect(dir, id, spec) — a real rule in the real graph. `check` makes it a script rule (run
+// locally, free); `content` makes it a prose rule, which a reader has to judge — the work the
+// verifier's own channel exists for.
+export function addAspect(dir, id, spec = {}) {
+  const {
+    name = id, description = `Fixture rule ${id}.`, status = 'enforced', check = null, content = null,
+  } = spec;
+  const dest = join(dir, '.yggdrasil', 'aspects', id);
+  mkdirSync(dest, { recursive: true });
+  const head = [`name: ${name}`, `description: ${description}`];
+  if (check) head.push('errs: under');
+  head.push(`status: ${status}`, 'review_by: 2099-01-01');
+  writeFileSync(join(dest, 'yg-aspect.yaml'), `${head.join('\n')}\n`);
+  if (check) writeFileSync(join(dest, 'check.mjs'), check);
+  if (content) writeFileSync(join(dest, 'content.md'), content);
+  return dest;
+}
+
+// A script rule that refuses any file carrying the marker — small, real and deterministic, so a
+// fixture can make `yg check` red on purpose and green again by deleting one line.
+export const MARKER_CHECK = [
+  'export function check(ctx) {',
+  '  const out = [];',
+  '  for (const file of ctx.files) {',
+  "    const lines = file.content.split('\\n');",
+  '    for (let i = 0; i < lines.length; i++) {',
+  "      if (lines[i].includes('UNFINISHED')) {",
+  "        out.push({ file: file.path, line: i + 1, column: 0, message: 'unfinished-work marker left behind.' });",
+  '      }',
+  '    }',
+  '  }',
+  '  return out;',
+  '}',
+  '',
+].join('\n');
 
 // findRealYg() — the real, installed Yggdrasil CLI, for the tests that measure a real graph
 // rather than a stand-in: the HORDE_TEST_YG environment variable, else `yg` on PATH, else a
@@ -74,15 +209,30 @@ export function initHorde(dir, name = 'mission1', extra = []) {
 // this repository — the layout of a machine that has both repos out). Returns the command line
 // to put in `config.ygCommand`, or null when there is none. A test that gets null asserts the
 // honest "not measured" answer the tools give without a CLI; it never fabricates a report.
+let resolvedYg;
 export function findRealYg() {
+  // Resolved once per process: the probe starts a process, and a machine running the whole suite
+  // at once can fail to start one for a moment. Answering "there is no CLI" to that would be a
+  // lie about the machine, and every fixture below would then be built on it.
+  if (resolvedYg !== undefined) return resolvedYg;
+  resolvedYg = locateRealYg();
+  return resolvedYg;
+}
+
+function locateRealYg() {
   const probe = (cmdline) => {
     const parts = String(cmdline).trim().split(/\s+/).filter(Boolean);
-    try {
-      execFileSync(parts[0], [...parts.slice(1), '--version'], { stdio: 'ignore' });
-      return cmdline;
-    } catch {
-      return null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        execFileSync(parts[0], [...parts.slice(1), '--version'], { stdio: 'ignore' });
+        return cmdline;
+      } catch (e) {
+        // A program that is not there is not there; a machine that could not start one right now
+        // is worth one more ask.
+        if (e.code === 'ENOENT' || (e.status !== undefined && e.status !== null)) return null;
+      }
     }
+    return null;
   };
   if (process.env.HORDE_TEST_YG) return probe(process.env.HORDE_TEST_YG);
   const onPath = probe('yg');

@@ -7,29 +7,29 @@
   "ticket": "001",
   "branch": "m1/t-001",
   "parentBranch": "m1/trunk",
-  "tip": "3de9b82de6e613b1e6f4b40e111faeb9a3151a16",
+  "tip": "0b7aea82b8c8027dcc80c3bfc4533f5375582766",
   "refs": [
     "m1/t-001",
     "m1/trunk",
     "develop"
   ],
-  "recordedAt": "2026-09-06T15:40:09.385Z",
+  "recordedAt": "2026-09-06T20:37:01.303Z",
   "note": "the test arrived on a tree that could not pass it",
   "saw": [
     {
       "name": "commits",
       "ok": true,
-      "note": "2 commit(s) on m1/t-001 beyond f812add"
+      "note": "2 commit(s) on m1/t-001 beyond 1a86c44"
     },
     {
       "name": "new tests",
       "ok": true,
-      "note": "b8065b4: src/retry.test.mjs"
+      "note": "acc47dd: src/retry.test.mjs"
     },
     {
       "name": "red before",
       "ok": true,
-      "note": "b8065b4 on f812add: src/retry.test.mjs 1 fail / 1 tests"
+      "note": "acc47dd on 1a86c44: src/retry.test.mjs 1 fail / 1 tests"
     },
     {
       "name": "green after",

@@ -5,8 +5,9 @@
       "state": "running",
       "class": "sonnet",
       "branch": "m1/t-001",
-      "worktree": "/tmp/horde-corpus-cpAT70/.horde/worktrees/m1/t-001",
+      "worktree": "/tmp/horde-drill-4z1GiI/.horde/worktrees/m1/t-001",
       "dependsOn": [],
+      "stackedOn": null,
       "agent": "worker1",
       "sha": null,
       "notes": []

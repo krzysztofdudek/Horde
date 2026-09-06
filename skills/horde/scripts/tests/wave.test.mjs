@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, writeCostRuns, findRealYg,
+  makeRepo, rmRepo, run, initHorde, writeCostRuns, requireYg,
 } from './helpers.mjs';
 
 function git(args, cwd) {
@@ -346,19 +346,14 @@ function libWith(line, value) {
   return `${lines.join('\n')}\n`;
 }
 
-// A real Yggdrasil graph: `yg init` from the installed CLI when the machine has one, then one
-// node mapping the two source files and one enforced deterministic rule over them. The rule is a
-// real check.mjs the CLI runs, not a description of one — the quality index is only worth
-// measuring against a graph that actually enforces something.
-function graphFixture(dir, yg) {
+// A real Yggdrasil graph: `yg init` from the installed CLI, then one component mapping the two
+// source files and one enforced deterministic rule over them. The rule is a real check.mjs the
+// CLI runs, not a description of one — the quality index is only worth measuring against a graph
+// that actually enforces something.
+function graphFixture(dir, ygCommand) {
   writeFileSync(join(dir, 'package.json'), `${JSON.stringify({ name: 'e14', version: '1.0.0', type: 'module' }, null, 2)}\n`);
-  if (yg) {
-    const parts = yg.split(/\s+/);
-    execFileSync(parts[0], [...parts.slice(1), 'init', '--no-reviewer'], { cwd: dir, stdio: 'ignore' });
-  } else {
-    mkdirSync(join(dir, '.yggdrasil'), { recursive: true });
-    writeFileSync(join(dir, '.yggdrasil', 'yg-architecture.yaml'), 'node_types: {}\n');
-  }
+  const parts = ygCommand.split(/\s+/);
+  execFileSync(parts[0], [...parts.slice(1), 'init', '--no-reviewer'], { cwd: dir, stdio: 'ignore' });
 
   mkdirSync(join(dir, '.yggdrasil', 'model', 'feature'), { recursive: true });
   writeFileSync(join(dir, '.yggdrasil', 'model', 'feature', 'yg-node.yaml'), [
@@ -420,18 +415,12 @@ function reviewTicket(dir, id, branch, who) {
 }
 
 test('E14 — a wave close states parallelism, keys transferred, the audit rate and its interval, decisions per merged ticket and the quality index', async (t) => {
-  const yg = findRealYg();
+  const yg = requireYg();
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
 
   graphFixture(dir, yg);
   initHorde(dir);
-  assert.equal(
-    JSON.parse(readFileSync(join(dir, '.horde', 'config.json'), 'utf8')).nodeSource,
-    'yggdrasil',
-    'a repository with a graph is a repository whose nodes come from it',
-  );
-  if (yg) run('horde.mjs', ['config', 'set', 'ygCommand', yg], dir);
 
   // Three tickets, one of them waiting on another: the DAG the wave is planned against.
   const alpha = run('tk.mjs', ['new', 'change-the-middle', '--title', 'One line in the middle of lib', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
@@ -537,25 +526,15 @@ test('E14 — a wave close states parallelism, keys transferred, the audit rate 
 });
 
 test('wave.mjs close: a quality index that fell is an escalation, not a line in a report', async (t) => {
-  const yg = findRealYg();
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
 
-  graphFixture(dir, yg);
+  graphFixture(dir, requireYg());
   initHorde(dir);
-  if (yg) run('horde.mjs', ['config', 'set', 'ygCommand', yg], dir);
 
   run('wave.mjs', ['start'], dir);
   const first = run('wave.mjs', ['close', '--gate', 'green'], dir);
   assert.equal(first.code, 0, first.stderr);
-
-  if (!yg) {
-    // No CLI to read the graph with: the close says so in those words and invents nothing.
-    assert.equal(first.json.quality.measured, false);
-    assert.equal(first.json.qualityEscalation, null);
-    return;
-  }
-
   assert.equal(first.json.quality.enforced, 1);
   assert.equal(first.json.qualityEscalation, null, 'a first reading has nothing to have fallen from');
 

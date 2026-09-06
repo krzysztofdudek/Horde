@@ -1,9 +1,10 @@
-- 2026-09-06T15:40:11.855Z landed 3b62eb3 — retry implemented
-- 2026-09-06T15:40:11.930Z key: author set to worker1
+- 2026-09-06T20:37:04.204Z key: author set to worker1
 
 ## Verdict · 001 · 2026-09-06 · by verifier1 (sonnet)
 
 **Result:** reproduced
+
+**Flake:** not flaky
 
 **Base check:** rooted at `m1/trunk` tip — yes
 
@@ -11,11 +12,13 @@
 
 | item | command | saw |
 |---|---|---|
-| node --test src/retry.test.mjs prints 1 pass | node --test src/retry.test.mjs | 1 pass, 0 fail |
+| node --test src/retry.test.mjs prints 1 pass | node --test src/retry.test.mjs | 1 pass |
 
 **Revert test:** new tests on the base — failed as expected
 
-**Gate:** `(not configured)` — green at sha 3b62eb34b9d7bc27abbdec568df883c384f9d20d
+**Gate:** `(not configured)` — green at sha bb528c0
+
+**Diff:** 36eafc7841ff41f1b6a6b19d6b86fcde5971d8b5
 
 **Scope:** diff inside core — yes · protected paths — untouched
 

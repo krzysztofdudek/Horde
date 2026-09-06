@@ -46,9 +46,12 @@ commands:
       the disciplines, the drill each carries, and the corpus cases recorded for it.
   check <drill> --repo <dir> [--ticket NNN] [--horde h]
       asserts the drill against real state in that repository. ✓/✗ per line, non-zero on any ✗.
-  run <drill> [--corpus <dir>]
+  run <drill> [--corpus <dir>] [--yg <command>]
       restores every corpus case into a temporary repository and checks it: a "violates-" case
       must come out red, a "satisfies-" case green. Non-zero when any case says otherwise.
+      A case carries no way of invoking the Yggdrasil CLI — that is a property of the machine
+      running the drill, never of the recorded state — so it is taken from --yg, else from this
+      repository's own config.ygCommand, else the bare "yg" on PATH.
   record <name> --discipline <d> --expect violates|satisfies [--ticket NNN] [--horde h]
       [--corpus <dir>] [--note "…"]
       snapshots this repository's .horde/ state and the ticket's branch refs into a new case
@@ -559,7 +562,7 @@ function corpusCases(corpus, drill) {
 // A case is restored, never read in place: `git fetch` from its bundle rebuilds the branches, and
 // the snapshot becomes the repository's own `.horde/`. The drill then runs against a real
 // repository, exactly as it does on a live mission.
-function restoreCase(caseDir) {
+function restoreCase(caseDir, ygCommand) {
   const meta = readJSON(join(caseDir, 'case.json'), null);
   if (!meta) fail(`case has no case.json: ${caseDir}`);
   const tmp = mkdtempSync(join(tmpdir(), 'drill-case-'));
@@ -570,7 +573,21 @@ function restoreCase(caseDir) {
   execFileSync('git', ['checkout', '-q', meta.parentBranch], { cwd: tmp, stdio: 'pipe' });
   cpSync(join(caseDir, 'horde'), join(tmp, '.horde'), { recursive: true });
   writeFileSync(join(tmp, '.horde', '.gitignore'), '*\n');
+  // How a machine invokes the Yggdrasil CLI is a property of the machine, not of the case: a
+  // recorded snapshot carries none, and the drill puts this machine's own in before it runs. A
+  // case that carried one would only be runnable on the laptop it was recorded on.
+  const cfgPath = join(tmp, '.horde', 'config.json');
+  const cfg = readJSON(cfgPath, null);
+  if (cfg) writeJSON(cfgPath, { ...cfg, ygCommand });
   return { meta, dir: tmp };
+}
+
+// The Yggdrasil CLI this run should use: what the caller named, else what the repository the
+// drill is invoked from uses, else the bare `yg` an installed Yggdrasil puts on PATH.
+function hostYgCommand(flags) {
+  if (flags.yg) return String(flags.yg);
+  const cfg = readConfig();
+  return (cfg && cfg.ygCommand) || 'yg';
 }
 
 function cmdRun(drill, flags) {
@@ -578,8 +595,9 @@ function cmdRun(drill, flags) {
   const cases = corpusCases(corpus, drill);
   if (cases.length === 0) fail(`no case recorded for drill "${drill}" under ${corpus}`);
   const results = [];
+  const ygCommand = hostYgCommand(flags);
   for (const c of cases) {
-    const restored = restoreCase(c.dir);
+    const restored = restoreCase(c.dir, ygCommand);
     try {
       const outcome = runCheck(drill, {
         repo: restored.dir, horde: restored.meta.horde, ticket: restored.meta.ticket,
@@ -658,6 +676,12 @@ function snapshotHorde(root, dest) {
       return !SNAPSHOT_SKIP.has(rel.split('/')[0]);
     },
   });
+  // A case is state, not a machine. `ygCommand` on the recording machine is very often an
+  // absolute path to a local build, and a case carrying that would run nowhere else, so it is
+  // dropped here and supplied again by whoever runs the drill.
+  const cfgPath = join(dest, 'config.json');
+  const cfg = readJSON(cfgPath, null);
+  if (cfg) writeJSON(cfgPath, { ...cfg, ygCommand: null });
 }
 
 function cmdRecord(name, flags) {

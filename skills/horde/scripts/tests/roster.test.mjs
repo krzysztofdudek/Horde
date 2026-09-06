@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde,
+  makeRepo, rmRepo, run, initHorde, addNode,
 } from './helpers.mjs';
 
 function git(args, cwd) {
@@ -279,6 +279,15 @@ test('roster.mjs: spawn, steward team creation, trace, list --dead, reclaim, sta
     assert.equal(ruled.code, 0, ruled.stderr);
     const aliveAgain = run('roster.mjs', ['list'], dir);
     assert.equal(aliveAgain.json.find((e) => e.name === architectName).verdict, 'alive');
+
+    // A port waiting to be added or bumped is open work the same way a graph-change proposal is.
+    addNode(dir, 'widgets', { mapping: ['src/widgets/**'] });
+    const port = run('node.mjs', ['contract', 'propose', 'widgets', 'render', 'what widgets promise', '--as', 'tests/render.test.mjs', '--by', 'owner1'], dir);
+    assert.equal(port.code, 0, port.stderr);
+    const deadOnPort = run('roster.mjs', ['list', '--dead'], dir);
+    assert.ok(deadOnPort.json.some((e) => e.name === architectName && e.verdict === 'dead'));
+    assert.equal(run('node.mjs', ['contract', 'approve', port.json.id, '--by', architectName], dir).code, 0);
+    assert.equal(run('roster.mjs', ['list'], dir).json.find((e) => e.name === architectName).verdict, 'alive');
 
     run('horde.mjs', ['config', 'set', 'liveness.ownerMinutes', '45'], dir);
   });

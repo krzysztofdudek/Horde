@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde,
+  makeRepo, rmRepo, run, initHorde, yg, requireYg,
 } from './helpers.mjs';
 
 test('verify.mjs: record (one --item per acceptance line, a reproduced verdict needs a non-red gate, reproduced sets the verifier key, refuses the author, refuses missing flags), show', async (t) => {
@@ -235,7 +235,7 @@ test('verify.mjs record: --runs/--results — two disagreeing results record a f
     assert.match(r.stderr, /requires --test/);
   });
 
-  await t.test('without a graph: two disagreeing runs record flaky, send the ticket to changes, and file a journal-note incident', () => {
+  await t.test('two disagreeing runs record flaky, send the ticket to changes, and file the incident', () => {
     const created = run('tk.mjs', ['new', 'flaky-test', '--title', 'Has a flaky test', '--node', 'core', '--class', 'sonnet'], dir);
     const id = created.json.id;
     run('tk.mjs', ['key', id, 'author', '--by', 'worker-1'], dir);
@@ -247,7 +247,7 @@ test('verify.mjs record: --runs/--results — two disagreeing results record a f
     assert.equal(r.json.verdict, 'flaky');
     assert.deepEqual(r.json.flake, { runs: 2, results: ['red', 'green'], test: 'tests/flaky.test.mjs' });
     assert.equal(r.json.incident.recorded, true);
-    assert.match(r.json.incident.via, /journal note/);
+    assert.match(r.json.incident.via, /incident add/);
 
     const ticket = run('tk.mjs', ['show', id], dir);
     assert.match(ticket.json.text, /\*\*Status:\*\* changes/);
@@ -257,9 +257,6 @@ test('verify.mjs record: --runs/--results — two disagreeing results record a f
     assert.match(log.json.log, /\*\*Result:\*\* flaky/);
     assert.match(log.json.log, /\*\*Flake:\*\* tests\/flaky\.test\.mjs — runs: red, green \(2 runs\)/);
     assert.match(log.json.log, /status: changes — flaky: tests\/flaky\.test\.mjs \(round 1\/5/);
-
-    const incidents = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'incidents.md'), 'utf8');
-    assert.match(incidents, /flaky test on ticket \d+: tests\/flaky\.test\.mjs — runs: red, green/);
 
     // a flaky verdict never sets the verifier key — it did not reproduce anything
     assert.doesNotMatch(ticket.json.text, /verifier verifier-1/);
@@ -276,17 +273,8 @@ test('verify.mjs record: --runs/--results — two disagreeing results record a f
     assert.equal(r.json.verdict, 'not-reproduced');
   });
 
-  await t.test('with a graph: the flake is filed through the installed Yggdrasil CLI, via a stub that records its own argv', () => {
-    const stubPath = join(dir, 'stub-yg.mjs');
-    writeFileSync(stubPath, [
-      "import { appendFileSync } from 'node:fs';",
-      "appendFileSync('stub-yg-calls.log', JSON.stringify(process.argv.slice(2)) + '\\n');",
-    ].join('\n'));
-
-    assert.equal(run('horde.mjs', ['config', 'set', 'nodeSource', 'yggdrasil'], dir).code, 0);
-    assert.equal(run('horde.mjs', ['config', 'set', 'ygCommand', `node ${stubPath}`], dir).code, 0);
-
-    const created = run('tk.mjs', ['new', 'flaky-graph', '--title', 'Flaky under a graph', '--node', 'core', '--class', 'sonnet'], dir);
+  await t.test('the incident really reaches the ledger — the entry the graph now holds names the test', () => {
+    const created = run('tk.mjs', ['new', 'flaky-graph', '--title', 'Flaky again', '--node', 'core', '--class', 'sonnet'], dir);
     const id = created.json.id;
     run('tk.mjs', ['key', id, 'author', '--by', 'worker-3'], dir);
 
@@ -295,14 +283,32 @@ test('verify.mjs record: --runs/--results — two disagreeing results record a f
     ], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.incident.recorded, true);
-    assert.match(r.json.incident.via, /incident add/);
 
-    const calls = readFileSync(join(dir, 'stub-yg-calls.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-    const call = calls[calls.length - 1];
-    assert.deepEqual(call.slice(0, 3), ['incident', 'add', '--tag']);
-    assert.equal(call[3], 'not-enforcement');
-    assert.equal(call[4], '--reason');
-    assert.match(call[5], new RegExp(`ticket ${id}: tests/graph-flaky\\.test\\.mjs`));
+    const listed = yg(dir, ['incident', 'read']);
+    assert.equal(listed.code, 0, listed.out);
+    assert.match(listed.out, /not-enforcement/);
+    // `incident read` lists cause and time; the testimony itself lives in the committed ledger.
+    const ledger = readFileSync(join(dir, '.yggdrasil', 'incidents.md'), 'utf8');
+    assert.match(ledger, new RegExp(`ticket ${id}: tests/graph-flaky\\.test\\.mjs`));
+  });
+
+  await t.test('a ledger that refuses the entry never loses the flake — it lands in the horde\'s journal, and the result says so', () => {
+    run('horde.mjs', ['config', 'set', 'ygCommand', join(dir, 'no-such-yg')], dir);
+    const created = run('tk.mjs', ['new', 'flaky-nowhere', '--title', 'Flaky with no ledger', '--node', 'core', '--class', 'sonnet'], dir);
+    const id = created.json.id;
+    run('tk.mjs', ['key', id, 'author', '--by', 'worker-4'], dir);
+
+    const r = run('verify.mjs', [
+      'record', id, '--by', 'verifier-4', '--runs', '2', '--results', 'red,green', '--test', 'tests/nowhere.test.mjs',
+    ], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.verdict, 'flaky');
+    assert.equal(r.json.incident.recorded, false);
+    assert.match(r.json.incident.reason, /written to the horde's own journal instead/);
+
+    const incidents = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'incidents.md'), 'utf8');
+    assert.match(incidents, new RegExp(`ticket ${id} — flaky test`));
+    run('horde.mjs', ['config', 'set', 'ygCommand', requireYg()], dir);
   });
 });
 

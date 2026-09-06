@@ -44,8 +44,9 @@ file ever conflicts in a merge.
 ```
 .horde/
   .gitignore                        "*"
-  config.json                       base branch, gate commands per level, node source, cost-class
-                                    weights (`classes`), liveness thresholds, protected paths
+  config.json                       base branch, gate commands per level, how to invoke the
+                                    Yggdrasil and Grain CLIs, cost-class weights (`classes`),
+                                    liveness thresholds, protected paths
   leases.json (+ .md)               node -> {horde, since}: shared across every horde on this
                                     repository, never per-horde (see "Node leases" below)
   hordes/<horde>/
@@ -91,30 +92,48 @@ horde shares: `.horde/leases.json`, node id -> `{horde, since}`.
 Leasing a node id never requires that a graph object for it already exists — a mission is free to
 reserve the name of a node it is about to create before the architect ever files it.
 
-## Two graph modes — the skill works with and without Yggdrasil
+## The graph is Yggdrasil's — there is no second one
 
 The node map is the horde's memory of structure and must outlive the horde, so it is always
-committed; only where it lives depends on `config.nodeSource`:
+committed; and it is the graph a repository already has, never a copy of it:
 
-| | `yggdrasil` | `manual` |
-|---|---|---|
-| node ids and boundaries | read from `.yggdrasil/model/**/yg-node.yaml`; never edited by the horde except through `yg` | `<graphDir>/nodes/<node>/node.json` (id, boundary paths, depends-on), written by `node.mjs` |
-| charter and contracts | `charter.md`, `contracts.md` beside `yg-node.yaml` | `<graphDir>/nodes/<node>/charter.md`, `contracts.md` |
-| the node's log | `yg log add --reason` (English) | `<graphDir>/nodes/<node>/log.md`, appended by `node.mjs log` |
-| currency stamp | the graph's own verification status | `verifiedAt` in `node.json`, set by `node.mjs stamp` |
-| enforcement loop down | `yg check` in the gate | the contract tests in the gate, nothing more |
-| graph changes | the architect files them with `yg` commands; `yg-architecture.yaml` and suppressions still need the user | the architect files them with `node.mjs` after approval |
+| | where it lives |
+|---|---|
+| node ids and boundaries | `.yggdrasil/model/**/yg-node.yaml`, read through `yg node <path> --json`; never edited by the horde |
+| the rules over a node | `yg context --node <path> --json` — the graph's own resolution, with the status word that says what a refusal costs |
+| who consumes a port | `yg impact --node <path> --json` |
+| contracts | ports on the node, each with a version and the test that is its promise |
+| the node's charter | `charter.md` beside `yg-node.yaml`, committed |
+| the node's log | `yg log add --reason` (English) |
+| is the code still what the graph describes | the lock: every verdict is bound to the hash of what it judged, and `yg check` re-proves it |
+| enforcement loop down | `yg check` in the gate |
+| graph changes | the architect files them with `yg` commands; `yg-architecture.yaml` and suppressions still need the user |
+
+`horde init` on a repository with no `.yggdrasil/` creates the graph rather than working around it:
+`yg init` from the repository root (never a subdirectory — Yggdrasil's own rule), and where a Grain
+CLI is configured (`config.grainCommand`) or on PATH, a proposal mined from the repository's own code
+accepted with `yg adopt`, which reports how much of the existing code the new rules already refuse.
+With no graph and no Yggdrasil CLI to make one, `init` refuses and names the install step, before
+creating any state of its own.
+
+**There is no currency stamp.** The lock already binds every verdict to the hash of the code it
+judged, so "is this node's verification current" has exactly one answer and `yg check` gives it. A
+stamp the horde kept beside that could only ever be a second, weaker claim about the same thing —
+and the one that goes stale in silence.
 
 Yggdrasil keeps deterministic verdicts in a gitignored cache, so every fresh worktree starts with
 every deterministic pair "unverified" and `yg check` red. Rebuilding that cache is free and involves no
 judgement: `yg check --approve --only-deterministic` is always allowed, in any worktree, before a gate
-is judged, and every worker and verifier runs it first. What stays forbidden for every role is
-approving a nondeterministic (LLM) pair, writing a suppression, and touching a lock file by hand.
+is judged, and every worker and verifier runs it first. What that run leaves behind is the prose
+rules — the ones a reader has to judge — and the ticket's **verifier** is that reader: it takes the
+review package for each pending pair and records its judgement under its own name
+(`yg verdict package` / `yg verdict record`), bound to the same hashes any verdict is, so CI
+re-proves it without a key and the report says whose judgement it was. What stays forbidden for every
+role is approving a nondeterministic pair through `yg check --approve`, writing a suppression, and
+touching a lock file by hand.
 
-`graphDir` is chosen at `horde init` (default `architecture/`) and is a normal committed directory.
-Both modes present the same commands to every role, so no brief and no rule differs between them;
-`node.mjs` is the only file that knows which mode it is in. Operational state never leaves `.horde/`
-in either mode.
+Operational state never leaves `.horde/`; the only graph-shaped objects it holds are the horde's own
+proposals — a port to add or bump, a boundary to move — waiting on the architect.
 
 ## Gates per level
 
@@ -128,10 +147,12 @@ Configured in `config.json` under `gates`; the defaults for this repository:
 | trunk → base | the user | full gate; audit clean; evidence catalogue fully green; cost report written |
 
 `premerge.mjs <branch>` automates the mechanical part for the two middle rows; the steward escalates
-anything it cannot tick, and never interprets a red item. Where the nodes come from a Yggdrasil
-graph, `premerge` also runs `yg check` on the branch's own tree as its own checklist item, whatever
-the gate commands say — the graph is what says the code is right there, and a repository whose gate
-command never calls `yg` would otherwise merge a tree the graph refuses. The full gate is expensive (this repository's
+anything it cannot tick, and never interprets a red item. `premerge` also judges the graph on the
+branch's own tree as its own checklist item, whatever the gate commands say — the graph is what says
+the code is right there, and a repository whose gate command never calls `yg` would otherwise merge a
+tree the graph refuses. That item runs the free half itself
+(`yg check --approve --only-deterministic`), names every prose rule still waiting on a judgement,
+and is ✓ only when a full `yg check` is green. The full gate is expensive (this repository's
 includes the browser suite), so it runs once per SHA: a verifier's `reproduced` verdict names the SHA
 and the gate result it saw, `premerge` accepts that instead of rerunning, and the auditor's rerun is
 the deliberate third opinion. Gate results are cached per level in `cache/last-gate.json`.

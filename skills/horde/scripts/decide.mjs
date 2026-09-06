@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import {
   hordePath, readConfig, readText, appendText, today, fail, parseArgs, emit, isMain, resolveHorde,
 } from './_lib.mjs';
+import { ygCommand } from './node.mjs';
 
 const ENTRY_RE = /^## (\d{4}-\d{2}-\d{2}) · ([^\s·]+)(?: · ticket (\S+))?(?: · node (\S+))?\s*$/;
 
@@ -23,8 +24,8 @@ const USAGE = `usage: decide.mjs <command> [options]
 
 commands:
   add <slug> "<ruling>" [--ticket NNN] [--node n] [--horde h]
-      appends a new entry; refuses a duplicate slug. When --node is given and the repository's
-      nodeSource is "yggdrasil", refuses and prints the "yg log add" command to run instead.
+      appends a new entry; refuses a duplicate slug. When --node is given it refuses and prints
+      the "yg log add" command to run instead — a node's decisions belong in the graph's own log.
   list [--grep <re>] [--node n] [--horde h]
       prints "date slug ticket node first-line" rows, newest first.
   show <slug> [--horde h]
@@ -66,9 +67,9 @@ function formatHeading(entry) {
 }
 
 // appendDecision(horde, {slug, ruling, ticket, node}) — throws on a missing field, a duplicate
-// slug, or (when node is given and nodeSource is "yggdrasil") on the yggdrasil-redirect case;
-// the caller decides how to report that (decide.mjs's own CLI turns it into a fail(), while a
-// caller like escalate.mjs never passes node and so never sees it).
+// slug, or (when node is given) on the graph-redirect case; the caller decides how to report that
+// (decide.mjs's own CLI turns it into a fail(), while a caller like escalate.mjs never passes
+// node and so never sees it).
 export function appendDecision(horde, { slug, ruling, ticket, node } = {}) {
   if (!slug) throw new Error('slug required');
   if (!ruling) throw new Error('ruling required');
@@ -78,15 +79,13 @@ export function appendDecision(horde, { slug, ruling, ticket, node } = {}) {
   if (entries.some((e) => e.slug === slug)) throw new Error(`duplicate slug: ${slug}`);
 
   if (node) {
-    const cfg = readConfig();
-    if (cfg && cfg.nodeSource === 'yggdrasil') {
-      const err = new Error(
-        `architectural decisions for a node live in the graph's own log, not here — run: `
-        + `yg log add --node ${node} --reason "${ruling}"`,
-      );
-      err.yggdrasilRedirect = true;
-      throw err;
-    }
+    const cfg = readConfig() || {};
+    const err = new Error(
+      `architectural decisions for a node live in the graph's own log, not here — run: `
+      + `${ygCommand(cfg).display} log add --node ${node} --reason "${ruling}"`,
+    );
+    err.yggdrasilRedirect = true;
+    throw err;
   }
 
   const entry = { date: today(), slug, ticket: ticket ? String(ticket) : null, node: node || null };

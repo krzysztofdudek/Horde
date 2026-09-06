@@ -9,15 +9,23 @@
 /plugin install horde@horde-marketplace
 ```
 
-Run both, then `/reload-plugins` to activate it in this session (or restart Claude Code). Requires Node.js on your `PATH` (any recent version), since the skill's tools are plain ES modules with zero dependencies. It also needs Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams) turned on, an experimental feature that is off by default; see [Requirements](#requirements) below before you invoke it. Invoke it by handing over a mission: `/horde <mission>`, or your own words for it ("let's run this as a horde").
+Run both, then `/reload-plugins` to activate it in this session (or restart Claude Code). Requires Node.js on your `PATH` (any recent version), since the skill's tools are plain ES modules with zero dependencies. It also needs Yggdrasil, and Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams) turned on, an experimental feature that is off by default; see [Requirements](#requirements) below before you invoke it. Invoke it by handing over a mission: `/horde <mission>`, or your own words for it ("let's run this as a horde").
 
-> MIT licensed · Node scripts, zero dependencies · works with or without [Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil) · part of the [Yggdrasil family](#the-yggdrasil-family) · [full skill body](skills/horde/SKILL.md)
+> MIT licensed · Node scripts, zero dependencies · needs [Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil), and creates the graph if your repository has none · part of the [Yggdrasil family](#the-yggdrasil-family) · [full skill body](skills/horde/SKILL.md)
 
 ---
 
 ## Requirements
 
-Turn on Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams) before you hand over a mission. It's off by default and still experimental. Add this to your `settings.json`:
+**Yggdrasil.** Horde works on an architecture graph: the map it cuts the work by, the rules every ticket is held to, and the verdict that says a change is safe to merge all come from it. Install it once:
+
+```
+npm i -g @chrisdudek/yg
+```
+
+If your repository already has a graph, Horde reads it. If it doesn't, `horde init` makes one for you before anything else happens. With [Grain](https://github.com/krzysztofdudek/Grain) installed as well, the graph it makes is read out of your own code — the components you actually have and the rules you already follow — and it tells you up front how much of the code you have today those rules would refuse. Without Yggdrasil, Horde stops and says so.
+
+**Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams)**, turned on before you hand over a mission. It's off by default and still experimental. Add this to your `settings.json`:
 
 ```json
 {
@@ -41,7 +49,7 @@ Workers pick up tickets, each in its own worktree, each against a locked spec. A
 
 You never read a diff. What comes to you: a contract two owners can't agree on, a claim that something is a boundary and shouldn't be touched, a cost limit reached, anything genuinely unsure. Everything else, the horde rules on itself and writes down why, so the next session picks it up cold from the files, not from your memory of the conversation.
 
-Every line the horde ever merged has a custody chain: point at a file and a line and it tells you the commit that introduced it, the ticket that commit belongs to, who wrote it and who reviewed and verified it, what evidence that ticket was supposed to prove and whether it did, and — on a repository with an architecture graph — what the graph currently says about the rules standing over that code. A closed mission is searched too; a line from before the horde ever touched the repository is reported as exactly that.
+Every line the horde ever merged has a custody chain: point at a file and a line and it tells you the commit that introduced it, the ticket that commit belongs to, who wrote it and who reviewed and verified it, what evidence that ticket was supposed to prove and whether it did, and what the graph currently says about the rules standing over that code. A closed mission is searched too; a line from before the horde ever touched the repository is reported as exactly that.
 
 ---
 
@@ -141,7 +149,7 @@ Copy the whole `skills/horde/` directory (`SKILL.md`, `reference/`, `templates/`
 
 Nothing else in this repo affects behavior, all of it lives in that one directory.
 
-### If your repository has an architecture graph
+### The skill's own files, and your graph
 
 Dropping a skill into a repository adds several dozen files to it, and a repository under Yggdrasil
 counts every file: the new ones land outside every node's mapping and show up as uncovered, which
@@ -173,7 +181,7 @@ No hidden spend: cost is booked once per spawn and summed every wave, and a char
 <details>
 <summary><b>Do I have to use Yggdrasil?</b></summary>
 
-No. With Yggdrasil present, the horde reads and writes the same architecture graph you already have. Without it, `horde init` keeps its own committed node map in a plain directory, same shape, same rules, no fewer guarantees.
+Yes, and you don't have to set it up first. Horde works on an architecture graph — that is where the components come from, where the rules over each one come from, and what says a change is safe to merge. On a repository that already has one, Horde reads it and never edits it behind your back. On a repository that doesn't, `horde init` creates the graph, and with Grain installed it reads that first graph out of your own code rather than handing you a blank one. What it will not do is invent a second, weaker map of its own and pretend that is the same thing.
 </details>
 
 <details>

@@ -1,21 +1,27 @@
 #!/usr/bin/env node
 // horde skill — node.mjs
 //
-// The only tool that knows which graph mode a horde runs in. With Yggdrasil, node ids, boundaries
-// and descriptions are read from .yggdrasil/model/**/yg-node.yaml (never written by this tool —
-// the architect files graph changes through `yg`, with the user's confirmation where the repo's
-// own rules require it); charter.md and contracts.md live beside the yaml, committed. Without it
-// (config.nodeSource = "manual"), this tool is the sole writer of the whole committed node map
-// under <graphDir>/nodes/<node>/. Either way, graph *proposals* and contract negotiations are
-// operational state — uncommitted, per horde, in hordes/<horde>/graph.json — until an approval
-// turns one into a committed charter/contracts.md write (manual) or a `yg` filing the architect
-// runs by hand (Yggdrasil).
+// The graph belongs to Yggdrasil, and this is the only tool that speaks to it. Every fact about
+// a node comes from one of Yggdrasil's own versioned machine documents, asked for by running the
+// CLI (`config.ygCommand`):
+//
+//   yg node <path> --json            → yg-node/1     structure: mapping, relations, ports, kin
+//   yg context --node|--file <p> --json → yg-context/1  the rules in force, with their status
+//   yg impact --node <path> --json   → yg-impact/1   who consumes a port, who depends on the node
+//
+// Nothing here parses a file the layer below owns. A document Yggdrasil does not produce is a
+// refusal that names what to upgrade, never a guess from the files — a graph read two ways is a
+// graph that can disagree with itself, and the horde would be the one telling the lie.
+//
+// Writing to the graph is the architect's, through `yg`. What lives here is the horde's own
+// process state — port proposals and graph-change proposals, uncommitted, per horde, in
+// hordes/<horde>/graph.json — until an approval turns one into a filing the architect makes.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  repoRoot, hordePath, readJSON, writeJSON, readText, writeText, appendText, readConfig, nowIso,
+  repoRoot, hordePath, readJSON, writeJSON, readText, writeText, readConfig, nowIso,
   fail, parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, claimLease,
 } from './_lib.mjs';
 import { trace as traceRoster } from './roster.mjs';
@@ -24,56 +30,51 @@ const USAGE = `usage: node.mjs <command> [options]
 
 commands:
   bind [--horde h]
-      verifies the graph is readable; lists every node id.
+      verifies the graph is readable through the Yggdrasil CLI; lists every node id.
   bind <node> [--horde h] [--take --escalation <id>]
       node-lease-across-hordes: leases <node> to this horde in .horde/leases.json, exclusive
       across every live horde on the repository. Refuses a node already leased by another horde
-      that is not archived, naming that horde and its last activity. --take overrides that refusal
-      but only over a ruled escalation on this horde (--escalation <id>); the take-over is written
-      to the node's own log as well as to the lease history.
+      that is not archived, naming that horde and its last activity. --take overrides that
+      refusal but only over a ruled escalation on this horde (--escalation <id>); the take-over
+      is written to the node's own log as well as to the lease history.
   map [--horde h]
-      this mission's nodes (named by an owner in the roster or by a ticket) with owner, stamp,
-      open contract proposals.
+      this mission's nodes (named by an owner in the roster or by a ticket) with owner, the
+      ports they publish, and open port proposals.
   show <node> [--horde h]
       boundary, the rules in force on the node (with the status word that says what a refusal
-      costs), charter, contracts, last log entries, stamp.
+      costs), the ports it publishes with version and test, charter, last log entries.
   charter edit <node> [--horde h]
-      writes charter.md from stdin; seeds it from the template first when the node has none yet
-      and stdin is empty.
+      writes charter.md beside the node's yg-node.yaml; seeds it from the template first when
+      the node has none yet and stdin is empty.
   log <node> "<reason>" [--run] [--horde h]
-      manual mode: appends to the node's log.md. Yggdrasil mode: prints the "yg log add --reason"
-      command; runs it too when --run is given.
-  stamp <node> <sha> [--horde h]
-      manual mode: records verifiedAt on the node. Yggdrasil mode: the graph computes its own
-      verification status — this prints how to refresh it instead of writing anything.
-  contract propose <a> <b> --as <path> "<text>" [--horde h]
+      prints the "yg log add --reason" command for the node's own log; runs it too with --run.
+  contract propose <node> <port> "<text>" --as <test-path> [--version <n>] --by <owner> [--horde h]
+      port-is-contract: proposes adding a port to a node, or bumping the version of one it
+      already publishes. --as names the test that IS the contract. --version defaults to the
+      next version above what the node publishes today.
   contract approve <id> ["why"] --by <name> [--horde h]
   contract veto <id> "why" --by <name> [--horde h]
+      the architect rules on a port proposal; an approved one is filed by editing the node's
+      yg-node.yaml and recording the why with "yg log add" — the command prints both.
   contracts [--pending] [--node n] [--horde h]
+      the ports of this mission's nodes as the graph declares them (name, version, test), plus
+      every port proposal this horde has open.
+  verdicts [--at <path>] [--by <name>] [--horde h]
+      the prose rules still waiting on a judgement in a tree, each with the exact
+      "yg verdict package" and "yg verdict record" commands that judge it. --at names the
+      worktree to read (default: this one).
   propose <kind> "<text>" --by <owner> [--node n] [--boundary <glob>[,glob…]] [--horde h]
       kinds: new-node, move-boundary, rename, rule. move-boundary requires --node and --boundary
-      so apply can carry it out later, not just record that it happened.
+      so apply can name the exact edit later, not just record that it happened.
   proposals [--open] [--horde h]
   approve <id> ["why"] --by <name> [--horde h]
   veto <id> "why" --by <name> [--horde h]
-  new <node> --boundary <glob>[,glob…] [--depends a,b] [--horde h]
-      manual mode only: creates the node's committed files. Yggdrasil mode prints the yg-side
-      steps instead (they need the user's confirmation).
-  boundary set <node> --boundary <glob>[,glob…] [--horde h]
-  boundary add <node> --boundary <glob>[,glob…] [--horde h]
-      manual mode: rewrites (set) or extends (add) node.json's boundary, logs the change.
-      Yggdrasil mode prints the yg-side steps instead.
   apply <proposal-id> [--horde h]
-      manual mode only: closes an approved graph-change proposal. Yggdrasil mode prints the
-      filing steps instead.
+      closes an approved graph-change proposal and prints the filing steps for the architect.
 
 options: --json  --help`;
 
-// ---- mode ----------------------------------------------------------------
-
-function mode(cfg) {
-  return cfg && cfg.nodeSource === 'yggdrasil' ? 'yggdrasil' : 'manual';
-}
+// ---- talking to the Yggdrasil CLI ------------------------------------------------------------
 
 // How this repository invokes the Yggdrasil CLI: `config.ygCommand`, default the bare `yg` on
 // PATH. Written as a command line ("yg", "node ./yg/bin.js") so a checkout that runs a local
@@ -85,27 +86,198 @@ export function ygCommand(cfg) {
   return { cmd: parts[0] || 'yg', prefix: parts.slice(1), display: parts.join(' ') || 'yg' };
 }
 
-// True when the graph — not the horde's own node map — is what says the code is right, and so
-// `yg check` is part of every merge gate whatever `config.gates` holds.
-export function graphIsLaw(cfg) {
-  return mode(cfg) === 'yggdrasil';
+// The release these machine documents arrived in. They are not in 5.8.0; a CLI that answers
+// `--json` with anything but the document is one from before them, and the horde says which
+// release to pass rather than degrading into reading the graph's files itself.
+const YG_DOCUMENTS_AFTER = '5.8.0';
+
+const YG_DOCUMENTS = 'yg-node/1, yg-context/1 and yg-impact/1';
+
+function ygVersion(cfg) {
+  const { cmd, prefix } = ygCommand(cfg);
+  try {
+    return execFileSync(cmd, [...prefix, '--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  } catch {
+    return null;
+  }
+}
+
+// The refusal for a CLI that cannot be started at all. Horde requires Yggdrasil: there is no
+// second graph to fall back to, so this is a stop, not a degraded mode.
+function failNoCli(cfg, command) {
+  const { display } = ygCommand(cfg);
+  fail(
+    `\`${command}\` could not be started — there is no Yggdrasil CLI at "${display}".\n`
+    + 'Horde reads the architecture graph only through that CLI, so without it there is nothing to '
+    + 'read a node, its rules or its ports from.\n'
+    + 'Install it (npm i -g @chrisdudek/yg), or point the horde at a local build: '
+    + 'horde.mjs config set ygCommand "node path/to/bin.js"',
+  );
+}
+
+// The refusal for a CLI that runs but predates the machine documents.
+function failStaleCli(cfg, command, saw) {
+  const { display } = ygCommand(cfg);
+  const version = ygVersion(cfg);
+  fail(
+    `\`${command}\` did not answer with the document Horde reads${saw ? ` (${saw})` : ''}.\n`
+    + `The Yggdrasil CLI at "${display}"${version ? ` reports version ${version} and` : ''} predates `
+    + `${YG_DOCUMENTS} — the versioned answers Horde reads the graph through. An older CLI cannot be `
+    + 'read around: the alternative would be Horde parsing the graph\'s own files, which is the second '
+    + 'graph this tool exists to not have.\n'
+    + `Upgrade to a release later than ${YG_DOCUMENTS_AFTER} (npm i -g @chrisdudek/yg), or point the `
+    + 'horde at a newer build: horde.mjs config set ygCommand "node path/to/bin.js"',
+  );
+}
+
+// Starting the CLI, once. Three outcomes are told apart because they mean different things:
+// the program ran and said something (whatever its exit code), the program does not exist, and
+// the machine could not start a process at all. The last is not an answer about anything — it
+// happens under load, and reading it as "the graph refuses" would turn a busy laptop into an
+// architecture verdict — so it is retried once and then named for what it is.
+function startCli(cmd, args, opts) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return { out: execFileSync(cmd, args, opts), code: 0, err: '' };
+    } catch (e) {
+      if (e.code === 'ENOENT') return { missing: true };
+      const exited = e.status !== undefined && e.status !== null;
+      if (exited) {
+        return {
+          code: e.status,
+          out: (e.stdout && e.stdout.toString()) || '',
+          err: (e.stderr && e.stderr.toString()) || '',
+        };
+      }
+      if (attempt === 1) return { spawnFailed: e.code || e.message };
+    }
+  }
+  return { spawnFailed: 'unknown' };
+}
+
+// One call to the CLI asking for one machine document. Returns a state rather than throwing, so
+// each caller decides what "absent" means for it: a node the graph does not have is an ordinary
+// answer, while a missing or too-old CLI is a stop.
+//
+//   ok      — the document, with the schema it claimed
+//   absent  — the CLI ran and said the graph has no such node
+//   no-cli  — the CLI could not be started
+//   stale   — the CLI ran and answered something that is not the document
+//   error   — the CLI ran and refused for its own reason (a graph that does not load, say)
+function ygJson(root, cfg, args, schema) {
+  const { cmd, prefix, display } = ygCommand(cfg);
+  const command = `${display} ${args.join(' ')}`;
+  const run = startCli(cmd, [...prefix, ...args], {
+    cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (run.missing) return { state: 'no-cli', command };
+  if (run.spawnFailed) {
+    return {
+      state: 'error',
+      command,
+      code: null,
+      detail: `this machine could not start the process (${run.spawnFailed}), twice — nothing was `
+        + 'read, and this says nothing about the graph. Try again with less running at once.',
+    };
+  }
+  const { code, err } = run;
+  const out = run.out;
+  const body = out.trim();
+  if (body.startsWith('{')) {
+    let parsed = null;
+    try { parsed = JSON.parse(body); } catch { parsed = null; }
+    if (parsed && parsed.schema === schema) return { state: 'ok', command, doc: parsed };
+    if (parsed) return { state: 'stale', command, saw: `it answered a "${parsed.schema || 'nameless'}" document, not ${schema}` };
+  }
+  if (/does not exist in the graph/.test(err)) return { state: 'absent', command };
+  if (/unknown option|unknown command/i.test(err)) return { state: 'stale', command, saw: 'it does not know that option' };
+  if (code === 0) return { state: 'stale', command, saw: 'it answered no document at all' };
+  return { state: 'error', command, code, detail: (err || body).trim() };
+}
+
+// The same call, with every state that is not an answer about this node turned into a stop.
+function ygDoc(root, cfg, args, schema) {
+  const res = ygJson(root, cfg, args, schema);
+  if (res.state === 'ok') return res.doc;
+  if (res.state === 'absent') return null;
+  if (res.state === 'no-cli') failNoCli(cfg, res.command);
+  if (res.state === 'stale') failStaleCli(cfg, res.command, res.saw);
+  fail(res.code === null
+    ? `\`${res.command}\` — ${res.detail}`
+    : `\`${res.command}\` exited ${res.code} — the graph could not be read:\n${res.detail}`);
+  return null;
+}
+
+// A node's own document. Probed once per node per process: a plan asks about the same node many
+// times and the answer cannot change mid-run.
+const nodeCache = new Map();
+export function ygNode(root, cfg, node) {
+  if (nodeCache.has(node)) return nodeCache.get(node);
+  const doc = ygDoc(root, cfg, ['node', node, '--json'], 'yg-node/1');
+  nodeCache.set(node, doc);
+  return doc;
+}
+
+// `yg context --node <p> --json` — the rules in force on a node, with the effective status each
+// one carries and the channel it reaches the node by. Yggdrasil's own resolution: it accounts
+// for every channel (node, cascade, type, ancestor type, flow, port, implies) and for `when:`
+// filters, none of which can be worked out from a node's own file.
+//
+// A graph the CLI itself refuses to assemble a context from — a mapping naming a file nobody
+// wrote, say — is not something to abort a read on: the CLI's own words are the answer, and the
+// merge gate refuses on the same problem for its own reasons. A missing or too-old CLI is still a
+// stop, because that is not an answer at all.
+const contextCache = new Map();
+export function ygContext(root, cfg, node) {
+  if (contextCache.has(node)) return contextCache.get(node);
+  const res = ygJson(root, cfg, ['context', '--node', node, '--json'], 'yg-context/1');
+  if (res.state === 'no-cli') failNoCli(cfg, res.command);
+  if (res.state === 'stale') failStaleCli(cfg, res.command, res.saw);
+  const out = res.state === 'ok'
+    ? { doc: res.doc }
+    : { doc: null, why: res.state === 'absent' ? `the graph has no component '${node}'` : res.detail };
+  contextCache.set(node, out);
+  return out;
+}
+
+// The same document for one file — it names the component that owns the file as well as the
+// rules that reach it, which is the one question `blame` asks and the graph alone can answer.
+// A file no component owns is an ordinary answer here (`owner.kind` is not "node"), not a stop.
+const fileContextCache = new Map();
+export function ygFileContext(root, cfg, relFile) {
+  if (fileContextCache.has(relFile)) return fileContextCache.get(relFile);
+  const res = ygJson(root, cfg, ['context', '--file', relFile, '--json'], 'yg-context/1');
+  let doc = null;
+  if (res.state === 'ok') doc = res.doc;
+  else if (res.state === 'no-cli') failNoCli(cfg, res.command);
+  else if (res.state === 'stale') failStaleCli(cfg, res.command, res.saw);
+  fileContextCache.set(relFile, doc);
+  return doc;
+}
+
+// `yg impact --node <path> --json` — Yggdrasil's own answer to "who depends on this node".
+const impactCache = new Map();
+export function ygImpact(root, cfg, node) {
+  if (impactCache.has(node)) return impactCache.get(node);
+  const doc = ygDoc(root, cfg, ['impact', '--node', node, '--json'], 'yg-impact/1');
+  impactCache.set(node, doc);
+  return doc;
 }
 
 // Runs `yg check` in one worktree and reports what it found. Never approves anything (that fills
 // the lock and can cost money); `check` alone is read-only and keyless. `available: false` means
 // the CLI itself could not be started — a different failure from a graph that refuses the tree,
 // and the caller says so in those words.
-export function runYgCheck(cfg, cwd) {
+export function runYgCheck(cfg, cwd, extra = []) {
   const { cmd, prefix, display } = ygCommand(cfg);
-  let out = '';
-  let status = 0;
-  try {
-    out = execFileSync(cmd, [...prefix, 'check'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  } catch (e) {
-    if (e.code === 'ENOENT') return { available: false, ok: false, command: `${display} check`, summary: null };
-    status = e.status === undefined || e.status === null ? 1 : e.status;
-    out = ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || '');
+  const args = ['check', ...extra];
+  const command = `${display} ${args.join(' ')}`;
+  const run = startCli(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  if (run.missing || run.spawnFailed) {
+    return { available: false, ok: false, command, summary: null, out: '' };
   }
+  const status = run.code;
+  const out = run.out + run.err;
   const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
   const verdictLine = lines.find((l) => /^yg check:/.test(l));
   const errorLine = lines.find((l) => /^(enforced|Errors)\b/.test(l));
@@ -113,8 +285,99 @@ export function runYgCheck(cfg, cwd) {
     available: true,
     ok: status === 0,
     exit: status,
-    command: `${display} check`,
+    command,
+    out,
     summary: verdictLine || errorLine || lines[lines.length - 1] || null,
+  };
+}
+
+// ---- the prose rules a judge still owes a verdict on -----------------------------------------
+//
+// verifier-is-yggdrasil-reviewer: the free half of a graph gate is `yg check --approve
+// --only-deterministic`, which records every verdict a script can reach, costs nothing and needs
+// no key. What it leaves behind is the prose rules — the pairs a reader has to judge — and in a
+// horde the reader is the verifier, judging under its own name through Yggdrasil's external-judge
+// channel. These two functions are how the tools name that work: run the free half, then list
+// exactly what is left.
+
+// The free half. Always allowed, in any worktree, before any gate is judged.
+export function fillDeterministic(cfg, cwd) {
+  const { cmd, prefix, display } = ygCommand(cfg);
+  const args = ['check', '--approve', '--only-deterministic'];
+  const command = `${display} ${args.join(' ')}`;
+  const run = startCli(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  if (run.missing || run.spawnFailed) return { available: false, ok: false, command, out: '' };
+  return {
+    available: true, ok: run.code === 0, exit: run.code, command, out: run.out + run.err,
+  };
+}
+
+// `unverified  <node>  No valid verdict for aspect '<id>' on <kind>:<path>.` — the line
+// `yg check --details` prints, one block per pair, for a pair the lock holds no valid verdict for.
+const PENDING_RE = /No valid verdict for aspect '([^']+)' on (file|node):(.+?)\.\s*$/;
+
+// Which pairs are prose is not guessed from what is left over: the graph says so itself. Each
+// unit's context document names every rule reaching it and the kind of reviewer it takes, so a
+// pending pair is sorted by the graph's own word — `llm` is a judgement somebody has to make, and
+// anything else is a script that has simply not been run yet. Sorting by elimination instead would
+// call a script rule a prose one on any tree where the free run had not happened, and send a
+// verifier off to judge what a command answers for nothing.
+export function pendingProsePairs(cfg, cwd) {
+  const res = runYgCheck(cfg, cwd, ['--details']);
+  if (!res.available) {
+    return {
+      available: false, command: res.command, pairs: [], scriptPending: [],
+    };
+  }
+  const candidates = [];
+  const seen = new Set();
+  for (const raw of (res.out || '').split('\n')) {
+    const m = PENDING_RE.exec(raw.trim());
+    if (!m) continue;
+    const key = `${m[1]} ${m[2]} ${m[3]}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push({ aspect: m[1], unitKind: m[2], unit: m[3] });
+  }
+
+  const docs = new Map();
+  const kindOf = (pair) => {
+    const key = `${pair.unitKind}:${pair.unit}`;
+    if (!docs.has(key)) {
+      const args = pair.unitKind === 'node'
+        ? ['context', '--node', pair.unit, '--json']
+        : ['context', '--file', pair.unit, '--json'];
+      const answer = ygJson(cwd, cfg, args, 'yg-context/1');
+      docs.set(key, answer.state === 'ok' ? answer.doc : null);
+    }
+    const doc = docs.get(key);
+    if (!doc) return null;
+    const found = asArray(doc.aspects).find((a) => a && a.id === pair.aspect);
+    return found ? found.kind : null;
+  };
+
+  const pairs = [];
+  const scriptPending = [];
+  for (const pair of candidates) {
+    if (kindOf(pair) === 'llm') pairs.push(pair);
+    else scriptPending.push(pair);
+  }
+  return {
+    available: true, command: res.command, green: res.ok, pairs, scriptPending,
+  };
+}
+
+// The two commands that judge one pending pair, in the order they are run: the package names the
+// hash, and the record is bound to it. Written out in full so a verifier copies rather than
+// composes — the hash is the one field it cannot invent.
+export function verdictCommandsFor(cfg, pair, judge) {
+  const { display } = ygCommand(cfg);
+  const unit = `--${pair.unitKind} ${pair.unit}`;
+  return {
+    package: `${display} verdict package --aspect ${pair.aspect} ${unit}`,
+    record: `${display} verdict record --aspect ${pair.aspect} ${unit} --by ${judge || '<your name>'} `
+      + '--verdict pass|refused --hash <hashes.pass or hashes.refused from the package> '
+      + '[--report "<what it breaks, with file:line>"]',
   };
 }
 
@@ -124,9 +387,9 @@ export function runYgCheck(cfg, cwd) {
 // read-only, keyless commands the installed Yggdrasil CLI actually has: `check` (the gate's own
 // report) and `aspects` (the rule list with each rule's status). There is deliberately no
 // `--json` here: the installed CLI has no such flag on either command — verified against its own
-// `--help`, the same way blame.mjs settled on reading the lock — so the honest source is what
-// those two commands print, parsed for the figures they state outright, and a figure the output
-// does not state is reported as unknown rather than invented.
+// `--help` — so the honest source is what those two commands print, parsed for the figures they
+// state outright, and a figure the output does not state is reported as unknown rather than
+// invented.
 //
 //   enforced       rules at status "enforced" — the law that actually blocks
 //   advisoryClean  advisory rules this run reported nothing against, of all advisory rules
@@ -146,24 +409,12 @@ const ASPECT_LINE_RE = /^(\S+) \[(draft|advisory|enforced)\]/;
 
 function runYg(cfg, cwd, args) {
   const { cmd, prefix, display } = ygCommand(cfg);
-  try {
-    return {
-      available: true,
-      ok: true,
-      out: execFileSync(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
-      command: `${display} ${args.join(' ')}`,
-    };
-  } catch (e) {
-    if (e.code === 'ENOENT') {
-      return { available: false, ok: false, out: '', command: `${display} ${args.join(' ')}` };
-    }
-    return {
-      available: true,
-      ok: false,
-      out: ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || ''),
-      command: `${display} ${args.join(' ')}`,
-    };
-  }
+  const command = `${display} ${args.join(' ')}`;
+  const run = startCli(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  if (run.missing || run.spawnFailed) return { available: false, ok: false, out: '', command };
+  return {
+    available: true, ok: run.code === 0, out: run.out + run.err, command,
+  };
 }
 
 // ygQualityIndex(cfg, cwd) — the reading above, taken on the tree at `cwd`. `available: false`
@@ -206,226 +457,55 @@ export function ygQualityIndex(cfg, cwd) {
   };
 }
 
-function graphDir(cfg) {
-  return (cfg && cfg.graphDir) || 'architecture/';
-}
+// ---- where a node's own files live -----------------------------------------------------------
 
-function manualNodeDir(root, cfg, node) {
-  return join(root, graphDir(cfg).replace(/\/$/, ''), 'nodes', node);
-}
-
-function yggdrasilNodeDir(root, node) {
+export function nodeDir(root, node) {
   return join(root, '.yggdrasil', 'model', node);
 }
 
-function nodeDir(root, cfg, node) {
-  return mode(cfg) === 'yggdrasil' ? yggdrasilNodeDir(root, node) : manualNodeDir(root, cfg, node);
-}
-
-// ---- manual mode: node.json -----------------------------------------------
-
-function manualNodeJsonPath(root, cfg, node) {
-  return join(manualNodeDir(root, cfg, node), 'node.json');
-}
-
-function readManualNode(root, cfg, node) {
-  return readJSON(manualNodeJsonPath(root, cfg, node), null);
-}
-
-// ---- yggdrasil mode: a minimal, targeted yg-node.yaml reader --------------
-//
-// Not a general YAML parser — this repository's yg-node.yaml files are generated by `yg` in a
-// narrow, predictable shape (scalar fields, `mapping:`/`aspects:` as flat dash-lists, `relations:`
-// as a dash-list of {type, target} pairs), and node.mjs only ever reads this file, never writes
-// it. A parser that tried to be a general YAML implementation would be both larger and no more
-// correct for the one shape it actually has to handle.
-function parseYgNodeYaml(text) {
-  const lines = text.split('\n');
-  const result = {
-    name: null, type: null, description: null, mapping: [], relations: [], aspects: [], ports: {},
-  };
-  let section = null;
-  let pendingRelation = null;
-  let pendingList = null;
-  let relationIndent = 0;
-  let pendingPort = null;
-  const flushRelation = () => {
-    if (pendingRelation && (pendingRelation.target || pendingRelation.type)) result.relations.push(pendingRelation);
-    pendingRelation = null;
-    pendingList = null;
-  };
-  for (const raw of lines) {
-    const line = raw.replace(/\s+$/, '');
-    if (!line.trim() || line.trim().startsWith('#')) continue;
-    const topMatch = /^([A-Za-z_-]+):\s*(.*)$/.exec(line);
-    if (topMatch && !line.startsWith(' ')) {
-      flushRelation();
-      const [, key, rest] = topMatch;
-      if (key === 'name') result.name = unquote(rest.trim());
-      else if (key === 'type') result.type = unquote(rest.trim());
-      else if (key === 'description') result.description = unquote(rest.trim());
-      pendingPort = null;
-      section = ['mapping', 'aspects', 'relations', 'ports'].includes(key) ? key : null;
-      continue;
-    }
-    if (section === 'mapping') {
-      const m = /^\s*-\s*(.+)$/.exec(line);
-      if (m) result.mapping.push(unquote(m[1].trim()));
-      continue;
-    }
-    // The aspects attached to the node itself (channel 1) — and, because a node's aspects cascade
-    // to every node below it, to its descendants too (channel 2). Each entry is either a bare id
-    // or an `- id: <id>` block whose `status:` (and `when:`) lines follow it, indented further.
-    if (section === 'aspects') {
-      const dash = /^\s*-\s*(.+)$/.exec(line);
-      const kv = /^\s+([A-Za-z_-]+):\s*(.*)$/.exec(line);
-      if (dash) {
-        const body = dash[1].trim();
-        const inline = /^id:\s*(.+)$/.exec(body);
-        result.aspects.push(inline
-          ? { id: unquote(inline[1].trim()), status: null }
-          : { id: unquote(body), status: null });
-      } else if (kv && kv[1] === 'status' && result.aspects.length) {
-        result.aspects[result.aspects.length - 1].status = unquote(kv[2].trim());
-      }
-      continue;
-    }
-    // A relation is a dash item whose keys follow it, indented further; a key with no value on its
-    // own line (`consumes:`) opens a nested list, whose own dash items are indented deeper than the
-    // dash that opened the relation — that indent is what tells the two kinds of dash apart, so a
-    // `consumes:` list is read as the relation's ports rather than as three more relations.
-    if (section === 'relations') {
-      const indent = line.length - line.trimStart().length;
-      const dash = /^\s*-\s*(.+)$/.exec(line);
-      const kv = /^\s+([A-Za-z_-]+):\s*(.*)$/.exec(line);
-      if (dash && pendingRelation && pendingList && indent > relationIndent) {
-        pendingRelation[pendingList].push(unquote(dash[1].trim()));
-      } else if (dash) {
-        flushRelation();
-        pendingRelation = {};
-        relationIndent = indent;
-        const inline = /^([A-Za-z_-]+):\s*(.*)$/.exec(dash[1]);
-        if (inline) pendingRelation[inline[1]] = parseYamlValue(inline[2].trim());
-      } else if (kv && pendingRelation) {
-        const value = kv[2].trim();
-        if (value === '') {
-          pendingList = kv[1];
-          pendingRelation[kv[1]] = [];
-        } else {
-          pendingList = null;
-          pendingRelation[kv[1]] = parseYamlValue(value);
-        }
-      }
-      continue;
-    }
-    // `ports:` is a map, not a list: each port is a key two spaces in, its own fields deeper. Only
-    // the fields the layers above agreed on are read (`version`, `test`); anything else is kept as
-    // written, so a field added later reaches a caller that knows to look for it.
-    if (section === 'ports') {
-      const indent = line.length - line.trimStart().length;
-      const kv = /^\s+([A-Za-z0-9._-]+):\s*(.*)$/.exec(line);
-      if (!kv) continue;
-      if (indent <= 2) {
-        pendingPort = unquote(kv[1].trim());
-        result.ports[pendingPort] = { version: null, test: null };
-        const inline = kv[2].trim();
-        if (inline && inline !== '{}') result.ports[pendingPort].value = parseYamlValue(inline);
-      } else if (pendingPort) {
-        const value = parseYamlValue(kv[2].trim());
-        const numeric = kv[1] === 'version' && typeof value === 'string' && /^\d+$/.test(value);
-        result.ports[pendingPort][kv[1]] = numeric ? Number(value) : (value === '' ? null : value);
-      }
-      continue;
-    }
-  }
-  flushRelation();
-  return result;
-}
-
-function unquote(s) {
-  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) return s.slice(1, -1);
-  if (s.length >= 2 && s.startsWith("'") && s.endsWith("'")) return s.slice(1, -1);
-  return s;
-}
-
-// One scalar, or the inline list form `[a, b]` that `yg` uses for short lists — the only two
-// shapes a value takes in these files.
-function parseYamlValue(raw) {
-  const s = String(raw).trim();
-  if (s.startsWith('[') && s.endsWith(']')) {
-    return s.slice(1, -1).split(',').map((p) => unquote(p.trim())).filter(Boolean);
-  }
-  return unquote(s);
-}
-
-function readYggdrasilNode(root, node) {
-  const file = join(yggdrasilNodeDir(root, node), 'yg-node.yaml');
-  const text = readText(file);
-  if (!text) return null;
-  return parseYgNodeYaml(text);
-}
-
-// ---- shared node reads (exported for brief.mjs / premerge.mjs) ------------
-
 export function nodeExists(root, cfg, node) {
-  if (mode(cfg) === 'yggdrasil') return existsSync(join(yggdrasilNodeDir(root, node), 'yg-node.yaml'));
-  return existsSync(manualNodeJsonPath(root, cfg, node));
+  return ygNode(root, cfg, node) !== null;
 }
 
-export function listAllNodes(root, cfg) {
-  if (mode(cfg) === 'yggdrasil') {
-    const base = join(root, '.yggdrasil', 'model');
-    const found = [];
-    const walk = (dir) => {
-      if (!existsSync(dir)) return;
-      for (const e of readdirSync(dir, { withFileTypes: true })) {
-        const full = join(dir, e.name);
-        if (e.isDirectory()) walk(full);
-        else if (e.name === 'yg-node.yaml') found.push(relative(base, dir));
-      }
-    };
-    walk(base);
-    return found.sort();
-  }
-  const dir = join(root, graphDir(cfg).replace(/\/$/, ''), 'nodes');
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
+// Every node id in the graph. Node identity IS the path under `.yggdrasil/model/` — that is the
+// one thing all three layers agree on and the only thing read here: directory names, never a
+// file's content. Every fact ABOUT a node still comes from `yg node --json`.
+export function listAllNodes(root) {
+  const base = join(root, '.yggdrasil', 'model');
+  const found = [];
+  const walk = (dir) => {
+    if (!existsSync(dir)) return;
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.name === 'yg-node.yaml') found.push(relative(base, dir));
+    }
+  };
+  walk(base);
+  return found.sort();
 }
 
-// boundary — array of path globs the node covers.
+// boundary — the path globs the node's mapping covers.
 export function nodeBoundary(root, cfg, node) {
-  if (mode(cfg) === 'yggdrasil') {
-    const y = readYggdrasilNode(root, node);
-    return y ? y.mapping : [];
-  }
-  const n = readManualNode(root, cfg, node);
-  return n && Array.isArray(n.boundary) ? n.boundary : [];
+  const doc = ygNode(root, cfg, node);
+  return doc ? asArray(doc.mapping) : [];
 }
 
 // The repo-root-relative directory a node's own graph files live in (yg-node.yaml, charter.md,
-// contracts.md, log.md in Yggdrasil mode; node.json and the same three .md files in manual mode),
-// trailing slash included — the prefix premerge.mjs's scope check treats as inside a ticket's
-// node, alongside its code boundary. Nothing else under .yggdrasil/ (yg-architecture.yaml,
-// aspects, locks, config) is a node's own files, so this names only that one directory, never
-// the graph root.
+// log.md), trailing slash included — the prefix premerge.mjs's scope check treats as inside a
+// ticket's node, alongside its code boundary. Nothing else under .yggdrasil/
+// (yg-architecture.yaml, aspects, locks, config) is a node's own files, so this names only that
+// one directory, never the graph root.
 export function nodeGraphPathPrefix(root, cfg, node) {
-  return `${relative(root, nodeDir(root, cfg, node))}/`;
+  return `${relative(root, nodeDir(root, node))}/`;
 }
 
 export function nodeCharterPath(root, cfg, node) {
-  return join(nodeDir(root, cfg, node), 'charter.md');
-}
-
-export function nodeContractsPath(root, cfg, node) {
-  return join(nodeDir(root, cfg, node), 'contracts.md');
+  return join(nodeDir(root, node), 'charter.md');
 }
 
 export function readNodeCharterText(root, cfg, node) {
   return readText(nodeCharterPath(root, cfg, node));
-}
-
-export function readNodeContractsText(root, cfg, node) {
-  return readText(nodeContractsPath(root, cfg, node));
 }
 
 // ---- boundary matching (shared with premerge.mjs and tk.mjs) ---------------
@@ -458,89 +538,76 @@ export function ticketBoundary(root, cfg, nodes) {
   return nodes.flatMap((n) => (nodeExists(root, cfg, n) ? [...nodeBoundary(root, cfg, n), nodeGraphPathPrefix(root, cfg, n)] : []));
 }
 
-// ---- ports and the nodes that consume them ---------------------------------
+// ---- ports: the contracts ---------------------------------------------------------------
+//
+// port-is-contract. A port is one object in the graph, carrying the version a consumer names and
+// the test that IS the promise. The horde has no contract object of its own: what it has is a
+// PROPOSAL to add or bump one, which the architect files.
 
-// The relations a node declares. Yggdrasil mode reads them from `yg-node.yaml` (a relation may
-// name the ports it consumes); manual mode has no ports at all, so `dependsOn` — the only edge
-// it records — stands in, naming no port.
 export function nodeRelations(root, cfg, node) {
-  if (mode(cfg) === 'yggdrasil') {
-    const y = readYggdrasilNode(root, node);
-    return y ? y.relations : [];
-  }
-  const n = readManualNode(root, cfg, node);
-  return n && Array.isArray(n.dependsOn) ? n.dependsOn.map((t) => ({ target: t, type: 'depends' })) : [];
+  const doc = ygNode(root, cfg, node);
+  return doc ? asArray(doc.relations) : [];
 }
 
-// The ports a node offers, as {name: {version, test}} — empty in manual mode, which has none.
+// The ports a node publishes, as {name: {description, version, test, aspects}}.
 export function nodePorts(root, cfg, node) {
-  if (mode(cfg) === 'yggdrasil') {
-    const y = readYggdrasilNode(root, node);
-    return y && y.ports ? y.ports : {};
-  }
-  const n = readManualNode(root, cfg, node);
-  return n && n.ports && typeof n.ports === 'object' ? n.ports : {};
+  const doc = ygNode(root, cfg, node);
+  return doc && doc.ports && typeof doc.ports === 'object' ? doc.ports : {};
 }
 
 export function portExists(root, cfg, node, port) {
   return Object.prototype.hasOwnProperty.call(nodePorts(root, cfg, node), port);
 }
 
-// `<ygCommand> impact --node <path> --json` — Yggdrasil's own answer to "who depends on this
-// node", the versioned document the layers agreed on. Accepted only when the document says so
-// itself (`schema` = "yg-impact/1"); anything else — an older CLI, no CLI, a different shape —
-// is a null, and the caller reads the graph files instead. Probed once per node per process:
-// a plan asks about the same node many times and the answer cannot change mid-run.
-const impactCache = new Map();
-export function ygImpact(cfg, node) {
-  if (!cfg || !cfg.ygCommand) return null;
-  if (impactCache.has(node)) return impactCache.get(node);
-  const { cmd, prefix } = ygCommand(cfg);
-  let doc = null;
-  try {
-    const out = execFileSync(cmd, [...prefix, 'impact', '--node', node, '--json'], {
-      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const parsed = JSON.parse(out);
-    if (parsed && parsed.schema === 'yg-impact/1') doc = parsed;
-  } catch {
-    doc = null;
-  }
-  impactCache.set(node, doc);
-  return doc;
-}
-
-// consumersOf(node, port) — every node that consumes one node's port: from `yg impact` when the
-// installed CLI produces the document, else from the relations in the graph files. The one
+// consumersOf(node, port) — every node that consumes one node's port, from `yg impact`. The one
 // derivation of this, because three things depend on the same answer: which tickets a version
 // bump must come before, whose owner has to approve it, and what the merge checklist then
 // requires. A relation that names no port at all consumes the node as a whole, so a bump reaches
-// it too — the safe direction, and the only reading manual mode's `dependsOn` supports.
+// it too — the safe direction.
 export function consumersOf(root, cfg, node, port) {
   const out = new Set();
-  const doc = ygImpact(cfg, node);
-  if (doc) {
-    for (const p of asArray(doc.ports)) {
-      if (p && p.name === port) for (const c of asArray(p.consumers)) if (c && c.node) out.add(c.node);
-    }
-    for (const d of asArray(doc.dependents)) {
-      if (!d || !d.node) continue;
-      for (const r of asArray(d.relations)) {
-        const ports = asArray(r && r.ports);
-        if (ports.length === 0 || ports.includes(port)) out.add(d.node);
-      }
-    }
-    return [...out].sort();
+  const doc = ygImpact(root, cfg, node);
+  if (!doc) return [];
+  for (const p of asArray(doc.ports)) {
+    if (p && p.name === port) for (const c of asArray(p.consumers)) if (c && c.node) out.add(c.node);
   }
-  for (const other of listAllNodes(root, cfg)) {
-    if (other === node) continue;
-    for (const rel of nodeRelations(root, cfg, other)) {
-      if (!rel || rel.target !== node) continue;
-      const consumes = asArray(rel.consumes);
-      if (consumes.length === 0 || consumes.includes(port)) out.add(other);
+  for (const d of asArray(doc.dependents)) {
+    if (!d || !d.node) continue;
+    for (const r of asArray(d.relations)) {
+      const ports = asArray(r && r.ports);
+      if (ports.length === 0 || ports.includes(port)) out.add(d.node);
     }
   }
   return [...out].sort();
+}
+
+// One node's ports rendered for a brief: what this node promises its neighbours, at which
+// version, proved by which test. The verifier reads this instead of a hand-kept contracts table,
+// so what it is held to is what the graph actually declares.
+export function renderNodePorts(root, cfg, node) {
+  const ports = nodePorts(root, cfg, node);
+  const names = Object.keys(ports).sort();
+  const lines = [`# Ports · ${node}`, ''];
+  if (names.length === 0) {
+    lines.push('(this component publishes no port — it promises its neighbours nothing by name)');
+    return lines.join('\n');
+  }
+  lines.push('| port | version | the test that is the contract | promise |', '|---|---|---|---|');
+  for (const name of names) {
+    const p = ports[name] || {};
+    lines.push(`| ${name} | ${p.version ?? '(none declared)'} | ${p.test || '(none declared)'} | ${p.description || ''} |`);
+  }
+  const consumers = names
+    .map((n) => ({ port: n, by: consumersOf(root, cfg, node, n) }))
+    .filter((r) => r.by.length);
+  if (consumers.length) {
+    lines.push('', 'Consumed by:', ...consumers.map((r) => `- ${r.port} → ${r.by.join(', ')}`));
+  }
+  return lines.join('\n');
+}
+
+export function readNodePortsText(root, cfg, node) {
+  return renderNodePorts(root, cfg, node);
 }
 
 // ---- the node's rules ------------------------------------------------------
@@ -548,205 +615,28 @@ export function consumersOf(root, cfg, node, port) {
 // What the graph forbids and requires of this node's code, with the word that says what a refusal
 // costs. Three statuses, and the difference between them is the whole point of showing them:
 // `enforced` blocks a merge, `advisory` warns and lets it through, `draft` is inert until someone
-// promotes it. Two ways of getting them, in order of authority:
-//
-//   1. `yg <sub> context --node <node>` — Yggdrasil's own resolution, the only one that accounts
-//      for every channel (node, cascade, type, ancestor type, flow, port, implies) and for `when:`
-//      filters. Its JSON form is used when the installed CLI has one, its text form otherwise.
-//   2. the graph files, read directly, when the CLI is not installed at all — the node's and its
-//      ancestors' own `aspects:`, plus the aspects on their types in `yg-architecture.yaml`,
-//      resolved to an effective status the way the graph documents it (highest wins). Flows,
-//      ports and implied aspects are not resolved this way, and the reading says so rather than
-//      letting a short list read as a complete one.
+// promotes it. All of it from `yg context --json`, Yggdrasil's own resolution — the only one that
+// accounts for every channel and for `when:` filters.
 
 const STATUS_MEANING = {
   enforced: 'blocks the merge',
   advisory: 'warns, does not block',
   draft: 'not in force yet — inert until promoted',
 };
-const STATUS_RANK = { draft: 0, advisory: 1, enforced: 2 };
 
-function strongerStatus(a, b) {
-  if (!a) return b;
-  if (!b) return a;
-  return (STATUS_RANK[a] ?? 0) >= (STATUS_RANK[b] ?? 0) ? a : b;
-}
-
-// `Must satisfy (N aspects):` followed by one indented block per aspect:
-//   "  <id> [<status>] — <description>" then "    Source: <where it comes from>".
-function parseYgContextText(text) {
-  const aspects = [];
-  let current = null;
-  for (const raw of text.split('\n')) {
-    const head = /^\s{1,3}(\S+)\s+\[(\w+)\]\s+—\s+(.*)$/.exec(raw);
-    if (head) {
-      current = { id: head[1], status: head[2], description: trimStatusSentence(head[3]), via: null };
-      aspects.push(current);
-      continue;
-    }
-    const src = /^\s{3,}Source:\s*(.+)$/.exec(raw);
-    if (src && current) current.via = src[1].trim();
-  }
-  return aspects;
-}
-
-// The JSON form of the same thing, whatever the installed CLI happens to call the fields — this
-// tool reads it defensively (id/status/description under any of a few plausible names) and falls
-// back to the text form when it recognizes nothing, so a CLI that grows `--json` later is picked
-// up without a release here, and one that never does keeps working.
-function parseYgContextJson(doc) {
-  const list = [doc && doc.aspects, doc && doc.mustSatisfy, doc && doc.must_satisfy]
-    .find((x) => Array.isArray(x));
-  if (!list) return null;
-  const out = [];
-  for (const a of list) {
-    if (!a || typeof a !== 'object') continue;
-    const id = a.id || a.aspect;
-    if (!id) continue;
-    const channels = Array.isArray(a.channels)
-      ? a.channels.map((c) => (typeof c === 'string' ? c : c.origin || c.kind)).filter(Boolean)
-      : [];
-    out.push({
-      id: String(id),
-      status: String(a.status || a.effectiveStatus || 'enforced'),
-      description: trimStatusSentence(String(a.name || a.description || a.summary || '')),
-      via: channels.length ? channels.join(' · ') : (a.source || a.via || null),
-    });
-  }
-  return out.length ? out : null;
-}
-
-// Yggdrasil's own rendering of an aspect ends with a sentence restating what its status means
-// ("This rule is advisory: `yg check` reports …"). The status word is printed beside the rule
-// here already, so that sentence is dropped rather than said twice.
-function trimStatusSentence(text) {
-  return text.replace(/\s*This rule is (?:not in force yet|advisory|enforced)[^]*$/, '').trim();
-}
-
-function rulesFromYg(root, cfg, node) {
-  const { cmd, prefix, display } = ygCommand(cfg);
-  const call = (extra) => {
-    try {
-      return execFileSync(cmd, [...prefix, 'context', '--node', node, ...extra], {
-        cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
-      });
-    } catch (e) {
-      if (e.code === 'ENOENT') return null;
-      return e.stdout ? e.stdout.toString() : '';
-    }
-  };
-  const asJson = call(['--json']);
-  if (asJson === null) return null; // no CLI at all — the caller reads the graph files instead
-  if (asJson.trim().startsWith('{')) {
-    try {
-      const parsed = parseYgContextJson(JSON.parse(asJson));
-      if (parsed) return { source: `${display} context --node ${node} --json`, aspects: parsed };
-    } catch { /* not the JSON this reads — fall through to the text form */ }
-  }
-  const text = call([]);
-  if (text === null) return null;
-  return { source: `${display} context --node ${node}`, aspects: parseYgContextText(text) };
-}
-
-// ---- reading the graph files directly (no CLI installed) --------------------
-
-function aspectDefaults(root, id) {
-  const text = readText(join(root, '.yggdrasil', 'aspects', ...String(id).split('/'), 'yg-aspect.yaml'));
-  if (!text) return { status: 'enforced', description: null };
-  let status = null;
-  let description = null;
-  let name = null;
-  for (const raw of text.split('\n')) {
-    if (raw.startsWith(' ') || raw.trim().startsWith('#')) continue;
-    const m = /^([A-Za-z_-]+):\s*(.*)$/.exec(raw);
-    if (!m) continue;
-    if (m[1] === 'status') status = unquote(m[2].trim());
-    else if (m[1] === 'description') description = unquote(m[2].trim());
-    else if (m[1] === 'name') name = unquote(m[2].trim());
-  }
-  return { status: status || 'enforced', description: description || name };
-}
-
-// node_types.<type>.aspects from yg-architecture.yaml, as {type: [{id, status}]}. Indentation is
-// the only structure this needs: types are the keys two spaces in under `node_types:`, their
-// `aspects:` four in, its entries six in.
-function parseArchitectureTypeAspects(text) {
-  const byType = {};
-  if (!text) return byType;
-  let inNodeTypes = false;
-  let type = null;
-  let inAspects = false;
-  for (const raw of text.split('\n')) {
-    const line = raw.replace(/\s+$/, '');
-    if (!line.trim() || line.trim().startsWith('#')) continue;
-    const indent = line.length - line.trimStart().length;
-    if (indent === 0) { inNodeTypes = /^node_types:/.test(line); type = null; inAspects = false; continue; }
-    if (!inNodeTypes) continue;
-    if (indent === 2) {
-      const m = /^\s{2}([^\s:]+):\s*$/.exec(line);
-      type = m ? unquote(m[1]) : null;
-      inAspects = false;
-      continue;
-    }
-    if (!type) continue;
-    if (indent === 4) { inAspects = /^\s{4}aspects:\s*$/.test(line); continue; }
-    if (!inAspects || indent < 6) continue;
-    const dash = /^\s*-\s*(.+)$/.exec(line);
-    const kv = /^\s*([A-Za-z_-]+):\s*(.*)$/.exec(line);
-    byType[type] = byType[type] || [];
-    if (dash) {
-      const body = dash[1].trim();
-      const inline = /^id:\s*(.+)$/.exec(body);
-      byType[type].push(inline ? { id: unquote(inline[1].trim()), status: null } : { id: unquote(body), status: null });
-    } else if (kv && kv[1] === 'status' && byType[type].length) {
-      byType[type][byType[type].length - 1].status = unquote(kv[2].trim());
-    }
-  }
-  return byType;
-}
-
-// The node itself and every node above it, nearest last — the chain an aspect cascades down.
-function nodeAncestry(root, node) {
-  const parts = String(node).split('/').filter(Boolean);
-  const chain = [];
-  for (let i = 1; i <= parts.length; i++) {
-    const path = parts.slice(0, i).join('/');
-    if (existsSync(join(yggdrasilNodeDir(root, path), 'yg-node.yaml'))) chain.push(path);
-  }
-  return chain;
-}
-
-function rulesFromGraphFiles(root, cfg, node) {
-  const typeAspects = parseArchitectureTypeAspects(readText(join(root, '.yggdrasil', 'yg-architecture.yaml')));
-  const found = new Map();
-  const attach = (id, declaredStatus, via) => {
-    const defaults = aspectDefaults(root, id);
-    const status = strongerStatus(declaredStatus || null, defaults.status);
-    const existing = found.get(id);
-    if (existing) {
-      existing.status = strongerStatus(existing.status, status);
-      if (!existing.via.includes(via)) existing.via.push(via);
-      return;
-    }
-    found.set(id, {
-      id, status, description: defaults.description || '', via: [via],
-    });
-  };
-  for (const ancestor of nodeAncestry(root, node)) {
-    const y = readYggdrasilNode(root, ancestor);
-    if (!y) continue;
-    const here = ancestor === node;
-    for (const a of y.aspects) {
-      attach(a.id, a.status, here ? 'this node' : `cascades from node ${ancestor}`);
-    }
-    for (const a of typeAspects[y.type] || []) {
-      attach(a.id, a.status, here ? `type ${y.type}` : `type ${y.type}, on node ${ancestor}`);
-    }
-  }
-  return {
-    source: 'the graph files (no Yggdrasil CLI on this machine — flows, ports and implied aspects are not resolved here)',
-    aspects: [...found.values()].map((a) => ({ ...a, via: a.via.join(' · ') })),
-  };
+function aspectsFromContext(doc) {
+  return asArray(doc && doc.aspects).map((a) => {
+    const channels = asArray(a.channels)
+      .map((c) => (typeof c === 'string' ? c : (c && (c.origin || c.kind))))
+      .filter(Boolean);
+    return {
+      id: String(a.id),
+      status: String(a.status || 'enforced'),
+      kind: a.kind || null,
+      description: String(a.name || a.description || ''),
+      via: channels.length ? channels.join(' · ') : null,
+    };
+  });
 }
 
 // The section a node's charter carries naming the rules that reach its files from above — written
@@ -760,21 +650,41 @@ export function charterInheritedRules(charterText) {
   return (next === -1 ? rest : rest.slice(0, next)).trim();
 }
 
-// The rules in force on one node, however they can be got at. Manual mode has no aspects at all —
-// the node map carries no rules, and saying so is the honest answer, not an empty list.
+// The rules in force on one node.
 export function nodeRules(root, cfg, node) {
-  if (mode(cfg) !== 'yggdrasil') {
-    return {
-      source: 'the horde\'s own node map, which carries no rules — this node\'s charter and its contracts are its law',
-      aspects: [],
-    };
+  const { display } = ygCommand(cfg);
+  const source = `${display} context --node ${node} --json`;
+  const res = ygContext(root, cfg, node);
+  if (!res.doc) return { source, aspects: [], unresolved: res.why };
+  return { source, aspects: aspectsFromContext(res.doc) };
+}
+
+// The rules in force on one file, and the component that owns it — one document answers both.
+export function fileRules(root, cfg, relFile) {
+  const { display } = ygCommand(cfg);
+  const doc = ygFileContext(root, cfg, relFile);
+  if (!doc) {
+    return { available: false, reason: `\`${display} context --file ${relFile} --json\` could not resolve this file` };
   }
-  return rulesFromYg(root, cfg, node) || rulesFromGraphFiles(root, cfg, node);
+  const owner = doc.owner && doc.owner.kind === 'node' ? doc.owner.path : null;
+  return {
+    available: true,
+    node: owner,
+    source: `${display} context --file ${relFile} --json`,
+    aspects: aspectsFromContext(doc),
+  };
 }
 
 export function renderRules(rules, inherited) {
   const lines = [`_Resolved from: ${rules.source}_`, ''];
-  if (rules.aspects.length === 0) {
+  if (rules.unresolved) {
+    lines.push(
+      '- **The rules over this node could not be resolved.** The graph itself refuses to assemble',
+      '  them, and until that is fixed nobody can say what this code must satisfy:',
+      '',
+      ...String(rules.unresolved).split('\n').map((l) => `  ${l}`),
+    );
+  } else if (rules.aspects.length === 0) {
     lines.push('- (no rule reaches this node)');
   } else {
     for (const a of rules.aspects) {
@@ -786,7 +696,13 @@ export function renderRules(rules, inherited) {
   return lines.join('\n');
 }
 
-// ---- operational graph.json: proposals + contracts + stamps ---------------
+// ---- operational graph.json: the horde's own proposals --------------------
+//
+// The only objects the horde keeps for itself, and they are process, not architecture: a port
+// proposal and a graph-change proposal, both waiting on the architect. Uncommitted, per horde,
+// gone when the horde is archived. Nothing about the code's currency lives here — the lock binds
+// every verdict to the hash of what it judged, so `yg check` is the one answer to "does the graph
+// still describe this code", and a second stamp kept beside it could only ever disagree.
 
 function graphJsonPath(horde) {
   return hordePath(horde, 'graph.json');
@@ -796,8 +712,7 @@ function loadGraph(horde) {
   const doc = readJSON(graphJsonPath(horde), null);
   return {
     proposals: doc && Array.isArray(doc.proposals) ? doc.proposals : [],
-    contracts: doc && Array.isArray(doc.contracts) ? doc.contracts : [],
-    stamps: doc && doc.stamps && typeof doc.stamps === 'object' ? doc.stamps : {},
+    ports: doc && Array.isArray(doc.ports) ? doc.ports : [],
   };
 }
 
@@ -811,44 +726,17 @@ function nextId(items) {
   return String(max + 1);
 }
 
-// ---- contracts.md rendering (per node, from graph.json — the source of truth) --
-
-function renderContractsTable(node, contracts) {
-  const rows = contracts.filter((c) => c.a === node || c.b === node);
-  const lines = [
-    `# Contracts · ${node}`, '',
-    '| id | with | promise | expressed as | status |', '|---|---|---|---|---|',
-  ];
-  if (rows.length === 0) lines.push('| | | | | |');
-  for (const c of rows) {
-    const other = c.a === node ? c.b : c.a;
-    lines.push(`| ${c.id} | ${other} | ${c.text} | ${c.as} | ${c.status} |`);
-  }
-  return lines.join('\n') + '\n';
-}
-
-function writeContractsMd(root, cfg, horde, node, contracts) {
-  if (!nodeExists(root, cfg, node)) return; // nothing to write beside yet
-  writeText(nodeContractsPath(root, cfg, node), renderContractsTable(node, contracts));
-}
-
 // ---- commands ---------------------------------------------------------------
 
 // Writes a take-over to the node's own log for real (never merely prints the command, unlike
 // cmdLog's default) — a --take is something that already happened, not something an agent still
-// needs to go and do. Best-effort: a node id leased before its graph object exists (or a
-// repository whose `yg` isn't on PATH) has nothing to append to, and the lease itself — recorded
-// in .horde/leases.json's own history — is the durable record either way, so this never blocks
-// the take-over on the node's log succeeding.
+// needs to go and do. Best-effort: a node id leased before its graph object exists has nothing to
+// append to, and the lease itself — recorded in .horde/leases.json's own history — is the durable
+// record either way, so this never blocks the take-over on the node's log succeeding.
 function logNodeTakeover(root, cfg, node, reason) {
   try {
-    if (mode(cfg) === 'yggdrasil') {
-      const yg = ygCommand(cfg);
-      execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
-      return true;
-    }
-    if (!nodeExists(root, cfg, node)) return false;
-    appendText(join(manualNodeDir(root, cfg, node), 'log.md'), `## [${nowIso()}]\n${reason}\n\n`);
+    const yg = ygCommand(cfg);
+    execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
     return true;
   } catch {
     return false;
@@ -858,8 +746,11 @@ function logNodeTakeover(root, cfg, node, reason) {
 function cmdBind(horde, root, cfg, positional, flags) {
   const node = positional[0];
   if (!node) {
-    const nodes = listAllNodes(root, cfg);
-    emit({ mode: mode(cfg), nodes }, flags, () => `graph readable (${mode(cfg)}) — ${nodes.length} node(s): ${nodes.join(', ') || '(none)'}`);
+    const nodes = listAllNodes(root);
+    // Ask the graph about one real node, so "readable" means the documents answered rather than
+    // that a directory exists: an unreadable graph or a CLI that predates them stops here.
+    if (nodes.length) ygNode(root, cfg, nodes[0]);
+    emit({ nodes }, flags, () => `graph readable through ${ygCommand(cfg).display} — ${nodes.length} node(s): ${nodes.join(', ') || '(none)'}`);
     return;
   }
 
@@ -938,13 +829,10 @@ function ownerOf(horde, node) {
   return owners.length ? owners[owners.length - 1].name : '-';
 }
 
-function stampOf(root, cfg, horde, node) {
-  if (mode(cfg) === 'yggdrasil') {
-    const graph = loadGraph(horde);
-    return graph.stamps[node] ? `${graph.stamps[node].sha} (horde-recorded — see yg check for the graph's own status)` : 'graph-managed — see yg check';
-  }
-  const n = readManualNode(root, cfg, node);
-  return n && n.verifiedAt ? `${n.verifiedAt.sha} @ ${n.verifiedAt.at}` : 'unverified';
+function portSummary(root, cfg, node) {
+  const ports = nodePorts(root, cfg, node);
+  const names = Object.keys(ports).sort();
+  return names.map((n) => `${n}@${ports[n] && ports[n].version != null ? ports[n].version : '-'}`);
 }
 
 function cmdMap(horde, root, cfg, flags) {
@@ -953,46 +841,49 @@ function cmdMap(horde, root, cfg, flags) {
   const rows = nodes.map((node) => ({
     node,
     owner: ownerOf(horde, node),
-    stamp: stampOf(root, cfg, horde, node),
-    openProposals: graph.contracts.filter((c) => (c.a === node || c.b === node) && c.status === 'proposed').length,
+    known: nodeExists(root, cfg, node),
+    ports: nodeExists(root, cfg, node) ? portSummary(root, cfg, node) : [],
+    openPortProposals: graph.ports.filter((p) => p.node === node && p.status === 'proposed').length,
   }));
   emit(rows, flags, () => {
     if (rows.length === 0) return '(no nodes touched yet)';
-    return rows.map((r) => `${r.node}  owner=${r.owner}  stamp=${r.stamp}  open-proposals=${r.openProposals}`).join('\n');
+    return rows.map((r) => `${r.node}  owner=${r.owner}  ports=${r.ports.join(',') || '-'}  open-port-proposals=${r.openPortProposals}${r.known ? '' : '  (not in the graph yet)'}`).join('\n');
   });
 }
 
 function cmdShow(horde, root, cfg, positional, flags) {
   const node = positional[0];
   if (!node) fail('show requires <node>');
-  if (!nodeExists(root, cfg, node)) fail(`no such node: ${node}`);
-  const boundary = nodeBoundary(root, cfg, node);
+  if (!nodeExists(root, cfg, node)) fail(`no such node in the graph: ${node}`);
+  const doc = ygNode(root, cfg, node);
+  const boundary = asArray(doc.mapping);
   const charter = readNodeCharterText(root, cfg, node) || '(no charter yet)';
-  const contracts = readNodeContractsText(root, cfg, node) || renderContractsTable(node, loadGraph(horde).contracts);
+  const ports = renderNodePorts(root, cfg, node);
   let log = '(no log yet)';
-  if (mode(cfg) === 'yggdrasil') {
-    try {
-      const { cmd, prefix } = ygCommand(cfg);
-      log = execFileSync(cmd, [...prefix, 'log', 'read', '--node', node], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim() || log;
-    } catch { /* yg not on PATH or no entries yet — keep the placeholder */ }
-  } else {
-    const text = readText(join(manualNodeDir(root, cfg, node), 'log.md'));
-    if (text) log = text.trim();
-  }
-  const stamp = stampOf(root, cfg, horde, node);
+  try {
+    const { cmd, prefix } = ygCommand(cfg);
+    log = execFileSync(cmd, [...prefix, 'log', 'read', '--node', node], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim() || log;
+  } catch { /* no entries yet — keep the placeholder */ }
   const rules = nodeRules(root, cfg, node);
   const inherited = charterInheritedRules(readNodeCharterText(root, cfg, node));
   const result = {
-    node, boundary, stamp, rules: { ...rules, charterInherited: inherited }, charter, contracts, log,
+    node,
+    type: doc.type || null,
+    description: doc.description || null,
+    boundary,
+    ports: doc.ports || {},
+    rules: { ...rules, charterInherited: inherited },
+    charter,
+    log,
   };
   emit(result, flags, () => [
-    `# ${node}`, '',
-    `**Boundary:** ${boundary.join(', ') || '(none)'}`,
-    `**Stamp:** ${stamp}`, '',
+    `# ${node}${doc.type ? ` [${doc.type}]` : ''}`, '',
+    `**Boundary:** ${boundary.join(', ') || '(none)'}`, '',
     '## Rules — what this node\'s code must satisfy', '',
     renderRules(rules, inherited), '',
+    '## Ports — what it promises its neighbours', '',
+    ports, '',
     '## Charter', charter, '',
-    '## Contracts', contracts, '',
     '## Log', log,
   ].join('\n'));
 }
@@ -1008,23 +899,15 @@ function readStdin() {
 function cmdCharterEdit(horde, root, cfg, positional, flags) {
   const node = positional[0];
   if (!node) fail('charter edit requires <node>');
+  if (!nodeExists(root, cfg, node)) {
+    fail(`no such node in the graph: ${node} — a new node is filed with \`${ygCommand(cfg).display}\` by the architect, not seeded here`);
+  }
   const stdin = readStdin();
-  const exists = nodeExists(root, cfg, node);
   let content = stdin;
   if (!content.trim()) {
-    if (exists) fail('charter edit requires content on stdin');
     content = renderTemplate('node-charter', {
       node, owner: '(unassigned)', class: '(unassigned)', lease: '(unassigned)',
     });
-  }
-  if (!exists) {
-    if (mode(cfg) === 'manual') {
-      writeJSON(manualNodeJsonPath(root, cfg, node), { id: node, boundary: [], dependsOn: [], verifiedAt: null });
-      writeText(nodeContractsPath(root, cfg, node), renderContractsTable(node, loadGraph(horde).contracts));
-      writeText(join(manualNodeDir(root, cfg, node), 'log.md'), `# Log · ${node}\n\n`);
-    } else {
-      fail(`no such node in the Yggdrasil graph: ${node} — a new node is filed with \`yg\` by the architect, not seeded here`);
-    }
   }
   writeText(nodeCharterPath(root, cfg, node), content);
   emit({ node, bytes: content.length }, flags, () => `charter written: ${node} (${content.length} bytes)`);
@@ -1033,60 +916,68 @@ function cmdCharterEdit(horde, root, cfg, positional, flags) {
 function cmdLog(horde, root, cfg, positional, flags) {
   const [node, reason] = positional;
   if (!node || !reason) fail('log requires <node> "<reason>"');
-  if (mode(cfg) === 'yggdrasil') {
-    const yg = ygCommand(cfg);
-    const cmd = `${yg.display} log add --node ${node} --reason "${reason.replace(/"/g, '\\"')}"`;
-    if (flags.run) {
-      try {
-        execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
-      } catch (e) {
-        fail(`yg log add failed: ${e.message}`);
-      }
-      emit({ node, reason, ran: true }, flags, () => `ran: ${cmd}`);
-      return;
+  const yg = ygCommand(cfg);
+  const cmd = `${yg.display} log add --node ${node} --reason "${reason.replace(/"/g, '\\"')}"`;
+  if (flags.run) {
+    try {
+      execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+      fail(`${yg.display} log add failed: ${e.message}`);
     }
-    emit({ node, reason, command: cmd }, flags, () => cmd);
+    emit({ node, reason, ran: true }, flags, () => `ran: ${cmd}`);
     return;
   }
-  if (!nodeExists(root, cfg, node)) fail(`no such node: ${node}`);
-  appendText(join(manualNodeDir(root, cfg, node), 'log.md'), `## [${nowIso()}]\n${reason}\n\n`);
-  emit({ node, reason }, flags, () => `logged: ${node}`);
+  emit({ node, reason, command: cmd }, flags, () => cmd);
 }
 
-function cmdStamp(horde, root, cfg, positional, flags) {
-  const [node, sha] = positional;
-  if (!node || !sha) fail('stamp requires <node> <sha>');
-  if (mode(cfg) === 'yggdrasil') {
-    emit(
-      { node, sha, written: false },
-      flags,
-      () => `Yggdrasil computes its own verification status for ${node} — this is not written here. `
-        + `Run \`yg check --node ${node}\` (or \`yg aspect-test --node ${node}\`) to refresh it.`,
-    );
-    return;
-  }
-  if (!nodeExists(root, cfg, node)) fail(`no such node: ${node}`);
-  const n = readManualNode(root, cfg, node);
-  n.verifiedAt = { sha, at: nowIso() };
-  writeJSON(manualNodeJsonPath(root, cfg, node), n);
-  emit({ node, sha }, flags, () => `stamped: ${node} @ ${sha}`);
-}
-
-// ---- contracts --------------------------------------------------------------
+// ---- port proposals ---------------------------------------------------------
 
 function cmdContractPropose(horde, root, cfg, positional, flags) {
-  const [a, b, text] = positional;
-  if (!a || !b || !text) fail('contract propose requires <a> <b> "<text>"');
-  if (!flags.as) fail('contract propose requires --as <test-or-scenario-path>');
+  const [node, port, text] = positional;
+  if (!node || !port || !text) fail('contract propose requires <node> <port> "<text>"');
+  if (!flags.as) fail('contract propose requires --as <test-path> — a port\'s promise IS a test, and the graph records which one');
+  if (!flags.by) fail('contract propose requires --by <owner>');
+  if (!nodeExists(root, cfg, node)) fail(`no such node in the graph: ${node}`);
+
+  const existing = nodePorts(root, cfg, node)[port];
+  const current = existing && existing.version != null ? Number(existing.version) : null;
+  const version = flags.version !== undefined ? Number(flags.version) : (current === null ? 1 : current + 1);
+  if (!Number.isFinite(version) || version < 1) fail(`--version must be a whole number of 1 or more, got: ${flags.version}`);
+  if (current !== null && version <= current) {
+    fail(`${node}/${port} already publishes version ${current} — a proposal must raise it, not restate it (--version ${current + 1})`);
+  }
+
   const graph = loadGraph(horde);
   const entry = {
-    id: nextId(graph.contracts), a, b, as: flags.as, text, status: 'proposed', by: flags.by || null, at: nowIso(),
+    id: nextId(graph.ports),
+    node,
+    port,
+    version,
+    test: flags.as,
+    kind: current === null ? 'add' : 'bump',
+    from: current,
+    text,
+    status: 'proposed',
+    by: flags.by,
+    at: nowIso(),
   };
-  graph.contracts.push(entry);
+  graph.ports.push(entry);
   saveGraph(horde, graph);
-  writeContractsMd(root, cfg, horde, a, graph.contracts);
-  writeContractsMd(root, cfg, horde, b, graph.contracts);
-  emit(entry, flags, () => `contract proposed: [${entry.id}] ${a} <-> ${b}`);
+  const consumers = current === null ? [] : consumersOf(root, cfg, node, port);
+  emit({ ...entry, consumers }, flags, () => `port ${entry.kind === 'add' ? 'proposed' : 'bump proposed'}: [${entry.id}] ${node}/${port}@${version}`
+    + (consumers.length ? ` — ${consumers.length} consumer(s) read the old version: ${consumers.join(', ')}` : ''));
+}
+
+// The filing an approved port proposal asks the architect for: the edit to the node's own file,
+// and the entry that records why. Both are `yg`'s business, never this tool's — the horde writes
+// nothing into the graph.
+function portFilingSteps(cfg, p) {
+  const yg = ygCommand(cfg);
+  return [
+    `edit .yggdrasil/model/${p.node}/yg-node.yaml — under ports:, set ${p.port}: { version: ${p.version}, test: ${p.test} }`,
+    `${yg.display} log add --node ${p.node} --reason "<why this port exists at version ${p.version}>"`,
+    `${yg.display} check --approve --only-deterministic  (records the contract baseline — free, no key)`,
+  ];
 }
 
 function cmdContractRule(horde, root, cfg, positional, flags, verdict) {
@@ -1094,28 +985,94 @@ function cmdContractRule(horde, root, cfg, positional, flags, verdict) {
   if (!id) fail(`contract ${verdict === 'approved' ? 'approve' : 'veto'} requires <id>`);
   if (!flags.by) fail('--by is required');
   const graph = loadGraph(horde);
-  const c = graph.contracts.find((x) => x.id === id);
-  if (!c) fail(`no such contract: ${id}`);
-  if (c.status !== 'proposed') fail(`contract ${id} is already ${c.status}`);
-  c.status = verdict;
-  c.ruling = why || null;
-  c.rulingBy = flags.by;
-  c.ruledAt = nowIso();
+  const p = graph.ports.find((x) => x.id === id);
+  if (!p) fail(`no such port proposal: ${id}`);
+  if (p.status !== 'proposed') fail(`port proposal ${id} is already ${p.status}`);
+  p.status = verdict;
+  p.ruling = why || null;
+  p.rulingBy = flags.by;
+  p.ruledAt = nowIso();
   saveGraph(horde, graph);
-  writeContractsMd(root, cfg, horde, c.a, graph.contracts);
-  writeContractsMd(root, cfg, horde, c.b, graph.contracts);
   traceRoster(horde, flags.by);
-  emit(c, flags, () => `contract ${id} ${verdict}`);
+  const steps = verdict === 'approved' ? portFilingSteps(cfg, p) : [];
+  emit({ ...p, filing: steps }, flags, () => [
+    `port proposal ${id} ${verdict} — ${p.node}/${p.port}@${p.version}`,
+    ...(steps.length ? ['file it into the graph yourself:', ...steps.map((s) => `  ${s}`)] : []),
+  ].join('\n'));
 }
 
-function cmdContracts(horde, positional, flags) {
+function cmdContracts(horde, root, cfg, flags) {
   const graph = loadGraph(horde);
-  let rows = graph.contracts;
-  if (flags.pending) rows = rows.filter((c) => c.status === 'proposed');
-  if (flags.node) rows = rows.filter((c) => c.a === flags.node || c.b === flags.node);
-  emit(rows, flags, () => {
-    if (rows.length === 0) return '(none)';
-    return rows.map((c) => `[${c.id}] ${c.a} <-> ${c.b}  ${c.status}  ${c.text}`).join('\n');
+  const nodes = flags.node ? [flags.node] : missionNodes(horde, root, cfg);
+  const declared = [];
+  if (!flags.pending) {
+    for (const node of nodes) {
+      if (!nodeExists(root, cfg, node)) continue;
+      const ports = nodePorts(root, cfg, node);
+      for (const name of Object.keys(ports).sort()) {
+        const p = ports[name] || {};
+        declared.push({
+          node,
+          port: name,
+          version: p.version ?? null,
+          test: p.test || null,
+          description: p.description || '',
+          consumers: consumersOf(root, cfg, node, name),
+        });
+      }
+    }
+  }
+  let proposals = graph.ports;
+  if (flags.pending) proposals = proposals.filter((p) => p.status === 'proposed');
+  if (flags.node) proposals = proposals.filter((p) => p.node === flags.node);
+
+  emit({ declared, proposals }, flags, () => {
+    const lines = [];
+    if (!flags.pending) {
+      lines.push('Declared in the graph:');
+      lines.push(...(declared.length
+        ? declared.map((d) => `  ${d.node}/${d.port}@${d.version ?? '-'}  test=${d.test || '(none)'}  consumers=${d.consumers.join(',') || '-'}`)
+        : ['  (none)']));
+      lines.push('');
+    }
+    lines.push(flags.pending ? 'Proposals waiting on the architect:' : 'Proposals:');
+    lines.push(...(proposals.length
+      ? proposals.map((p) => `  [${p.id}] ${p.node}/${p.port}@${p.version}  ${p.status}  test=${p.test}  by ${p.by}  ${p.text}`)
+      : ['  (none)']));
+    return lines.join('\n');
+  });
+}
+
+// ---- the prose rules waiting on a judge --------------------------------------
+
+function cmdVerdicts(horde, root, cfg, flags) {
+  const cwd = flags.at ? resolve(root, flags.at) : root;
+  const res = pendingProsePairs(cfg, cwd);
+  if (!res.available) failNoCli(cfg, res.command);
+  const rows = res.pairs.map((p) => ({ ...p, ...verdictCommandsFor(cfg, p, flags.by) }));
+  const free = res.scriptPending.length
+    ? `${res.scriptPending.length} script rule(s) here have no verdict yet either — nobody has to read `
+      + `those: run \`${ygCommand(cfg).display} check --approve --only-deterministic\` first, it is free `
+      + 'and needs no key.'
+    : null;
+  emit({ at: cwd, green: res.green, pending: rows, scriptPending: res.scriptPending }, flags, () => {
+    const lines = [];
+    if (rows.length === 0) {
+      lines.push(res.green
+        ? `no prose rule is waiting — ${res.command} is green on this tree`
+        : `no prose rule is waiting on a judgement; ${res.command} is still red for another reason — read it`);
+    } else {
+      lines.push(
+        `${rows.length} prose rule(s) waiting on a judgement in ${cwd}:`,
+        ...rows.flatMap((r) => [
+          `- ${r.aspect} on ${r.unitKind}:${r.unit}`,
+          `    ${r.package}`,
+          `    ${r.record}`,
+        ]),
+      );
+    }
+    if (free) lines.push('', free);
+    return lines.join('\n');
   });
 }
 
@@ -1133,7 +1090,7 @@ function cmdPropose(horde, positional, flags) {
   if (!PROPOSAL_KINDS.includes(kind)) fail(`unknown kind: ${kind} (kinds: ${PROPOSAL_KINDS.join(', ')})`);
   if (!flags.by) fail('propose requires --by <owner>');
   if (kind === 'move-boundary' && (!flags.node || !flags.boundary)) {
-    fail('propose move-boundary requires --node <n> --boundary <glob>[,glob…], so apply can carry it out');
+    fail('propose move-boundary requires --node <n> --boundary <glob>[,glob…], so apply can name the exact edit');
   }
   const graph = loadGraph(horde);
   const entry = {
@@ -1178,69 +1135,6 @@ function cmdProposalRule(horde, positional, flags, verdict) {
   emit(p, flags, () => `proposal ${id} ${verdict}`);
 }
 
-// ---- manual-only new / apply (yggdrasil prints instead of acting) -----------
-
-function cmdNew(horde, root, cfg, positional, flags) {
-  const node = positional[0];
-  if (!node) fail('new requires <node>');
-  if (!flags.boundary) fail('new requires --boundary <glob>[,glob…]');
-  const boundary = parseBoundaryList(flags.boundary);
-  const dependsOn = flags.depends ? parseBoundaryList(flags.depends) : [];
-
-  if (mode(cfg) === 'yggdrasil') {
-    emit(
-      { node, boundary, dependsOn, written: false },
-      flags,
-      () => `Yggdrasil mode — this does not write a node. Create `
-        + `.yggdrasil/model/${node}/yg-node.yaml (mapping: ${boundary.join(', ')}) and add it to `
-        + `yg-architecture.yaml; both need the user's explicit confirmation.`,
-    );
-    return;
-  }
-
-  if (nodeExists(root, cfg, node)) fail(`node already exists: ${node}`);
-  writeJSON(manualNodeJsonPath(root, cfg, node), { id: node, boundary, dependsOn, verifiedAt: null });
-  const charter = renderTemplate('node-charter', {
-    node, owner: '(unassigned)', class: '(unassigned)', lease: '(unassigned)',
-  });
-  writeText(nodeCharterPath(root, cfg, node), charter);
-  writeText(nodeContractsPath(root, cfg, node), renderContractsTable(node, loadGraph(horde).contracts));
-  writeText(join(manualNodeDir(root, cfg, node), 'log.md'), `# Log · ${node}\n\n`);
-  emit({ node, boundary, dependsOn }, flags, () => `node created: ${node}`);
-}
-
-// boundary set|add <node> --boundary <glob>… — the one place a manual-mode node's boundary
-// changes after `new`, so a move doesn't need going through node.json by hand. "set" replaces
-// the list; "add" extends it, de-duplicated.
-function cmdBoundary(horde, root, cfg, sub, positional, flags) {
-  const node = positional[0];
-  if (!node) fail(`boundary ${sub} requires <node>`);
-  if (!flags.boundary) fail(`boundary ${sub} requires --boundary <glob>[,glob…]`);
-  const globs = parseBoundaryList(flags.boundary);
-
-  if (mode(cfg) === 'yggdrasil') {
-    emit(
-      { node, boundary: globs, written: false },
-      flags,
-      () => `Yggdrasil mode — this does not write a node. ${sub === 'set' ? 'Replace' : 'Extend'} the `
-        + `mapping: list in .yggdrasil/model/${node}/yg-node.yaml with: ${globs.join(', ')}; `
-        + `needs the user's explicit confirmation.`,
-    );
-    return;
-  }
-
-  if (!nodeExists(root, cfg, node)) fail(`no such node: ${node}`);
-  const n = readManualNode(root, cfg, node);
-  const before = Array.isArray(n.boundary) ? n.boundary : [];
-  n.boundary = sub === 'set' ? globs : [...new Set([...before, ...globs])];
-  writeJSON(manualNodeJsonPath(root, cfg, node), n);
-  appendText(
-    join(manualNodeDir(root, cfg, node), 'log.md'),
-    `## [${nowIso()}]\nboundary ${sub === 'set' ? 'set to' : 'extended with'}: ${globs.join(', ')}\n\n`,
-  );
-  emit({ node, boundary: n.boundary }, flags, () => `boundary ${sub}: ${node} -> ${n.boundary.join(', ')}`);
-}
-
 function cmdApply(horde, root, cfg, positional, flags) {
   const id = positional[0];
   if (!id) fail('apply requires <proposal-id>');
@@ -1250,50 +1144,18 @@ function cmdApply(horde, root, cfg, positional, flags) {
   if (p.status !== 'approved') fail(`proposal ${id} is not approved (status: ${p.status})`);
   if (p.appliedAt) fail(`proposal ${id} was already applied`);
 
-  if (mode(cfg) === 'yggdrasil') {
-    p.appliedAt = nowIso();
-    saveGraph(horde, graph);
-    const step = p.kind === 'move-boundary' && p.node && p.boundary
-      ? `set ${p.node}'s mapping: to ${p.boundary.join(', ')} in .yggdrasil/model/${p.node}/yg-node.yaml`
-      : `edit .yggdrasil/model/**/yg-node.yaml (and yg-architecture.yaml for a new/renamed/moved node)`;
-    emit(
-      { id, kind: p.kind, applied: true },
-      flags,
-      () => `proposal ${id} closed — file it into Yggdrasil yourself: ${step}; needs the user's explicit confirmation.`,
-    );
-    return;
-  }
-
-  // A move-boundary proposal carries the target node and the globs it's moving to (required at
-  // propose time), so apply can actually rewrite the boundary — not just mark the proposal done
-  // and leave the architect to redo by hand what the proposal already specified.
-  if (p.kind === 'move-boundary' && p.node && p.boundary) {
-    if (!nodeExists(root, cfg, p.node)) fail(`no such node: ${p.node}`);
-    const n = readManualNode(root, cfg, p.node);
-    n.boundary = p.boundary;
-    writeJSON(manualNodeJsonPath(root, cfg, p.node), n);
-    appendText(
-      join(manualNodeDir(root, cfg, p.node), 'log.md'),
-      `## [${nowIso()}]\nboundary moved (proposal ${id}): ${p.boundary.join(', ')}\n\n`,
-    );
-    p.appliedAt = nowIso();
-    saveGraph(horde, graph);
-    emit(
-      {
-        id, kind: p.kind, applied: true, node: p.node, boundary: p.boundary,
-      },
-      flags,
-      () => `proposal ${id} applied — ${p.node}'s boundary set to: ${p.boundary.join(', ')}`,
-    );
-    return;
-  }
-
   p.appliedAt = nowIso();
   saveGraph(horde, graph);
-  const followUp = p.kind === 'new-node'
-    ? `run \`node.mjs new <node> --boundary …\` to create the node's files`
-    : `edit the node's files directly (\`node.mjs charter edit\`, or \`new\` again is not needed) to realize "${p.text}"`;
-  emit({ id, kind: p.kind, applied: true }, flags, () => `proposal ${id} applied (bookkeeping) — ${followUp}`);
+  const yg = ygCommand(cfg);
+  const step = p.kind === 'move-boundary' && p.node && p.boundary
+    ? `set ${p.node}'s mapping: to ${p.boundary.join(', ')} in .yggdrasil/model/${p.node}/yg-node.yaml`
+    : 'edit .yggdrasil/model/**/yg-node.yaml (and yg-architecture.yaml for a new, renamed or moved node)';
+  emit(
+    { id, kind: p.kind, applied: true, step },
+    flags,
+    () => `proposal ${id} closed — file it into the graph yourself: ${step}; record the why with \`${yg.display} log add\`. `
+      + 'A change to yg-architecture.yaml needs the user\'s explicit confirmation.',
+  );
 }
 
 // ---- main ---------------------------------------------------------------------
@@ -1317,7 +1179,6 @@ function main() {
     return cmdCharterEdit(horde, root, cfg, rest.slice(1), flags);
   }
   if (cmd === 'log') return cmdLog(horde, root, cfg, rest, flags);
-  if (cmd === 'stamp') return cmdStamp(horde, root, cfg, rest, flags);
   if (cmd === 'contract') {
     const [sub, ...subRest] = rest;
     if (sub === 'propose') return cmdContractPropose(horde, root, cfg, subRest, flags);
@@ -1325,17 +1186,12 @@ function main() {
     if (sub === 'veto') return cmdContractRule(horde, root, cfg, subRest, flags, 'vetoed');
     fail('contract requires "propose", "approve" or "veto"');
   }
-  if (cmd === 'contracts') return cmdContracts(horde, rest, flags);
+  if (cmd === 'contracts') return cmdContracts(horde, root, cfg, flags);
+  if (cmd === 'verdicts') return cmdVerdicts(horde, root, cfg, flags);
   if (cmd === 'propose') return cmdPropose(horde, rest, flags);
   if (cmd === 'proposals') return cmdProposals(horde, flags);
   if (cmd === 'approve') return cmdProposalRule(horde, rest, flags, 'approved');
   if (cmd === 'veto') return cmdProposalRule(horde, rest, flags, 'vetoed');
-  if (cmd === 'new') return cmdNew(horde, root, cfg, rest, flags);
-  if (cmd === 'boundary') {
-    const [sub, ...subRest] = rest;
-    if (sub === 'set' || sub === 'add') return cmdBoundary(horde, root, cfg, sub, subRest, flags);
-    fail('boundary requires "set" or "add"');
-  }
   if (cmd === 'apply') return cmdApply(horde, root, cfg, rest, flags);
   fail(`unknown command: ${cmd} (see --help)`);
 }

@@ -1,8 +1,11 @@
 # 001 · Retry a failed call three times
 
 **Status:** proposed
-**Node:** core · **Class:** sonnet · **Severity:** medium · **Team:** trunk
+**Node:** core · **Class:** sonnet · **Severity:** medium · **Team:** trunk · **Kind:** work
 **Depends on:** none · **Branch:** —
+**Files:** none
+**Consumes:** none · **Produces:** none
+**Evidence:** none
 **Revert base:** 
 **Keys:** author worker1 · verifier verifier1 · core —
 
@@ -17,7 +20,8 @@ The line of the charter or the evidence catalogue this serves, or the finding th
 
 ## Scope
 
-What is in. What is explicitly out. Paths this may touch (must lie inside the node's boundary).
+What is in. What is explicitly out. The **Files:** field above is the binding list — the merge
+checklist refuses a diff that reaches past it, and widening it is `tk.mjs edit NNN --files …`.
 
 ## Acceptance — evidence
 
