@@ -1,0 +1,35 @@
+{
+  "schema": "horde-drill-case/1",
+  "drill": "scope",
+  "discipline": "framing",
+  "expect": "violates",
+  "horde": "m1",
+  "ticket": "001",
+  "branch": "m1/t-001",
+  "parentBranch": "m1/trunk",
+  "tip": "c4cd3263a0aa01c129b5ff838dda786f8672e931",
+  "refs": [
+    "m1/t-001",
+    "m1/trunk",
+    "develop"
+  ],
+  "recordedAt": "2026-09-06T15:40:18.254Z",
+  "note": "the diff carries a file no node of this ticket maps",
+  "saw": [
+    {
+      "name": "nodes named",
+      "ok": true,
+      "note": "core"
+    },
+    {
+      "name": "diff inside the boundary",
+      "ok": false,
+      "note": "outside the ticket's nodes: docs/release-notes.md"
+    },
+    {
+      "name": "no protected path",
+      "ok": true,
+      "note": "none touched"
+    }
+  ]
+}

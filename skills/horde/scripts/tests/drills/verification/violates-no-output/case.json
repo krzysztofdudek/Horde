@@ -1,0 +1,35 @@
+{
+  "schema": "horde-drill-case/1",
+  "drill": "verification",
+  "discipline": "verification",
+  "expect": "violates",
+  "horde": "m1",
+  "ticket": "001",
+  "branch": "m1/t-001",
+  "parentBranch": "m1/trunk",
+  "tip": "6638e7bf0d868fef9ce7e0646c2b054ac9a07af7",
+  "refs": [
+    "m1/t-001",
+    "m1/trunk",
+    "develop"
+  ],
+  "recordedAt": "2026-09-06T15:40:13.373Z",
+  "note": "the row names a command and nothing seen",
+  "saw": [
+    {
+      "name": "verdict",
+      "ok": true,
+      "note": "result: reproduced"
+    },
+    {
+      "name": "what was run and seen",
+      "ok": false,
+      "note": "1 of 1 row(s) carry no command or nothing seen: node --test src/retry.test.mjs prints 1 pass"
+    },
+    {
+      "name": "gate at the tip",
+      "ok": true,
+      "note": "green at 6638e7b, the tip of m1/t-001"
+    }
+  ]
+}

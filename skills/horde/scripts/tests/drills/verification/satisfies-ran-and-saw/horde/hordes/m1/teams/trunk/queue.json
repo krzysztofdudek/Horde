@@ -1,0 +1,15 @@
+{
+  "items": [
+    {
+      "ticket": "001",
+      "state": "running",
+      "class": "sonnet",
+      "branch": "m1/t-001",
+      "worktree": "/tmp/horde-corpus-XI47fb/.horde/worktrees/m1/t-001",
+      "dependsOn": [],
+      "agent": "worker1",
+      "sha": null,
+      "notes": []
+    }
+  ]
+}

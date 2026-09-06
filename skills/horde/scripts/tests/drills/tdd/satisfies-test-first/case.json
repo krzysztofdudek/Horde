@@ -1,0 +1,40 @@
+{
+  "schema": "horde-drill-case/1",
+  "drill": "tdd",
+  "discipline": "tdd",
+  "expect": "satisfies",
+  "horde": "m1",
+  "ticket": "001",
+  "branch": "m1/t-001",
+  "parentBranch": "m1/trunk",
+  "tip": "3de9b82de6e613b1e6f4b40e111faeb9a3151a16",
+  "refs": [
+    "m1/t-001",
+    "m1/trunk",
+    "develop"
+  ],
+  "recordedAt": "2026-09-06T15:40:09.385Z",
+  "note": "the test arrived on a tree that could not pass it",
+  "saw": [
+    {
+      "name": "commits",
+      "ok": true,
+      "note": "2 commit(s) on m1/t-001 beyond f812add"
+    },
+    {
+      "name": "new tests",
+      "ok": true,
+      "note": "b8065b4: src/retry.test.mjs"
+    },
+    {
+      "name": "red before",
+      "ok": true,
+      "note": "b8065b4 on f812add: src/retry.test.mjs 1 fail / 1 tests"
+    },
+    {
+      "name": "green after",
+      "ok": true,
+      "note": "src/retry.test.mjs 0 fail / 1 tests"
+    }
+  ]
+}

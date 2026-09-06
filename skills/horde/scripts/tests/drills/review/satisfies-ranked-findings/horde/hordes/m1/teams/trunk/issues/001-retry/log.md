@@ -1,0 +1,5 @@
+- 2026-09-06T15:40:14.224Z landed d882c11 — retry implemented
+- 2026-09-06T15:40:14.301Z key: author set to worker1
+- 2026-09-06T15:40:14.382Z review requested
+- 2026-09-06T15:40:14.466Z review: core changes by owner-core — Important: a permanent failure still costs three calls
+- 2026-09-06T15:40:14.557Z Minor: "last" would read better as "lastError" — logged, not sent back

@@ -1,0 +1,26 @@
+{
+  "base": "develop",
+  "gates": {
+    "commit": "",
+    "team": "",
+    "trunk": ""
+  },
+  "nodeSource": "manual",
+  "ygCommand": null,
+  "graphDir": "architecture/",
+  "testGlobs": [
+    "**/*.test.mjs"
+  ],
+  "protectedPaths": [],
+  "liveness": {
+    "stewardMinutes": 60,
+    "ownerMinutes": 45
+  },
+  "classes": {
+    "haiku": 1,
+    "sonnet": 3,
+    "opus": 10,
+    "fable": 30
+  },
+  "parallelism": 6
+}
