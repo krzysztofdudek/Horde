@@ -32,7 +32,10 @@ roles:
   steward <team> --name <n>
   owner <node> --name <n>
   architect --name <n>
-  worker <ticket> --name <n>
+  worker <ticket> --name <n> [--takeover]
+      --takeover renders a takeover section — a prior worker attempted this ticket N times; the
+      ticket is yours; here is its log — for the fresh, one-class-up worker tk.mjs status <ticket>
+      changes hands a ticket to once its resume rounds are spent.
   verifier <ticket> --name <n>
   auditor <ticket> --wave <n> --name <n>
   counsel --question "<q>" [--attach <file>]… --name <n>
@@ -231,11 +234,45 @@ function requireName(flags) {
   return flags.name;
 }
 
+// tk.mjs's own "changes" log line carries "(round N/cap — <label>)" — read back the same way
+// tk.mjs's own priorChangesRounds does, so the takeover block can say how many times a prior
+// worker actually attempted this ticket before the fresh, one-class-up one takes it over.
+const CHANGES_ROUND_RE = /\(round (\d+)\/\d+ — /;
+
+function latestChangesRound(logText) {
+  let max = 0;
+  for (const line of (logText || '').split('\n')) {
+    const m = CHANGES_ROUND_RE.exec(line);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return max;
+}
+
+// "a prior worker attempted this ticket N times; the ticket is yours; here is its log" — rendered
+// only with --takeover, for the fresh worker a ticket's fix-loop hands off to once the resume
+// rounds are spent. The round just logged (the one that triggered this takeover) is not itself a
+// prior attempt, hence the -1.
+function takeoverBlockFor(horde, t) {
+  const logPath = join(teamPath(horde, t.team, 'issues', t.issueDirName), 'log.md');
+  const logText = readText(logPath) || '(no log yet)';
+  const attempts = Math.max(latestChangesRound(logText) - 1, 0);
+  return [
+    '## Takeover',
+    '',
+    `A prior worker attempted this ticket ${attempts} time${attempts === 1 ? '' : 's'}; the ticket is yours now. Its log so far:`,
+    '',
+    '```',
+    logText.trim() || '(empty)',
+    '```',
+  ].join('\n');
+}
+
 function cmdSteward(horde, root, cfg, positional, flags) {
   const team = positional[0];
   if (!team) fail('steward requires <team>');
   const name = requireName(flags);
   const entry = findRosterEntry(horde, name);
+  const fixRounds = cfg.fixRounds || { resume: 3, fresh: 2 };
   const vars = {
     repoRoot: root,
     name, horde, team,
@@ -244,6 +281,8 @@ function cmdSteward(horde, root, cfg, positional, flags) {
     parallelism: cfg.parallelism,
     parentTeam: (entry && entry.parent) || 'trunk',
     reportsTo: reportsToFor('steward', horde),
+    fixRoundsResume: fixRounds.resume,
+    fixRoundsFresh: fixRounds.fresh,
   };
   const brief = renderRole('steward', vars);
   emit({ role: 'steward', team, name, brief }, flags, () => brief);
@@ -302,9 +341,12 @@ function cmdWorker(horde, root, cfg, positional, flags) {
     protectedPaths: (cfg.protectedPaths || []).join(', ') || '(none)',
     issueDir: `teams/${t.team}/issues/${t.issueDirName}`,
     reportsTo: reportsToFor('worker', horde, { team: t.team }),
+    takeoverBlock: flags.takeover ? takeoverBlockFor(horde, t) : '',
   };
   const brief = renderRole('worker', vars);
-  emit({ role: 'worker', ticket: rawId, name, brief }, flags, () => brief);
+  emit({
+    role: 'worker', ticket: rawId, name, takeover: !!flags.takeover, brief,
+  }, flags, () => brief);
 }
 
 function cmdVerifier(horde, root, cfg, positional, flags) {
@@ -375,7 +417,7 @@ function cmdCounsel(horde, root, cfg, flags) {
 // ---- main -----------------------------------------------------------------------
 
 function main() {
-  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: [] });
+  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['takeover'] });
   const [role, ...positional] = allPositional;
 
   if (flags.help) { console.log(USAGE); process.exit(0); }

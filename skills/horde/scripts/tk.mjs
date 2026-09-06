@@ -26,7 +26,7 @@ import {
   hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, git,
 } from './_lib.mjs';
-import { trace as traceRoster } from './roster.mjs';
+import { trace as traceRoster, ownerNameForNode, architectIsLive } from './roster.mjs';
 
 const STATUSES = ['proposed', 'queued', 'running', 'landed', 'changes', 'verified', 'merged', 'escalated', 'dropped'];
 const SEVERITIES = ['high', 'medium', 'low'];
@@ -49,6 +49,11 @@ commands:
   list [--state s] [--node n] [--review-pending] [--open] [--team t] [--horde h]
   show <ticket> [--log] [--horde h]
   status <ticket> <${STATUSES.join('|')}> ["note"] [--horde h]
+      "changes" counts the round and prints it: rounds 1..config.fixRounds.resume (default 3) —
+      resume the same worker; the next config.fixRounds.fresh (default 2) rounds — "fresh worker,
+      class up", one class heavier, briefed with "brief.mjs worker NNN --takeover"; beyond that it
+      refuses and prints the next step (escalate.mjs add … --kind adjudicate --ticket NNN, then
+      queue.mjs set NNN escalated).
   log <ticket> "<text>" [--horde h]
   grep <regex> [--horde h]
   key <ticket> author --by <name> | --from-queue [--horde h]
@@ -65,7 +70,9 @@ commands:
       cannot review it). Refuses --by equal to the ticket's author. An "approve" also binds to
       the ticket's branch's current tip sha (read from its queue item), so a later commit on the
       branch makes the approval stale — premerge.mjs's item 2 (keys) refuses a stale one and asks
-      for review again.
+      for review again. The ticket's own verifier may approve in an owner's place (marked
+      "<name>(verifier-seat)" in the Keys line) only when the ticket's author is that node's own
+      owner and the roster has no live architect — refused otherwise.
   move <ticket> --team t [--horde h]
       relocates the issue folder to team t's issues/.
   edit <ticket> --by <name> [--horde h]
@@ -154,6 +161,62 @@ export function allNodesApproved(text) {
 
 export function setStatus(text, status) {
   return text.replace(/^\*\*Status:\*\*.*$/m, `**Status:** ${status}`);
+}
+
+// --- the fix-loop breaker (config.fixRounds) ------------------------------
+
+// tk.mjs's own log line for a "changes" transition carries "(round N/cap — <label>)" — read back
+// to work out how many rounds this ticket has already been through, without a second, separate
+// counter file to keep in sync with the log.
+const ROUND_LOG_RE = /\(round (\d+)\/\d+ — /;
+
+function priorChangesRounds(ticket) {
+  const log = readText(ticket.logPath) || '';
+  let max = 0;
+  for (const line of log.split('\n')) {
+    const m = ROUND_LOG_RE.exec(line);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return max;
+}
+
+// What this round of "changes" means: rounds 1..resume ask the steward to resume the same
+// worker with the findings; the next "fresh" rounds ask for a new one, one class heavier, briefed
+// with "brief.mjs worker NNN --takeover"; beyond resume+fresh this refuses outright — another
+// round would be a stall dressed up as progress, not a fix, so the caller is told to rule on it
+// instead (escalate.mjs add … --kind adjudicate, then queue.mjs set … escalated).
+export function changesRoundInfo(horde, ticket) {
+  const cfg = readConfig();
+  const fixRounds = (cfg && cfg.fixRounds) || {};
+  const resume = Number(fixRounds.resume ?? 3);
+  const fresh = Number(fixRounds.fresh ?? 2);
+  const cap = resume + fresh;
+  const round = priorChangesRounds(ticket) + 1;
+  if (round > cap) {
+    return {
+      refused: true,
+      round,
+      resume,
+      fresh,
+      message: `ticket ${ticket.id} has already gone through ${cap} round(s) of changes (config.fixRounds: `
+        + `resume ${resume} + fresh ${fresh}) — another round is a stall, not a fix. Rule on it: `
+        + `escalate.mjs add "<why>" --kind adjudicate --ticket ${ticket.id}, then queue.mjs set ${ticket.id} escalated`,
+    };
+  }
+  const label = round <= resume ? 'resume same worker' : 'fresh worker, class up';
+  return {
+    refused: false, round, resume, fresh, cap, label,
+  };
+}
+
+// Writes the status and its log line for one transition, embedding the round suffix
+// changesRoundInfo computed (when given) so priorChangesRounds can read it back later. Shared by
+// cmdStatus and verify.mjs's own "flaky" transition, so both count against the one cap.
+export function transitionStatus(ticket, status, note, roundInfo) {
+  const roundSuffix = roundInfo ? ` (round ${roundInfo.round}/${roundInfo.cap ?? roundInfo.resume + roundInfo.fresh} — ${roundInfo.label})` : '';
+  writeText(ticket.issuePath, setStatus(ticket.text, status));
+  appendText(ticket.logPath, `- ${nowIso()} status: ${status}${note ? ` — ${note}` : ''}${roundSuffix}\n`);
+  return roundSuffix;
 }
 
 // --- id / lookup ---------------------------------------------------------
@@ -369,9 +432,19 @@ function cmdStatus(horde, positional, flags) {
   if (!idRaw || !status) fail('status requires <ticket> <state>');
   if (!STATUSES.includes(status)) fail(`unknown state: ${status} (allowed: ${STATUSES.join(', ')})`);
   const ticket = requireTicket(horde, idRaw);
-  writeText(ticket.issuePath, setStatus(ticket.text, status));
-  appendLog(ticket, `status: ${status}${note ? ` — ${note}` : ''}`);
-  emit({ id: ticket.id, status }, flags, () => `${ticket.id}: ${status}`);
+
+  let roundInfo = null;
+  if (status === 'changes') {
+    roundInfo = changesRoundInfo(horde, ticket);
+    if (roundInfo.refused) fail(roundInfo.message);
+  }
+
+  const roundSuffix = transitionStatus(ticket, status, note, roundInfo);
+  emit(
+    { id: ticket.id, status, ...(roundInfo ? { round: roundInfo.round, phase: roundInfo.label } : {}) },
+    flags,
+    () => `${ticket.id}: ${status}${roundSuffix}`,
+  );
 }
 
 function cmdLog(horde, positional, flags) {
@@ -473,9 +546,32 @@ function cmdReview(horde, positional, flags) {
     fail('ticket names multiple nodes — pass --node <n>, or review as "architect" to approve all at once');
   }
 
+  // The approval seat: a ticket's own recorded verifier may stand in for "approve" only when the
+  // ticket's author is the target node's own owner (nobody reviews their own ticket, and the
+  // owner IS the author here) and the roster carries no live architect (the usual stand-in) —
+  // otherwise a verifier has no standing to approve at all, and this refuses rather than letting
+  // it through unmarked. A "changes" request has no such gap to fill, so this never touches it.
+  let verifierSeat = false;
+  if (verdict === 'approve' && keys.verifier !== '—' && flags.by === keys.verifier) {
+    const notOwned = targets.filter((n) => ownerNameForNode(horde, n) !== keys.author);
+    const liveArchitect = architectIsLive(horde);
+    if (notOwned.length > 0 || liveArchitect) {
+      const reasons = [];
+      if (notOwned.length) reasons.push(`the ticket's author does not own: ${notOwned.join(', ')}`);
+      if (liveArchitect) reasons.push('a live architect is on the roster and reviews it instead');
+      fail(
+        `${flags.by} is this ticket's verifier, not an owner or the architect — a verifier stands in `
+        + `for approval only when the ticket's author owns the node and no architect is live; refused `
+        + `because ${reasons.join(' and ')}`,
+      );
+    }
+    verifierSeat = true;
+  }
+
   const branchSha = verdict === 'approve' ? ticketBranchSha(horde, ticket) : null;
+  const seatTag = verifierSeat ? '(verifier-seat)' : '';
   const value = verdict === 'approve'
-    ? (branchSha ? `${flags.by}@${branchSha}` : flags.by)
+    ? (branchSha ? `${flags.by}${seatTag}@${branchSha}` : `${flags.by}${seatTag}`)
     : `changes:${flags.by}`;
   let text = ticket.text;
   for (const n of targets) text = setNodeApproval(text, n, value);
@@ -487,9 +583,16 @@ function cmdReview(horde, positional, flags) {
   }
   writeText(ticket.issuePath, text);
   const shaNote = branchSha ? ` at ${branchSha}` : '';
-  for (const n of targets) appendLog(ticket, `review: ${n} ${verdict} by ${flags.by}${shaNote}${why ? ` — ${why}` : ''}`);
+  const seatNote = verifierSeat ? ' (verifier-seat)' : '';
+  for (const n of targets) appendLog(ticket, `review: ${n} ${verdict} by ${flags.by}${seatNote}${shaNote}${why ? ` — ${why}` : ''}`);
   traceRoster(horde, flags.by);
-  emit({ id: ticket.id, verdict, by: flags.by, nodes: targets }, flags, () => `${ticket.id}: ${verdict} by ${flags.by} (${targets.join(', ')})`);
+  emit(
+    {
+      id: ticket.id, verdict, by: flags.by, nodes: targets, verifierSeat,
+    },
+    flags,
+    () => `${ticket.id}: ${verdict} by ${flags.by}${seatNote} (${targets.join(', ')})`,
+  );
 }
 
 function cmdMove(horde, positional, flags) {
