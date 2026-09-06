@@ -84,7 +84,8 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   trunk branch's tip (a matching recorded green in `cache/last-gate.json` is accepted, anything else
   is run fresh in a scratch worktree); no audit verdict (`wave.mjs audit`) was recorded anywhere in
   the mission's last wave — "current" once that wave is closed means "the last one", not "none
-  open"; or no run has ever been recorded in `cost.json` (nothing has run, so there is nothing to
+  open", and a verdict recorded *after* that close counts toward it, since `audit-plan` draws its
+  sample from the wave that has just closed; or no run has ever been recorded in `cost.json` (nothing has run, so there is nothing to
   report). Otherwise: the charter is already stamped (a side effect of the evidence check above),
   the completion block (`templates/mission-close.md`) is appended to the mission's `plan.md`, and
   the result says what to do next — push, a decision that stays the chairman's, never this tool's.
@@ -675,6 +676,40 @@ would. The suite finds it in `HORDE_TEST_YG`, on `PATH` as `yg`, or as a sibling
 and refuses to run with none of those — Horde requires Yggdrasil, and a suite measuring a stand-in
 instead would be proving something no adopter ever runs. Rules, ports, refusals and the verdicts
 that clear a prose rule are all the CLI's own; nothing about the graph is stood in for.
+
+### the family's contract test — `tests/family.e2e.test.mjs`
+
+Every other test drives one tool over a fixture another tool built. This one drives the layers, in
+one walk, on the two real builds: **Grain** mines a graph out of a repository's own history,
+**Yggdrasil** accepts and baselines it, and only then does a horde exist on top of it. In order:
+
+1. a temporary repository is built with a handful of source files in two directories, tests beside
+   them, a build file that says how it is tested, and four commits touching them — the evidence
+   Grain reads;
+2. `grain propose .yggdrasil-proposal` writes a `grain-proposal/1` staging tree; `yg adopt` accepts
+   it, baselines it and records who accepted what; the test asserts the nodes that arrive under
+   `.yggdrasil/model/` and that at least one mined rule arrived on the status ladder rather than
+   enforced out of nowhere. The graph is committed, and the horde's base branch cut from it;
+3. `horde.mjs init` keeps that graph (it made none), works the gate command and the test patterns
+   out of the repository's own build file, and leases the node the mission works on; the charter is
+   written through `charter edit` with two evidence rows; an owner files a ticket carrying `Files`,
+   `Produces` and both evidence ids; `queue plan` derives one layer and no uncovered row; `queue set
+   running` cuts the branch and the worktree; the worker lands a change with a test that really is
+   red on the branch it merges into and green on its own; the author key, then a verifier's verdict
+   with `--ran`/`--saw`, the gate at the branch's own tip, and the patch-id of the ticket's diff —
+   which the test computes with git itself and compares; the owner of the node approves, and so does
+   the owner of the node the graph says consumes the port the ticket raises; `premerge` passes all
+   seven items, the graph one through a real `yg check` in the branch's own worktree; the merge, the
+   wave close that turns both evidence rows green, `horde done` refusing until the wave is audited
+   and passing after, and `blame` on one merged line printing the ticket, both keys, both approvals,
+   the evidence and the rules standing over the component the graph says owns the file.
+
+It asserts on files, exit codes and recorded fields only — never on anything's prose. It is skipped,
+with the reason printed, when either build is missing, and never silently: `YG_BIN` and `GRAIN_BIN`
+name them, and both fall back to a sibling checkout on a machine that has the family out. Grain is
+found by asking a candidate for its own usage text and requiring a `propose` command in it — its
+engine module and its dispatcher sit next to each other under the same name, and only one of them
+runs.
 
 ## premerge.mjs's revert test — how a new test file is found and run
 

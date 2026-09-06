@@ -301,9 +301,11 @@ export function wave1Started(journalText) {
   });
 }
 
-// The highest-numbered wave's own span (start marker to the next start/close marker, or end of
-// file) whether or not it is still open — a mission-level gate run after the final wave has
-// already been closed means "current" is "the last one", not "none". Null when no wave was ever
+// The highest-numbered wave's own span: its start marker to the end of the journal, close marker
+// and everything written after it included. Nothing has started since — it is the last wave — so
+// a bullet added after the close still belongs to it, and the audit is exactly such a bullet:
+// `audit-plan` draws its sample from the wave that just closed, so the verdict is recorded after
+// the close by design, and the mission's final gate has to see it. Null when no wave was ever
 // started at all.
 export function lastWaveSpan(journalText) {
   if (!journalText) return null;
@@ -314,7 +316,6 @@ export function lastWaveSpan(journalText) {
   for (const line of journalText.split('\n')) {
     const sm = START_RE.exec(line);
     if (sm) { capturing = sm[1] === String(n); if (capturing) lines.push(line); continue; }
-    if (CLOSE_RE.test(line)) { if (capturing) lines.push(line); capturing = false; continue; }
     if (capturing) lines.push(line);
   }
   return { n, text: lines.join('\n') };
