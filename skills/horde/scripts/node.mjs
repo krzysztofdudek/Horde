@@ -115,16 +115,20 @@ function failNoCli(cfg, command) {
   );
 }
 
-// The refusal for a CLI that runs but predates the machine documents.
-function failStaleCli(cfg, command, saw) {
+// The refusal for a CLI that runs but predates the machine documents. `docs` names whichever
+// document set this call site reads (defaulting to the three read all over this file); the
+// quality index reads a different pair (yg-check/1, yg-aspects/1) and names those instead, so the
+// message never claims a CLI is missing documents it never asked for.
+function failStaleCli(cfg, command, saw, docs = YG_DOCUMENTS) {
   const { display } = ygCommand(cfg);
   const version = ygVersion(cfg);
   fail(
     `\`${command}\` did not answer with the document Horde reads${saw ? ` (${saw})` : ''}.\n`
     + `The Yggdrasil CLI at "${display}"${version ? ` reports version ${version} and` : ''} predates `
-    + `${YG_DOCUMENTS} — the versioned answers Horde reads the graph through. An older CLI cannot be `
-    + 'read around: the alternative would be Horde parsing the graph\'s own files, which is the second '
-    + 'graph this tool exists to not have.\n'
+    + `${docs} — the versioned answers Horde reads the graph through. An older CLI cannot be `
+    + 'read around: the alternative would be Horde reading the graph a second, fragile way — its own '
+    + 'files, or a report meant to be read, parsed as data — which is exactly what these documents '
+    + 'exist to remove.\n'
     + `Upgrade to a release later than ${YG_DOCUMENTS_AFTER} (npm i -g @chrisdudek/yg), or point the `
     + 'horde at a newer build: horde.mjs config set ygCommand "node path/to/bin.js"',
   );
@@ -383,77 +387,87 @@ export function verdictCommandsFor(cfg, pair, judge) {
 
 // ---- the quality index ----------------------------------------------------------------------
 //
-// Five numbers that say whether the graph got stronger or weaker over a wave, read from the two
-// read-only, keyless commands the installed Yggdrasil CLI actually has: `check` (the gate's own
-// report) and `aspects` (the rule list with each rule's status). There is deliberately no
-// `--json` here: the installed CLI has no such flag on either command — verified against its own
-// `--help` — so the honest source is what those two commands print, parsed for the figures they
-// state outright, and a figure the output does not state is reported as unknown rather than
-// invented.
+// Six numbers that say whether the graph got stronger or weaker over a wave, read from the two
+// machine documents the installed Yggdrasil CLI answers with: `check --json` (`yg-check/1`) and
+// `aspects --json` (`yg-aspects/1`). This used to parse the two commands' own text report — the
+// exact fragility ticket 147 removed everywhere else in this file — so a CLI whose document does
+// not carry `schema: "yg-check/1"` (or `"yg-aspects/1"`) is refused with the release to upgrade
+// to, never silently read as text again.
 //
-//   enforced       rules at status "enforced" — the law that actually blocks
-//   advisoryClean  advisory rules this run reported nothing against, of all advisory rules
-//   baseline       findings that block right now (the report's own error count)
-//   noiseFloor     findings that only warn (the report's own warning count) — the standing noise
-//   coverage       files a component owns, of all files the graph can see
+//   enforced       rules at status "enforced" — the law that actually blocks (yg-aspects/1)
+//   advisoryClean  advisory rules this run recorded nothing but "approved" pairs for, of all
+//                  advisory rules — a pair the lock does not approve (refused, unverified, stale,
+//                  too large, a companion error) is "something against it" (yg-check/1 pairs)
+//   baseline       findings that block right now (yg-check/1 totals.errors)
+//   noiseFloor     findings that only warn (yg-check/1 totals.warnings) — the standing noise
+//   coverage       files a component owns, of all files the graph can see (yg-check/1 coverage)
+//   judges         distinct external judges a verdict in force rests on (yg-check/1 judges) —
+//                  verifier-is-yggdrasil-reviewer's own count of who is answering outside the
+//                  configured reviewer; not part of what "fell" means below, shown for the record
 //
 // Higher enforced / advisoryClean / coverage and lower baseline / noiseFloor is a stronger
-// graph; wave.mjs close compares two readings and escalates when any of them moved the wrong way.
+// graph; wave.mjs close compares two readings and escalates when any of those five moved the
+// wrong way. `totals.verdicts`, the full `coverage` block and `progressive` (present only on a
+// project that measures changes against a branch) are carried through on the returned object for
+// a caller that wants more than the six headline figures; wave.mjs's own printed line does not
+// grow past them.
 
-const CHECK_FILES_RE = /(\d+)\/(\d+) files/;
-const CHECK_NODES_RE = /(\d+) nodes/;
-const CHECK_ASPECTS_RE = /(\d+) aspects/;
-const CHECK_ERRORS_RE = /Errors \((\d+)\)/;
-const CHECK_WARNINGS_RE = /Warnings \((\d+)\)/;
-const ASPECT_LINE_RE = /^(\S+) \[(draft|advisory|enforced)\]/;
-
-function runYg(cfg, cwd, args) {
-  const { cmd, prefix, display } = ygCommand(cfg);
-  const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  if (run.missing || run.spawnFailed) return { available: false, ok: false, out: '', command };
-  return {
-    available: true, ok: run.code === 0, out: run.out + run.err, command,
-  };
-}
+const YG_QUALITY_DOCUMENTS = 'yg-check/1 and yg-aspects/1';
 
 // ygQualityIndex(cfg, cwd) — the reading above, taken on the tree at `cwd`. `available: false`
 // means the CLI could not be started at all, which is a different answer from a graph that
 // refuses the tree: a red check still yields a perfectly good index (that is what a baseline of
-// blocking findings IS). Never approves anything — `check` and `aspects` are both read-only and
-// keyless, so this costs nothing and needs no key.
+// blocking findings IS). Never approves anything — `check --json` and `aspects --json` are both
+// read-only and keyless, so this costs nothing and needs no key.
 export function ygQualityIndex(cfg, cwd) {
-  const check = runYg(cfg, cwd, ['check']);
-  if (!check.available) {
-    return { available: false, command: check.command, why: 'the Yggdrasil CLI could not be started' };
+  const checkRes = ygJson(cwd, cfg, ['check', '--json'], 'yg-check/1');
+  if (checkRes.state === 'no-cli') {
+    return { available: false, command: checkRes.command, why: 'the Yggdrasil CLI could not be started' };
   }
-  const aspects = runYg(cfg, cwd, ['aspects']);
-
-  const statuses = [];
-  for (const line of (aspects.out || '').split('\n')) {
-    const m = ASPECT_LINE_RE.exec(line.trim());
-    if (m) statuses.push({ id: m[1], status: m[2] });
+  if (checkRes.state === 'stale') failStaleCli(cfg, checkRes.command, checkRes.saw, YG_QUALITY_DOCUMENTS);
+  if (checkRes.state !== 'ok') {
+    fail(checkRes.code == null
+      ? `\`${checkRes.command}\` — ${checkRes.detail}`
+      : `\`${checkRes.command}\` exited ${checkRes.code} — the graph could not be read:\n${checkRes.detail}`);
   }
-  const advisory = statuses.filter((a) => a.status === 'advisory');
-  // "Zero new violations" is read off the report itself: an advisory rule with something to say
-  // is named in the block that says it. A rule the report never mentions raised nothing.
-  const body = check.out || '';
-  const advisoryClean = advisory.filter((a) => !body.includes(a.id)).length;
+  const check = checkRes.doc;
 
-  const files = CHECK_FILES_RE.exec(body);
+  const aspectsRes = ygJson(cwd, cfg, ['aspects', '--json'], 'yg-aspects/1');
+  if (aspectsRes.state === 'no-cli') {
+    return { available: false, command: aspectsRes.command, why: 'the Yggdrasil CLI could not be started' };
+  }
+  if (aspectsRes.state === 'stale') failStaleCli(cfg, aspectsRes.command, aspectsRes.saw, YG_QUALITY_DOCUMENTS);
+  if (aspectsRes.state !== 'ok') {
+    fail(aspectsRes.code == null
+      ? `\`${aspectsRes.command}\` — ${aspectsRes.detail}`
+      : `\`${aspectsRes.command}\` exited ${aspectsRes.code} — the graph could not be read:\n${aspectsRes.detail}`);
+  }
+  const aspectList = asArray(aspectsRes.doc.aspects);
+
+  const advisory = aspectList.filter((a) => a.status === 'advisory');
+  // "Nothing against it" is read off the lock's own verdicts: an advisory aspect with any pair
+  // the lock does not currently approve — refused, unverified, stale, too large, a companion
+  // error — has something recorded against it. An aspect no such pair names raised nothing.
+  const dirtyAdvisory = new Set(asArray(check.pairs).filter((p) => p.verdict !== 'approved').map((p) => p.aspect));
+  const advisoryClean = advisory.filter((a) => !dirtyAdvisory.has(a.id)).length;
+
   return {
     available: true,
-    command: check.command,
-    green: check.ok,
-    enforced: statuses.filter((a) => a.status === 'enforced').length,
+    command: checkRes.command,
+    green: check.exit.status === 'pass',
+    enforced: aspectList.filter((a) => a.status === 'enforced').length,
     advisoryTotal: advisory.length,
     advisoryClean,
-    baseline: Number((CHECK_ERRORS_RE.exec(body) || [])[1] || 0),
-    noiseFloor: Number((CHECK_WARNINGS_RE.exec(body) || [])[1] || 0),
-    coveredFiles: files ? Number(files[1]) : null,
-    totalFiles: files ? Number(files[2]) : null,
-    nodes: Number((CHECK_NODES_RE.exec(body) || [])[1] || 0),
-    aspects: Number((CHECK_ASPECTS_RE.exec(body) || [])[1] || 0),
+    baseline: check.totals.errors,
+    noiseFloor: check.totals.warnings,
+    coveredFiles: check.coverage.covered,
+    totalFiles: check.coverage.files,
+    nodes: check.project.nodes,
+    aspects: check.project.aspects,
+    judges: check.judges.length,
+    verdicts: check.totals.verdicts,
+    coverage: check.coverage,
+    progressive: check.progressive,
   };
 }
 

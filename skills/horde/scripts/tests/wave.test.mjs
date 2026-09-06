@@ -509,16 +509,40 @@ test('E14 — a wave close states parallelism, keys transferred, the audit rate 
     assert.match(block, /\*\*Decisions per merged ticket:\*\* 0\.50 \(1 ruled \/ 2 merged\)/);
   });
 
-  await t.test('the quality index is read from the graph\'s own CLI, or plainly says it was not', () => {
+  await t.test('the quality index is read from yg-check/1 and yg-aspects/1, not scraped as text, or plainly says it was not', () => {
     if (yg) {
       assert.equal(closed.json.quality.measured, true, JSON.stringify(closed.json.quality));
       assert.equal(closed.json.quality.enforced, 1);
       assert.equal(closed.json.quality.coveredFiles, 2, 'lib.mjs and other.mjs are the mapped files');
-      assert.match(block, /\*\*Quality index:\*\* enforced 1 · advisory clean 0\/0 · baseline \d+ · noise floor \d+ · coverage 2\/\d+ \(first reading\)/);
+      // Fields only the document carries, never the text report: nobody judged outside the
+      // configured reviewer on this fixture, and the full verdict breakdown is passed through.
+      assert.equal(closed.json.quality.judges, 0);
+      assert.ok(closed.json.quality.verdicts, 'totals.verdicts from yg-check/1 is carried through');
+      assert.match(block, /\*\*Quality index:\*\* enforced 1 · advisory clean 0\/0 · baseline \d+ · noise floor \d+ · coverage 2\/\d+ · judges 0 \(first reading\)/);
     } else {
       assert.equal(closed.json.quality.measured, false);
       assert.match(block, /\*\*Quality index:\*\* not measured — the Yggdrasil CLI could not be started/);
     }
+  });
+
+  await t.test('a CLI that answers no yg-check/1 document is refused with the release to upgrade to, never parsed as text', () => {
+    const stub = join(dir, 'stub-yg.mjs');
+    writeFileSync(stub, [
+      "if (process.argv.includes('--version')) { console.log('5.7.9'); process.exit(0); }",
+      "console.log('enforced 1 [enforced]');",
+      'process.exit(0);',
+      '',
+    ].join('\n'));
+    const bad = run('horde.mjs', ['config', 'set', 'ygCommand', `node ${stub}`], dir);
+    assert.equal(bad.code, 0, bad.stderr);
+    run('wave.mjs', ['start'], dir);
+    const r = run('wave.mjs', ['close', '--gate', 'green'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /predates/);
+    assert.match(r.stderr, /yg-check\/1 and yg-aspects\/1/);
+    assert.match(r.stderr, /later than 5\.8\.0/);
+    assert.match(r.stderr, /reports version 5\.7\.9/);
+    run('horde.mjs', ['config', 'set', 'ygCommand', yg], dir);
   });
 
   // Printed so the block this evidence row is about is readable in the test output itself.
