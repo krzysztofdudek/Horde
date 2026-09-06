@@ -71,6 +71,22 @@ taken, and the cost. It changes nothing.
 - `--depends` still exists and is still yours to use for an order the ports do not express (a
   removal that must follow three migrations). It is added to what the plan derived, never instead
   of it.
+- **A chain on the critical path, while workers sit idle, is stacked rather than waited out.** The
+  critical path the plan prints is a chain of dependent tickets: normally each one waits a whole
+  wave for the one in front to merge. When you have fewer than `{{parallelism}}` workers running and
+  nothing fully ready to give the free one, the ticket behind can be started **now, on top of** the
+  one in front: `queue.mjs next --stack` offers those, marked stack-ready, after every ready ticket,
+  and `queue.mjs set NNN running --on MMM` cuts its branch from `MMM`'s tip. The worker's brief says
+  which ticket it is standing on. The merge order does not move — `NNN` still merges after `MMM`,
+  and the queue refuses it any earlier.
+  - Stack a chain whose front is **written and in review**, not one still being argued about: if
+    `MMM` is sent back for changes, the base under `NNN` is wrong and its work waits anyway.
+  - What it costs, when it costs anything: an amendment to `MMM` inside `NNN`'s own change before
+    `MMM` lands is a scoped re-review for `NNN` (`premerge` says so and writes the delta). An
+    amendment anywhere else costs nothing — `NNN`'s keys are bound to its own diff.
+  - Never stack instead of taking a ready ticket, and never stack a second link on a stacked one
+    without a reason you can say out loud: two unmerged bases under one ticket is a chain of risk,
+    not a shortcut.
 - Two components each larger than half your parallelism is the evidence for a sub-team; take it
   with `escalate.mjs add … --kind structure`.
 
@@ -80,7 +96,7 @@ taken, and the cost. It changes nothing.
    first, up to `{{parallelism}}` workers at once — the layer `queue.mjs plan` prints is what a wave
    is meant to hold.
 2. For each ticket: `roster.mjs spawn worker --team {{team}} --class <c>` gives the name; `queue set NNN
-   running --agent <name>` creates the ticket branch off your tip **and its worktree** under
+   running --agent <name>` (add `--on MMM` for a stack, above) creates the ticket branch off your tip **and its worktree** under
    `.horde/worktrees/<horde>/t-NNN`, and prints the path; `brief.mjs worker NNN` renders the brief with that
    path; spawn the worker with the Agent tool at the class the ticket names (haiku | sonnet | opus),
    **without** the harness's own worktree isolation (the horde made the worktree), prompt = the brief.
@@ -102,8 +118,11 @@ taken, and the cost. It changes nothing.
    be spawned. Two keys and every approval present → `premerge.mjs <branch>`.
 4. `premerge` all ✓ → `git merge --no-ff <branch>` on your branch, run the level's gate, `queue set NNN
    merged --sha` (removes the worktree, then the branch, and writes the merge into the wave journal
-   itself), `tk.mjs status NNN merged`. A ✗ on **base freshness** alone is routine, not an escalation: in the ticket's worktree
-   run `git merge {{branch}}`; clean → rerun `premerge` (the keys travel if the ticket's own diff is
+   itself), `tk.mjs status NNN merged`. Anything that was stacked on `NNN` now stands on your branch
+   instead — the queue records that on the item as it merges — so tell that worker, in one line, to
+   catch up with `git merge {{branch}}`; its keys survive the catch-up. A ✗ on **base freshness** alone is routine, not an escalation: in the ticket's worktree
+   run `git merge {{branch}}` — or, for a stacked ticket, the branch `premerge`'s own note names, which
+   is the ticket it was started from until that one merges; clean → rerun `premerge` (the keys travel if the ticket's own diff is
    unchanged — the note then reads "keys bound to diff …" — and the gate runs again either way, the
    sha changed); a conflict → `tk.mjs status NNN changes "conflict with <sha>"`, back to the author.
    A ✗ on **keys** is routine too, and the note says which kind: "diff changed since review at

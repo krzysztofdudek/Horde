@@ -95,7 +95,7 @@ Configured in `config.json` under `gates`; the defaults for this repository:
 | level | before | what must be green |
 |---|---|---|
 | ticket commit | every commit on a ticket branch | the repository's commit hook lanes (`yg check`, lint, build, typecheck, unit) |
-| ticket → team | the team steward merges | full gate (`pnpm run gate`) in the worker's worktree; the ticket's evidence reproduced by a verifier; diff within the ticket's node(s); no protected path touched; branch rooted at the team tip |
+| ticket → team | the team steward merges | full gate (`pnpm run gate`) in the worker's worktree; the ticket's evidence reproduced by a verifier; diff within the ticket's node(s); no protected path touched; branch rooted at its parent's tip (the team's branch, or the unmerged ticket it was started from) |
 | team → trunk | the trunk steward merges | full gate on the merged trunk; every contract test of the touched nodes green; the evidence catalogue delta in the right direction |
 | trunk → base | the user | full gate; audit clean; evidence catalogue fully green; cost report written |
 
@@ -110,7 +110,7 @@ the deliberate third opinion. Gate results are cached per level in `cache/last-g
 
 ## Liveness — by files, never by silence
 
-- A **worker** is done when its branch carries a commit beyond the team tip and its worktree is
+- A **worker** is done when its branch carries a commit beyond its parent's tip and its worktree is
   clean; a report without a commit is not a report. The steward checks branches every turn.
 - Thresholds live in `config.liveness` as `stewardMinutes`/`ownerMinutes`; `stewardSeconds`/
   `ownerSeconds` win when present (tests and rehearsals set seconds).
