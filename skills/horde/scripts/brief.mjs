@@ -22,7 +22,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   repoRoot, hordePath, teamPath, readJSON, readText, readConfig, fail, parseArgs, asArray, emit,
-  isMain, resolveHorde,
+  isMain, resolveHorde, parentBranchOf,
 } from './_lib.mjs';
 import {
   nodeExists, readNodeCharterText, readNodeContractsText, ticketNodes,
@@ -312,12 +312,12 @@ function previousFindings(logText) {
 // passes the delta file the merge checklist wrote — only what moved since the last review, with
 // the open findings to answer one by one. Everything about HOW a scoped re-review is judged lives
 // in the role brief itself; this fills in which one it is and what it is about.
-function verdictScope(root, t, delta) {
+function verdictScope(root, t, delta, parentBranch) {
   if (delta === true) fail('--delta requires the path of the file to re-review (the merge checklist prints it)');
   const deltaPath = typeof delta === 'string' ? delta : null;
   if (!deltaPath) {
     return `Full verification: every acceptance line above, over the whole of \`${t.queueItem.branch}\` `
-      + 'against the team branch.';
+      + `against \`${parentBranch}\`.`;
   }
   if (readText(join(root, deltaPath)) === null && readText(deltaPath) === null) {
     fail(`--delta names no readable file: ${deltaPath} — run the merge checklist on the branch again to have it written, or drop --delta for a full re-review`);
@@ -454,6 +454,23 @@ function cmdArchitect(horde, root, cfg, flags) {
   emit({ role: 'architect', name, brief }, flags, () => brief);
 }
 
+// The branch this ticket is cut from, and the paragraph that says so when it is not the one
+// anybody would assume. A ticket started from a dependency that has not merged yet is rooted on
+// that ticket's branch; merging the team branch into it instead would pull in what the parent has
+// not landed and change the ticket's own diff — which is what its keys are bound to. So the first
+// action names the parent the tools measure against, and the note says which ticket it belongs to.
+function stackNoteFor(parent) {
+  if (!parent.stacked) return '';
+  return [
+    `**This ticket is stacked.** Ticket ${parent.stackedOn} has not merged yet and your work sits on top of it: your`,
+    `base is its branch \`${parent.branch}\`, which is what the merge above names — not the team branch`,
+    `\`${parent.teamBranch}\`. What ${parent.stackedOn} changed is under you already: build on it, never redo it, and`,
+    `never merge the team branch yourself. When ${parent.stackedOn} lands, the steward tells you; the team branch`,
+    'is your base from then on, like any other ticket\'s.',
+    '',
+  ].join('\n');
+}
+
 function cmdWorker(horde, root, cfg, positional, flags) {
   const rawId = positional[0];
   if (!rawId) fail('worker requires <ticket>');
@@ -463,12 +480,14 @@ function cmdWorker(horde, root, cfg, positional, flags) {
   if (!t.queueItem) fail(`ticket ${rawId} has no queue item yet (queue.mjs set <id> running creates it)`);
   const nodes = ticketNodes(t.issueText);
   const title = ticketTitle(t.issueText);
+  const parent = parentBranchOf(horde, t.team, t.queueItem, { cwd: root });
   const vars = {
     repoRoot: root,
     name, horde, team: t.team,
     ticketId: t.id, ticketTitle: title,
     node: nodes.join(', ') || null,
-    teamBranch: `${horde}/${t.team}`,
+    parentBranch: parent.branch,
+    stackNote: stackNoteFor(parent),
     worktree: t.queueItem.worktree,
     branch: t.queueItem.branch,
     fastCheck: cfg.gates && cfg.gates.commit,
@@ -496,6 +515,7 @@ function cmdVerifier(horde, root, cfg, positional, flags) {
   if (!t.queueItem) fail(`ticket ${rawId} has no queue item yet`);
   const nodes = ticketNodes(t.issueText);
   const title = ticketTitle(t.issueText);
+  const parent = parentBranchOf(horde, t.team, t.queueItem, { cwd: root });
   const vars = {
     repoRoot: root,
     name, horde,
@@ -503,11 +523,11 @@ function cmdVerifier(horde, root, cfg, positional, flags) {
     ticketAcceptance: ticketSection(t.issueText, 'Acceptance — evidence'),
     branch: t.queueItem.branch,
     worktree: t.queueItem.worktree,
-    teamBranch: `${horde}/${t.team}`,
+    parentBranch: parent.branch,
     gateCommand: cfg.gates && cfg.gates.team,
     nodeContracts: nodesText(root, cfg, nodes, readNodeContractsText, '(no contracts yet)'),
     reportsTo: reportsToFor('verifier', horde, { team: t.team }),
-    scope: verdictScope(root, t, flags.delta),
+    scope: verdictScope(root, t, flags.delta, parent.branch),
   };
   const brief = renderRole('verifier', vars);
   emit({

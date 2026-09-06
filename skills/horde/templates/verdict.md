@@ -4,7 +4,7 @@
 
 **Flake:** {{flake | not flaky}}
 
-**Base check:** rooted at `{{teamBranch}}` tip — {{yes | no}}
+**Base check:** rooted at `{{parentBranch}}` tip — {{yes | no}}
 
 **Evidence reproduced:**
 

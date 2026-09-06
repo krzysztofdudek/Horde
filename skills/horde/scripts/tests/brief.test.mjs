@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
@@ -303,5 +304,52 @@ test('brief.mjs verifier --delta: a scoped re-review names the delta and the fin
     const r = run('brief.mjs', ['verifier', '001', '--delta', 'nowhere/rereview-1111111..2222222.diff', '--name', 'mission1-verifier-trunk-2'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /--delta names no readable file/);
+  });
+});
+
+// A worker whose ticket was started from an unmerged dependency's tip is told to merge that
+// dependency's branch, not the team's — merging the team branch would pull in what the parent has
+// not landed and change the very diff the ticket's keys are bound to. The brief is rendered from
+// real queue state, made by the real command, because what is being tested is that the first
+// action a worker takes matches where the branch actually is.
+test('brief.mjs: a stacked ticket\'s brief names the branch it was started from, and says so', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  run('node.mjs', ['new', 'feature', '--boundary', 'lib.mjs'], dir);
+
+  const first = run('tk.mjs', ['new', 'first-link', '--title', 'First link', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
+  const second = run('tk.mjs', ['new', 'second-link', '--title', 'Second link', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
+  run('queue.mjs', ['add', first], dir);
+  run('queue.mjs', ['add', second, '--depends', first], dir);
+  const parent = run('queue.mjs', ['set', first, 'running', '--agent', 'worker1'], dir).json;
+  execFileSync('git', ['-C', parent.worktree, 'commit', '--allow-empty', '-qm', 'the first link'], { encoding: 'utf8' });
+  const stacked = run('queue.mjs', ['set', second, 'running', '--agent', 'worker2', '--on', first], dir);
+  assert.equal(stacked.code, 0, stacked.stderr);
+
+  await t.test('the worker merges the parent ticket\'s branch and is told which ticket it belongs to', () => {
+    const r = run('brief.mjs', ['worker', second, '--name', 'mission1-worker-trunk-2'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, new RegExp(`git merge mission1/t-${first}`));
+    assert.doesNotMatch(r.json.brief, /git merge mission1\/trunk/);
+    assert.match(r.json.brief, /\*\*This ticket is stacked\.\*\*/);
+    assert.match(r.json.brief, new RegExp(`Ticket ${first} has not merged yet`));
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
+
+  await t.test('the verifier is held to the same base', () => {
+    const r = run('brief.mjs', ['verifier', second, '--name', 'mission1-verifier-trunk-2'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, new RegExp(`is-ancestor mission1/t-${first} HEAD`));
+    assert.match(r.json.brief, new RegExp(`against \`mission1/t-${first}\``));
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
+
+  await t.test('an unstacked ticket\'s brief is the team branch, with no note at all', () => {
+    const r = run('brief.mjs', ['worker', first, '--name', 'mission1-worker-trunk-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, /git merge mission1\/trunk/);
+    assert.doesNotMatch(r.json.brief, /This ticket is stacked/);
+    assert.doesNotMatch(r.json.brief, /\{\{/);
   });
 });

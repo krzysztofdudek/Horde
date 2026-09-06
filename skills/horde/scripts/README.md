@@ -190,10 +190,10 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
 
 ## queue.mjs — the DAG
 
-`teams/<team>/queue.json`: items `{ticket, state, class, branch, worktree, dependsOn[], agent, sha, notes[]}`.
+`teams/<team>/queue.json`: items `{ticket, state, class, branch, worktree, dependsOn[], stackedOn, agent, sha, notes[]}`.
 States: `queued waiting running landed merged escalated dropped`.
 - `list [--state s]`, `add NNN [--depends dep,…]`, `set NNN <state> [--sha x] [--agent name] [--note "…"]`,
-  `next [--class c] [--why]` — ready = queued, every dependency merged, and clear of every
+  `next [--class c] [--why] [--stack]` — ready = queued, every dependency merged, and clear of every
   `running` ticket's own lock: a ticket declaring `**Files:**` collides only on an overlapping
   path or glob; a ticket with none (or a `running` item whose ticket can no longer be read) locks
   every file of every node it names instead — the safe degradation for a ticket that never said
@@ -204,10 +204,16 @@ States: `queued waiting running landed merged escalated dropped`.
   then a ticket whose nodes hold no `running` ticket; then FIFO by queue order. `--why` prints
   every `queued` item: its rank if it qualified, or the reason it didn't (an unmet dependency, the
   file lock naming the `running` ticket and the file(s) it shares, or the `--class` filter).
-  `rm NNN`, `move NNN --team t`, `render`, `reconcile` (every `running` item: a commit beyond the team
-  tip → `landed`; a dirty worktree → `git add -A && git commit -m "wip: reclaimed"` on the ticket branch,
-  then `queued` with a note; a clean worktree and no commit → `queued`, worktree removed. A `waiting`
-  item is left untouched — it has nothing running to reconcile).
+  `--stack` keeps in the ranking, below every ready ticket and in the same order among
+  themselves, each queued item whose unmerged dependencies are all in this team, `running` or
+  `landed`, and on a branch — returned as `stackReady: true` with `stackOn` naming them, since it
+  can be started now on top of one. The lock holds there too: the ticket it would start from is
+  often the one holding the file. Without `--stack`, such an item is skipped as before, and
+  `--why` says which tip it could have started from.
+  `rm NNN`, `move NNN --team t`, `render`, `reconcile` (every `running` item: a commit beyond its
+  parent's tip → `landed`; a dirty worktree → `git add -A && git commit -m "wip: reclaimed"` on the
+  ticket branch, then `queued` with a note; a clean worktree and no commit → `queued`, worktree
+  removed. A `waiting` item is left untouched — it has nothing running to reconcile).
 - `plan [--team t] [--apply-order]` — the team's DAG, derived from the tickets and printed, never
   dispatched. Three kinds of edge, added together and never overriding one another: a ticket that
   `**Consumes:** <node>/<port>@<v>` comes after the ticket that `**Produces:**` that exact version
@@ -243,8 +249,22 @@ States: `queued waiting running landed merged escalated dropped`.
   out which evidence rows the wave turned green, and the catalogue used to sit at zero whenever the
   second command was forgotten. `wave.mjs merged` remains, for a merge the queue never saw, and
   never records one twice.
-- Refuses `set NNN merged` when the ticket's `**Keys:**` field lacks the author key, the verifier key
-  (a `verify` record with verdict `reproduced`), or an approval for every node it names.
+- `set NNN running --on MMM` cuts the branch from `MMM`'s tip instead of the team's — a **stack**, so
+  a chain of tickets does not cost one wave per link — and records `stackedOn: MMM` on the item.
+  `MMM` must be a dependency of `NNN` (a stack follows the merge order, never crosses it), in the
+  same team, `running` or `landed`, and on a branch that exists; each of those is a named refusal,
+  as is `--on` on a ticket whose branch was already cut somewhere else (moving a base under work
+  already done is a rebase this tool does not do). From then on the item's **parent branch** — the
+  branch it is rooted on, measured against, and merged into — is `MMM`'s, everywhere: base
+  freshness, the diff its keys bind to, the scope, the revert test, the range-diff of a moved diff,
+  and the branch the worker's and verifier's briefs tell them to merge. `set MMM merged` clears
+  `stackedOn` on everything stacked on it by the same write, and the parent is the team branch
+  again — with the work now in it, the stacked ticket's own diff is unchanged, so its keys hold and
+  only the gate re-runs.
+- Refuses `set NNN merged` while any dependency of the ticket is unmerged (merge order is the
+  dependency order, stack or no stack), and when the ticket's `**Keys:**` field lacks the author
+  key, the verifier key (a `verify` record with verdict `reproduced`), or an approval for every node
+  it names.
 
 ## roster.mjs — who is alive
 
@@ -436,7 +456,10 @@ re-derive it independently.
 
 ## premerge.mjs — the mechanical checklist
 
-`premerge.mjs <branch> [--level team|trunk] [--no-gate]`, for a ticket branch (`<horde>/t-NNN`):
+`premerge.mjs <branch> [--level team|trunk] [--no-gate]`, for a ticket branch (`<horde>/t-NNN`).
+Its **parent branch** is the team's own (`<horde>/<team>`), or — while the ticket is stacked on a
+dependency that has not merged yet — that dependency's branch; one answer, reported as `parent` in
+the JSON, and every item below is measured against it:
 
 1. base freshness — the branch is rooted at its parent branch's tip;
 2. keys — the author key and the verifier key are set, the verify verdict is `reproduced`, every
@@ -578,7 +601,7 @@ can name its branch) always runs the gate fresh.
 ## keys are bound to the diff, not to the branch tip
 
 An owner's approval and a verifier's verdict are recorded against the identity of the ticket's own
-diff — `git patch-id --stable` over `<team branch>...<ticket branch>`, at `config.keyContext` lines
+diff — `git patch-id --stable` over `<parent branch>...<ticket branch>`, at `config.keyContext` lines
 of context (default 3). So when a ticket catches its branch up with the team branch after somebody
 else's ticket lands, item 2 asks one question: does the branch still carry the diff those keys were
 given? If it does, the keys travel with it and nothing is re-reviewed. If the landing reached inside
@@ -598,3 +621,28 @@ diff and the verifier's reproduction of the evidence — and git has proved that
 byte for byte, at three lines of context. Nothing is taken on trust that was not taken on trust
 before. `keyContext` is the dial: raise it to send more tickets back for a scoped re-review, lower
 it to send fewer. Zero is not offered — it would call a change on the very next line the same diff.
+
+## a ticket started from an unmerged dependency (a stack)
+
+A chain of three tickets used to cost three waves of wall-clock: each waited for the one before it
+to be merged before its branch could even be cut, however short the work was. `queue.mjs set NNN
+running --on MMM` cuts it from `MMM`'s tip instead, so the second is written, reviewed and verified
+while the first is still in flight. Only the merge order still waits: `set NNN merged` refuses while
+a dependency of the ticket is unmerged, exactly as `dependsOn` always said.
+
+This works because of the section above and nothing else. The keys on the stacked ticket are bound
+to the identity of its own diff against the branch it was cut from — its parent's, not the team's —
+so they name what that ticket changed and nothing underneath it. When the parent merges, its work
+arrives on the team branch, the stacked ticket catches up with `git merge <team branch>`, and its
+diff against the team branch is the same diff its reviewers read. Item 1 goes green against the new
+parent, item 2 reports "keys bound to diff …", and only the gate re-runs — on the merged tree, as
+always. If the parent is amended inside the stacked ticket's own hunk context before it lands, the
+diff is a different one and item 2 asks for a scoped re-review with a range-diff file, the same as
+any other landing that reaches into a change; if the amendment overlaps the change outright, the
+catch-up conflicts and the ticket goes back to its author, untouched.
+
+One function answers "what is this branch's parent" for the whole tool set — the merge checklist,
+the briefs the worker and the verifier are given, the keys `tk.mjs review` and `verify.mjs record`
+write, and `queue.mjs reconcile`'s count of what a branch actually carries of its own. Two answers
+would be a ticket whose keys are recorded against one branch and checked against another, which is
+the same as having no keys at all.

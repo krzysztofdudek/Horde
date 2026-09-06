@@ -16,6 +16,7 @@ import { execFileSync } from 'node:child_process';
 import {
   readConfig, readText, writeText, appendText, today, fail, parseArgs, emit, isMain, resolveHorde,
   renderTemplate, asArray, readJSON, teamPath, patchIdOf, hordePath, repoRoot, nowIso,
+  parentBranchOf,
 } from './_lib.mjs';
 import {
   findTicket, parseField, parseKeys, setVerifierKey, changesRoundInfo, transitionStatus,
@@ -66,25 +67,36 @@ function teamBranchName(horde, team) {
   return team === 'trunk' ? `${horde}/trunk` : `${horde}/${String(team).split('/').pop()}`;
 }
 
-// The ticket's own branch, from its queue item — read straight off queue.json rather than through
-// queue.mjs, the same way tk.mjs reads it and for the same reason (queue.mjs imports tk.mjs, and
-// a two-way import would be a cycle). null when the ticket has no queue item or no branch yet.
-function ticketBranch(horde, ticket) {
+// The ticket's queue item — read straight off queue.json rather than through queue.mjs, the same
+// way tk.mjs reads it and for the same reason (queue.mjs imports tk.mjs, and a two-way import
+// would be a cycle). null when the ticket was never queued.
+function ticketItem(horde, ticket) {
   const queue = readJSON(teamPath(horde, ticket.team, 'queue.json'), { items: [] });
   const items = Array.isArray(queue.items) ? queue.items : [];
-  const item = items.find((i) => String(i.ticket) === ticket.id);
-  return (item && item.branch) || null;
+  return items.find((i) => String(i.ticket) === ticket.id) || null;
 }
 
-// What this verdict actually judged: the identity of the ticket's diff against its team branch at
-// record time. The sha stays on the Gate line as the tree the gate ran on; this is the binding —
-// the merge checklist honours the verdict for as long as the diff is this one, so a branch that
-// only catches up with the team keeps its verdict instead of paying for a second verification.
+// The branch this ticket's work is measured against: its team's, or — while the ticket was
+// started from a dependency that has not merged yet — that dependency's. The same answer the
+// merge checklist gets, from the same function, because a verdict bound against one branch and
+// checked against another would die on a catch-up that changed nothing.
+function ticketParentBranch(horde, ticket) {
+  const item = ticketItem(horde, ticket);
+  return item
+    ? parentBranchOf(horde, ticket.team, item).branch
+    : teamBranchName(horde, ticket.team);
+}
+
+// What this verdict actually judged: the identity of the ticket's diff against its parent branch
+// at record time. The sha stays on the Gate line as the tree the gate ran on; this is the binding
+// — the merge checklist honours the verdict for as long as the diff is this one, so a branch that
+// only catches up keeps its verdict instead of paying for a second verification.
 // null (the line then says so) when there is no branch to read, or nothing to identify.
 function verdictPatchId(horde, cfg, ticket, flags) {
-  const branch = flags.branch || ticketBranch(horde, ticket);
+  const item = ticketItem(horde, ticket);
+  const branch = flags.branch || (item && item.branch) || null;
   if (!branch) return null;
-  return patchIdOf(branch, teamBranchName(horde, ticket.team), { context: cfg && cfg.keyContext });
+  return patchIdOf(branch, ticketParentBranch(horde, ticket), { context: cfg && cfg.keyContext });
 }
 
 // The ticket's own "## Acceptance — evidence" checklist, in order — the same section tk.mjs
@@ -244,7 +256,7 @@ function cmdRecord(horde, positional, flags) {
     verifier: flags.by,
     class: (rosterEntry(horde, flags.by) || {}).class || parseField(ticket.text, 'Class') || '-',
     reproduced: verdict,
-    teamBranch: teamBranchName(horde, ticket.team),
+    parentBranch: ticketParentBranch(horde, ticket),
     yes: isRepro ? 'yes' : `no: ${verdict}`,
     flake: flake ? `${flake.test} — runs: ${flake.results.join(', ')} (${flake.runs} runs)` : undefined,
     'failed as expected': flags.revert === 'failed' ? 'failed as expected'

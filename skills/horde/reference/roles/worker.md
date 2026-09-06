@@ -12,14 +12,16 @@ Repository root: `{{repoRoot}}` — every command runs from there, every relativ
 ## First action, before anything else
 
 ```
-git merge {{teamBranch}}
-git merge-base --is-ancestor {{teamBranch}} HEAD && git status --porcelain
+git merge {{parentBranch}}
+git merge-base --is-ancestor {{parentBranch}} HEAD && git status --porcelain
 ```
 
 `git status` must print nothing. A dirty tree after the merge is a stale base or somebody else's diff:
 **stop and report**. Your worktree is `{{worktree}}` on branch `{{branch}}`; work only there. Then run
 the fast check `{{fastCheck}}`; the team branch last reported {{fastCheckCount}} — a lower count means a
 wrong base: stop and report.
+
+{{stackNote | }}
 
 ## The ticket
 

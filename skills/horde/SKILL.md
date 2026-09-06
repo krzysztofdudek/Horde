@@ -120,7 +120,7 @@ Every agent of the horde lives only while your session lives. Two consequences:
   reclaim, close, hand off, sleep. Without one, the horde works while the user is present; say so.
 - **When the session ends**, the whole roster is gone, whatever the files say. Every boot therefore
   starts with a **cold boot**: `roster.mjs reconcile` marks every entry dead; `queue.mjs reconcile`
-  looks at every `running` ticket's branch — a commit beyond the team tip → `landed`; a dirty worktree
+  looks at every `running` ticket's branch — a commit beyond its parent's tip → `landed`; a dirty worktree
   → its diff committed as `wip: reclaimed` on the ticket branch and the item back to `queued` (the next
   worker is told); a clean worktree without a commit → `queued`, worktree removed; then you respawn
   the trunk steward from the files, and

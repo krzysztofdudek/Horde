@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync } from 'node:child_process';
 import {
   repoRoot, hordePath, teamPath, readJSON, writeJSON, readText, readConfig, git, nowIso,
-  fail, parseArgs, asArray, emit, isMain, resolveHorde,
+  fail, parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf,
 } from './_lib.mjs';
 import { findTicket, ticketFiles } from './tk.mjs';
 import {
@@ -228,7 +228,12 @@ function ticketContext(horde, ticketId) {
   const queue = readJSON(teamPath(horde, ticket.team, 'queue.json'), { items: [] });
   const item = asArray(queue.items).find((it) => String(it.ticket) === ticket.id) || null;
   const branch = (item && item.branch) || `${horde}/t-${ticket.id}`;
-  const parentBranch = `${horde}/${leaf}`;
+  // The same parent the merge checklist and the keys use: the team's branch, or the unmerged
+  // ticket this one was started from. A drill that counted a stacked ticket's commits from the
+  // team branch would be reading its parent's work as its own.
+  const parentBranch = item
+    ? parentBranchOf(horde, ticket.team, item).branch
+    : `${horde}/${leaf}`;
   return {
     horde,
     root: repoRoot(),
