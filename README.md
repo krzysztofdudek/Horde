@@ -41,6 +41,8 @@ Workers pick up tickets, each in its own worktree, each against a locked spec. A
 
 You never read a diff. What comes to you: a contract two owners can't agree on, a claim that something is a boundary and shouldn't be touched, a cost limit reached, anything genuinely unsure. Everything else, the horde rules on itself and writes down why, so the next session picks it up cold from the files, not from your memory of the conversation.
 
+Every line the horde ever merged has a custody chain: point at a file and a line and it tells you the commit that introduced it, the ticket that commit belongs to, who wrote it and who reviewed and verified it, what evidence that ticket was supposed to prove and whether it did, and — on a repository with an architecture graph — what the graph currently says about the rules standing over that code. A closed mission is searched too; a line from before the horde ever touched the repository is reported as exactly that.
+
 ---
 
 ## When it fires
