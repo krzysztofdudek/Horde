@@ -452,6 +452,29 @@ newer than the last commit.
 result under its level's key in `hordes/<horde>/cache/last-gate.json` (`{commit, team, trunk}`, each
 with sha, result, count, at).
 
+## blame.mjs — chain of custody
+
+Read-only: `blame.mjs <file>:<line> [--horde h] [--json]`. `git blame` finds the commit that
+introduced the line, then every horde on the repository — live and archived (`horde.mjs archive`
+moves a horde's directory but never touches its branches or tickets, so a closed mission's tickets
+are searched exactly like an open one's) — is searched for the ticket whose recorded branch tip
+contains that commit as an ancestor. Three places record a branch tip: a `**Keys:**` node
+approval (`<name>@<sha>+<patch-id>`), a `verify.mjs` verdict block's `**Gate:** … at sha <sha>`
+line, and the team journal's own `merged: NNN <sha>` bullet. Several tickets' recorded shas can
+all technically be ancestors of the same commit (trunk only ever moves forward, so every later
+merge carries every earlier one in its history too) — the one actually reported is whichever
+recorded sha sits closest to the commit (`git rev-list --count` between them, smallest wins).
+Prints the commit, the ticket's id and title, its node(s), the author key, the verifier key with
+its class, the owner approvals, the evidence rows the ticket named and what its own verdict
+recorded for each, and — only on a repository whose `nodeSource` is `yggdrasil` — the rule
+verdicts standing against the file's owning node. Those verdicts come from the lock's own entries
+(`.yggdrasil/yg-lock.nondeterministic.json`, `.yggdrasil/.yg-lock.deterministic.json`), read
+directly: the installed Yggdrasil CLI's `check` has neither `--json` nor any way to scope to one
+file (verified against its own `--help` rather than assumed), so the lock — the same
+content-addressed record `yg check` itself re-hashes against — is the honest source, not a flag
+that does not exist. `--horde` narrows the search to one horde and its own archived copies. A line
+no ticket's recorded shas reach is reported plainly as pre-horde code.
+
 ## drill.mjs — the disciplines, drilled
 
 The disciplines live in `reference/discipline/*.md` and are rendered into the briefs by `brief.mjs`.
