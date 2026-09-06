@@ -22,24 +22,26 @@ import {
   asArray, emit, isMain, resolveHorde,
 } from './_lib.mjs';
 import {
-  nodeBoundary, nodeExists, nodeGraphPathPrefix, ticketNodes,
+  nodeBoundary, nodeExists, nodeGraphPathPrefix, ticketNodes, graphIsLaw, runYgCheck, ygCommand,
 } from './node.mjs';
 
 const DEFAULT_TEST_GLOBS = ['**/*.test.*', '**/*.spec.*'];
 
 const USAGE = `usage: premerge.mjs <branch> [--level team|trunk] [--no-gate] [--horde h]
 
-Six checks, in order — ✓/✗ per line, non-zero exit on any ✗:
+The checks, in order — ✓/✗ per line, non-zero exit on any ✗:
   1. base freshness — branch rooted at its parent branch's tip
   2. keys           — author + verifier keys set, verdict reproduced, every named node approved,
                       and every approval and the verdict itself sha-bound to the branch's tip
   3. scope          — diff stays inside the ticket's node boundaries, no protected path touched
   4. revert test    — new test files, extracted onto the parent's tree, fail there
   5. gate           — green at this SHA (a verifier's recorded green gate, or a fresh run)
-  6. journal        — a log entry newer than the last commit
+  6. graph          — "yg check" green on this branch's tree (only when the horde's nodes come
+                      from a Yggdrasil graph; it runs whatever config.gates holds)
+  7. journal        — a log entry newer than the last commit
 
 --level selects the gate command (config.gates.team or .trunk; default team — "trunk" is only for
-a branch landing directly on <horde>/trunk). --no-gate skips item 5 (informational: pass).
+a branch landing directly on <horde>/trunk). --no-gate skips items 5 and 6 (informational: pass).
 
 options: --json  --help`;
 
@@ -434,6 +436,35 @@ function checkGate(horde, root, cfg, level, branch, branchSha, logText, ticketId
   };
 }
 
+// The graph gate. Where the node map IS the Yggdrasil graph, the graph is what says the code is
+// right, and `yg check` is the only thing that reads it — so it runs on every premerge whatever
+// `config.gates` holds, and a graph that refuses the tree is a refused merge. Without this the
+// level's gate can be green on a tree `yg check` exits 1 on, which is exactly the state a
+// repository whose own gate command doesn't call `yg` is in by default.
+function checkGraph(root, cfg, branch, noGate) {
+  const display = ygCommand(cfg).display;
+  if (noGate) return { ok: true, note: `skipped (--no-gate) — \`${display} check\` was not run` };
+  const worktree = findWorktreePath(root, branch);
+  if (!worktree) {
+    return {
+      ok: false,
+      note: `no worktree checked out for ${branch} — \`${display} check\` reads a tree, so it cannot judge this branch; check it out (queue.mjs set <t> running does) and run premerge again`,
+    };
+  }
+  const res = runYgCheck(cfg, worktree);
+  if (!res.available) {
+    return {
+      ok: false,
+      note: `cannot run \`${res.command}\` — this horde's nodes come from the Yggdrasil graph, so the graph's own verdict is part of the gate; install the Yggdrasil CLI, or point config.ygCommand at it (horde.mjs config set ygCommand "node path/to/bin.js")`,
+    };
+  }
+  if (res.ok) return { ok: true, note: `${res.command} green${res.summary ? ` — ${res.summary}` : ''}` };
+  return {
+    ok: false,
+    note: `${res.command} exited ${res.exit} — the graph refuses this tree${res.summary ? `: ${res.summary}` : ''}; a red graph is a red gate, whatever the level's gate command said`,
+  };
+}
+
 function checkJournal(text, branch) {
   const lastEntry = latestTimestamp(text);
   const commitDate = git(['log', '-1', '--format=%cI', branch]);
@@ -503,6 +534,8 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
     cache[level] = { ...gate.cache, at: new Date().toISOString() };
     saveGateCache(horde, cache);
   }
+
+  if (graphIsLaw(cfg)) checks.push({ name: 'graph', ...checkGraph(root, cfg, branch, noGate) });
 
   checks.push({ name: 'journal', ...checkJournal(logText, branch) });
 

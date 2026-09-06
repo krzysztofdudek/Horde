@@ -72,7 +72,11 @@ wave 1. Owners stay alive for the reviews the wave will ask of them.
    run `git merge {{branch}}`; clean → rerun `premerge` (the gate runs again, the sha changed); a conflict
    → `tk.mjs status NNN changes "conflict with <sha>"`, back to the author. A ✗ on **keys** whose note
    reads "approval/verdict predates … — re-review" is routine too: a commit landed on the branch after
-   the review — `review-request` the owner again and spawn a fresh verifier, don't escalate it. Any
+   the review — `review-request` the owner again and spawn a fresh verifier, don't escalate it. A ✗ on
+   **graph** is the architecture graph refusing this tree, and it is never worked around: send the
+   ticket back (`tk.mjs status NNN changes "<what yg check refused>"`) so the author makes it green —
+   rebuilding the free deterministic verdicts (`yg check --approve --only-deterministic`) is their
+   first move — and escalate only when the refusal is a rule the ticket cannot satisfy. Any
    other ✗ → `escalate.mjs add … --ticket NNN`, `queue set NNN escalated`, move on. A merge
    conflict is never resolved by hand: back to the author with `tk.mjs status NNN changes "conflict with
    <sha>"`, or escalate if it crosses nodes.

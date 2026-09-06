@@ -100,7 +100,10 @@ Configured in `config.json` under `gates`; the defaults for this repository:
 | trunk → base | the user | full gate; audit clean; evidence catalogue fully green; cost report written |
 
 `premerge.mjs <branch>` automates the mechanical part for the two middle rows; the steward escalates
-anything it cannot tick, and never interprets a red item. The full gate is expensive (this repository's
+anything it cannot tick, and never interprets a red item. Where the nodes come from a Yggdrasil
+graph, `premerge` also runs `yg check` on the branch's own tree as its own checklist item, whatever
+the gate commands say — the graph is what says the code is right there, and a repository whose gate
+command never calls `yg` would otherwise merge a tree the graph refuses. The full gate is expensive (this repository's
 includes the browser suite), so it runs once per SHA: a verifier's `reproduced` verdict names the SHA
 and the gate result it saw, `premerge` accepts that instead of rerunning, and the auditor's rerun is
 the deliberate third opinion. Gate results are cached per level in `cache/last-gate.json`.

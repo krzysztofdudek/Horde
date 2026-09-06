@@ -24,10 +24,13 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   empty roster, journals, `teams/trunk/`, and the branch `<name>/trunk` off `<base>` (no checkout of the
   main tree). Sets `config.nodeSource` to `yggdrasil` when `.yggdrasil/` exists, else `manual` with
   `config.graphDir` = `--graph-dir` (default `architecture/`), creating `<graphDir>/nodes/` and a README
-  that says what the directory is. Refuses an existing name.
+  that says what the directory is. On a repository with a Yggdrasil graph the result also says that
+  `yg check` is now part of every merge check. Refuses an existing name.
 - `list` — hordes with trunk, base, wave, open tickets, last activity.
 - `config get|set <key> [value]` — `.horde/config.json`: `base`, `gates.commit|team|trunk` (commands),
-  `nodeSource` (`yggdrasil` | `manual`), `protectedPaths[]`, `liveness.stewardMinutes|ownerMinutes`
+  `nodeSource` (`yggdrasil` | `manual`), `ygCommand` (how this repository invokes the Yggdrasil CLI
+  — default `yg` on PATH; set it to e.g. `node path/to/bin.js` for a local build),
+  `protectedPaths[]`, `liveness.stewardMinutes|ownerMinutes`
   (also accepts `liveness.stewardSeconds|ownerSeconds` — a `*Seconds` key wins over its `*Minutes`
   counterpart when both are set; useful for tests and fast-loop tuning where a whole minute isn't
   practical), `classes` (weights: haiku 1, sonnet 3, opus 10, fable 30 — defaults), `parallelism`.
@@ -262,14 +265,20 @@ evidence catalogue and `cost`; `--gate` with `--sha` records the level's gate at
 4. revert test — new test files in the diff, extracted onto the parent's tree, show at least one failure;
 5. gate — green at the branch's SHA: taken from the verifier's verdict when it names this SHA with a
    green gate, otherwise the level's gate command from `config.gates` run in the branch's worktree;
-6. journal — `tk log` has an entry newer than the last commit.
+6. graph — `yg check` green on the branch's own worktree. Only when `nodeSource` is `yggdrasil`, and
+   then on every run whatever `config.gates` holds: where the graph is the node map, the graph is what
+   says the code is right, and a repository whose own gate command never calls `yg` would otherwise
+   show a green gate over a tree `yg check` exits 1 on. A red graph is a red gate. When the CLI cannot
+   be started at all the item is ✗ (never a quiet ✓) and names `config.ygCommand`;
+7. journal — `tk log` has an entry newer than the last commit.
 
-For a team branch (`<horde>/<team>`, the item `team:<name>` in the parent's queue) the same six
-items read differently: 1 rooted at the parent's tip; 2 every ticket of that team is `merged` with its
+For a team branch (`<horde>/<team>`, the item `team:<name>` in the parent's queue) the same items
+read differently: 1 rooted at the parent's tip; 2 every ticket of that team is `merged` with its
 keys; 3 the diff stays inside the union of the team's tickets' nodes; 4 skipped; 5 the level's gate
-at the branch SHA; 6 the team's `plan.md` has a wave close newer than the last commit.
+at the branch SHA; 6 the graph, exactly as for a ticket; 7 the team's `plan.md` has a wave close
+newer than the last commit.
 
-Prints ✓/✗ per item; exits non-zero on any ✗. Never modifies the parent's tracked files; writes the gate
+`--no-gate` skips items 5 and 6. Prints ✓/✗ per item; exits non-zero on any ✗. Never modifies the parent's tracked files; writes the gate
 result under its level's key in `hordes/<horde>/cache/last-gate.json` (`{commit, team, trunk}`, each
 with sha, result, count, at).
 

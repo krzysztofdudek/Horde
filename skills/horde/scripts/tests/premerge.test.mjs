@@ -600,3 +600,111 @@ for (const state of ['queued', 'waiting']) {
     assert.match(keys.note, new RegExp(`101: ${state}`));
   });
 }
+
+// ---- the graph gate (nodeSource: yggdrasil) ----------------------------------------
+//
+// A stand-in for the Yggdrasil CLI: a real program, invoked exactly as the real one is (through
+// config.ygCommand, in the branch's own worktree), that prints what `yg check` prints and exits
+// with its exit code. The point under test is that premerge runs it at all and believes its
+// exit code — not anything about Yggdrasil's own internals.
+function writeFakeYg(dir, name, { exit = 0, line = 'yg check: PASS  1 nodes · 1 aspects' } = {}) {
+  const path = join(dir, name);
+  writeFileSync(path, [
+    "if (process.argv[2] !== 'check') { console.error('unexpected: ' + process.argv.slice(2).join(' ')); process.exit(2); }",
+    `console.log(${JSON.stringify(line)});`,
+    `process.exit(${exit});`,
+    '',
+  ].join('\n'));
+  return path;
+}
+
+function setupGraphGateRepo(dir, id) {
+  mkdirSync(join(dir, '.yggdrasil', 'model', 'feature'), { recursive: true });
+  writeFileSync(join(dir, '.yggdrasil', 'model', 'feature', 'yg-node.yaml'), [
+    'name: feature', 'type: domain', 'description: "the node"', '',
+    'mapping:', `  - feature-${id}.mjs`, `  - feature-${id}.test.mjs`, '', 'relations: []', '',
+  ].join('\n'));
+  initHorde(dir); // .yggdrasil/ exists -> nodeSource auto-detects "yggdrasil"
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir); // the level's gate is green
+
+  const branch = makeTicketBranch(dir, id);
+  const dst = writeIssue(dir, 'trunk', id);
+  writeVerdictLog(dst);
+  seedQueueItem(dir, 'trunk', id, branch);
+  const wt = join(dir, '.horde', 'worktrees', 'mission1', `t-${id}`);
+  git(['worktree', 'add', wt, branch], dir);
+  return branch;
+}
+
+test('premerge.mjs: horde.mjs init says the graph check is in the merge gate on a repository with a graph', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  mkdirSync(join(dir, '.yggdrasil', 'model', 'feature'), { recursive: true });
+  writeFileSync(join(dir, '.yggdrasil', 'model', 'feature', 'yg-node.yaml'), 'name: feature\ntype: domain\ndescription: "d"\nmapping:\n  - src/\nrelations: []\n');
+
+  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop'], dir, { json: false });
+  assert.equal(r.code, 0);
+  assert.match(r.stdout, /yg check` is part of every merge check/);
+});
+
+test('premerge.mjs: the graph gate is red when yg check refuses the tree, even with a green level gate', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const branch = setupGraphGateRepo(dir, '020');
+  const fake = writeFakeYg(dir, 'fake-yg-red.mjs', { exit: 1, line: 'yg check: FAIL  1 nodes · Errors (1): enforced 1 pairs' });
+  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${fake}`], dir);
+
+  const r = run('premerge.mjs', [branch], dir);
+  assert.equal(r.code, 1);
+  const gate = r.json.checks.find((c) => c.name === 'gate');
+  assert.equal(gate.ok, true, 'the level gate is green — only the graph refuses');
+  const graph = r.json.checks.find((c) => c.name === 'graph');
+  assert.equal(graph.ok, false);
+  assert.match(graph.note, /the graph refuses this tree/);
+  assert.match(graph.note, /yg check: FAIL/);
+  assert.equal(r.json.ok, false);
+});
+
+test('premerge.mjs: the graph gate is green when yg check accepts the tree', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const branch = setupGraphGateRepo(dir, '021');
+  const fake = writeFakeYg(dir, 'fake-yg-green.mjs');
+  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${fake}`], dir);
+
+  const r = run('premerge.mjs', [branch], dir);
+  if (r.code !== 0) console.error(r.stdout, r.stderr);
+  assert.equal(r.code, 0);
+  const graph = r.json.checks.find((c) => c.name === 'graph');
+  assert.equal(graph.ok, true);
+  assert.match(graph.note, /green/);
+});
+
+test('premerge.mjs: the graph gate refuses rather than passes when the Yggdrasil CLI cannot be run', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const branch = setupGraphGateRepo(dir, '022');
+  run('horde.mjs', ['config', 'set', 'ygCommand', join(dir, 'no-such-yg-binary')], dir);
+
+  const r = run('premerge.mjs', [branch], dir);
+  assert.equal(r.code, 1);
+  const graph = r.json.checks.find((c) => c.name === 'graph');
+  assert.equal(graph.ok, false);
+  assert.match(graph.note, /cannot run/);
+  assert.match(graph.note, /config\.ygCommand/);
+});
+
+test('premerge.mjs: a manual node map has no graph item at all', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  run('node.mjs', ['new', 'feature', '--boundary', 'feature-023.mjs,feature-023.test.mjs'], dir);
+  const branch = makeTicketBranch(dir, '023');
+  const dst = writeIssue(dir, 'trunk', '023');
+  writeVerdictLog(dst);
+  seedQueueItem(dir, 'trunk', '023', branch);
+
+  const r = run('premerge.mjs', [branch, '--no-gate'], dir);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.checks.some((c) => c.name === 'graph'), false);
+});

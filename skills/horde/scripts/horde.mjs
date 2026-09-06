@@ -62,6 +62,7 @@ function defaultConfig(root) {
     base: null,
     gates: detectGates(root),
     nodeSource,
+    ygCommand: nodeSource === 'yggdrasil' ? 'yg' : null,
     graphDir: nodeSource === 'manual' ? 'architecture/' : null,
     protectedPaths: [],
     liveness: { stewardMinutes: 60, ownerMinutes: 45 },
@@ -132,7 +133,18 @@ function cmdInit(positional, flags) {
 
   if (cfg.nodeSource === 'manual') ensureManualGraphDir(root, cfg.graphDir || flags['graph-dir'] || 'architecture/');
 
-  emit({ horde: name, branch, base: flags.base }, flags, () => `horde "${name}" created — trunk branch ${branch} off ${flags.base}`);
+  // Whatever the repository's own gate command turns out to be, a repository with a graph is
+  // judged by that graph too — so say, at the one moment the operator is reading, that the
+  // graph's verdict was put into the merge checklist and nothing further is needed to arm it.
+  const graphGate = cfg.nodeSource === 'yggdrasil'
+    ? `\`${cfg.ygCommand || 'yg'} check\` is part of every merge check on this repository — it runs on the branch's own tree, whatever the gate commands say, and a graph that refuses the tree refuses the merge.`
+    : null;
+
+  emit(
+    { horde: name, branch, base: flags.base, graphGate },
+    flags,
+    () => [`horde "${name}" created — trunk branch ${branch} off ${flags.base}`, ...(graphGate ? [graphGate] : [])].join('\n'),
+  );
 }
 
 // writeText — the one local helper this file needs beyond _lib's writeJSON; kept tiny and local

@@ -68,6 +68,49 @@ function mode(cfg) {
   return cfg && cfg.nodeSource === 'yggdrasil' ? 'yggdrasil' : 'manual';
 }
 
+// How this repository invokes the Yggdrasil CLI: `config.ygCommand`, default the bare `yg` on
+// PATH. Written as a command line ("yg", "node ./yg/bin.js") so a checkout that runs a local
+// build needs no other change; split into a program plus its fixed leading arguments here, once,
+// for every call site.
+export function ygCommand(cfg) {
+  const raw = (cfg && cfg.ygCommand) || 'yg';
+  const parts = String(raw).trim().split(/\s+/).filter(Boolean);
+  return { cmd: parts[0] || 'yg', prefix: parts.slice(1), display: parts.join(' ') || 'yg' };
+}
+
+// True when the graph — not the horde's own node map — is what says the code is right, and so
+// `yg check` is part of every merge gate whatever `config.gates` holds.
+export function graphIsLaw(cfg) {
+  return mode(cfg) === 'yggdrasil';
+}
+
+// Runs `yg check` in one worktree and reports what it found. Never approves anything (that fills
+// the lock and can cost money); `check` alone is read-only and keyless. `available: false` means
+// the CLI itself could not be started — a different failure from a graph that refuses the tree,
+// and the caller says so in those words.
+export function runYgCheck(cfg, cwd) {
+  const { cmd, prefix, display } = ygCommand(cfg);
+  let out = '';
+  let status = 0;
+  try {
+    out = execFileSync(cmd, [...prefix, 'check'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    if (e.code === 'ENOENT') return { available: false, ok: false, command: `${display} check`, summary: null };
+    status = e.status === undefined || e.status === null ? 1 : e.status;
+    out = ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || '');
+  }
+  const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
+  const verdictLine = lines.find((l) => /^yg check:/.test(l));
+  const errorLine = lines.find((l) => /^(enforced|Errors)\b/.test(l));
+  return {
+    available: true,
+    ok: status === 0,
+    exit: status,
+    command: `${display} check`,
+    summary: verdictLine || errorLine || lines[lines.length - 1] || null,
+  };
+}
+
 function graphDir(cfg) {
   return (cfg && cfg.graphDir) || 'architecture/';
 }
@@ -357,7 +400,8 @@ function cmdShow(horde, root, cfg, positional, flags) {
   let log = '(no log yet)';
   if (mode(cfg) === 'yggdrasil') {
     try {
-      log = execFileSync('yg', ['log', 'read', '--node', node], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim() || log;
+      const { cmd, prefix } = ygCommand(cfg);
+      log = execFileSync(cmd, [...prefix, 'log', 'read', '--node', node], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim() || log;
     } catch { /* yg not on PATH or no entries yet — keep the placeholder */ }
   } else {
     const text = readText(join(manualNodeDir(root, cfg, node), 'log.md'));
@@ -412,10 +456,11 @@ function cmdLog(horde, root, cfg, positional, flags) {
   const [node, reason] = positional;
   if (!node || !reason) fail('log requires <node> "<reason>"');
   if (mode(cfg) === 'yggdrasil') {
-    const cmd = `yg log add --node ${node} --reason "${reason.replace(/"/g, '\\"')}"`;
+    const yg = ygCommand(cfg);
+    const cmd = `${yg.display} log add --node ${node} --reason "${reason.replace(/"/g, '\\"')}"`;
     if (flags.run) {
       try {
-        execFileSync('yg', ['log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+        execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
       } catch (e) {
         fail(`yg log add failed: ${e.message}`);
       }
