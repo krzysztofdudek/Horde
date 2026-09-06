@@ -171,10 +171,51 @@ function acceptanceSection(issueText) {
   return nextHeading === -1 ? rest : rest.slice(0, nextHeading);
 }
 
-function mentionsEvidenceId(text, id) {
+// Exported so horde.mjs's charter edit can hold a ruled escalation's own text to the same test it
+// holds a ticket's acceptance checklist to: does this text actually name the row it's cited for.
+export function mentionsEvidenceId(text, id) {
   if (!id) return false;
   const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`\\b${escaped}\\b`).test(text);
+}
+
+// Has wave 1 of the mission (the trunk-level journal — "trunk" IS the mission, see the header
+// note above) ever started, open or since closed. Exported for horde.mjs's charter edit: a row
+// drop is free before the mission's first wave, and needs a ruled escalation after it — a
+// mission that never started a wave has nothing yet for a drop to cost.
+export function wave1Started(journalText) {
+  if (!journalText) return false;
+  return journalText.split('\n').some((line) => {
+    const sm = START_RE.exec(line);
+    if (sm && sm[1] === '1') return true;
+    const cm = CLOSE_RE.exec(line);
+    return !!(cm && cm[1] === '1');
+  });
+}
+
+// The highest-numbered wave's own span (start marker to the next start/close marker, or end of
+// file) whether or not it is still open — a mission-level gate run after the final wave has
+// already been closed means "current" is "the last one", not "none". Null when no wave was ever
+// started at all.
+export function lastWaveSpan(journalText) {
+  if (!journalText) return null;
+  const n = lastWaveNumber(journalText);
+  if (!n) return null;
+  const lines = [];
+  let capturing = false;
+  for (const line of journalText.split('\n')) {
+    const sm = START_RE.exec(line);
+    if (sm) { capturing = sm[1] === String(n); if (capturing) lines.push(line); continue; }
+    if (CLOSE_RE.test(line)) { if (capturing) lines.push(line); capturing = false; continue; }
+    if (capturing) lines.push(line);
+  }
+  return { n, text: lines.join('\n') };
+}
+
+// An "audit: <ticket> clean|findings — …" bullet anywhere in the given span — wave.mjs audit's
+// own bullet shape, read back rather than re-derived.
+export function hasAuditIn(text) {
+  return /^- \S+ audit: \S+ (clean|findings) — /m.test(text || '');
 }
 
 // The latest verify.mjs verdict block in a ticket's log.md (verdict.md's rendered heading, in
@@ -261,6 +302,125 @@ function computeEvidence(horde, team, mergedTickets) {
   }
   if (changed) writeText(charterPath, charterText);
   return { total: rows.length, green };
+}
+
+// ---- mission-wide, all-time evidence coverage --------------------------------------
+//
+// computeEvidence above turns rows green for one wave close: one team, one wave's own merged
+// tickets, mutating the charter as it finds a match. status.mjs's five-state digest and
+// horde.mjs's done gate both need the same judgement stretched over the whole mission's history
+// instead — this section is that shared reading, so neither reimplements "does a ticket's
+// acceptance checklist name this row, and did its verifier reproduce it".
+
+// Every team directory of the horde, at every depth (sub-teams nest under teams/<team>/teams/…) —
+// mirrors tk.mjs's own allTeamPaths()/status.mjs's listTeamNames(), kept local rather than
+// imported to avoid a three-way import cycle through roster.mjs (tk.mjs <-> roster.mjs already
+// cross-import, and roster.mjs imports this file for currentWaveNumber).
+function allTeamNames(horde) {
+  const out = [];
+  const walk = (rel) => {
+    out.push(rel);
+    const subDir = teamPath(horde, rel, 'teams');
+    if (existsSync(subDir)) {
+      for (const d of readdirSync(subDir, { withFileTypes: true })) {
+        if (d.isDirectory()) walk(`${rel}/${d.name}`);
+      }
+    }
+  };
+  const root = hordePath(horde, 'teams');
+  if (existsSync(root)) {
+    for (const d of readdirSync(root, { withFileTypes: true })) {
+      if (d.isDirectory()) walk(d.name);
+    }
+  }
+  return out;
+}
+
+// Every non-dropped ticket across every team of the horde, whatever its state — {id, team, text,
+// status, logText}.
+function allHordeTickets(horde) {
+  const out = [];
+  for (const team of allTeamNames(horde)) {
+    const issuesDir = teamPath(horde, team, 'issues');
+    if (!existsSync(issuesDir)) continue;
+    for (const d of readdirSync(issuesDir, { withFileTypes: true })) {
+      if (!d.isDirectory()) continue;
+      const dir = join(issuesDir, d.name);
+      const text = readText(join(dir, 'issue.md')) || '';
+      const status = (/^\*\*Status:\*\*\s*(\S+)/m.exec(text) || [])[1] || '';
+      if (status === 'dropped') continue;
+      out.push({
+        id: d.name.slice(0, 3), team, text, status, logText: readText(join(dir, 'log.md')) || '',
+      });
+    }
+  }
+  return out;
+}
+
+// A ticket's own **Status:** rank toward a row it names — the strongest one wins when more than
+// one ticket claims the same row. "merged" here does not yet mean the charter is stamped
+// (queue.mjs's own merge refusal already requires a reproduced verdict to reach it, but
+// computeEvidence's own charter write only happens at a wave close, or here); every other active
+// state reads as "running" — in flight, neither filed-and-waiting nor done.
+const ROW_STATE_RANK = { proposed: 1, queued: 1, merged: 3 };
+
+// The state of one charter row against every ticket in the horde, without writing anything:
+// 'reproduced' when the charter cell already names who reproduced it; otherwise the strongest
+// state reached by a ticket whose own acceptance checklist names this row's id — 'merged' (a
+// merged ticket already carrying a reproduced verdict, per queue.mjs's own merge refusal, but not
+// yet written into the charter), 'running' (filed and in flight), 'queued' (filed, not started),
+// or 'no-ticket' (nothing claims it at all).
+function deriveRowState(row, tickets) {
+  if (row.reproducedBy) return { state: 'reproduced', ticket: null, verifier: null };
+  const naming = tickets.filter((t) => mentionsEvidenceId(acceptanceSection(t.text), row.id));
+  if (naming.length === 0) return { state: 'no-ticket', ticket: null, verifier: null };
+  let best = { rank: 0, ticket: null, verifier: null };
+  for (const t of naming) {
+    const rank = ROW_STATE_RANK[t.status] ?? 2;
+    if (rank <= best.rank) continue;
+    const verdict = rank >= 3 ? latestVerdict(t.logText) : null;
+    best = {
+      rank, ticket: t.id, verifier: verdict && verdict.result === 'reproduced' ? verdict.verifier : null,
+    };
+  }
+  const state = best.rank >= 3 ? 'merged' : best.rank === 2 ? 'running' : 'queued';
+  return { state, ticket: best.ticket, verifier: best.verifier };
+}
+
+// Read-only: every charter row with its mission-wide state — what status.mjs's evidence block
+// shows. Exported so status.mjs never re-derives what "does a ticket prove this row" means.
+export function evidenceCoverage(horde) {
+  const charterText = readText(hordePath(horde, 'charter.md')) || '';
+  const rows = parseEvidenceRows(charterText);
+  const tickets = allHordeTickets(horde);
+  return rows.map((row) => {
+    const { state, ticket } = deriveRowState(row, tickets);
+    return { ...row, state, ticket };
+  });
+}
+
+// Mutating: promotes every row currently at 'merged' (a merged ticket already reproduced it, but
+// the charter was never stamped — computeEvidence's own write only fires at that ticket's own
+// wave's close) into the charter's "reproduced by" cell, mission-wide and regardless of wave or
+// team. What horde.mjs done calls before judging whether every row is green, so the mission's
+// final gate does not depend on the director having remembered to close a wave for it. Returns
+// the coverage read back afterwards.
+export function stampMissionEvidence(horde) {
+  const charterPath = hordePath(horde, 'charter.md');
+  let charterText = readText(charterPath) || '';
+  const rows = parseEvidenceRows(charterText);
+  const tickets = allHordeTickets(horde);
+  let changed = false;
+  for (const row of rows) {
+    if (row.reproducedBy) continue;
+    const { state, verifier } = deriveRowState(row, tickets);
+    if (state === 'merged' && verifier) {
+      charterText = setReproducedBy(charterText, row.id, verifier);
+      changed = true;
+    }
+  }
+  if (changed) writeText(charterPath, charterText);
+  return evidenceCoverage(horde);
 }
 
 function cmdEvidence(horde, positional, flags) {

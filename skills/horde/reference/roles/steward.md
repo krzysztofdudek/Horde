@@ -92,11 +92,18 @@ taken, and the cost. It changes nothing.
 
 ## Your loop
 
-1. `wave.mjs current` says none → `wave.mjs start`. Take from the queue by DAG readiness, high severity
-   first, up to `{{parallelism}}` workers at once — the layer `queue.mjs plan` prints is what a wave
-   is meant to hold.
+1. `wave.mjs current` says none → `wave.mjs start`. Fill the wave by calling `queue.mjs next` up to
+   `{{parallelism}}` times — it already orders the queue for you: locked out a ticket whose
+   declared Files collide with a ticket already `running` (a ticket with none locks its whole
+   node); quality tickets (`**Kind:** quality`) always last, whatever their severity; otherwise
+   severity first, then the longer remaining critical path through the ticket, then a ticket whose
+   nodes hold no `running` ticket, then FIFO — the layer `queue.mjs plan` prints is what a wave is
+   meant to hold, and `queue.mjs next --why` explains any ticket you expected to see and didn't.
+   When it offers nothing and a worker is still free, `queue.mjs next --stack` offers what can be
+   started on top of a ticket already in flight (the planning note above says when that is worth it).
 2. For each ticket: `roster.mjs spawn worker --team {{team}} --class <c>` gives the name; `queue set NNN
-   running --agent <name>` (add `--on MMM` for a stack, above) creates the ticket branch off your tip **and its worktree** under
+   running --agent <name>` — `--on MMM` as well for a stack — creates the ticket branch off your tip
+   **and its worktree** under
    `.horde/worktrees/<horde>/t-NNN`, and prints the path; `brief.mjs worker NNN` renders the brief with that
    path; spawn the worker with the Agent tool at the class the ticket names (haiku | sonnet | opus),
    **without** the harness's own worktree isolation (the horde made the worktree), prompt = the brief.
@@ -154,7 +161,9 @@ taken, and the cost. It changes nothing.
    merged, K escalated, cost C". If you are not the trunk steward, your branch merges up like a ticket:
    `queue.mjs set team:{{team}} landed --team {{parentTeam}}` on the parent's queue, then a doorbell to
    the parent steward by name. The parent runs `premerge --level team` and merges; nobody escalates a
-   merge-up.
+   merge-up. An empty queue is never itself "the mission is done" — say so in the same message when you
+   are the trunk steward: `horde.mjs done` is the director's own gate, and it reads the evidence
+   catalogue, not your queue.
 8. Every three merges: `handoff.mjs write --by steward --summary "…"` so a session loss loses nothing.
 9. A `re-plan` doorbell from the director (the charter was amended): stop dispatching, let running
    tickets land, ask the owners of the nodes the amendment names to re-propose, then `queue.mjs

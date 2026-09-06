@@ -27,7 +27,7 @@ import {
 } from './_lib.mjs';
 import {
   findTicket, parseField, padId, parseKeys, hasAuthor, hasVerifier, allNodesApproved,
-  allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence,
+  allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind,
 } from './tk.mjs';
 import { noteMerged, parseEvidenceRows } from './wave.mjs';
 import { consumersOf, portExists, globToRegExp } from './node.mjs';
@@ -68,14 +68,22 @@ commands:
       "queued" (its worktree kept) until the dependency merges. Refuses a same-team cycle and an
       unknown dependency (cross-team dependencies are not cycle-checked — a merge-up DAG only
       ever points up or sideways, never back down).
-  next [--class c] [--stack] [--team t] [--horde h]
-      the first queued item whose every dependency is merged, high severity first (read live
-      from the ticket) then FIFO by queue order. A cross-team dependency is checked against the
-      other team's own queue.json, read fresh each time. A "waiting" item is never a candidate.
-      --stack also offers, after every fully ready item, a queued item whose unmerged
-      dependencies are all in this team, running or landed, and on a branch: it can be started
-      now from one of their tips ("set <ticket> running --on <that one>"). Such an item comes
-      back marked stack-ready, naming the tickets it could start from.
+  next [--class c] [--why] [--stack] [--team t] [--horde h]
+      the first ready queued item — every dependency merged, and its declared Files (a ticket with
+      none locks every file of every node it names) clear of every "running" ticket's own Files in
+      this team. Ranked: quality-kind tickets (tk.mjs new --kind quality) always last, whatever
+      their severity; then severity (read live from the ticket); then the longer remaining
+      critical path through the ticket wins (queue.mjs plan's own DAG, read in-process, never
+      shelled out); then a ticket whose nodes hold no running ticket; then FIFO by queue order. A
+      cross-team dependency is checked against the other team's own queue.json, read fresh each
+      time. A "waiting" item is never a candidate. --why prints every queued item with its rank or
+      the reason it did not qualify (an unmet dependency, a file lock naming the running ticket
+      and the file, or the --class filter).
+      --stack also offers, after every ready item and in the same rank order, a queued item whose
+      unmerged dependencies are all in this team, running or landed, and on a branch: it can be
+      started now from one of their tips ("set <ticket> running --on <that one>"). Such an item
+      comes back marked stack-ready, naming the tickets it could start from. A file lock is a
+      refusal there too — the tip it would start from is the very ticket holding the file.
   plan [--team t] [--apply-order] [--horde h]
       derives the team's DAG from the tickets themselves and prints it; dispatches nothing.
       Edges come from the ports the tickets declare (a ticket consuming <node>/<port>@<v> comes
@@ -438,38 +446,151 @@ function stackParentsFor(horde, doc, team, item) {
   return parents;
 }
 
+// Every currently "running" real ticket's declared lock, in this team: its Files and its Nodes.
+// A ticket with no declared Files locks every file of every node it names — the safe degradation
+// for a ticket written (or read) before the field carried anything — so it is recorded by its
+// nodes instead, and checked against the other side's nodes rather than specific paths.
+function runningLocks(horde, doc) {
+  return doc.items
+    .filter((i) => i.state === 'running' && !isTeamItem(i.ticket))
+    .map((i) => {
+      const ticket = findTicket(horde, i.ticket);
+      return {
+        ticket: i.ticket,
+        files: ticket ? ticketFiles(ticket.text) : [],
+        nodes: ticket ? nodesOf(ticket.text) : [],
+      };
+    });
+}
+
+// The first running lock a candidate collides with, or null. Both sides declaring Files is
+// decided by path/glob overlap alone; either side with none falls back to whole-node overlap —
+// the case a ticket without Files (or a running item whose ticket vanished) has to degrade to.
+function lockConflict(ticketText, ticketId, locks) {
+  const files = ticketFiles(ticketText);
+  const nodes = nodesOf(ticketText);
+  for (const running of locks) {
+    if (running.ticket === ticketId) continue;
+    if (files.length && running.files.length) {
+      const shared = files.filter((f) => filesOverlap([f], running.files));
+      if (shared.length) return { by: running.ticket, files: shared, wholeNode: false, nodes: [] };
+      continue;
+    }
+    const sharedNodes = nodes.filter((n) => running.nodes.includes(n));
+    if (sharedNodes.length) return { by: running.ticket, files: [], wholeNode: true, nodes: sharedNodes };
+  }
+  return null;
+}
+
 function cmdNext(horde, positional, flags) {
   const team = flags.team || 'trunk';
   const doc = load(horde, team);
-  const queued = doc.items
+  const cfg = readConfig() || {};
+  // Reused in-process, never shelled out: the same DAG `queue.mjs plan` derives, read straight off
+  // this call's own buildPlan() so "longer remaining critical path" ranks against the plan's own
+  // figures rather than a second, possibly stale, reading of the tickets.
+  const plan = buildPlan(horde, team, cfg);
+  const remainingPath = new Map(plan.tickets.map((t) => [t.id, t.remainingPath]));
+  const locks = runningLocks(horde, doc);
+  const busyNodes = new Set(locks.flatMap((l) => l.nodes));
+
+  const entries = doc.items
     .map((item, idx) => ({ item, idx }))
     .filter(({ item }) => item.state === 'queued')
-    .filter(({ item }) => !flags.class || item.class === flags.class);
-  const bySeverityThenOrder = (a, b) => {
-    const ra = SEVERITY_RANK[severityOf(horde, a.item)] ?? 1;
-    const rb = SEVERITY_RANK[severityOf(horde, b.item)] ?? 1;
-    return ra !== rb ? ra - rb : a.idx - b.idx;
-  };
-  const candidates = queued
-    .filter(({ item }) => (item.dependsOn || []).every((d) => dependencySatisfied(horde, doc, team, d)))
-    .sort(bySeverityThenOrder)
-    .map(({ item }) => ({ item, stackOn: [] }));
-  // --stack: a ticket that can be started now on top of an unmerged dependency, offered after
-  // every fully ready one — the dependency's own risk is still ahead of it, so it is never taken
-  // while something with nothing in front of it is waiting.
-  if (flags.stack) {
-    candidates.push(...queued
-      .map((c) => ({ ...c, stackOn: stackParentsFor(horde, doc, team, c.item) }))
-      .filter((c) => c.stackOn.length > 0)
-      .sort(bySeverityThenOrder)
-      .map(({ item, stackOn }) => ({ item, stackOn })));
-  }
-  const chosen = candidates.length ? candidates[0] : null;
-  const result = chosen
-    ? { ...chosen.item, stackReady: chosen.stackOn.length > 0, stackOn: chosen.stackOn }
+    .map(({ item, idx }) => {
+      const unmet = (item.dependsOn || []).filter((d) => !dependencySatisfied(horde, doc, team, d));
+      // A ticket whose unmet dependencies are all running or landed in this team, each on a
+      // branch, can be started now on top of one of those tips instead of after the wave that
+      // merges it. With --stack it stays a candidate — ranked below every ready one, and held to
+      // the same file locks, since the ticket it would start from is often the one holding the
+      // file. Without --stack, an unmet dependency is what it always was.
+      const stackOn = unmet.length ? stackParentsFor(horde, doc, team, item) : [];
+      if (unmet.length && !(flags.stack && stackOn.length)) {
+        return {
+          item, idx, eligible: false,
+          reason: `waiting on dependenc${unmet.length > 1 ? 'ies' : 'y'} ${unmet.join(', ')}`
+            + (stackOn.length ? ` — could be started on top of ${stackOn.join(', ')} (--stack)` : ''),
+        };
+      }
+      const ticket = isTeamItem(item.ticket) ? null : findTicket(horde, item.ticket);
+      if (ticket) {
+        const conflict = lockConflict(ticket.text, item.ticket, locks);
+        if (conflict) {
+          const detail = conflict.wholeNode
+            ? `node ${conflict.nodes.join(', ')} (declares no files itself — whole-node lock)`
+            : `file(s) ${conflict.files.join(', ')}`;
+          return {
+            item, idx, eligible: false,
+            reason: `locked — running ticket ${conflict.by} also holds ${detail}`,
+          };
+        }
+      }
+      if (flags.class && item.class !== flags.class) {
+        return {
+          item, idx, eligible: false,
+          reason: `excluded by --class ${flags.class} (this ticket is ${item.class})`,
+        };
+      }
+      const nodes = ticket ? nodesOf(ticket.text) : [];
+      return {
+        item,
+        idx,
+        eligible: true,
+        stackOn,
+        severity: severityOf(horde, item),
+        kind: ticket ? ticketKind(ticket.text) : 'work',
+        path: remainingPath.get(item.ticket) || 0,
+        nodeBusy: nodes.some((n) => busyNodes.has(n)),
+      };
+    });
+
+  const eligible = entries.filter((e) => e.eligible);
+  eligible.sort((a, b) => {
+    // A ticket that would start on top of an unmerged dependency comes after every ticket with
+    // nothing in front of it, whatever either is ranked on below: a stack buys wall-clock, and
+    // the parent's own risk is still ahead of it.
+    const astack = a.stackOn.length ? 1 : 0;
+    const bstack = b.stackOn.length ? 1 : 0;
+    if (astack !== bstack) return astack - bstack;
+    // Quality work always sorts after every non-quality ticket, whatever its severity — the
+    // quality-always-authorised ruling: quality is raised in free parallelism, never ahead of
+    // the mission's own work.
+    const ak = a.kind === 'quality' ? 1 : 0;
+    const bk = b.kind === 'quality' ? 1 : 0;
+    if (ak !== bk) return ak - bk;
+    const ra = SEVERITY_RANK[a.severity] ?? 1;
+    const rb = SEVERITY_RANK[b.severity] ?? 1;
+    if (ra !== rb) return ra - rb;
+    if (a.path !== b.path) return b.path - a.path; // longer remaining critical path first
+    if (a.nodeBusy !== b.nodeBusy) return a.nodeBusy ? 1 : -1; // prefer a node with nothing running
+    return a.idx - b.idx; // FIFO
+  });
+  eligible.forEach((e, i) => { e.rank = i + 1; });
+
+  const first = eligible.length ? eligible[0] : null;
+  const chosen = first
+    ? { ...first.item, stackReady: first.stackOn.length > 0, stackOn: first.stackOn }
     : null;
-  emit(result, flags, () => (result
-    ? `${result.ticket} (${result.class})${result.stackReady ? ` stack-ready on ${result.stackOn.join(', ')}` : ''}`
+
+  if (flags.why) {
+    const rows = entries.map((e) => ({
+      ticket: e.item.ticket,
+      class: e.item.class,
+      eligible: e.eligible,
+      reason: e.eligible ? null : e.reason,
+      rank: e.eligible ? e.rank : null,
+      stackOn: e.eligible ? e.stackOn : [],
+    }));
+    emit({ chosen: chosen ? chosen.ticket : null, entries: rows }, flags, () => (rows.length
+      ? rows.map((r) => (r.eligible
+        ? `${r.ticket} (${r.class}) — rank ${r.rank}${r.stackOn.length ? `, stack-ready on ${r.stackOn.join(', ')}` : ''}${chosen && r.ticket === chosen.ticket ? ' (chosen)' : ''}`
+        : `${r.ticket} (${r.class}) — skipped: ${r.reason}`)).join('\n')
+      : '(queue empty)'));
+    return;
+  }
+
+  emit(chosen, flags, () => (chosen
+    ? `${chosen.ticket} (${chosen.class})${chosen.stackReady ? ` stack-ready on ${chosen.stackOn.join(', ')}` : ''}`
     : '(none ready)'));
 }
 
@@ -629,6 +750,25 @@ function buildPlan(horde, team, cfg) {
   const criticalPath = [];
   for (let cur = endpoint; cur !== null && cur !== undefined; cur = cameFrom.get(cur)) criticalPath.unshift(cur);
   const criticalWeight = criticalPath.reduce((sum, id) => sum + weightOf(byId.get(id).class), 0);
+
+  // The remaining critical path THROUGH each ticket: the longest weighted chain of everything that
+  // depends on it, directly or transitively, plus itself — read backwards from `longest` above
+  // (which reads forward, from the sources). Processing layers last-to-first guarantees every
+  // dependent's own figure is known before the ticket it depends on needs it. `queue.mjs next`
+  // reads this off the very same buildPlan() call, in-process, to rank equal-severity tickets by
+  // how much of the mission still sits behind each one landing.
+  const dependents = new Map(tickets.map((t) => [t.id, []]));
+  for (const t of tickets) for (const d of t.dependsOn) if (dependents.has(d)) dependents.get(d).push(t.id);
+  const downstream = new Map();
+  for (let li = layers.length - 1; li >= 0; li--) {
+    for (const id of layers[li]) {
+      const t = byId.get(id);
+      let best = 0;
+      for (const dep of dependents.get(id) || []) best = Math.max(best, downstream.get(dep) || 0);
+      downstream.set(id, weightOf(t.class) + best);
+    }
+  }
+  for (const t of tickets) t.remainingPath = downstream.has(t.id) ? downstream.get(t.id) : weightOf(t.class);
 
   // components of the undirected graph, and the tickets that hang loose on their own
   const groups = components(tickets, byId);
@@ -905,7 +1045,7 @@ function cmdReconcile(horde, positional, flags) {
 }
 
 function main() {
-  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['apply-order', 'stack'] });
+  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['apply-order', 'why', 'stack'] });
   const [cmd, ...positional] = allPositional;
 
   if (flags.help) { console.log(USAGE); process.exit(0); }

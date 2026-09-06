@@ -167,8 +167,16 @@ team's queue and doorbells the parent steward, who merges it like a ticket.
 ## Done
 
 A mission is done when every item in the evidence catalogue is green, the repo's full gate is green on
-the horde's trunk, the wave's audit sample raised nothing, and the cost report is written. Then, and only
-then, you present it to the user with the branch name. The pull request and the push are theirs.
+the horde's trunk, the wave's audit sample raised nothing, and the cost report is written. "The queue is
+empty" is never "done" — `status.mjs` shows every charter row's own coverage (no ticket / queued /
+running / merged / reproduced) so you see what still stands in the way before you ask. `horde.mjs done`
+is the gate itself: it refuses, listing every reason, until all four hold, then stamps the charter,
+appends the completion block to the mission journal, and tells you what to do next. Only then do you
+present it to the user with the branch name. The pull request and the push are theirs.
+
+A charter rewrite that drops an evidence row outright is free before the mission's wave 1 starts; after
+it, `horde.mjs charter edit` refuses the drop unless `--escalation <id>` names a ruled escalation whose
+own text names the row — a promise made to the chairman does not quietly disappear from a later edit.
 
 ## Where things are
 

@@ -17,6 +17,23 @@ function readyTicket(dir, slug, { severity, node = 'core' } = {}) {
   return r.json.id;
 }
 
+// A ticket with the full range of fields `queue.mjs next` reads: node, class, severity, the
+// declared Files a lock is computed from, the Depends-on field a critical path is derived from,
+// and the Kind a quality ticket is told apart by.
+function mkTicket(dir, slug, opts = {}) {
+  const {
+    node = 'core', class: cls = 'sonnet', severity, files, depends, kind,
+  } = opts;
+  const flags = ['--node', node, '--class', cls];
+  if (severity) flags.push('--severity', severity);
+  if (files) flags.push('--files', files);
+  if (depends) flags.push('--depends', depends);
+  if (kind) flags.push('--kind', kind);
+  const r = run('tk.mjs', ['new', slug, '--title', slug, ...flags], dir);
+  if (r.code !== 0) throw new Error(`tk new (${slug}) failed: ${r.stderr}`);
+  return r.json.id;
+}
+
 test('queue.mjs: add, set (running/merged with real branches+worktrees), next, rm, move, reconcile', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -296,6 +313,152 @@ test('queue.mjs set merged: the merge is recorded in the wave journal by the sam
   assert.equal(planAfter.match(/merged: 001 abc1234/g).length, 1);
 });
 
+// ---- next: locks, critical path, quality-last, --why ---------------------------------
+
+test('queue.mjs next: a running ticket\'s Files lock any ready ticket that shares them; a ticket without Files locks its whole node', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  await t.test('two tickets naming an overlapping file: the running one locks the other out', () => {
+    const runner = mkTicket(dir, 'file-runner', { node: 'core', severity: 'medium', files: 'src/core/shared.ts' });
+    const victim = mkTicket(dir, 'file-victim', { node: 'core', severity: 'high', files: 'src/core/shared.ts,src/core/extra.ts' });
+    const clear = mkTicket(dir, 'file-clear', { node: 'core', severity: 'low', files: 'src/core/clear.ts' });
+    run('queue.mjs', ['add', runner], dir);
+    run('queue.mjs', ['add', victim], dir);
+    run('queue.mjs', ['add', clear], dir);
+    run('queue.mjs', ['set', runner, 'running', '--agent', 'w'], dir);
+
+    const r = run('queue.mjs', ['next', '--class', 'sonnet'], dir);
+    assert.equal(r.code, 0);
+    // victim shares src/core/shared.ts with the running runner and is skipped despite the higher
+    // severity; clear names a disjoint file and is the only sonnet ticket actually ready.
+    assert.equal(r.json.ticket, clear);
+  });
+
+  await t.test('a ticket with no declared Files locks its whole node — nothing else on it can go next', () => {
+    const wideRunner = mkTicket(dir, 'wide-runner', {
+      node: 'wide', severity: 'medium', class: 'haiku',
+    });
+    const wideVictim = mkTicket(dir, 'wide-victim', {
+      node: 'wide', severity: 'high', class: 'haiku', files: 'src/wide/anything.ts',
+    });
+    run('queue.mjs', ['add', wideRunner], dir);
+    run('queue.mjs', ['add', wideVictim], dir);
+    run('queue.mjs', ['set', wideRunner, 'running', '--agent', 'w'], dir);
+
+    // wideRunner declares no Files, so it locks every file of node "wide" — wideVictim collides
+    // even though the two name no file in common, and no haiku ticket is left ready.
+    const r = run('queue.mjs', ['next', '--class', 'haiku'], dir);
+    assert.equal(r.code, 0);
+    assert.equal(r.json, null);
+  });
+});
+
+test('queue.mjs next: at equal severity, the ticket with the longer remaining critical path goes first', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  // A chain of three (weight 3 each, sonnet): completing the root unblocks two more tickets'
+  // worth of weighted work behind it — queue.mjs plan's own DAG, read in-process, says its
+  // remaining critical path is 9. Neither chain-2 nor chain-3 is ever queued; they exist only to
+  // give chain-1 that downstream weight. "solo" has nothing behind it, so its remaining path is
+  // just its own weight, 3.
+  const chain1 = mkTicket(dir, 'chain-1', { node: 'core', severity: 'medium' });
+  const chain2 = mkTicket(dir, 'chain-2', { node: 'core', severity: 'medium', depends: chain1 });
+  mkTicket(dir, 'chain-3', { node: 'core', severity: 'medium', depends: chain2 });
+  const solo = mkTicket(dir, 'solo', { node: 'core', severity: 'medium' });
+
+  // Queued in the order that would make FIFO alone pick "solo" — the critical path has to be
+  // what actually decides this, not queue order.
+  run('queue.mjs', ['add', solo], dir);
+  run('queue.mjs', ['add', chain1], dir);
+
+  const r = run('queue.mjs', ['next'], dir);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.ticket, chain1);
+
+  const why = run('queue.mjs', ['next', '--why'], dir);
+  const rows = Object.fromEntries(why.json.entries.map((e) => [e.ticket, e]));
+  assert.equal(rows[chain1].rank, 1);
+  assert.equal(rows[solo].rank, 2);
+});
+
+test('queue.mjs next: a quality ticket sorts after every non-quality ticket, whatever its severity', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const work = mkTicket(dir, 'work-item', { node: 'core', severity: 'low' });
+  const quality = mkTicket(dir, 'quality-item', { node: 'core', severity: 'high', kind: 'quality' });
+  // Queued quality-first, so only the kind ordering — never FIFO — explains the result below.
+  run('queue.mjs', ['add', quality], dir);
+  run('queue.mjs', ['add', work], dir);
+
+  const r = run('queue.mjs', ['next'], dir);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.ticket, work);
+
+  const why = run('queue.mjs', ['next', '--why'], dir);
+  const rows = Object.fromEntries(why.json.entries.map((e) => [e.ticket, e]));
+  assert.equal(rows[work].rank, 1);
+  assert.equal(rows[quality].rank, 2);
+});
+
+test('queue.mjs next --why: every queued ticket prints its rank, or the reason it did not qualify', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const dep = mkTicket(dir, 'dep-target', { node: 'core', severity: 'medium' });
+  const blocked = mkTicket(dir, 'blocked', { node: 'core', severity: 'high' });
+  run('queue.mjs', ['add', dep], dir);
+  run('queue.mjs', ['add', blocked, '--depends', dep], dir);
+  // "dep" itself never gets merged — "blocked" waits on it forever in this test.
+
+  const runner = mkTicket(dir, 'lock-runner', { node: 'locked-node', severity: 'medium', files: 'src/x/shared.ts' });
+  const locked = mkTicket(dir, 'lock-victim', { node: 'locked-node', severity: 'high', files: 'src/x/shared.ts' });
+  run('queue.mjs', ['add', runner], dir);
+  run('queue.mjs', ['add', locked], dir);
+  run('queue.mjs', ['set', runner, 'running', '--agent', 'w'], dir);
+
+  const wrongClass = mkTicket(dir, 'wrong-class', { node: 'core', severity: 'low' });
+  run('queue.mjs', ['add', wrongClass], dir);
+
+  const chosen = mkTicket(dir, 'chosen', { node: 'core', severity: 'low', class: 'haiku' });
+  run('queue.mjs', ['add', chosen], dir);
+
+  const r = run('queue.mjs', ['next', '--class', 'haiku', '--why'], dir);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.chosen, chosen);
+
+  const rows = r.json.entries;
+  const depRow = rows.find((e) => e.ticket === blocked);
+  assert.equal(depRow.eligible, false);
+  assert.match(depRow.reason, new RegExp(`waiting on dependency ${dep}`));
+
+  const lockRow = rows.find((e) => e.ticket === locked);
+  assert.equal(lockRow.eligible, false);
+  assert.match(lockRow.reason, new RegExp(`locked.*${runner}.*shared\\.ts`));
+
+  const classRow = rows.find((e) => e.ticket === wrongClass);
+  assert.equal(classRow.eligible, false);
+  assert.match(classRow.reason, /excluded by --class haiku \(this ticket is sonnet\)/);
+
+  // "runner" is "running", not "queued" — --why never lists it at all.
+  assert.equal(rows.find((e) => e.ticket === runner), undefined);
+
+  const chosenRow = rows.find((e) => e.ticket === chosen);
+  assert.equal(chosenRow.eligible, true);
+  assert.equal(chosenRow.rank, 1);
+
+  const human = run('queue.mjs', ['next', '--why'], dir, { json: false });
+  assert.match(human.stdout, new RegExp(`${blocked} \\(sonnet\\) — skipped: waiting on dependency ${dep}`));
+  assert.match(human.stdout, new RegExp(`${locked} \\(sonnet\\) — skipped: locked`));
+  assert.match(human.stdout, /rank 1 \(chosen\)/);
+});
+
 // ---- a ticket started from an unmerged dependency (a stack) ---------------------------------
 //
 // A chain of three tickets used to cost three waves of wall-clock: each one waited for the one
@@ -315,9 +478,12 @@ test('queue.mjs: a ticket started from an unmerged dependency (a stack)', async 
   t.after(() => rmRepo(dir));
   initHorde(dir);
 
-  const first = readyTicket(dir, 'first-link');
-  const second = readyTicket(dir, 'second-link');
-  const loose = readyTicket(dir, 'loose-end');
+  // The shape a chain actually has: the second consumes what the first delivers, so they sit on
+  // different nodes and touch different files. Sharing a file with the ticket you would stand on
+  // is the case the file lock refuses, and it has its own test below.
+  const first = mkTicket(dir, 'first-link', { node: 'core', files: 'src/core/a.ts' });
+  const second = mkTicket(dir, 'second-link', { node: 'edge', files: 'src/edge/b.ts' });
+  const loose = mkTicket(dir, 'loose-end', { node: 'far', files: 'src/far/c.ts' });
   run('queue.mjs', ['add', first], dir);
   run('queue.mjs', ['add', second, '--depends', first], dir);
   run('queue.mjs', ['add', loose], dir);
@@ -449,4 +615,57 @@ test('queue.mjs reconcile: a stacked ticket carrying only its parent\'s commits 
   git(['-C', back.json.worktree, 'commit', '--allow-empty', '-qm', 'the stack works'], dir);
   const after = run('queue.mjs', ['reconcile'], dir);
   assert.equal(after.json.find((x) => x.ticket === second).state, 'landed');
+});
+
+// The two orderings meeting: a stack-ready ticket is offered after every ready one, ranked among
+// its own kind by the same rules, and it is held to the same file lock — the tip it would start
+// from is usually the very ticket holding the file, and two workers editing it at once is what
+// the lock exists to stop.
+test('queue.mjs next --stack: stack-ready tickets rank below every ready one, and a shared file locks them out too', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const running = mkTicket(dir, 'in-flight', { node: 'core', files: 'src/core/a.ts', severity: 'low' });
+  const sharesFile = mkTicket(dir, 'shares-the-file', { node: 'core', files: 'src/core/a.ts', severity: 'high' });
+  const clearLow = mkTicket(dir, 'clear-but-low', { node: 'edge', files: 'src/edge/b.ts', severity: 'low' });
+  const clearHigh = mkTicket(dir, 'clear-and-high', { node: 'far', files: 'src/far/c.ts', severity: 'high' });
+  const ready = mkTicket(dir, 'nothing-in-front', { node: 'sky', files: 'src/sky/d.ts', severity: 'low' });
+  for (const id of [running, sharesFile, clearLow, clearHigh, ready]) run('queue.mjs', ['add', id], dir);
+  run('queue.mjs', ['dep', sharesFile, '--on', running], dir);
+  run('queue.mjs', ['dep', clearLow, '--on', running], dir);
+  run('queue.mjs', ['dep', clearHigh, '--on', running], dir);
+  run('queue.mjs', ['set', running, 'running', '--agent', 'w1'], dir);
+
+  await t.test('a ready ticket comes first even at the lowest severity', () => {
+    const r = run('queue.mjs', ['next', '--stack'], dir);
+    assert.equal(r.json.ticket, ready);
+    assert.equal(r.json.stackReady, false);
+  });
+
+  await t.test('with nothing ready, the stack-ready ones are ranked by the usual rules', () => {
+    run('queue.mjs', ['set', ready, 'running', '--agent', 'w2'], dir);
+    assert.equal(run('queue.mjs', ['next'], dir).json, null);
+    const r = run('queue.mjs', ['next', '--stack'], dir);
+    assert.equal(r.json.ticket, clearHigh, 'high severity leads among the stack-ready ones');
+    assert.equal(r.json.stackReady, true);
+    assert.deepEqual(r.json.stackOn, [running]);
+  });
+
+  await t.test('the ticket sharing a file with the one it would stand on is never offered', () => {
+    const why = run('queue.mjs', ['next', '--stack', '--why'], dir);
+    const rows = Object.fromEntries(why.json.entries.map((e) => [e.ticket, e]));
+    assert.equal(rows[sharesFile].eligible, false);
+    assert.match(rows[sharesFile].reason, new RegExp(`locked — running ticket ${running} also holds file\\(s\\) src/core/a.ts`));
+    assert.equal(rows[clearHigh].eligible, true);
+    assert.deepEqual(rows[clearHigh].stackOn, [running]);
+    assert.equal(rows[clearLow].rank > rows[clearHigh].rank, true);
+  });
+
+  await t.test('without --stack, --why says which tip each of them could have started from', () => {
+    const why = run('queue.mjs', ['next', '--why'], dir);
+    const row = why.json.entries.find((e) => e.ticket === clearHigh);
+    assert.equal(row.eligible, false);
+    assert.match(row.reason, new RegExp(`waiting on dependency ${running} — could be started on top of ${running} \\(--stack\\)`));
+  });
 });

@@ -42,6 +42,11 @@ import {
 
 const STATUSES = ['proposed', 'queued', 'running', 'landed', 'changes', 'verified', 'merged', 'escalated', 'dropped'];
 const SEVERITIES = ['high', 'medium', 'low'];
+// A ticket is "work" (the mission's own scope) unless it names itself "quality" — a self-filed
+// improvement outside a wave's assigned scope (better graph, normalization, tidy-up) that
+// `queue.mjs next` always ranks after every work ticket, whatever its severity, per the
+// quality-always-authorised ruling: quality is raised in free parallelism, never ahead of the work.
+const KINDS = ['work', 'quality'];
 const REVIEW_PENDING_STATUSES = new Set(['landed', 'changes']);
 const OPEN_EXCLUDE = new Set(['merged', 'dropped']);
 
@@ -49,12 +54,15 @@ const USAGE = `usage: tk.mjs <command> [options]
 
 commands:
   new <slug> --title "<t>" --node <n> [--node <n2> …] --class <c> [--severity high|medium|low]
-      [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
+      [--kind work|quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
       [--produces <node>/<port>@<v>,…] [--evidence "<…>"]… [--revert-base <ref>]
       [--team t] [--horde h]
       renders templates/ticket.md; status starts "proposed". --node is repeatable, up to two —
       two nodes mark a contract ticket, and both get their own approval slot in the Keys line;
       three or more is refused, since no owner holds the whole of such a diff.
+      --kind defaults to "work"; "quality" marks a self-filed improvement outside a wave's
+      assigned scope (better graph, normalization, tidy-up) — queue.mjs next always ranks it
+      after every work ticket, whatever its severity.
       --revert-base names the ref premerge.mjs's revert test should use instead of the parent
       branch's tip (for a test meant to already be green there, e.g. a contract test).
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
@@ -127,6 +135,12 @@ function setField(text, label, value) {
 export function nodesOf(text) {
   const raw = parseField(text, 'Node');
   return raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+// A ticket written before the Kind field existed (or written by hand) reads as "work" — the
+// field degrades to the mission-scope default rather than to an unrecognized value.
+export function ticketKind(text) {
+  return parseField(text, 'Kind') === 'quality' ? 'quality' : 'work';
 }
 
 // --- the four structural fields ----------------------------------------
@@ -532,6 +546,8 @@ function cmdNew(horde, positional, flags) {
   if (!flags.class) fail('new requires --class <c>');
   const severity = flags.severity || 'medium';
   if (!SEVERITIES.includes(severity)) fail(`--severity must be one of: ${SEVERITIES.join(', ')}`);
+  const kind = flags.kind || 'work';
+  if (!KINDS.includes(kind)) fail(`--kind must be one of: ${KINDS.join(', ')}`);
   const team = flags.team || 'trunk';
   const evidence = asArray(flags.evidence);
   checkEvidenceIds(horde, evidence);
@@ -559,6 +575,7 @@ function cmdNew(horde, positional, flags) {
     class: flags.class,
     severity,
     team,
+    kind,
     branch: '—',
     ...(depends.length ? { dependsOn: depends.join(', ') } : {}),
     ...(files.length ? { files: files.join(', ') } : {}),
@@ -580,7 +597,7 @@ function cmdNew(horde, positional, flags) {
   writeJSON(counterPath, { next: counter.next + 1 });
 
   emit({
-    id, dirName, team, files, consumes: consumes.map((c) => c.ref), produces: produces.map((p) => p.ref), evidence: evidenceIds,
+    id, dirName, team, kind, files, consumes: consumes.map((c) => c.ref), produces: produces.map((p) => p.ref), evidence: evidenceIds,
   }, flags, () => `${id} created — ${dirName} (team ${team})`);
 }
 

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
+import { makeRepo, rmRepo, run, initHorde, writeCostRuns } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -219,4 +219,163 @@ test('horde.mjs charter edit: a rewrite that drops a recorded verifier says so',
 
   const dropped = charterEdit(withRow);
   assert.deepEqual(dropped.droppedEvidence, [{ id: 'E1', was: 'verifier1' }]);
+});
+
+// E13 — dropping a row outright is free before the mission's wave 1 starts, and needs a ruled
+// escalation naming it afterwards.
+test('horde.mjs charter edit: dropping a row is free before wave 1, refused after without a ruled escalation naming it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const withTwo = [
+    '# Mission · m', '', '## Acceptance — the evidence catalogue', '',
+    '| id | evidence | node | reproduced by |', '|---|---|---|---|',
+    '| E1 | the suite is green | api | |',
+    '| E2 | the page renders | web | |', '',
+  ].join('\n');
+  const withOne = [
+    '# Mission · m', '', '## Acceptance — the evidence catalogue', '',
+    '| id | evidence | node | reproduced by |', '|---|---|---|---|',
+    '| E1 | the suite is green | api | |', '',
+  ].join('\n');
+
+  const charterEdit = (input, extra = []) => execFileSync(
+    'node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit', ...extra, '--json'],
+    { cwd: dir, input, encoding: 'utf8' },
+  );
+  const charterEditRaw = (input, extra = []) => {
+    try {
+      return { code: 0, json: JSON.parse(charterEdit(input, extra)) };
+    } catch (e) {
+      return { code: e.status ?? 1, stderr: (e.stderr || '').toString() };
+    }
+  };
+
+  charterEdit(withTwo);
+
+  await t.test('before wave 1, dropping E2 is free', () => {
+    const r = charterEditRaw(withOne);
+    assert.equal(r.code, 0);
+    charterEdit(withTwo); // restore for the next case
+  });
+
+  run('wave.mjs', ['start'], dir);
+
+  await t.test('after wave 1, dropping E2 without --escalation is refused', () => {
+    const r = charterEditRaw(withOne);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /drops evidence row\(s\) E2/);
+    assert.match(r.stderr, /escalate\.mjs add/);
+  });
+
+  await t.test('an --escalation that is not yet ruled is refused', () => {
+    const esc = run('escalate.mjs', ['add', 'field is unreachable', '--kind', 'charter', '--by', 'steward'], dir);
+    const r = charterEditRaw(withOne, ['--escalation', esc.json.id]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /not ruled yet/);
+  });
+
+  await t.test('a ruled escalation whose text never names the dropped row is refused', () => {
+    const esc = run('escalate.mjs', ['add', 'field is unreachable', '--kind', 'charter', '--by', 'steward'], dir);
+    run('escalate.mjs', ['rule', esc.json.id, 'agreed, dropping a row', '--by', 'director'], dir);
+    const r = charterEditRaw(withOne, ['--escalation', esc.json.id]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /does not mention dropped row\(s\): E2/);
+  });
+
+  await t.test('a ruled escalation naming the row lets the drop through', () => {
+    const esc = run('escalate.mjs', ['add', 'E2 cannot be reproduced in this environment', '--kind', 'charter', '--by', 'steward'], dir);
+    run('escalate.mjs', ['rule', esc.json.id, 'agreed, E2 is dropped', '--by', 'director'], dir);
+    const r = charterEditRaw(withOne, ['--escalation', esc.json.id]);
+    assert.equal(r.code, 0);
+    assert.equal(r.json.evidenceRows, 1);
+  });
+});
+
+// E13 — horde.mjs done: the mission's final gate.
+test('horde.mjs done: refuses listing every reason, then passes once each is met', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'gates.trunk', 'true'], dir);
+
+  await t.test('refuses with every reason when nothing has been done yet', () => {
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /evidence catalogue is empty/);
+    assert.match(r.stderr, /no wave has ever been started/);
+    assert.match(r.stderr, /no cost has ever been recorded/);
+  });
+
+  const charterPath = join(dir, '.horde', 'hordes', 'mission1', 'charter.md');
+  const charter = readFileSync(charterPath, 'utf8').replace('| | | | |', '| E1 | the suite is green | api | |');
+  writeFileSync(charterPath, charter);
+
+  await t.test('refuses naming the red row once the catalogue has one', () => {
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /E1 \(no-ticket\)/);
+  });
+
+  // A ticket merged with a reproduced verdict naming E1 — queue.mjs's own merge refusal is what
+  // would have required that verdict for a real ticket; this fixture writes the same shape by
+  // hand, matching wave.test.mjs's own convention.
+  const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-slug');
+  mkdirSync(ticketDir, { recursive: true });
+  writeFileSync(join(ticketDir, 'issue.md'), '# 001 · slug\n\n**Status:** merged\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
+  writeFileSync(join(ticketDir, 'log.md'), '## Verdict · 001 · 2026-01-01 · by verifier-1 (sonnet)\n\n**Result:** reproduced\n');
+
+  await t.test('refuses naming the missing audit and cost once evidence and gate are clear', () => {
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 1);
+    assert.doesNotMatch(r.stderr, /evidence row\(s\) not reproduced/);
+    assert.match(r.stderr, /no wave has ever been started/);
+  });
+
+  run('wave.mjs', ['start'], dir);
+
+  await t.test('refuses naming the missing audit specifically, once a wave is open', () => {
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no audit verdict recorded for wave 1/);
+    assert.match(r.stderr, /no cost has ever been recorded/);
+  });
+
+  run('wave.mjs', ['audit', '001', 'clean', 'reproduced evidence'], dir);
+
+  await t.test('refuses naming the missing cost report last', () => {
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no cost has ever been recorded/);
+  });
+
+  writeCostRuns(dir, 'mission1', [
+    { name: 'mission1-worker-trunk-1', role: 'worker', class: 'sonnet', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
+  ]);
+
+  await t.test('passes once every reason is met — stamps the charter and appends the completion block', () => {
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.evidence.green, 1);
+    assert.equal(r.json.evidence.total, 1);
+    assert.equal(r.json.gate.result, 'green');
+    assert.equal(r.json.audit.wave, '1');
+    assert.equal(r.json.audit.verdict, 'clean');
+    assert.equal(r.json.cost.runs, 1);
+
+    const stamped = readFileSync(charterPath, 'utf8');
+    assert.match(stamped, /\| E1 \| the suite is green \| api \| verifier-1 \|/);
+
+    const plan = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
+    assert.match(plan, /# Mission complete/);
+    assert.match(plan, /Evidence catalogue:\*\* 1\/1 green/);
+    assert.match(plan, /Ready to push: `mission1\/trunk`/);
+  });
+
+  await t.test('status.mjs now shows the row as reproduced', () => {
+    const r = run('status.mjs', ['--horde', 'mission1'], dir);
+    assert.equal(r.json.hordes[0].evidence.rows[0].state, 'reproduced');
+    assert.equal(r.json.hordes[0].evidence.rows[0].reproducedBy, 'verifier-1');
+  });
 });
