@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
+
+const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 test('horde.mjs: init, list, config, archive', async (t) => {
   const dir = makeRepo();
@@ -159,4 +162,61 @@ test('horde.mjs config set: a list-valued key takes a list, in either notation',
   const broken = run('horde.mjs', ['config', 'set', 'testGlobs', '["unclosed"'], dir);
   assert.equal(broken.code, 1);
   assert.match(broken.stderr, /not a readable list/);
+});
+
+test('horde.mjs charter: show prints it, edit replaces it from stdin', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir, 'mission1', ['--title', 'The Mission']);
+
+  const shown = run('horde.mjs', ['charter', 'show'], dir, { json: false });
+  assert.equal(shown.code, 0);
+  assert.match(shown.stdout, /# Mission · The Mission/);
+
+  const body = [
+    '# Mission · The Mission', '',
+    '## Goal', '', 'Ship the thing.', '',
+    '## Acceptance — the evidence catalogue', '',
+    '| id | evidence | node | reproduced by |',
+    '|---|---|---|---|',
+    '| E1 | the suite is green | api | |',
+    '| E2 | the page renders | web | |', '',
+  ].join('\n');
+  const written = execFileSync('node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit', '--json'], {
+    cwd: dir, input: body, encoding: 'utf8',
+  });
+  const result = JSON.parse(written);
+  assert.equal(result.evidenceRows, 2);
+  assert.equal(result.evidenceReproduced, 0);
+  assert.deepEqual(result.droppedEvidence, []);
+  assert.equal(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'charter.md'), 'utf8'), body);
+
+  const refused = run('horde.mjs', ['charter', 'edit'], dir);
+  assert.equal(refused.code, 1);
+  assert.match(refused.stderr, /requires content on stdin/);
+});
+
+test('horde.mjs charter edit: a rewrite that drops a recorded verifier says so', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const withRow = [
+    '# Mission · m', '', '## Acceptance — the evidence catalogue', '',
+    '| id | evidence | node | reproduced by |', '|---|---|---|---|',
+    '| E1 | the suite is green | api | |', '',
+  ].join('\n');
+  const charterEdit = (input) => JSON.parse(execFileSync(
+    'node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit', '--json'],
+    { cwd: dir, input, encoding: 'utf8' },
+  ));
+  charterEdit(withRow);
+  run('wave.mjs', ['evidence', 'E1', '--by', 'verifier1'], dir);
+
+  const kept = charterEdit(withRow.replace('| api | |', '| api | verifier1 |'));
+  assert.equal(kept.evidenceReproduced, 1);
+  assert.deepEqual(kept.droppedEvidence, []);
+
+  const dropped = charterEdit(withRow);
+  assert.deepEqual(dropped.droppedEvidence, [{ id: 'E1', was: 'verifier1' }]);
 });

@@ -44,6 +44,13 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   practical), `classes` (weights: haiku 1, sonnet 3, opus 10, fable 30 — defaults), `parallelism`.
   A list-valued key (`testGlobs`, `protectedPaths`) takes either a comma-separated list or a JSON
   array and is stored as a list either way — never as the text of one.
+- `charter show|edit` — the mission charter. `show` prints it; `edit` replaces it with what arrives
+  on stdin, the same shape as `node.mjs charter edit` for a node, and reports how many evidence rows
+  the new text carries and how many are recorded as reproduced — naming any row that was recorded
+  and is no longer, since a rewrite that drops one loses a verifier's work otherwise. This is how
+  the goal, the non-goals, the evidence catalogue and every amendment are written: the charter is
+  the one file where what the chairman asked for lands, and it is written through a tool like
+  everything else.
 - `archive <name>` — moves `hordes/<name>` to `hordes/_archive/<name>-<date>`; branches untouched.
 
 ## status.mjs — the digest

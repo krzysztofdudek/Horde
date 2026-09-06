@@ -55,8 +55,9 @@ the next wake-up starts blind.
 
 ## Framing — the only linear phase, done with the user
 
-Nothing runs until the user says go. Together you write the charter (`horde.mjs init <name>` from
-`templates/charter.md`): the goal in one paragraph; non-goals; constraints; **acceptance as a catalogue
+Nothing runs until the user says go. Together you write the charter (`horde.mjs init <name>` renders
+it from `templates/charter.md`; `horde.mjs charter edit` writes its content from stdin, and every
+later amendment the same way — never by hand): the goal in one paragraph; non-goals; constraints; **acceptance as a catalogue
 of evidence** (scenarios, tests, films — things a verifier can reproduce, never adjectives); the nodes
 the mission touches and the nodes it creates; the decision-rights table (what beyond the standard list
 must come to you or the user); the cost policy and the optional cost limit; the base branch. Then the

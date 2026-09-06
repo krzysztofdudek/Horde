@@ -181,8 +181,9 @@ function latestVerdict(logText) {
 }
 
 // The evidence catalogue table in charter.md: | id | evidence | node | reproduced by |. A row
-// counts once any cell holds text (the template ships one all-empty row).
-function parseEvidenceRows(charterText) {
+// counts once any cell holds text (the template ships one all-empty row). Exported so horde.mjs
+// can tell a rewritten charter what it just did to the catalogue.
+export function parseEvidenceRows(charterText) {
   const headingIdx = charterText.indexOf('## Acceptance');
   if (headingIdx === -1) return [];
   const rest = charterText.slice(headingIdx);

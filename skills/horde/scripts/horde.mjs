@@ -10,9 +10,9 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, renameSync, readdir
 import { join, dirname } from 'node:path';
 import {
   repoRoot, hordeRoot, hordePath, readConfig, writeConfig, listHordes, readJSON,
-  writeJSON, readText, git, today, fail, parseArgs, emit, isMain, renderTemplate,
+  writeJSON, readText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
 } from './_lib.mjs';
-import { currentWaveNumber } from './wave.mjs';
+import { currentWaveNumber, parseEvidenceRows } from './wave.mjs';
 
 const DEFAULT_CLASSES = { haiku: 1, sonnet: 3, opus: 10, fable: 30 };
 
@@ -29,7 +29,12 @@ commands:
       hordes on this repository: trunk, base, wave, open tickets, last activity.
   config get <key>
   config set <key> <value>
-      dotted paths into .horde/config.json, e.g. "gates.trunk", "liveness.stewardMinutes".
+      dotted paths into .horde/config.json, e.g. "gates.trunk", "liveness.stewardMinutes". A
+      list-valued key takes a comma-separated list or a JSON array.
+  charter show [--horde h]
+  charter edit [--horde h]
+      the mission charter: "show" prints it, "edit" replaces it with what arrives on stdin and
+      reports what that did to the evidence catalogue.
   archive <name>
       moves hordes/<name> to hordes/_archive/<name>-<date>. Branches are untouched.
 
@@ -353,6 +358,59 @@ function cmdConfig(positional, flags) {
   fail('config requires "get" or "set"');
 }
 
+function readStdin() {
+  try {
+    return readFileSync(0, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+// The mission charter, written through a tool like everything else. It is the one file where what
+// the chairman asked for actually lands — the goal, the non-goals, the evidence catalogue, the
+// amendments — and it was the one file with no way to write it but by hand, which the skill's own
+// rule forbids. `show` prints it; `edit` replaces it from stdin, and says what that did to the
+// evidence catalogue, because a rewrite that drops a row already recorded as reproduced loses a
+// verifier's work silently.
+function cmdCharter(positional, flags) {
+  const horde = resolveHorde(flags);
+  const path = hordePath(horde, 'charter.md');
+  const sub = positional[0];
+
+  if (sub === 'show') {
+    const text = readText(path);
+    if (text === null) fail(`no charter for horde "${horde}"`);
+    emit({ horde, path, charter: text }, flags, () => text);
+    return;
+  }
+  if (sub !== 'edit') fail('charter requires "show" or "edit"');
+
+  const before = readText(path) || '';
+  const content = readStdin();
+  if (!content.trim()) fail('charter edit requires content on stdin');
+
+  const filledBefore = parseEvidenceRows(before).filter((r) => r.reproducedBy);
+  const rowsAfter = parseEvidenceRows(content);
+  const afterById = new Map(rowsAfter.map((r) => [r.id, r]));
+  const dropped = filledBefore
+    .filter((r) => !afterById.has(r.id) || !afterById.get(r.id).reproducedBy)
+    .map((r) => ({ id: r.id, was: r.reproducedBy }));
+
+  writeText(path, content);
+  const result = {
+    horde,
+    path,
+    bytes: content.length,
+    evidenceRows: rowsAfter.length,
+    evidenceReproduced: rowsAfter.filter((r) => r.reproducedBy).length,
+    droppedEvidence: dropped,
+  };
+  emit(result, flags, () => [
+    `charter written: ${horde} (${content.length} bytes) — evidence catalogue: ${result.evidenceRows} row(s), ${result.evidenceReproduced} reproduced`,
+    ...dropped.map((d) => `warning: ${d.id} was recorded as reproduced by ${d.was} and this text drops that — put it back with: wave.mjs evidence ${d.id} --by "${d.was}"`),
+  ].join('\n'));
+}
+
 function cmdArchive(positional, flags) {
   const name = positional[0];
   if (!name) fail('archive requires <name>');
@@ -375,6 +433,7 @@ function main() {
     case 'init': return cmdInit(positional, flags);
     case 'list': return cmdList(positional, flags);
     case 'config': return cmdConfig(positional, flags);
+    case 'charter': return cmdCharter(positional, flags);
     case 'archive': return cmdArchive(positional, flags);
     default: fail(`unknown command: ${cmd} (see --help)`);
   }
