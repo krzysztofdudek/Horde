@@ -42,6 +42,8 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   (also accepts `liveness.stewardSeconds|ownerSeconds` — a `*Seconds` key wins over its `*Minutes`
   counterpart when both are set; useful for tests and fast-loop tuning where a whole minute isn't
   practical), `classes` (weights: haiku 1, sonnet 3, opus 10, fable 30 — defaults), `parallelism`.
+  A list-valued key (`testGlobs`, `protectedPaths`) takes either a comma-separated list or a JSON
+  array and is stored as a list either way — never as the text of one.
 - `archive <name>` — moves `hordes/<name>` to `hordes/_archive/<name>-<date>`; branches untouched.
 
 ## status.mjs — the digest

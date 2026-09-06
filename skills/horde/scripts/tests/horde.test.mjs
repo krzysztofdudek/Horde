@@ -138,3 +138,25 @@ test('horde.mjs init: --test-globs names the test patterns outright', async (t) 
   const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--test-globs', '**/*Tests.java,**/*Test.java'], dir);
   assert.deepEqual(r.json.testGlobs, ['**/*Tests.java', '**/*Test.java']);
 });
+
+test('horde.mjs config set: a list-valued key takes a list, in either notation', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const json = run('horde.mjs', ['config', 'set', 'testGlobs', '["**/*Tests.java","**/*Test.java"]'], dir);
+  assert.equal(json.code, 0);
+  assert.deepEqual(json.json.value, ['**/*Tests.java', '**/*Test.java']);
+
+  const commas = run('horde.mjs', ['config', 'set', 'testGlobs', '**/*_test.go,**/*_bench.go'], dir);
+  assert.deepEqual(commas.json.value, ['**/*_test.go', '**/*_bench.go']);
+
+  // …and it is a list on disk, not the text of one: the whole point is that every reader of the
+  // key gets an array back.
+  const onDisk = JSON.parse(readFileSync(join(dir, '.horde', 'config.json'), 'utf8'));
+  assert.ok(Array.isArray(onDisk.testGlobs));
+
+  const broken = run('horde.mjs', ['config', 'set', 'testGlobs', '["unclosed"'], dir);
+  assert.equal(broken.code, 1);
+  assert.match(broken.stderr, /not a readable list/);
+});

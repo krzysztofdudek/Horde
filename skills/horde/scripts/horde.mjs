@@ -311,6 +311,11 @@ function parseListValue(raw) {
   return text.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+// Keys whose value is a list whatever the config currently holds — a list-valued key that has
+// never been set (or was set to a string once) must still take a list, or `config set` writes the
+// string "[\"**/*Tests.java\"]" and every reader of that key breaks on it.
+const LIST_KEYS = new Set(['protectedPaths', 'testGlobs']);
+
 function setPath(obj, path, rawValue) {
   const keys = path.split('.');
   let node = obj;
@@ -320,8 +325,9 @@ function setPath(obj, path, rawValue) {
   }
   const last = keys[keys.length - 1];
   const existing = node[last];
+  const wantsList = Array.isArray(existing) || LIST_KEYS.has(last) || String(rawValue).trim().startsWith('[');
   let value = rawValue;
-  if (Array.isArray(existing)) value = parseListValue(rawValue);
+  if (wantsList) value = parseListValue(rawValue);
   else if (typeof existing === 'number') value = Number(rawValue);
   else if (typeof existing === 'boolean') value = rawValue === 'true';
   node[last] = value;
