@@ -156,3 +156,60 @@ test('brief.mjs: refuses with the unfilled placeholder(s) rather than print "{{�
   assert.match(r.stderr, /unfilled placeholder/);
   assert.match(r.stderr, /ticketTitle/);
 });
+
+test('brief.mjs verifier --delta: a scoped re-review names the delta and the findings still open', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  run('node.mjs', ['new', 'nodeA', '--boundary', 'src/a/**'], dir);
+
+  seedTicket(dir, 'mission1', 'trunk', '001', {
+    branch: 'mission1/t-001', worktree: '.horde/worktrees/mission1/t-001',
+  });
+
+  // The record the last look at this ticket left behind: a verdict that failed on something, and
+  // the node owner's own changes-request.
+  const issueDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-sample-ticket');
+  writeFileSync(join(issueDir, 'log.md'), [
+    '- 2026-09-06T10:00:00.000Z review: nodeA changes by owner1 — the empty list is not handled',
+    '',
+    '## Verdict · 001 · 2026-09-06 · by verifier1 (sonnet)',
+    '',
+    '**Result:** not-reproduced',
+    '',
+    '**What failed, if anything** (what, not what to do):',
+    '',
+    'the second acceptance line renders nothing on a cold cache',
+    '',
+  ].join('\n'));
+
+  const deltaPath = join('.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-sample-ticket', 'rereview-aaaaaaa..bbbbbbb.diff');
+  writeFileSync(join(dir, deltaPath), '1:  aaaaaaa = 1:  bbbbbbb ticket 001\n');
+
+  await t.test('the scoped brief names the file to read and every finding to answer', () => {
+    const r = run('brief.mjs', ['verifier', '001', '--delta', deltaPath, '--name', 'mission1-verifier-trunk-2'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.delta, deltaPath);
+    assert.match(r.json.brief, /Scoped re-review/);
+    assert.match(r.json.brief, new RegExp(deltaPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(r.json.brief, /the second acceptance line renders nothing on a cold cache/);
+    assert.match(r.json.brief, /the empty list is not handled \(nodeA, asked by owner1\)/);
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
+
+  await t.test('without --delta the same brief is the full verification', () => {
+    const r = run('brief.mjs', ['verifier', '001', '--name', 'mission1-verifier-trunk-2'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.delta, null);
+    assert.match(r.json.brief, /Full verification/);
+    assert.doesNotMatch(r.json.brief, /Scoped re-review\.\*\*/);
+    assert.doesNotMatch(r.json.brief, /rereview-aaaaaaa/);
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
+
+  await t.test('a --delta naming no readable file is refused, not rendered around', () => {
+    const r = run('brief.mjs', ['verifier', '001', '--delta', 'nowhere/rereview-1111111..2222222.diff', '--name', 'mission1-verifier-trunk-2'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--delta names no readable file/);
+  });
+});

@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Marking a ticket merged now records the merge everywhere it needs to be recorded. The mission's evidence list used to stay empty unless the same merge was entered a second time by hand.
 - The mission charter — the goal, what is out of scope, the evidence the mission is judged by, and every later amendment — can now be written and read with a command instead of by hand. Rewriting it reports what happened to the evidence list, and warns when a rewrite drops something a verifier already proved.
 - Settings that hold a list of values — the test patterns, the protected paths — can now be set to a list. They used to be stored as text and broke the merge check.
+- When a ticket does have to go back for another look, that look now covers only what moved: the difference between what was approved and what is there now is written out for the owner and for a verifier, with every point the last review left open. A review of the whole change is still available.
+
+### Changed
+- A review no longer expires just because someone else's work landed first. An approval and a verdict now hold for as long as the ticket's own change is the change that was read, so catching a branch up with the team costs nothing — the tests still run again on the result. Another look is asked for only when the catch-up really touched what the ticket does; how near it has to be before that happens is a setting. Ten tickets ready at once used to cost up to fifty-five verifications between them; now it is ten, plus the few the catch-up genuinely disturbed.
 
 ## [0.1.0] - 2026-09-04
 
