@@ -13,7 +13,15 @@
 // line is different: its own segments are separated by "·", so it gets its own whole-line
 // regex and is split on "·" directly. Every node the ticket names gets one Keys segment, in the
 // order the **Node:** field lists them, so approvals can be tracked per node even though the
-// field itself has no per-node structure otherwise.
+// field itself has no per-node structure otherwise; a node that only consumes a port the ticket
+// produces gets one appended after those, found by name rather than by position.
+//
+// Four more fields — **Files:**, **Consumes:**, **Produces:**, **Evidence:** — are what the plan
+// is computed from: the paths the ticket touches, the ports it needs and delivers, the charter
+// evidence rows it earns. They are validated where they are written (a file inside the node's
+// boundary, a port that reads <node>/<port>@<version> and that something actually produces, an
+// evidence id the charter carries), because a ticket that declares an impossible plan is cheapest
+// to refuse at the proposal.
 //
 // Exports findTicket, the field/keys helpers and padId so queue.mjs and verify.mjs — which also
 // need to read and update a ticket's Keys line and status — don't reimplement the parsing.
@@ -23,10 +31,13 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import {
-  hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
+  hordePath, teamPath, repoRoot, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, git, patchIdOf,
 } from './_lib.mjs';
 import { trace as traceRoster, ownerNameForNode, architectIsLive } from './roster.mjs';
+import {
+  ticketBoundary, pathInBoundary, portExists, consumersOf,
+} from './node.mjs';
 
 const STATUSES = ['proposed', 'queued', 'running', 'landed', 'changes', 'verified', 'merged', 'escalated', 'dropped'];
 const SEVERITIES = ['high', 'medium', 'low'];
@@ -37,15 +48,22 @@ const USAGE = `usage: tk.mjs <command> [options]
 
 commands:
   new <slug> --title "<t>" --node <n> [--node <n2> …] --class <c> [--severity high|medium|low]
-      [--depends NNN,…] [--evidence "<…>"]… [--revert-base <ref>] [--team t] [--horde h]
+      [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
+      [--produces <node>/<port>@<v>,…] [--evidence "<…>"]… [--revert-base <ref>]
+      [--team t] [--horde h]
       renders templates/ticket.md; status starts "proposed". --node is repeatable, up to two —
       two nodes mark a contract ticket, and both get their own approval slot in the Keys line;
       three or more is refused, since no owner holds the whole of such a diff.
       --revert-base names the ref premerge.mjs's revert test should use instead of the parent
-      branch's tip (for a test meant to already be green there, e.g. a contract test). Each
-      --evidence value becomes its own "- [ ] …" line in the ticket's Acceptance — evidence
-      checklist. A catalogue id (E1, E2, …) cited in an --evidence value must already be a row
-      in the horde's charter.md evidence table — refuses otherwise, listing the unknown ids.
+      branch's tip (for a test meant to already be green there, e.g. a contract test).
+      --files lists the paths the ticket touches (each must lie inside a named node's boundary;
+      the merge checklist refuses a diff that reaches past them). --consumes/--produces name the
+      ports the ticket needs and delivers, as <node>/<port>@<version>; a consumed port with no
+      producing ticket and no such port in the graph is refused. An --evidence value that is
+      nothing but catalogue ids ("E2,E5") fills the Evidence field; any other value becomes its
+      own "- [ ] …" line in the ticket's Acceptance — evidence checklist, and the ids cited in it
+      fill the field too. A catalogue id (E1, E2, …) must already be a row in the horde's
+      charter.md evidence table — refuses otherwise, listing the unknown ids.
   list [--state s] [--node n] [--review-pending] [--open] [--team t] [--horde h]
   show <ticket> [--log] [--horde h]
   status <ticket> <${STATUSES.join('|')}> ["note"] [--horde h]
@@ -68,8 +86,10 @@ commands:
       of the whole change again.
   review <ticket> approve|changes ["why"] --by <name> [--node n] [--horde h]
       records an approval or a changes-request for one node in the Keys line. Pass --node when
-      the ticket names more than one; --by architect with no --node approves every node the
-      ticket names at once (the case where a node's own owner is the ticket's author and so
+      the ticket names more than one, or when it produces a port other nodes consume — those
+      nodes get their own approval slot, since a version bump changes their contract and only
+      they can say the new version is usable. --by architect with no --node approves every node
+      the ticket names at once (the case where a node's own owner is the ticket's author and so
       cannot review it). Refuses --by equal to the ticket's author. An "approve" also binds to
       what was read: the ticket's branch's current tip sha and the identity of its diff against
       the team branch (both from its queue item). The branch catching up with the team keeps the
@@ -79,10 +99,14 @@ commands:
       owner and the roster has no live architect — refused otherwise.
   move <ticket> --team t [--horde h]
       relocates the issue folder to team t's issues/.
-  edit <ticket> --by <name> [--horde h]
+  edit <ticket> --by <name> [--files a,b] [--consumes …] [--produces …] [--evidence E1,…]
+      [--horde h]
       rewrites the body (everything from "## What" on) from stdin, leaving the header block —
-      the id/title heading, Status, Node/Class/Severity/Team, Depends on/Branch, Keys — untouched.
-      Appends "body edited by <name>" to the log. What owners use to write ticket bodies.
+      the id/title heading, Status, Node/Class/Severity/Team, Depends on/Branch, Files,
+      Consumes/Produces, Evidence, Keys — untouched. Appends "body edited by <name>" to the log.
+      What owners use to write ticket bodies. With any of --files/--consumes/--produces/
+      --evidence it changes those fields instead, each with its own log line saying who changed
+      it — how a ticket is widened when the work turns out to touch a file it never declared.
 
 options: --json  --help`;
 
@@ -104,8 +128,48 @@ export function nodesOf(text) {
   return raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : [];
 }
 
+// --- the four structural fields ----------------------------------------
+//
+// **Files:** the paths this ticket touches · **Consumes:**/**Produces:** the ports it needs and
+// delivers, `<node>/<port>@<version>` · **Evidence:** the catalogue rows it earns. Together they
+// are what the plan is computed from: the order between tickets, which of them collide over a
+// file, who has to approve a version bump, and which promised evidence nobody is building. Read
+// through these three functions everywhere, so a ticket written by hand in an old shape (an
+// empty field, the word "none") degrades to "not declared" rather than to a wrong answer.
+
+function listField(text, label) {
+  const raw = parseField(text || '', label);
+  if (!raw || raw === 'none' || raw === '—') return [];
+  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+export function ticketFiles(text) { return listField(text, 'Files'); }
+
+export function ticketEvidence(text) { return listField(text, 'Evidence'); }
+
+// `<node>/<port>@<version>`, where the node is a whole graph path ("orders/order-service") and
+// the port is its last segment before the "@" — null when the text is not that shape at all.
+export function parsePortRef(raw) {
+  const m = /^([A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)\/([A-Za-z0-9._-]+)@(\d+)$/.exec(String(raw).trim());
+  if (!m) return null;
+  return {
+    node: m[1], port: m[2], version: Number(m[3]), ref: `${m[1]}/${m[2]}@${m[3]}`,
+  };
+}
+
+// label is "Consumes" or "Produces". Unparseable entries are dropped here — `new`/`edit` refuse
+// them at the door, so anything that reached the file was well-formed when it was written.
+export function ticketPorts(text, label) {
+  return listField(text, label).map(parsePortRef).filter(Boolean);
+}
+
 const KEYS_LINE_RE = /^\*\*Keys:\*\*\s*(.*)$/m;
 
+// Every approval segment names the node it belongs to ("<node> <value>"), so the slots the
+// ticket's own **Node:** field lists come first, in that order, and a consumer's slot — a node
+// the ticket does not name but whose contract it changes — is appended after them and found by
+// name. A line whose segments name none of the ticket's nodes is read positionally, the way the
+// first version of this field was written.
 export function parseKeys(text) {
   const nodes = nodesOf(text);
   const m = KEYS_LINE_RE.exec(text);
@@ -115,8 +179,20 @@ export function parseKeys(text) {
     const v = sp === -1 ? '' : seg.slice(sp + 1).trim();
     return v || '—';
   };
+  const segments = parts.slice(2).map((seg) => {
+    const sp = seg.indexOf(' ');
+    return { name: sp === -1 ? seg.trim() : seg.slice(0, sp).trim(), value: takeVal(seg) };
+  });
+  const named = segments.some((s) => nodes.includes(s.name));
   const nodeApprovals = {};
-  nodes.forEach((n, i) => { nodeApprovals[n] = parts[2 + i] ? takeVal(parts[2 + i]) : '—'; });
+  nodes.forEach((n, i) => {
+    const byName = segments.find((s) => s.name === n);
+    if (named) nodeApprovals[n] = byName ? byName.value : '—';
+    else nodeApprovals[n] = segments[i] ? segments[i].value : '—';
+  });
+  if (named) {
+    for (const s of segments) if (!(s.name in nodeApprovals)) nodeApprovals[s.name] = s.value;
+  }
   return {
     author: parts[0] ? takeVal(parts[0]) : '—',
     verifier: parts[1] ? takeVal(parts[1]) : '—',
@@ -126,8 +202,9 @@ export function parseKeys(text) {
 
 function writeKeys(text, keys) {
   const nodes = nodesOf(text);
+  const extra = Object.keys(keys.nodeApprovals).filter((n) => !nodes.includes(n));
   const segs = [`author ${keys.author || '—'}`, `verifier ${keys.verifier || '—'}`];
-  for (const n of nodes) segs.push(`${n} ${keys.nodeApprovals[n] || '—'}`);
+  for (const n of [...nodes, ...extra]) segs.push(`${n} ${keys.nodeApprovals[n] || '—'}`);
   return text.replace(KEYS_LINE_RE, `**Keys:** ${segs.join(' · ')}`);
 }
 
@@ -143,9 +220,12 @@ export function setVerifierKey(text, name) {
   return writeKeys(text, keys);
 }
 
-export function setNodeApproval(text, node, value) {
+// `allowNew` is how a consumer's slot comes into being: the ticket does not name that node, and
+// the caller has already established (from the ports the ticket produces) that its owner is owed
+// a say. Without it, only a node the ticket names can be written.
+export function setNodeApproval(text, node, value, { allowNew = false } = {}) {
   const keys = parseKeys(text);
-  if (!Object.prototype.hasOwnProperty.call(keys.nodeApprovals, node)) {
+  if (!allowNew && !Object.prototype.hasOwnProperty.call(keys.nodeApprovals, node)) {
     throw new Error(`ticket does not name node: ${node}`);
   }
   keys.nodeApprovals[node] = value;
@@ -155,9 +235,12 @@ export function setNodeApproval(text, node, value) {
 export function hasAuthor(text) { return parseKeys(text).author !== '—'; }
 export function hasVerifier(text) { return parseKeys(text).verifier !== '—'; }
 
+// Every slot on the line, not only the nodes the ticket names: once a consumer's slot exists it
+// is as binding as an owner's — an approval asked for and not given still blocks the merge.
 export function allNodesApproved(text) {
   const keys = parseKeys(text);
-  return nodesOf(text).every((n) => {
+  const slots = [...new Set([...nodesOf(text), ...Object.keys(keys.nodeApprovals)])];
+  return slots.every((n) => {
     const v = keys.nodeApprovals[n];
     return v && v !== '—' && !v.startsWith('changes:');
   });
@@ -324,6 +407,98 @@ function checkEvidenceIds(horde, evidence) {
   }
 }
 
+// `--evidence` says two things at once, and which one it is, is decided by what was written: a
+// value that is nothing but catalogue ids ("E2,E5") names the rows this ticket earns and fills
+// the **Evidence:** field; anything else is an acceptance line, written into the ticket's own
+// checklist as before — and any id cited inside it fills the field too, so a ticket that says
+// "E2: the engine denies by default" is counted for E2 without saying E2 twice.
+const EVIDENCE_ID_LIST = /^E\d+(?:\s*,\s*E\d+)*$/;
+function splitEvidenceValues(values) {
+  const ids = [];
+  const acceptance = [];
+  const addId = (id) => { if (!ids.includes(id)) ids.push(id); };
+  for (const raw of values) {
+    const value = String(raw).trim();
+    if (!value) continue;
+    if (EVIDENCE_ID_LIST.test(value)) {
+      for (const id of value.split(',').map((s) => s.trim())) addId(id);
+      continue;
+    }
+    acceptance.push(value);
+    for (const id of value.match(/\bE\d+\b/g) || []) addId(id);
+  }
+  return { ids, acceptance };
+}
+
+// --- the structural fields: parsing and refusals ---------------------------
+
+// A comma list, from one flag or several ("--files a,b --files c").
+function listFlag(value) {
+  return asArray(value).flatMap((v) => String(v).split(',')).map((s) => s.trim()).filter(Boolean);
+}
+
+// Every path a ticket declares must lie inside the boundary of a node the ticket names: a ticket
+// is work on a node, and a file outside every one of its nodes belongs to somebody else's — the
+// owner who would have to approve it never sees this ticket. A node the graph does not know
+// contributes no boundary, and with no boundary at all there is nothing to check against.
+function checkFilesInBoundary(nodes, files) {
+  if (files.length === 0) return;
+  const cfg = readConfig() || {};
+  const root = repoRoot();
+  const boundary = ticketBoundary(root, cfg, nodes);
+  if (boundary.length === 0) return;
+  const outside = files.filter((f) => !pathInBoundary(f, boundary));
+  if (outside.length) {
+    fail(`file(s) outside the boundary of ${nodes.join(', ')}: ${outside.join(', ')} — the boundary is ${boundary.join(', ')}. Declare only files of the node this ticket is on, or ask the architect to move the boundary`);
+  }
+}
+
+function parsePortList(raw, label) {
+  return listFlag(raw).map((entry) => {
+    const ref = parsePortRef(entry);
+    if (!ref) fail(`--${label.toLowerCase()} takes <node>/<port>@<version> (e.g. auth/policy@2) — got "${entry}"`);
+    return ref;
+  });
+}
+
+// Every ticket of the horde that is not dropped, as {id, team, text} — the population a
+// `Consumes` looks for its producer in, and the one the plan is derived over.
+export function allTickets(horde) {
+  const out = [];
+  for (const team of allTeamPaths(horde)) {
+    const issuesDir = teamPath(horde, team, 'issues');
+    if (!existsSync(issuesDir)) continue;
+    for (const d of readdirSync(issuesDir, { withFileTypes: true })) {
+      if (!d.isDirectory()) continue;
+      const text = readText(join(issuesDir, d.name, 'issue.md')) || '';
+      const status = parseField(text, 'Status');
+      if (status === 'dropped') continue;
+      out.push({
+        id: d.name.slice(0, 3), team, dirName: d.name, text, status,
+      });
+    }
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// A port a ticket consumes has to come from somewhere: a ticket that produces it (this team's or
+// another's — a cross-team contract is still a contract), or the graph, where the port already
+// exists. Neither, and the ticket is planning against something nobody is building; the refusal
+// names the port so the owner can either file the producing ticket or use the port that exists.
+function checkConsumesHaveProducers(horde, consumes, selfId) {
+  if (consumes.length === 0) return;
+  const cfg = readConfig() || {};
+  const root = repoRoot();
+  const tickets = allTickets(horde).filter((t) => t.id !== selfId);
+  const missing = consumes.filter((c) => {
+    if (portExists(root, cfg, c.node, c.port)) return false;
+    return !tickets.some((t) => ticketPorts(t.text, 'Produces').some((p) => p.node === c.node && p.port === c.port));
+  });
+  if (missing.length) {
+    fail(`nothing produces ${missing.map((c) => c.ref).join(', ')} — no ticket of this horde produces that port and the graph has no port "${missing[0].port}" on node "${missing[0].node}". File the producing ticket first, or name the port that already exists`);
+  }
+}
+
 // --- commands --------------------------------------------------------------
 
 // --revert-base <ref> on `new` — the ref premerge.mjs's revert test should extract a ticket's new
@@ -359,6 +534,13 @@ function cmdNew(horde, positional, flags) {
   const team = flags.team || 'trunk';
   const evidence = asArray(flags.evidence);
   checkEvidenceIds(horde, evidence);
+  const { ids: evidenceIds, acceptance } = splitEvidenceValues(evidence);
+
+  const files = listFlag(flags.files);
+  const consumes = parsePortList(flags.consumes, 'Consumes');
+  const produces = parsePortList(flags.produces, 'Produces');
+  checkFilesInBoundary(nodes, files);
+  checkConsumesHaveProducers(horde, consumes, null);
 
   const counterPath = hordePath(horde, 'counter.json');
   const counter = readJSON(counterPath, { next: 1 });
@@ -378,13 +560,17 @@ function cmdNew(horde, positional, flags) {
     team,
     branch: '—',
     ...(depends.length ? { dependsOn: depends.join(', ') } : {}),
+    ...(files.length ? { files: files.join(', ') } : {}),
+    ...(consumes.length ? { consumes: consumes.map((c) => c.ref).join(', ') } : {}),
+    ...(produces.length ? { produces: produces.map((p) => p.ref).join(', ') } : {}),
+    ...(evidenceIds.length ? { evidence: evidenceIds.join(', ') } : {}),
     ...revertBaseVar(flags),
   });
   // The Keys line only names author/verifier by default; extend it with one slot per node now
   // that the Node field (which the parser reads to know the node list) is actually rendered.
   text = writeKeys(text, parseKeys(text));
-  if (evidence.length) {
-    text = text.replace('- [ ] …', evidence.map((e) => `- [ ] ${e}`).join('\n'));
+  if (acceptance.length) {
+    text = text.replace('- [ ] …', acceptance.map((e) => `- [ ] ${e}`).join('\n'));
   }
 
   mkdirSync(dir, { recursive: true });
@@ -392,7 +578,9 @@ function cmdNew(horde, positional, flags) {
   writeText(join(dir, 'log.md'), '');
   writeJSON(counterPath, { next: counter.next + 1 });
 
-  emit({ id, dirName, team }, flags, () => `${id} created — ${dirName} (team ${team})`);
+  emit({
+    id, dirName, team, files, consumes: consumes.map((c) => c.ref), produces: produces.map((p) => p.ref), evidence: evidenceIds,
+  }, flags, () => `${id} created — ${dirName} (team ${team})`);
 }
 
 function cmdList(horde, positional, flags) {
@@ -538,6 +726,21 @@ function cmdKey(horde, positional, flags) {
   emit({ id: ticket.id, author }, flags, () => `${ticket.id}: author = ${author}`);
 }
 
+// The nodes that must approve this ticket beyond the ones it names: whoever consumes a port it
+// produces. A version bump is a change to their contract, and only they can say the new version
+// is usable — the same derivation `queue.mjs plan` prints as extra approval slots and
+// `premerge.mjs` item 2 then requires, kept in one place so the three never disagree.
+export function consumerNodesOf(text, nodes = nodesOf(text)) {
+  const produces = ticketPorts(text, 'Produces');
+  if (produces.length === 0) return [];
+  const cfg = readConfig() || {};
+  const root = repoRoot();
+  const out = new Set();
+  for (const p of produces) for (const c of consumersOf(root, cfg, p.node, p.port)) out.add(c);
+  for (const n of nodes) out.delete(n);
+  return [...out].sort();
+}
+
 // --delta <path> — the file holding the difference between what the owner already approved and
 // what is on the branch now, written by premerge.mjs when a ticket's diff moved after the review.
 // Logged by path rather than by content: the owner reads the file, and the log keeps the record of
@@ -564,14 +767,21 @@ function cmdReview(horde, positional, flags) {
   if (flags.by === keys.author) fail("the reviewer cannot be the ticket's author");
   const nodes = nodesOf(ticket.text);
 
+  const consumers = consumerNodesOf(ticket.text, nodes);
+
   let targets;
   if (flags.node) {
-    if (!nodes.includes(flags.node)) fail(`ticket does not name node: ${flags.node}`);
+    if (!nodes.includes(flags.node) && !consumers.includes(flags.node)) {
+      const offered = [...nodes, ...consumers].join(', ');
+      fail(`ticket does not name node: ${flags.node} — it is reviewed by ${offered}`);
+    }
     targets = [flags.node];
   } else if (flags.by === 'architect') {
     targets = nodes.slice();
-  } else if (nodes.length === 1) {
+  } else if (nodes.length === 1 && consumers.length === 0) {
     targets = nodes;
+  } else if (nodes.length === 1) {
+    fail(`this ticket changes a contract ${consumers.join(', ')} depend on — pass --node <n> to say whose approval this is (${[...nodes, ...consumers].join(', ')})`);
   } else {
     fail('ticket names multiple nodes — pass --node <n>, or review as "architect" to approve all at once');
   }
@@ -604,7 +814,7 @@ function cmdReview(horde, positional, flags) {
     ? approvalValue(`${flags.by}${seatTag}`, key)
     : `changes:${flags.by}`;
   let text = ticket.text;
-  for (const n of targets) text = setNodeApproval(text, n, value);
+  for (const n of targets) text = setNodeApproval(text, n, value, { allowNew: consumers.includes(n) });
 
   if (verdict === 'changes') {
     text = setStatus(text, 'changes');
@@ -653,22 +863,85 @@ function readStdin() {
   }
 }
 
+// Writes one of the four structural fields into the header, adding the line when an older ticket
+// has none — the fields are what the plan is computed from, so a ticket written before they
+// existed gains them where it can be read, rather than staying invisible to the plan forever.
+const FIELD_AFTER = {
+  Files: 'Depends on',
+  Consumes: 'Files',
+  Produces: 'Consumes',
+  Evidence: 'Produces',
+};
+function setHeaderField(text, label, value) {
+  // In place, and only the field's own value: Consumes and Produces share one line, so the
+  // replacement stops at the "·" that separates them (and keeps the spaces around it).
+  const inPlace = new RegExp(`(\\*\\*${label}:\\*\\*[ \\t]*)[^\\n·]*?(?=[ \\t]*(?:·|$))`, 'm');
+  if (inPlace.test(text)) return text.replace(inPlace, `$1${value}`);
+  const anchor = new RegExp(`^(\\*\\*${FIELD_AFTER[label]}:\\*\\*[^\\n]*)$`, 'm');
+  if (anchor.test(text)) return text.replace(anchor, `$1\n**${label}:** ${value}`);
+  return text.replace(/^(\*\*Status:\*\*[^\n]*)$/m, `$1\n**${label}:** ${value}`);
+}
+
 // The header block is everything above "## What" (id/title heading, Status, the combined
-// Node/Class/Severity/Team line, Depends-on/Branch, Keys) — edit replaces only what comes after
-// it, so none of that state can be clobbered by a body rewrite.
+// Node/Class/Severity/Team line, Depends-on/Branch, Files, Consumes/Produces, Evidence, Keys) —
+// edit replaces only what comes after it, so none of that state can be clobbered by a body
+// rewrite. The four structural fields are the exception: they are changed by their own flags,
+// each with its own log line, because widening a ticket's files or changing what it delivers is
+// a decision reviewers have to be able to see happen, never a silent drift.
 function cmdEdit(horde, positional, flags) {
   const ticket = requireTicket(horde, positional[0]);
   if (!flags.by) fail('edit requires --by <name>');
-  const stdin = readStdin();
-  if (!stdin.trim()) fail('edit requires the new body on stdin (everything from "## What" on)');
-  const idx = ticket.text.indexOf('## What');
-  if (idx === -1) fail(`ticket ${ticket.id}: could not find the "## What" section to replace`);
-  const header = ticket.text.slice(0, idx);
-  const body = stdin.replace(/\s+$/, '');
-  const updated = `${header}${body}\n`;
-  writeText(ticket.issuePath, updated);
-  appendLog(ticket, `body edited by ${flags.by}`);
-  emit({ id: ticket.id, bytes: body.length }, flags, () => `${ticket.id}: body updated (${body.length} bytes)`);
+  const wantsFields = ['files', 'consumes', 'produces', 'evidence'].some((k) => flags[k] !== undefined);
+
+  let text = ticket.text;
+  const changed = [];
+  if (wantsFields) {
+    const nodes = nodesOf(text);
+    if (flags.files !== undefined) {
+      const files = listFlag(flags.files);
+      checkFilesInBoundary(nodes, files);
+      text = setHeaderField(text, 'Files', files.length ? files.join(', ') : 'none');
+      changed.push(`files: ${files.length ? files.join(', ') : 'none'}`);
+    }
+    if (flags.consumes !== undefined) {
+      const consumes = parsePortList(flags.consumes, 'Consumes');
+      checkConsumesHaveProducers(horde, consumes, ticket.id);
+      text = setHeaderField(text, 'Consumes', consumes.length ? consumes.map((c) => c.ref).join(', ') : 'none');
+      changed.push(`consumes: ${consumes.length ? consumes.map((c) => c.ref).join(', ') : 'none'}`);
+    }
+    if (flags.produces !== undefined) {
+      const produces = parsePortList(flags.produces, 'Produces');
+      text = setHeaderField(text, 'Produces', produces.length ? produces.map((p) => p.ref).join(', ') : 'none');
+      changed.push(`produces: ${produces.length ? produces.map((p) => p.ref).join(', ') : 'none'}`);
+    }
+    if (flags.evidence !== undefined) {
+      const values = asArray(flags.evidence);
+      checkEvidenceIds(horde, values);
+      const { ids } = splitEvidenceValues(values);
+      text = setHeaderField(text, 'Evidence', ids.length ? ids.join(', ') : 'none');
+      changed.push(`evidence: ${ids.length ? ids.join(', ') : 'none'}`);
+    }
+  }
+
+  const stdin = wantsFields ? '' : readStdin();
+  if (!wantsFields && !stdin.trim()) fail('edit requires the new body on stdin (everything from "## What" on), or one of --files/--consumes/--produces/--evidence');
+
+  let bytes = 0;
+  if (stdin.trim()) {
+    const idx = text.indexOf('## What');
+    if (idx === -1) fail(`ticket ${ticket.id}: could not find the "## What" section to replace`);
+    const header = text.slice(0, idx);
+    const body = stdin.replace(/\s+$/, '');
+    bytes = body.length;
+    text = `${header}${body}\n`;
+  }
+
+  writeText(ticket.issuePath, text);
+  if (bytes) appendLog(ticket, `body edited by ${flags.by}`);
+  for (const c of changed) appendLog(ticket, `${c} — changed by ${flags.by}`);
+  emit({ id: ticket.id, bytes, changed }, flags, () => (changed.length
+    ? `${ticket.id}: ${changed.join(' · ')}${bytes ? ` · body updated (${bytes} bytes)` : ''}`
+    : `${ticket.id}: body updated (${bytes} bytes)`));
 }
 
 function main() {

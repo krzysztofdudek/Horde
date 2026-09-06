@@ -15,6 +15,7 @@ function issueDir(dir, team, id) {
 
 function writeIssue(dir, team, id, {
   node = 'feature', keysLine = '**Keys:** author worker1 · verifier verifier1 · feature owner1',
+  files = null, produces = null,
 } = {}) {
   const dst = issueDir(dir, team, id);
   mkdirSync(dst, { recursive: true });
@@ -23,6 +24,8 @@ function writeIssue(dir, team, id, {
     `**Status:** landed`,
     `**Node:** ${node} · **Class:** sonnet · **Severity:** medium · **Team:** ${team}`,
     `**Depends on:** none · **Branch:** mission1/t-${id}`,
+    ...(files ? [`**Files:** ${files.join(', ')}`] : []),
+    ...(produces ? [`**Consumes:** none · **Produces:** ${produces}`] : []),
     keysLine, '',
     '## Acceptance — evidence', '', '- [ ] does the thing', '',
   ].join('\n'));
@@ -749,6 +752,84 @@ test('premerge.mjs: item 4 says what it looked for when a diff really carries no
   // The Java patterns match nothing in this diff — and the note names them, so the ✓ cannot be
   // read as "there were no tests to find" when it means "none matching these".
   assert.match(revert.note, /no new test files in diff \(looked for \*\*\/\*Tests\.java\)/);
+});
+
+test('premerge.mjs: item 3 scope — a diff outside the files the ticket declared is refused', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  // The node's boundary is wide enough for all three files; the ticket declared only two of them.
+  run('node.mjs', ['new', 'feature', '--boundary', 'feature-040.mjs,feature-040.test.mjs,extra-040.mjs'], dir);
+
+  const branch = makeTicketBranch(dir, '040', { extraFiles: { 'extra-040.mjs': 'export const x = 1;\n' } });
+  const dst = writeIssue(dir, 'trunk', '040', { files: ['feature-040.mjs', 'feature-040.test.mjs'] });
+  writeVerdictLog(dst);
+  seedQueueItem(dir, 'trunk', '040', branch);
+
+  const r = run('premerge.mjs', [branch, '--no-gate'], dir);
+  assert.equal(r.code, 1);
+  const scope = r.json.checks.find((c) => c.name === 'scope');
+  assert.equal(scope.ok, false);
+  assert.match(scope.note, /declared 2 files, touched extra-040\.mjs outside them/);
+  assert.match(scope.note, /tk\.mjs edit --files/);
+});
+
+test('premerge.mjs: item 3 scope — declaring the file the diff touches makes it pass, and a ticket with no Files falls back to the node boundary', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  run('node.mjs', ['new', 'feature', '--boundary', 'feature-041.mjs,feature-041.test.mjs,extra-041.mjs'], dir);
+
+  const branch = makeTicketBranch(dir, '041', { extraFiles: { 'extra-041.mjs': 'export const x = 1;\n' } });
+  const dst = writeIssue(dir, 'trunk', '041', {
+    files: ['feature-041.mjs', 'feature-041.test.mjs', 'extra-041.mjs'],
+  });
+  writeVerdictLog(dst);
+  seedQueueItem(dir, 'trunk', '041', branch);
+
+  const declared = run('premerge.mjs', [branch, '--no-gate'], dir);
+  const declaredScope = declared.json.checks.find((c) => c.name === 'scope');
+  assert.equal(declaredScope.ok, true, declaredScope.note);
+  assert.match(declaredScope.note, /diff inside the 3 declared file\(s\)/);
+
+  // The same branch on a ticket that declares nothing: the node's boundary is what holds, exactly
+  // as it did before the field existed.
+  writeIssue(dir, 'trunk', '041');
+  writeVerdictLog(dst);
+  const undeclared = run('premerge.mjs', [branch, '--no-gate'], dir);
+  const undeclaredScope = undeclared.json.checks.find((c) => c.name === 'scope');
+  assert.equal(undeclaredScope.ok, true, undeclaredScope.note);
+  assert.match(undeclaredScope.note, /diff inside node boundary/);
+});
+
+test('premerge.mjs: item 2 keys — a ticket that raises a port\'s version owes an approval to every node that consumes it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  run('node.mjs', ['new', 'feature', '--boundary', 'feature-042.mjs,feature-042.test.mjs'], dir);
+  run('node.mjs', ['new', 'downstream', '--boundary', 'src/downstream/', '--depends', 'feature'], dir);
+
+  const branch = makeTicketBranch(dir, '042');
+  const dst = writeIssue(dir, 'trunk', '042', { produces: 'feature/api@2' });
+  writeVerdictLog(dst);
+  seedQueueItem(dir, 'trunk', '042', branch);
+
+  const missing = run('premerge.mjs', [branch, '--no-gate'], dir);
+  assert.equal(missing.code, 1);
+  const keys = missing.json.checks.find((c) => c.name === 'keys');
+  assert.equal(keys.ok, false);
+  assert.match(keys.note, /downstream=missing/);
+
+  // Once the consuming node's owner has approved, the same checklist is satisfied.
+  writeIssue(dir, 'trunk', '042', {
+    produces: 'feature/api@2',
+    keysLine: '**Keys:** author worker1 · verifier verifier1 · feature owner1 · downstream owner2',
+  });
+  writeVerdictLog(dst);
+  const approved = run('premerge.mjs', [branch, '--no-gate'], dir);
+  const keys2 = approved.json.checks.find((c) => c.name === 'keys');
+  assert.equal(keys2.ok, true, keys2.note);
+  assert.match(keys2.note, /downstream=owner2/);
 });
 
 // ---- keys bound to the ticket's own diff -------------------------------------------------

@@ -22,17 +22,21 @@ import {
   asArray, emit, isMain, resolveHorde, patchIdOf,
 } from './_lib.mjs';
 import {
-  nodeBoundary, nodeExists, nodeGraphPathPrefix, ticketNodes, graphIsLaw, runYgCheck, ygCommand,
+  ticketNodes, graphIsLaw, runYgCheck, ygCommand,
+  globToRegExp, pathInBoundary, ticketBoundary, consumersOf,
 } from './node.mjs';
+import { ticketFiles, ticketPorts } from './tk.mjs';
 
 const USAGE = `usage: premerge.mjs <branch> [--level team|trunk] [--no-gate] [--horde h]
 
 The checks, in order — ✓/✗ per line, non-zero exit on any ✗:
   1. base freshness — branch rooted at its parent branch's tip
-  2. keys           — author + verifier keys set, verdict reproduced, every named node approved,
-                      and every approval and the verdict still bound to the diff they were given
-                      for (a key with no diff recorded is bound to the branch tip, as before)
-  3. scope          — diff stays inside the ticket's node boundaries, no protected path touched
+  2. keys           — author + verifier keys set, verdict reproduced, every node approved (the
+                      ticket's own, plus every node consuming a port it produces), and every
+                      approval and the verdict still bound to the diff they were given for (a key
+                      with no diff recorded is bound to the branch tip, as before)
+  3. scope          — diff stays inside the files the ticket declared, or its node boundaries when
+                      it declared none; no protected path touched
   4. revert test    — new test files (named by config.testGlobs), extracted onto the parent's
                       tree, fail there; ✗ when this repository's test patterns are unknown
   5. gate           — green at this SHA (a verifier's recorded green gate, or a fresh run)
@@ -109,8 +113,20 @@ function parseKeys(issueText, nodes) {
     const v = sp === -1 ? '' : seg.slice(sp + 1).trim();
     return v && v !== '—' ? v : null;
   };
+  // Each approval segment names its own node ("<node> <value>"), so a slot is found by name
+  // first — the order still matches the **Node:** field for the nodes the ticket names, but a
+  // consumer's slot is appended after them and only the name places it.
+  const byName = new Map();
+  for (const seg of parts.slice(2)) {
+    const sp = seg.indexOf(' ');
+    if (sp !== -1) byName.set(seg.slice(0, sp).trim(), takeVal(seg));
+  }
+  const named = nodes.some((n) => byName.has(n));
   const approvals = {};
-  nodes.forEach((n, i) => { approvals[n] = parts[2 + i] ? takeVal(parts[2 + i]) : null; });
+  nodes.forEach((n, i) => {
+    if (named) approvals[n] = byName.has(n) ? byName.get(n) : null;
+    else approvals[n] = parts[2 + i] ? takeVal(parts[2 + i]) : null;
+  });
   return {
     author: parts[0] ? takeVal(parts[0]) : null,
     verifier: parts[1] ? takeVal(parts[1]) : null,
@@ -283,6 +299,20 @@ function writeScopedReReview(root, issueDirPath, branch, parentBranch, oldTip) {
   return { path: relative(root, file), why: null };
 }
 
+// Item 2's node list: the nodes the ticket names, and — when the ticket produces a port — the
+// node of everyone who consumes it. A version bump is a change to somebody else's contract, and
+// the somebody else is who has to say the new version is usable; the ticket's own owner cannot
+// answer that. The list is derived here from the same `consumersOf` the plan derives it from, so
+// the approval the checklist demands is exactly the one the plan told the steward to collect.
+function approvalNodesFor(root, cfg, issueText, nodes) {
+  const extra = new Set();
+  for (const p of ticketPorts(issueText, 'Produces')) {
+    for (const c of consumersOf(root, cfg, p.node, p.port)) extra.add(c);
+  }
+  for (const n of nodes) extra.delete(n);
+  return [...nodes, ...[...extra].sort()];
+}
+
 // Team merge-up substitute for "keys": no single author/verifier on a branch that isn't a
 // ticket, so readiness is every ticket the child team ever queued being merged, each still
 // carrying the same two keys and node approvals a ticket-level merge required of it.
@@ -307,41 +337,38 @@ function checkKeysForTeamMergeUp(childTeamDir) {
   };
 }
 
-function globToRegExp(glob) {
-  // "**/" — zero or more path segments, i.e. an optional prefix ending in one slash, so a
-  // pattern like "**/*.test.*" also matches a root-level file with no directory at all. A lone
-  // "**" (not followed by "/") maps to ".*"; a lone "*" to "[^/]*" (one path segment).
-  const esc = (s) => s.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-  let out = '';
-  for (let i = 0; i < glob.length;) {
-    if (glob.startsWith('**/', i)) { out += '(?:.*/)?'; i += 3; } else if (glob.startsWith('**', i)) { out += '.*'; i += 2; } else if (glob[i] === '*') { out += '[^/]*'; i += 1; } else { out += esc(glob[i]); i += 1; }
-  }
-  return new RegExp(`^${out}$`);
-}
-
-function pathInBoundary(path, boundary) {
-  return boundary.some((pat) => (pat.includes('*') ? globToRegExp(pat).test(path) : path === pat || path.startsWith(pat)));
-}
-
-// A ticket's scope is its named node(s)' own code boundary, plus each node's own graph files
-// (yg-node.yaml/node.json, charter.md, contracts.md, log.md) — the owner charters its node and
-// logs decisions as part of the same change that touches the code, so that stays in scope too.
-// Nothing else under .yggdrasil/ (yg-architecture.yaml, aspects, config) is any node's own
-// files, so no ticket's scope reaches those by way of this. Yggdrasil's committed lock files are
-// neither in nor out of scope: yg writes them itself as a consequence of in-scope edits (a log entry,
-// a merge-resolved log.md) and hand edits are what `yg check` in the gate refuses, so they are
-// reported as derived and left to the gate.
+// A ticket's scope is what it declared it would touch — the `**Files:**` field — and, when it
+// declared nothing, its named node(s)' own code boundary plus each node's own graph files
+// (yg-node.yaml/node.json, charter.md, contracts.md, log.md), since the owner charters its node
+// and logs decisions as part of the same change that touches the code. Nothing else under
+// .yggdrasil/ (yg-architecture.yaml, aspects, config) is any node's own files, so no ticket's
+// scope reaches those by way of this. Yggdrasil's committed lock files are neither in nor out of
+// scope: yg writes them itself as a consequence of in-scope edits (a log entry, a merge-resolved
+// log.md) and hand edits are what `yg check` in the gate refuses, so they are reported as derived
+// and left to the gate.
+//
+// A declared list is the tighter of the two and it wins: the owner said which files this ticket
+// touches, the reviewers approved that, and a diff that reaches past it is a widened ticket
+// nobody agreed to. The fix is never a quiet pass — it is `tk.mjs edit NNN --files …`, which
+// writes the new list and a log line saying who widened it and when.
 const DERIVED_LOCK = /^\.yggdrasil\/yg-lock\.[^/]+\.json$/;
-function checkScope(root, cfg, nodes, files) {
-  const boundary = nodes.flatMap((n) => (nodeExists(root, cfg, n) ? [...nodeBoundary(root, cfg, n), nodeGraphPathPrefix(root, cfg, n)] : []));
+function checkScope(root, cfg, nodes, files, declared = []) {
+  const boundary = declared.length ? declared : ticketBoundary(root, cfg, nodes);
   const derived = files.filter((f) => DERIVED_LOCK.test(f));
   files = files.filter((f) => !DERIVED_LOCK.test(f));
   const outside = boundary.length ? files.filter((f) => !pathInBoundary(f, boundary)) : files;
   const protectedPaths = cfg.protectedPaths || [];
   const touchedProtected = files.filter((f) => protectedPaths.some((p) => f === p || f.startsWith(p)));
   const ok = outside.length === 0 && touchedProtected.length === 0;
+  const shown = outside.slice(0, 5).join(', ') + (outside.length > 5 ? '…' : '');
   const parts = [];
-  parts.push(outside.length ? `outside boundary: ${outside.slice(0, 5).join(', ')}${outside.length > 5 ? '…' : ''}` : 'diff inside node boundary');
+  if (declared.length) {
+    parts.push(outside.length
+      ? `declared ${declared.length} files, touched ${shown} outside them — widen the ticket with tk.mjs edit --files, never in silence`
+      : `diff inside the ${declared.length} declared file(s)`);
+  } else {
+    parts.push(outside.length ? `outside boundary: ${shown}` : 'diff inside node boundary');
+  }
   parts.push(touchedProtected.length ? `protected paths touched: ${touchedProtected.join(', ')}` : 'no protected path touched');
   if (derived.length) parts.push(`derived lock files left to yg check: ${derived.join(', ')}`);
   return { ok, note: parts.join(' · ') };
@@ -575,6 +602,7 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
   let issueText = null;
   let logText = null;
   let nodes = [];
+  let declaredFiles = [];
 
   let skipRevertTest = false;
   if (isTeamMergeUp) {
@@ -592,8 +620,13 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
     issueText = readText(join(issueDirPath, 'issue.md'));
     logText = readText(join(issueDirPath, 'log.md'));
     nodes = ticketNodes(issueText);
+    declaredFiles = ticketFiles(issueText);
     const branchPatchId = patchIdOf(branch, parentBranch, { context: cfg.keyContext, cwd: root });
-    const keys = checkKeysForTicket(issueText, logText, ticketId, nodes, branchSha, branchPatchId);
+    // The node list is the ticket's own nodes plus every node that consumes a port it produces;
+    // how each of those keys is then bound to what it judged is the binding below.
+    const keys = checkKeysForTicket(
+      issueText, logText, ticketId, approvalNodesFor(root, cfg, issueText, nodes), branchSha, branchPatchId,
+    );
     // A key whose diff no longer holds is not an escalation and not a full re-review: write the
     // difference between what was approved and what is here now, and name that file, so the owner
     // and the verifier judge the delta instead of the whole change a second time.
@@ -610,7 +643,7 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
     });
   }
 
-  checks.push({ name: 'scope', ...checkScope(root, cfg, nodes, changedFiles) });
+  checks.push({ name: 'scope', ...checkScope(root, cfg, nodes, changedFiles, declaredFiles) });
   checks.push({
     name: 'revert test',
     ...(skipRevertTest

@@ -148,13 +148,17 @@ function readManualNode(root, cfg, node) {
 function parseYgNodeYaml(text) {
   const lines = text.split('\n');
   const result = {
-    name: null, type: null, description: null, mapping: [], relations: [], aspects: [],
+    name: null, type: null, description: null, mapping: [], relations: [], aspects: [], ports: {},
   };
   let section = null;
   let pendingRelation = null;
+  let pendingList = null;
+  let relationIndent = 0;
+  let pendingPort = null;
   const flushRelation = () => {
     if (pendingRelation && (pendingRelation.target || pendingRelation.type)) result.relations.push(pendingRelation);
     pendingRelation = null;
+    pendingList = null;
   };
   for (const raw of lines) {
     const line = raw.replace(/\s+$/, '');
@@ -166,7 +170,8 @@ function parseYgNodeYaml(text) {
       if (key === 'name') result.name = unquote(rest.trim());
       else if (key === 'type') result.type = unquote(rest.trim());
       else if (key === 'description') result.description = unquote(rest.trim());
-      section = ['mapping', 'aspects', 'relations'].includes(key) ? key : null;
+      pendingPort = null;
+      section = ['mapping', 'aspects', 'relations', 'ports'].includes(key) ? key : null;
       continue;
     }
     if (section === 'mapping') {
@@ -191,16 +196,50 @@ function parseYgNodeYaml(text) {
       }
       continue;
     }
+    // A relation is a dash item whose keys follow it, indented further; a key with no value on its
+    // own line (`consumes:`) opens a nested list, whose own dash items are indented deeper than the
+    // dash that opened the relation — that indent is what tells the two kinds of dash apart, so a
+    // `consumes:` list is read as the relation's ports rather than as three more relations.
     if (section === 'relations') {
+      const indent = line.length - line.trimStart().length;
       const dash = /^\s*-\s*(.+)$/.exec(line);
       const kv = /^\s+([A-Za-z_-]+):\s*(.*)$/.exec(line);
-      if (dash) {
+      if (dash && pendingRelation && pendingList && indent > relationIndent) {
+        pendingRelation[pendingList].push(unquote(dash[1].trim()));
+      } else if (dash) {
         flushRelation();
         pendingRelation = {};
+        relationIndent = indent;
         const inline = /^([A-Za-z_-]+):\s*(.*)$/.exec(dash[1]);
-        if (inline) pendingRelation[inline[1]] = unquote(inline[2].trim());
+        if (inline) pendingRelation[inline[1]] = parseYamlValue(inline[2].trim());
       } else if (kv && pendingRelation) {
-        pendingRelation[kv[1]] = unquote(kv[2].trim());
+        const value = kv[2].trim();
+        if (value === '') {
+          pendingList = kv[1];
+          pendingRelation[kv[1]] = [];
+        } else {
+          pendingList = null;
+          pendingRelation[kv[1]] = parseYamlValue(value);
+        }
+      }
+      continue;
+    }
+    // `ports:` is a map, not a list: each port is a key two spaces in, its own fields deeper. Only
+    // the fields the layers above agreed on are read (`version`, `test`); anything else is kept as
+    // written, so a field added later reaches a caller that knows to look for it.
+    if (section === 'ports') {
+      const indent = line.length - line.trimStart().length;
+      const kv = /^\s+([A-Za-z0-9._-]+):\s*(.*)$/.exec(line);
+      if (!kv) continue;
+      if (indent <= 2) {
+        pendingPort = unquote(kv[1].trim());
+        result.ports[pendingPort] = { version: null, test: null };
+        const inline = kv[2].trim();
+        if (inline && inline !== '{}') result.ports[pendingPort].value = parseYamlValue(inline);
+      } else if (pendingPort) {
+        const value = parseYamlValue(kv[2].trim());
+        const numeric = kv[1] === 'version' && typeof value === 'string' && /^\d+$/.test(value);
+        result.ports[pendingPort][kv[1]] = numeric ? Number(value) : (value === '' ? null : value);
       }
       continue;
     }
@@ -211,7 +250,18 @@ function parseYgNodeYaml(text) {
 
 function unquote(s) {
   if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) return s.slice(1, -1);
+  if (s.length >= 2 && s.startsWith("'") && s.endsWith("'")) return s.slice(1, -1);
   return s;
+}
+
+// One scalar, or the inline list form `[a, b]` that `yg` uses for short lists — the only two
+// shapes a value takes in these files.
+function parseYamlValue(raw) {
+  const s = String(raw).trim();
+  if (s.startsWith('[') && s.endsWith(']')) {
+    return s.slice(1, -1).split(',').map((p) => unquote(p.trim())).filter(Boolean);
+  }
+  return unquote(s);
 }
 
 function readYggdrasilNode(root, node) {
@@ -282,6 +332,121 @@ export function readNodeCharterText(root, cfg, node) {
 
 export function readNodeContractsText(root, cfg, node) {
   return readText(nodeContractsPath(root, cfg, node));
+}
+
+// ---- boundary matching (shared with premerge.mjs and tk.mjs) ---------------
+//
+// One reading of "inside the node", used by the merge checklist's scope item and by the ticket
+// tool when it accepts a declared file list: the same globs, matched the same way, so a path a
+// ticket is allowed to declare is exactly a path the checklist will allow it to touch.
+
+// "**/" — zero or more path segments, i.e. an optional prefix ending in one slash, so a pattern
+// like "**/*.test.*" also matches a root-level file with no directory at all. A lone "**" (not
+// followed by "/") maps to ".*"; a lone "*" to "[^/]*" (one path segment).
+export function globToRegExp(glob) {
+  const esc = (s) => s.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  let out = '';
+  for (let i = 0; i < glob.length;) {
+    if (glob.startsWith('**/', i)) { out += '(?:.*/)?'; i += 3; } else if (glob.startsWith('**', i)) { out += '.*'; i += 2; } else if (glob[i] === '*') { out += '[^/]*'; i += 1; } else { out += esc(glob[i]); i += 1; }
+  }
+  return new RegExp(`^${out}$`);
+}
+
+export function pathInBoundary(path, boundary) {
+  return boundary.some((pat) => (pat.includes('*') ? globToRegExp(pat).test(path) : path === pat || path.startsWith(pat)));
+}
+
+// The whole boundary of a ticket: every named node's code boundary plus that node's own graph
+// files. A node the graph does not know contributes nothing, and a ticket whose nodes are all
+// unknown gets an empty boundary — which the callers read as "nothing to check against", never
+// as "everything is inside".
+export function ticketBoundary(root, cfg, nodes) {
+  return nodes.flatMap((n) => (nodeExists(root, cfg, n) ? [...nodeBoundary(root, cfg, n), nodeGraphPathPrefix(root, cfg, n)] : []));
+}
+
+// ---- ports and the nodes that consume them ---------------------------------
+
+// The relations a node declares. Yggdrasil mode reads them from `yg-node.yaml` (a relation may
+// name the ports it consumes); manual mode has no ports at all, so `dependsOn` — the only edge
+// it records — stands in, naming no port.
+export function nodeRelations(root, cfg, node) {
+  if (mode(cfg) === 'yggdrasil') {
+    const y = readYggdrasilNode(root, node);
+    return y ? y.relations : [];
+  }
+  const n = readManualNode(root, cfg, node);
+  return n && Array.isArray(n.dependsOn) ? n.dependsOn.map((t) => ({ target: t, type: 'depends' })) : [];
+}
+
+// The ports a node offers, as {name: {version, test}} — empty in manual mode, which has none.
+export function nodePorts(root, cfg, node) {
+  if (mode(cfg) === 'yggdrasil') {
+    const y = readYggdrasilNode(root, node);
+    return y && y.ports ? y.ports : {};
+  }
+  const n = readManualNode(root, cfg, node);
+  return n && n.ports && typeof n.ports === 'object' ? n.ports : {};
+}
+
+export function portExists(root, cfg, node, port) {
+  return Object.prototype.hasOwnProperty.call(nodePorts(root, cfg, node), port);
+}
+
+// `<ygCommand> impact --node <path> --json` — Yggdrasil's own answer to "who depends on this
+// node", the versioned document the layers agreed on. Accepted only when the document says so
+// itself (`schema` = "yg-impact/1"); anything else — an older CLI, no CLI, a different shape —
+// is a null, and the caller reads the graph files instead. Probed once per node per process:
+// a plan asks about the same node many times and the answer cannot change mid-run.
+const impactCache = new Map();
+export function ygImpact(cfg, node) {
+  if (!cfg || !cfg.ygCommand) return null;
+  if (impactCache.has(node)) return impactCache.get(node);
+  const { cmd, prefix } = ygCommand(cfg);
+  let doc = null;
+  try {
+    const out = execFileSync(cmd, [...prefix, 'impact', '--node', node, '--json'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const parsed = JSON.parse(out);
+    if (parsed && parsed.schema === 'yg-impact/1') doc = parsed;
+  } catch {
+    doc = null;
+  }
+  impactCache.set(node, doc);
+  return doc;
+}
+
+// consumersOf(node, port) — every node that consumes one node's port: from `yg impact` when the
+// installed CLI produces the document, else from the relations in the graph files. The one
+// derivation of this, because three things depend on the same answer: which tickets a version
+// bump must come before, whose owner has to approve it, and what the merge checklist then
+// requires. A relation that names no port at all consumes the node as a whole, so a bump reaches
+// it too — the safe direction, and the only reading manual mode's `dependsOn` supports.
+export function consumersOf(root, cfg, node, port) {
+  const out = new Set();
+  const doc = ygImpact(cfg, node);
+  if (doc) {
+    for (const p of asArray(doc.ports)) {
+      if (p && p.name === port) for (const c of asArray(p.consumers)) if (c && c.node) out.add(c.node);
+    }
+    for (const d of asArray(doc.dependents)) {
+      if (!d || !d.node) continue;
+      for (const r of asArray(d.relations)) {
+        const ports = asArray(r && r.ports);
+        if (ports.length === 0 || ports.includes(port)) out.add(d.node);
+      }
+    }
+    return [...out].sort();
+  }
+  for (const other of listAllNodes(root, cfg)) {
+    if (other === node) continue;
+    for (const rel of nodeRelations(root, cfg, other)) {
+      if (!rel || rel.target !== node) continue;
+      const consumes = asArray(rel.consumes);
+      if (consumes.length === 0 || consumes.includes(port)) out.add(other);
+    }
+  }
+  return [...out].sort();
 }
 
 // ---- the node's rules ------------------------------------------------------

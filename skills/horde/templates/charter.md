@@ -20,6 +20,8 @@ apply, and anything the chairman said that narrows the solution space.
 
 The mission is done when every item below is green. Each item is something a verifier can reproduce:
 a test, a scenario file, a film, a screenshot, a measurement with a threshold. Never an adjective.
+Every row gets an id — E1, E2, E3 … — because that is how a ticket says which evidence it earns
+(`**Evidence:** E2, E5`), and how the plan names the rows no ticket has taken.
 
 | id | evidence | node | reproduced by |
 |---|---|---|---|
