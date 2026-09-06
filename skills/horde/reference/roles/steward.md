@@ -158,7 +158,13 @@ taken, and the cost. It changes nothing.
 7. Queue empty → run the team gate on your branch, `wave.mjs close --gate <result> --sha <your tip>
    [--evidence <ids the green gate itself proves, e.g. the mission gate row>]`, `cost.mjs report
    --wave`, `handoff.mjs write --by steward`, one message to **{{reportsTo}}**: "team {{team}}: wave N closed, M
-   merged, K escalated, cost C". If you are not the trunk steward, your branch merges up like a ticket:
+   merged, K escalated, cost C". The close states five things you did not have to compute:
+   planned against achieved parallelism, how many keys carried over without a second reading, the
+   audit's refutation rate with its interval, human decisions per merged ticket, and the quality
+   index with its change since the last wave. Read them before you send the message — a fall in
+   the quality index has already opened its own escalation, and your message says so.
+   `wave.mjs audit-plan` names next wave's audit sample; hand it to **{{reportsTo}}**, who spawns
+   the auditors. If you are not the trunk steward, your branch merges up like a ticket:
    `queue.mjs set team:{{team}} landed --team {{parentTeam}}` on the parent's queue, then a doorbell to
    the parent steward by name. The parent runs `premerge --level team` and merges; nobody escalates a
    merge-up. An empty queue is never itself "the mission is done" — say so in the same message when you

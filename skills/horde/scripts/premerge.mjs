@@ -28,6 +28,7 @@ import {
   globToRegExp, pathInBoundary, ticketBoundary, consumersOf,
 } from './node.mjs';
 import { ticketFiles, ticketPorts } from './tk.mjs';
+import { noteKeysTransferred } from './wave.mjs';
 
 const USAGE = `usage: premerge.mjs <branch> [--level team|trunk] [--no-gate] [--horde h]
 
@@ -245,11 +246,19 @@ function checkKeysForTicket(issueText, logText, ticketId, nodes, branchSha, bran
   const staleByDiff = [];
   const staleBySha = [];
   let boundToDiff = 0;
+  // A key that TRAVELLED: it was given at a tip the branch has since moved past, and the diff it
+  // was given for is still the diff the branch carries. That is review the horde did not have to
+  // buy twice, and it is counted here — the only place that can tell the difference between a key
+  // that never moved and one that survived a catch-up — for the journal note run() then appends.
+  let transferred = 0;
   const tally = (sha, patchId) => {
     const verdict = judge(sha, patchId);
     if (verdict === 'diff') staleByDiff.push(sha);
     else if (verdict === 'sha') staleBySha.push(sha);
-    else if (patchId && branchPatchId) boundToDiff += 1;
+    else if (patchId && branchPatchId) {
+      boundToDiff += 1;
+      if (sha && branchSha && !shaMatches(sha, branchSha)) transferred += 1;
+    }
   };
 
   for (const n of nodes) {
@@ -280,7 +289,9 @@ function checkKeysForTicket(issueText, logText, ticketId, nodes, branchSha, bran
   if (staleBySha.length) {
     parts.push(`approval/verdict predates ${short(branchSha)} — re-review`);
   }
-  return { ok, note: parts.join(', '), diffChangedAt: [...new Set(staleByDiff.filter(Boolean))] };
+  return {
+    ok, note: parts.join(', '), diffChangedAt: [...new Set(staleByDiff.filter(Boolean))], transferred,
+  };
 }
 
 // The scoped re-review: what changed between the state a key was given for and the state now,
@@ -639,6 +650,12 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
         ? `scoped re-review: ${path}`
         : `full re-review (${why})`}`;
     });
+    // Keys that survived a catch-up are the horde's saved review, and the wave close reports the
+    // total — so the moment premerge establishes it is the moment it goes into the journal. The
+    // note is idempotent on the ticket and the diff, so re-running premerge records it once.
+    if (keys.transferred > 0 && branchPatchId) {
+      noteKeysTransferred(horde, team, ticketId, keys.transferred, short(branchPatchId));
+    }
     checks.push({
       name: 'keys',
       ok: keys.ok,

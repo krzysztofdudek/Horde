@@ -3,9 +3,9 @@
 // exercise the actual CLI contract rather than the internals.
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -66,6 +66,36 @@ export function initHorde(dir, name = 'mission1', extra = []) {
   const r = run('horde.mjs', ['init', name, '--base', 'develop', ...globs, ...extra], dir);
   if (r.code !== 0) throw new Error(`initHorde failed: ${r.stderr}`);
   return r.json;
+}
+
+// findRealYg() — the real, installed Yggdrasil CLI, for the tests that measure a real graph
+// rather than a stand-in: the HORDE_TEST_YG environment variable, else `yg` on PATH, else a
+// sibling checkout's own build (`<ancestor>/Yggdrasil/source/cli/dist/bin.js`, walking up from
+// this repository — the layout of a machine that has both repos out). Returns the command line
+// to put in `config.ygCommand`, or null when there is none. A test that gets null asserts the
+// honest "not measured" answer the tools give without a CLI; it never fabricates a report.
+export function findRealYg() {
+  const probe = (cmdline) => {
+    const parts = String(cmdline).trim().split(/\s+/).filter(Boolean);
+    try {
+      execFileSync(parts[0], [...parts.slice(1), '--version'], { stdio: 'ignore' });
+      return cmdline;
+    } catch {
+      return null;
+    }
+  };
+  if (process.env.HORDE_TEST_YG) return probe(process.env.HORDE_TEST_YG);
+  const onPath = probe('yg');
+  if (onPath) return onPath;
+  let dir = SCRIPTS_DIR;
+  for (let i = 0; i < 12; i++) {
+    const candidate = join(dir, 'Yggdrasil', 'source', 'cli', 'dist', 'bin.js');
+    if (existsSync(candidate)) return probe(`node ${candidate}`);
+    const up = resolve(dir, '..');
+    if (up === dir) break;
+    dir = up;
+  }
+  return null;
 }
 
 // writeCostRuns(dir, horde, runs) — cost.json is written only by roster.mjs spawn (out of this

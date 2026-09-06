@@ -2,6 +2,11 @@
 
 **Merged:** {{merged}} tickets · **Escalated:** {{escalated}} · **Open:** {{open}} · **Gate on trunk:** {{gate}}
 **Evidence catalogue:** {{green}}/{{total}} green (Δ {{delta}} since wave {{n-1}})
+**Parallelism:** planned {{plannedParallelism}} · achieved {{achievedParallelism}}
+**Keys transferred:** {{keysTransferred}} without re-review
+**Audit:** {{auditLine}}
+**Decisions per merged ticket:** {{decisionsLine}}
+**Quality index:** {{qualityLine}}
 **Cost:** {{runs}} runs · weighted {{weighted}} · mission to date {{cumulative}}{{ of limit}}
 
 ## Graph changes (architect)

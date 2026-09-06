@@ -118,6 +118,94 @@ export function runYgCheck(cfg, cwd) {
   };
 }
 
+// ---- the quality index ----------------------------------------------------------------------
+//
+// Five numbers that say whether the graph got stronger or weaker over a wave, read from the two
+// read-only, keyless commands the installed Yggdrasil CLI actually has: `check` (the gate's own
+// report) and `aspects` (the rule list with each rule's status). There is deliberately no
+// `--json` here: the installed CLI has no such flag on either command — verified against its own
+// `--help`, the same way blame.mjs settled on reading the lock — so the honest source is what
+// those two commands print, parsed for the figures they state outright, and a figure the output
+// does not state is reported as unknown rather than invented.
+//
+//   enforced       rules at status "enforced" — the law that actually blocks
+//   advisoryClean  advisory rules this run reported nothing against, of all advisory rules
+//   baseline       findings that block right now (the report's own error count)
+//   noiseFloor     findings that only warn (the report's own warning count) — the standing noise
+//   coverage       files a component owns, of all files the graph can see
+//
+// Higher enforced / advisoryClean / coverage and lower baseline / noiseFloor is a stronger
+// graph; wave.mjs close compares two readings and escalates when any of them moved the wrong way.
+
+const CHECK_FILES_RE = /(\d+)\/(\d+) files/;
+const CHECK_NODES_RE = /(\d+) nodes/;
+const CHECK_ASPECTS_RE = /(\d+) aspects/;
+const CHECK_ERRORS_RE = /Errors \((\d+)\)/;
+const CHECK_WARNINGS_RE = /Warnings \((\d+)\)/;
+const ASPECT_LINE_RE = /^(\S+) \[(draft|advisory|enforced)\]/;
+
+function runYg(cfg, cwd, args) {
+  const { cmd, prefix, display } = ygCommand(cfg);
+  try {
+    return {
+      available: true,
+      ok: true,
+      out: execFileSync(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
+      command: `${display} ${args.join(' ')}`,
+    };
+  } catch (e) {
+    if (e.code === 'ENOENT') {
+      return { available: false, ok: false, out: '', command: `${display} ${args.join(' ')}` };
+    }
+    return {
+      available: true,
+      ok: false,
+      out: ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || ''),
+      command: `${display} ${args.join(' ')}`,
+    };
+  }
+}
+
+// ygQualityIndex(cfg, cwd) — the reading above, taken on the tree at `cwd`. `available: false`
+// means the CLI could not be started at all, which is a different answer from a graph that
+// refuses the tree: a red check still yields a perfectly good index (that is what a baseline of
+// blocking findings IS). Never approves anything — `check` and `aspects` are both read-only and
+// keyless, so this costs nothing and needs no key.
+export function ygQualityIndex(cfg, cwd) {
+  const check = runYg(cfg, cwd, ['check']);
+  if (!check.available) {
+    return { available: false, command: check.command, why: 'the Yggdrasil CLI could not be started' };
+  }
+  const aspects = runYg(cfg, cwd, ['aspects']);
+
+  const statuses = [];
+  for (const line of (aspects.out || '').split('\n')) {
+    const m = ASPECT_LINE_RE.exec(line.trim());
+    if (m) statuses.push({ id: m[1], status: m[2] });
+  }
+  const advisory = statuses.filter((a) => a.status === 'advisory');
+  // "Zero new violations" is read off the report itself: an advisory rule with something to say
+  // is named in the block that says it. A rule the report never mentions raised nothing.
+  const body = check.out || '';
+  const advisoryClean = advisory.filter((a) => !body.includes(a.id)).length;
+
+  const files = CHECK_FILES_RE.exec(body);
+  return {
+    available: true,
+    command: check.command,
+    green: check.ok,
+    enforced: statuses.filter((a) => a.status === 'enforced').length,
+    advisoryTotal: advisory.length,
+    advisoryClean,
+    baseline: Number((CHECK_ERRORS_RE.exec(body) || [])[1] || 0),
+    noiseFloor: Number((CHECK_WARNINGS_RE.exec(body) || [])[1] || 0),
+    coveredFiles: files ? Number(files[1]) : null,
+    totalFiles: files ? Number(files[2]) : null,
+    nodes: Number((CHECK_NODES_RE.exec(body) || [])[1] || 0),
+    aspects: Number((CHECK_ASPECTS_RE.exec(body) || [])[1] || 0),
+  };
+}
+
 function graphDir(cfg) {
   return (cfg && cfg.graphDir) || 'architecture/';
 }

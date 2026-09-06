@@ -37,7 +37,7 @@ Without it, Claude Code never raises a steward that stays alive and addressable 
 
 You and Horde write the charter together first: the goal, what's out of scope, and the evidence that proves it's done (tests, scenarios, nothing vaguer than that). Then it cuts the mission into nodes with you, once, and spawns a **steward**. The steward spawns an **owner** per node and an **architect** who can veto changes to the graph. Owners read their node and propose tickets; the steward assembles the proposals into a dependency graph and starts a wave.
 
-Workers pick up tickets, each in its own worktree, each against a locked spec. A **verifier who never verifies its own work** reproduces the evidence before anything merges. Nothing lands without two keys and one approval: the worker's key, the verifier's key, and the owner's review of every node the ticket touches. Once a wave closes, an Opus **auditor** redoes one merged ticket from scratch, because a report is a hypothesis until someone who didn't write it reproduces it.
+Workers pick up tickets, each in its own worktree, each against a locked spec. A **verifier who never verifies its own work** reproduces the evidence before anything merges. Nothing lands without two keys and one approval: the worker's key, the verifier's key, and the owner's review of every node the ticket touches. Once a wave closes, an Opus **auditor** redoes merged tickets from scratch, because a report is a hypothesis until someone who didn't write it reproduces it. How many is a sample size, not a habit: it doubles when an audit catches something, thins out after a long clean run, and never drops to nothing — and every wave close publishes what share of audited work didn't survive the second look, with how confident that share is.
 
 You never read a diff. What comes to you: a contract two owners can't agree on, a claim that something is a boundary and shouldn't be touched, a cost limit reached, anything genuinely unsure. Everything else, the horde rules on itself and writes down why, so the next session picks it up cold from the files, not from your memory of the conversation.
 
@@ -73,7 +73,7 @@ Roles, and what each one is not allowed to do:
 | Architect | Opus, no node of its own | approves or vetoes graph changes | implementation |
 | Worker | the cheapest model that will pass verification | implementation detail | contracts, decisions, other branches |
 | Verifier | never the author, fresh context | reproducible or not | fixing what it finds |
-| Auditor | Opus, once per wave | a process verdict on one merged ticket | nothing named |
+| Auditor | Opus, on a sample per wave | a process verdict on one merged ticket | nothing named |
 
 Every change belongs to exactly one ticket. Liveness is judged by files and branches, never by silence: a steward gone quiet for too long gets reclaimed and respawned from the same charter, not waited for. And it never pushes: starting a mission is your consent to local commits on the horde's own branches, nothing more. The pull request, and the push, stay yours.
 
