@@ -341,6 +341,34 @@ test('tk.mjs: new --revert-base sets the header; omitted, it renders empty (defa
   });
 });
 
+test('tk.mjs: new --kind defaults to "work"; "quality" is the only other value accepted', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  await t.test('omitted, the ticket is "work"', () => {
+    const r = run('tk.mjs', ['new', 'default-kind', '--title', 'Default kind', '--node', 'core', '--class', 'sonnet'], dir);
+    assert.equal(r.code, 0);
+    assert.equal(r.json.kind, 'work');
+    const shown = run('tk.mjs', ['show', r.json.id], dir);
+    assert.match(shown.json.text, /\*\*Kind:\*\* work/);
+  });
+
+  await t.test('--kind quality marks a self-filed improvement outside the ticket\'s own scope', () => {
+    const r = run('tk.mjs', ['new', 'tidy-up', '--title', 'Tidy up', '--node', 'core', '--class', 'sonnet', '--kind', 'quality'], dir);
+    assert.equal(r.code, 0);
+    assert.equal(r.json.kind, 'quality');
+    const shown = run('tk.mjs', ['show', r.json.id], dir);
+    assert.match(shown.json.text, /\*\*Kind:\*\* quality/);
+  });
+
+  await t.test('any other value is refused', () => {
+    const r = run('tk.mjs', ['new', 'bad-kind', '--title', 'Bad kind', '--node', 'core', '--class', 'sonnet', '--kind', 'bogus'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--kind must be one of: work, quality/);
+  });
+});
+
 test('tk.mjs status changes: the fix-loop breaker counts rounds, then refuses past the cap', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
