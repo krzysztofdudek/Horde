@@ -47,6 +47,12 @@ const SEVERITIES = ['high', 'medium', 'low'];
 // `queue.mjs next` always ranks after every work ticket, whatever its severity, per the
 // quality-always-authorised ruling: quality is raised in free parallelism, never ahead of the work.
 const KINDS = ['work', 'quality'];
+// A ticket's own answer to the charter's quality policy (ruling quality-always-authorised). The
+// mission's policy is the default; `tk.mjs new --no-quality` sets this one ticket to
+// "only-the-work" — the work it names, nothing beside it — which is how a single delicate change
+// is walled off without turning the policy off for the whole mission. Neither value ever permits
+// making anything weaker.
+const TICKET_QUALITY = ['autonomous', 'only-the-work'];
 const REVIEW_PENDING_STATUSES = new Set(['landed', 'changes']);
 const OPEN_EXCLUDE = new Set(['merged', 'dropped']);
 
@@ -54,7 +60,7 @@ const USAGE = `usage: tk.mjs <command> [options]
 
 commands:
   new <slug> --title "<t>" --node <n> [--node <n2> …] --class <c> [--severity high|medium|low]
-      [--kind work|quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
+      [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
       [--produces <node>/<port>@<v>,…] [--evidence "<…>"]… [--revert-base <ref>]
       [--team t] [--horde h]
       renders templates/ticket.md; status starts "proposed". --node is repeatable, up to two —
@@ -63,6 +69,9 @@ commands:
       --kind defaults to "work"; "quality" marks a self-filed improvement outside a wave's
       assigned scope (better graph, normalization, tidy-up) — queue.mjs next always ranks it
       after every work ticket, whatever its severity.
+      --no-quality walls this one ticket off from the mission's quality policy: the work it names
+      and nothing beside it, whatever the charter says. It never permits the opposite — nothing
+      here can make a rule weaker at any setting.
       --revert-base names the ref premerge.mjs's revert test should use instead of the parent
       branch's tip (for a test meant to already be green there, e.g. a contract test).
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
@@ -141,6 +150,12 @@ export function nodesOf(text) {
 // field degrades to the mission-scope default rather than to an unrecognized value.
 export function ticketKind(text) {
   return parseField(text, 'Kind') === 'quality' ? 'quality' : 'work';
+}
+
+// A ticket written before the Quality field existed reads as "autonomous" — the mission's own
+// default, not a silent opt-out of it.
+export function ticketQuality(text) {
+  return parseField(text, 'Quality') === 'only-the-work' ? 'only-the-work' : 'autonomous';
 }
 
 // --- the four structural fields ----------------------------------------
@@ -516,22 +531,27 @@ function checkConsumesHaveProducers(horde, consumes, selfId) {
 
 // --- commands --------------------------------------------------------------
 
-// --revert-base <ref> on `new` — the ref premerge.mjs's revert test should extract a ticket's new
-// tests onto instead of the parent branch's tip, for a test that is meant to already be green
-// there (a contract test pinning a surface that already holds) and is red somewhere else named
-// on the ticket's own acceptance line instead (e.g. "red on develop"). Empty by default: the
-// template's own "**Revert base:**" line then renders with nothing after it, which premerge.mjs
-// reads as "use the parent tip".
-function revertBaseVar(flags) {
-  return flags['revert-base'] ? { revertBase: flags['revert-base'] } : {};
-}
-
-function cmdNew(horde, positional, flags) {
-  const slug = positional[0];
+// createTicket(horde, spec) — the one place a ticket comes into being, so a ticket filed by a tool
+// (the quality pass over Grain's advisories, `queue.mjs quality`) is the same object, validated the
+// same way, as one an owner files by hand. `cmdNew` is this with the flags read off the command
+// line; nothing else writes an issue folder. Refusals still go through fail(), which is the tools'
+// shared error contract — a caller wanting a softer answer checks first.
+//
+// `revertBase` (`--revert-base <ref>` on `new`) is the ref premerge.mjs's revert test extracts a
+// ticket's new tests onto instead of the parent branch's tip, for a test meant to already be green
+// there (a contract test pinning a surface that already holds) and red somewhere else named on the
+// ticket's own acceptance line instead (e.g. "red on develop"). Empty by default: the template's own
+// "**Revert base:**" line then renders with nothing after it, which premerge.mjs reads as "use the
+// parent tip".
+export function createTicket(horde, spec) {
+  const {
+    slug, title, nodes, cls, severity = 'medium', kind = 'work', quality = 'autonomous',
+    team = 'trunk', evidence = [], files: fileList = [], consumes: consumesRaw,
+    produces: producesRaw, depends = [], revertBase = null,
+  } = spec;
   if (!slug) fail('new requires <slug>');
-  if (!flags.title) fail('new requires --title "<t>"');
-  const nodes = asArray(flags.node);
-  if (nodes.length === 0) fail('new requires --node <n> (repeatable)');
+  if (!title) fail('new requires --title "<t>"');
+  if (!Array.isArray(nodes) || nodes.length === 0) fail('new requires --node <n> (repeatable)');
   // The model allows a ticket one node, or two when the ticket carries a contract between them —
   // and no more, because a ticket spanning three nodes needs three owners' approval for one diff
   // and no owner holds the whole of it. Three were being accepted in silence.
@@ -540,22 +560,19 @@ function cmdNew(horde, positional, flags) {
   }
   const cfg = readConfig();
   const classes = (cfg && cfg.classes) || {};
-  if (Object.keys(classes).length && !Object.prototype.hasOwnProperty.call(classes, flags.class)) {
-    fail(`unknown class: ${flags.class} (config classes: ${Object.keys(classes).join(', ')})`);
+  if (Object.keys(classes).length && !Object.prototype.hasOwnProperty.call(classes, cls)) {
+    fail(`unknown class: ${cls} (config classes: ${Object.keys(classes).join(', ')})`);
   }
-  if (!flags.class) fail('new requires --class <c>');
-  const severity = flags.severity || 'medium';
+  if (!cls) fail('new requires --class <c>');
   if (!SEVERITIES.includes(severity)) fail(`--severity must be one of: ${SEVERITIES.join(', ')}`);
-  const kind = flags.kind || 'work';
   if (!KINDS.includes(kind)) fail(`--kind must be one of: ${KINDS.join(', ')}`);
-  const team = flags.team || 'trunk';
-  const evidence = asArray(flags.evidence);
+  if (!TICKET_QUALITY.includes(quality)) fail(`ticket quality must be one of: ${TICKET_QUALITY.join(', ')}`);
   checkEvidenceIds(horde, evidence);
   const { ids: evidenceIds, acceptance } = splitEvidenceValues(evidence);
 
-  const files = listFlag(flags.files);
-  const consumes = parsePortList(flags.consumes, 'Consumes');
-  const produces = parsePortList(flags.produces, 'Produces');
+  const files = listFlag(fileList);
+  const consumes = parsePortList(consumesRaw, 'Consumes');
+  const produces = parsePortList(producesRaw, 'Produces');
   checkFilesInBoundary(nodes, files);
   checkConsumesHaveProducers(horde, consumes, null);
 
@@ -566,23 +583,23 @@ function cmdNew(horde, positional, flags) {
   const dir = teamPath(horde, team, 'issues', dirName);
   if (existsSync(dir)) fail(`issue folder already exists: ${dirName}`);
 
-  const depends = flags.depends ? String(flags.depends).split(',').map((s) => s.trim()).filter(Boolean) : [];
   let text = renderTemplate('ticket', {
     id,
-    title: flags.title,
+    title,
     status: 'proposed',
     node: nodes.join(', '),
-    class: flags.class,
+    class: cls,
     severity,
     team,
     kind,
+    quality,
     branch: '—',
     ...(depends.length ? { dependsOn: depends.join(', ') } : {}),
     ...(files.length ? { files: files.join(', ') } : {}),
     ...(consumes.length ? { consumes: consumes.map((c) => c.ref).join(', ') } : {}),
     ...(produces.length ? { produces: produces.map((p) => p.ref).join(', ') } : {}),
     ...(evidenceIds.length ? { evidence: evidenceIds.join(', ') } : {}),
-    ...revertBaseVar(flags),
+    ...(revertBase ? { revertBase } : {}),
   });
   // The Keys line only names author/verifier by default; extend it with one slot per node now
   // that the Node field (which the parser reads to know the node list) is actually rendered.
@@ -592,13 +609,56 @@ function cmdNew(horde, positional, flags) {
   }
 
   mkdirSync(dir, { recursive: true });
-  writeText(join(dir, 'issue.md'), text);
+  const issuePath = join(dir, 'issue.md');
+  writeText(issuePath, text);
   writeText(join(dir, 'log.md'), '');
   writeJSON(counterPath, { next: counter.next + 1 });
 
+  return {
+    id,
+    dirName,
+    dir,
+    issuePath,
+    team,
+    kind,
+    quality,
+    files,
+    consumes: consumes.map((c) => c.ref),
+    produces: produces.map((p) => p.ref),
+    evidence: evidenceIds,
+  };
+}
+
+function cmdNew(horde, positional, flags) {
+  const created = createTicket(horde, {
+    slug: positional[0],
+    title: flags.title,
+    nodes: asArray(flags.node),
+    cls: flags.class,
+    severity: flags.severity || 'medium',
+    kind: flags.kind || 'work',
+    // --no-quality is the single-ticket form of the charter's own only-the-work: this ticket gets
+    // the work it names and nothing beside it, whatever the mission's policy says.
+    quality: flags['no-quality'] ? 'only-the-work' : 'autonomous',
+    team: flags.team || 'trunk',
+    evidence: asArray(flags.evidence),
+    files: flags.files,
+    consumes: flags.consumes,
+    produces: flags.produces,
+    depends: flags.depends ? String(flags.depends).split(',').map((s) => s.trim()).filter(Boolean) : [],
+    revertBase: flags['revert-base'] || null,
+  });
   emit({
-    id, dirName, team, kind, files, consumes: consumes.map((c) => c.ref), produces: produces.map((p) => p.ref), evidence: evidenceIds,
-  }, flags, () => `${id} created — ${dirName} (team ${team})`);
+    id: created.id,
+    dirName: created.dirName,
+    team: created.team,
+    kind: created.kind,
+    quality: created.quality,
+    files: created.files,
+    consumes: created.consumes,
+    produces: created.produces,
+    evidence: created.evidence,
+  }, flags, () => `${created.id} created — ${created.dirName} (team ${created.team})`);
 }
 
 function cmdList(horde, positional, flags) {
@@ -634,7 +694,13 @@ function cmdShow(horde, positional, flags) {
     emit({ id: ticket.id, log: logText }, flags, () => logText || '(empty log)');
     return;
   }
-  emit({ id: ticket.id, team: ticket.team, text: ticket.text }, flags, () => ticket.text);
+  emit({
+    id: ticket.id,
+    team: ticket.team,
+    kind: ticketKind(ticket.text),
+    quality: ticketQuality(ticket.text),
+    text: ticket.text,
+  }, flags, () => ticket.text);
 }
 
 function cmdStatus(horde, positional, flags) {
@@ -909,6 +975,27 @@ function setHeaderField(text, label, value) {
 // rewrite. The four structural fields are the exception: they are changed by their own flags,
 // each with its own log line, because widening a ticket's files or changing what it delivers is
 // a decision reviewers have to be able to see happen, never a silent drift.
+// Everything from "## What" on, replaced; the header block (the fields every other tool parses)
+// left exactly as it was. One derivation, because a ticket filed by a tool writes its body the
+// same way an owner does through `edit`.
+function replaceTicketBody(ticket, text, body) {
+  const idx = text.indexOf('## What');
+  if (idx === -1) fail(`ticket ${ticket.id}: could not find the "## What" section to replace`);
+  return `${text.slice(0, idx)}${body.replace(/\s+$/, '')}\n`;
+}
+
+// setTicketBody(horde, id, body, by) — the same write, addressed by ticket id, for a caller that
+// files a ticket and its body in one move (the quality pass over Grain's advisories). Appends the
+// same log line `edit` does, so who wrote a body is never in doubt.
+export function setTicketBody(horde, id, body, by) {
+  const ticket = findTicket(horde, padId(id));
+  if (!ticket) fail(`no such ticket: ${id}`);
+  const text = replaceTicketBody(ticket, ticket.text, body);
+  writeText(ticket.issuePath, text);
+  appendLog(ticket, `body edited by ${by}`);
+  return { id: ticket.id, bytes: body.replace(/\s+$/, '').length };
+}
+
 function cmdEdit(horde, positional, flags) {
   const ticket = requireTicket(horde, positional[0]);
   if (!flags.by) fail('edit requires --by <name>');
@@ -949,12 +1036,8 @@ function cmdEdit(horde, positional, flags) {
 
   let bytes = 0;
   if (stdin.trim()) {
-    const idx = text.indexOf('## What');
-    if (idx === -1) fail(`ticket ${ticket.id}: could not find the "## What" section to replace`);
-    const header = text.slice(0, idx);
-    const body = stdin.replace(/\s+$/, '');
-    bytes = body.length;
-    text = `${header}${body}\n`;
+    text = replaceTicketBody(ticket, text, stdin);
+    bytes = stdin.replace(/\s+$/, '').length;
   }
 
   writeText(ticket.issuePath, text);
@@ -969,7 +1052,7 @@ function main() {
   const {
     positional: allPositional,
     flags,
-  } = parseArgs(process.argv.slice(2), { flags: ['open', 'review-pending', 'log', 'from-queue'] });
+  } = parseArgs(process.argv.slice(2), { flags: ['open', 'review-pending', 'log', 'from-queue', 'no-quality'] });
   const [cmd, ...positional] = allPositional;
 
   if (flags.help) { console.log(USAGE); process.exit(0); }

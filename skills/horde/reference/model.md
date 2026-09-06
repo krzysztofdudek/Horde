@@ -119,6 +119,10 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
 - The director's context holds intent, escalations, dissents, wave closes and audit samples — nothing else.
 - Operational state is uncommitted and dies with the horde; durable knowledge is committed to the
   graph and outlives it.
+- Enforcement only ever moves one way on its own. A rule climbs draft → advisory → enforced on
+  evidence, without asking, and every climb is written into the graph's log and listed at the wave
+  close. Anything that lowers enforcement — a status down, a waiver, a review date, a retirement —
+  is the chairman's, under every setting; the horde has no command for it.
 
 ## Hard places, named
 

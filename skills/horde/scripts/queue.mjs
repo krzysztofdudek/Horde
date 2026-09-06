@@ -21,16 +21,26 @@
 
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
   hordePath, teamPath, hordeRoot, repoRoot, readJSON, writeJSON, readText, readConfig, nowIso,
-  fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf,
+  fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray,
 } from './_lib.mjs';
 import {
   findTicket, parseField, padId, parseKeys, hasAuthor, hasVerifier, allNodesApproved,
   allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind,
+  createTicket, setTicketBody,
 } from './tk.mjs';
 import { noteMerged, parseEvidenceRows } from './wave.mjs';
-import { consumersOf, portExists, globToRegExp } from './node.mjs';
+import {
+  consumersOf, portExists, globToRegExp, nodeExists, advisoryKey, readAdvisoryLedger,
+  recordAdvisory,
+} from './node.mjs';
+// roster.mjs imports this file too (renderQueueDoc). Same deliberate, safe shape as the wave.mjs
+// cycle above: hoisted function declarations on both sides, neither calling the other while the
+// module is still being evaluated. Naming the owner a quality ticket is filed for is the roster's
+// answer and nowhere else's — a second lookup here could disagree with the one every brief uses.
+import { ownerNameForNode } from './roster.mjs';
 
 const STATES = ['queued', 'waiting', 'running', 'landed', 'merged', 'escalated', 'dropped'];
 const SEVERITY_RANK = { high: 0, medium: 1, low: 2 };
@@ -96,6 +106,14 @@ commands:
       ticket names, and what the whole thing costs in runs. Refuses, naming the circle, when the
       tickets depend on each other in one. --apply-order records the order it proposes for a
       file clash as an ordinary dependency, with a note.
+  quality [--from <path>] [--class c] [--dry-run] [--team t] [--horde h]
+      the quality pass (ruling quality-always-authorised): reads a grain-advice/1 document —
+      the configured Grain CLI's own "advise --json", or --from a file — and files one
+      low-priority "quality" ticket per improvement it names, attributed to the owner of the
+      node it is about, queued straight away without an escalation. An advisory already turned
+      into a ticket is not filed twice. Prints and files nothing when the charter's quality
+      policy is only-the-work, or when no Grain CLI is configured. --dry-run reads and reports
+      without filing anything.
   rm <ticket> [--team t] [--horde h]
   move <ticket> --team t [--horde h]
       relocates the item to team t's queue (the source team is found by searching).
@@ -227,7 +245,16 @@ function cmdAdd(horde, positional, flags) {
       dependsOn.push(ref.canonical);
     }
   }
-  const item = {
+  const item = newQueueItem(ticket, dependsOn);
+  doc.items.push(item);
+  save(horde, team, doc);
+  emit(item, flags, () => `queued: ${item.ticket}`);
+}
+
+// The shape of a queued item, in one place, so a ticket the quality pass files enters the queue as
+// the same object an owner's ticket does.
+function newQueueItem(ticket, dependsOn = []) {
+  return {
     ticket: ticket.id,
     state: 'queued',
     class: parseField(ticket.text, 'Class') || 'sonnet',
@@ -239,9 +266,215 @@ function cmdAdd(horde, positional, flags) {
     sha: null,
     notes: [],
   };
-  doc.items.push(item);
-  save(horde, team, doc);
-  emit(item, flags, () => `queued: ${item.ticket}`);
+}
+
+// ---- the quality pass (ruling quality-always-authorised) --------------------------------------
+//
+// A repository tells you things about itself that nobody put on a ticket: two components that
+// always change together with nothing in the architecture joining them, a component its own
+// evidence says is two. Grain reads those out of the history as a `grain-advice/1` document, and
+// under an autonomous quality policy the horde does not wait to be asked about them: each item
+// becomes a low-priority ticket on the node it is about, attributed to that node's owner, queued
+// without a ruling and worked in whatever parallelism is free after the mission's own tickets.
+//
+// Three things keep this from turning into noise. It never files the same advisory twice (what has
+// been filed is remembered by what the item says, not by where it sat in a list that is recomputed
+// every run). Every ticket it files is `--kind quality`, which `next` ranks after every work ticket
+// whatever its severity. And nothing it files changes the architecture by itself — an advisory is
+// evidence, so each ticket's acceptance is "the graph answered this, or the node's log says why it
+// stands", which is a proposal to the architect either way.
+
+const ADVICE_SCHEMA = 'grain-advice/1';
+
+function grainCommandLine(cfg) {
+  const raw = cfg && cfg.grainCommand;
+  if (!raw) return null;
+  const parts = String(raw).trim().split(/\s+/).filter(Boolean);
+  return parts.length ? { cmd: parts[0], prefix: parts.slice(1), display: parts.join(' ') } : null;
+}
+
+// The document, from a file or from the CLI itself. Grain prints its progress on stderr and the
+// document on stdout, so stdout is what is read; a run that answers something other than the
+// document is a refusal naming what was seen, never a guess at what was meant.
+function readAdvice(root, cfg, from) {
+  if (from) {
+    const text = readText(from);
+    if (text === null) fail(`no such file: ${from}`);
+    return { source: from, text };
+  }
+  const grain = grainCommandLine(cfg);
+  if (!grain) return { source: null, text: null };
+  try {
+    const out = execFileSync(grain.cmd, [...grain.prefix, 'advise', '--json'], {
+      cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
+    });
+    return { source: `${grain.display} advise --json`, text: out };
+  } catch (e) {
+    fail(
+      `\`${grain.display} advise --json\` did not run (exit ${e.status === undefined ? '?' : e.status}).\n`
+      + 'The quality pass reads what the repository says about itself from that command; without it there is '
+      + 'nothing to file tickets from.\n'
+      + `Check the command (horde.mjs config set grainCommand "…"), or pass a document you already have: queue.mjs quality --from <path>\n${((e.stderr && e.stderr.toString()) || e.message).trim()}`,
+    );
+    return { source: null, text: null };
+  }
+}
+
+function parseAdvice(source, text, fromFile) {
+  const body = String(text || '').trim();
+  const start = body.indexOf('{');
+  let doc = null;
+  if (start !== -1) {
+    try { doc = JSON.parse(body.slice(start)); } catch { doc = null; }
+  }
+  if (!doc || doc.schema !== ADVICE_SCHEMA) {
+    const saw = doc && doc.schema ? ` (it is a "${doc.schema}" one)` : '';
+    fail(
+      (fromFile
+        ? `\`${source}\` does not hold a ${ADVICE_SCHEMA} document${saw}.\n`
+        : `\`${source}\` did not answer with a ${ADVICE_SCHEMA} document${saw}.\n`)
+      + 'That document is the whole input to the quality pass — the horde reads what a repository says about '
+      + 'itself from it and from nothing else.\n'
+      + (fromFile
+        ? 'Point --from at a document written by a Grain CLI new enough to answer it.'
+        : 'Upgrade the Grain CLI, or point the horde at one that answers it: horde.mjs config set grainCommand "…"'),
+    );
+  }
+  return doc;
+}
+
+const ADVICE_TITLE = {
+  relation: (nodes) => `Coupling with nothing declared between ${nodes.join(' and ')}`,
+  split: (nodes) => `A finer cut beats ${nodes[0]} on its own evidence`,
+  port: (nodes) => `A promise between ${nodes.join(' and ')} with no port`,
+  rule: (nodes) => `A rule the code already follows in ${nodes.join(', ')}`,
+};
+
+const ADVICE_ASK = {
+  relation: 'Declare what joins these two, or record in the node\'s log why they move together without it.',
+  split: 'Propose the cut to the architect, or record in the node\'s log why the boundary stands as it is.',
+  port: 'Propose the port that carries this promise, or record why it stays informal.',
+  rule: 'Propose the rule, or record why what the code does is not something to hold it to.',
+};
+
+function adviceTicketBody(item, source) {
+  const kind = String(item.kind || 'item');
+  const ask = ADVICE_ASK[kind] || 'Act on what the evidence below says, or record why it stands as it is.';
+  return [
+    '## What',
+    '',
+    ask,
+    '',
+    '## Why',
+    '',
+    String(item.text || '').trim(),
+    '',
+    `Read out of this repository's own history by \`${source}\`. Nobody was asked for it: improving the`,
+    'architecture where the evidence allows is the horde\'s own call. It runs after every ticket the mission',
+    'itself asked for, never instead of one.',
+    '',
+    '## Scope',
+    '',
+    'The graph objects this advisory names, and the node\'s own log. No behaviour changes here — an advisory is',
+    'evidence, and what to do about it is the architect\'s to approve.',
+    '',
+    '## Acceptance — evidence',
+    '',
+    '- [ ] the advisory is answered: either the architecture changed and the change is filed, or the node\'s log',
+    '      carries one entry saying why it stands',
+    '',
+    '## Notes for the worker',
+    '',
+    'The evidence above came from the repository\'s history, not from a person. Check it before acting on it: if',
+    'the numbers do not hold up, saying so in the node\'s log is a complete answer to this ticket.',
+    '',
+  ].join('\n');
+}
+
+function cmdQuality(horde, positional, flags) {
+  const team = flags.team || 'trunk';
+  const policy = qualityPolicy(horde);
+  if (policy === 'only-the-work') {
+    emit({
+      policy, ran: false, filed: [], skipped: [],
+    }, flags, () => 'the charter sets quality to only-the-work — this mission files no improvement tickets of its own');
+    return;
+  }
+  const cfg = readConfig() || {};
+  const root = repoRoot();
+  const { source, text } = readAdvice(root, cfg, flags.from);
+  if (!source) {
+    emit({
+      policy, ran: false, filed: [], skipped: [], why: 'no Grain CLI is configured',
+    }, flags, () => 'no Grain CLI is configured, so there is nothing telling this repository what it says about itself — '
+      + 'name one with `horde.mjs config set grainCommand "…"`, or pass a document with --from');
+    return;
+  }
+  const doc = parseAdvice(source, text, !!flags.from);
+
+  const already = new Set(readAdvisoryLedger(horde).map((a) => a.key));
+  const filed = [];
+  const skipped = [];
+  for (const item of asArray(doc.items)) {
+    const nodes = asArray(item && item.nodes).filter(Boolean);
+    const key = advisoryKey(item);
+    if (nodes.length === 0) {
+      skipped.push({ key, why: 'it names no component, so there is no owner to hand it to' });
+      continue;
+    }
+    if (already.has(key)) {
+      skipped.push({ key, node: nodes[0], why: 'already filed as a ticket' });
+      continue;
+    }
+    const node = nodes[0];
+    if (!nodeExists(root, cfg, node)) {
+      skipped.push({ key, node, why: 'the graph has no such component' });
+      continue;
+    }
+    const kind = String(item.kind || 'item');
+    const owner = ownerNameForNode(horde, node) || '(no owner staffed)';
+    const title = (ADVICE_TITLE[kind] || ((n) => `Quality advisory on ${n.join(', ')}`))(nodes);
+    if (flags['dry-run']) {
+      filed.push({
+        key, node, owner, kind, title, ticket: null,
+      });
+      continue;
+    }
+    const created = createTicket(horde, {
+      slug: `quality-${kind}-${node}`,
+      title,
+      nodes: [node],
+      cls: flags.class || 'sonnet',
+      severity: 'low',
+      kind: 'quality',
+      team,
+    });
+    setTicketBody(horde, created.id, adviceTicketBody(item, source), owner);
+    const ticket = findTicket(horde, created.id);
+    const qdoc = load(horde, team);
+    qdoc.items.push(newQueueItem(ticket));
+    save(horde, team, qdoc);
+    already.add(key);
+    recordAdvisory(horde, {
+      key, node, owner, kind, ticket: created.id, source,
+    });
+    filed.push({
+      key, node, owner, kind, title, ticket: created.id,
+    });
+  }
+
+  emit({
+    policy,
+    ran: true,
+    source,
+    dryRun: !!flags['dry-run'],
+    items: asArray(doc.items).length,
+    filed,
+    skipped,
+  }, flags, () => {
+    const head = `${source}: ${asArray(doc.items).length} item(s) — ${filed.length} ${flags['dry-run'] ? 'would be filed' : 'filed and queued'}, ${skipped.length} skipped`;
+    return [head, ...filed.map((f) => `  ${f.ticket || '(dry run)'}  ${f.node}  ${f.owner}  ${f.title}`)].join('\n');
+  });
 }
 
 function findItem(horde, team, key) {
@@ -1048,7 +1281,7 @@ function cmdReconcile(horde, positional, flags) {
 }
 
 function main() {
-  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['apply-order', 'why', 'stack'] });
+  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['apply-order', 'why', 'stack', 'dry-run'] });
   const [cmd, ...positional] = allPositional;
 
   if (flags.help) { console.log(USAGE); process.exit(0); }
@@ -1067,6 +1300,7 @@ function main() {
     case 'move': return cmdMove(horde, positional, flags);
     case 'render': return cmdRender(horde, positional, flags);
     case 'reconcile': return cmdReconcile(horde, positional, flags);
+    case 'quality': return cmdQuality(horde, positional, flags);
     default: fail(`unknown command: ${cmd} (see --help)`);
   }
 }

@@ -76,6 +76,16 @@ it, within the boundary `node.mjs show` prints; nothing outside except the ports
     the merge waits for them.
   - `--evidence E2` — the charter rows this ticket earns. A row no ticket names is reported as
     something nobody is building, every time the plan is printed; take the ones your node owes.
+- **Quality proposals — yours to make without asking.** Unless the charter says `only-the-work`, an
+  improvement your node's own evidence calls for is a ticket you file, not a question you ask: a
+  ticket of `--kind quality`, with the finding as its Why. It is worked in whatever parallelism is
+  free after every ticket the mission asked for, never instead of one, and no ruling is needed to
+  queue it. Where a Grain CLI is configured, the steward's own pass already hands you these — what
+  the repository's history says about your node — and files them in your name; read them before you
+  work them, because the numbers came from a history, not from a person, and "the evidence does not
+  hold up" written into your node's log is a complete answer to one. The scope of every OTHER ticket
+  stays strict: an improvement you notice while working one is its own quality ticket, never an extra
+  file in that ticket's diff.
 
 ## What you never do alone
 
@@ -85,6 +95,9 @@ it, within the boundary `node.mjs show` prints; nothing outside except the ports
 - Merge, dispatch, verify or review your own tickets. You may implement a ticket in your node when the
   steward assigns it to you; then a different agent verifies it and the architect gives the review in
   your place.
+- Weaken a rule over your node — lower its status, waive it inline, move its review date. That is the
+  chairman's, always, and the tools refuse it to everyone else. A rule that is wrong for your node is a
+  dissent or a proposal, never a workaround.
 
 When a ruling has settled a port, your approval of the ticket that lands it is a check that the
 code meets the contract, not a second vote; withholding it is a conflict the steward escalates, and

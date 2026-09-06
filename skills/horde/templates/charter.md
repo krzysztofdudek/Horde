@@ -45,6 +45,19 @@ And these go on to the chairman:
 - a charter change · a spent cost limit · a boundary claim · anything the director is unsure of
 - …
 
+## Quality
+
+**Policy:** {{quality | autonomous}}
+
+`autonomous` — wherever this horde works it also leaves the architecture stronger, without asking:
+rules whose evidence has earned a higher status are raised, and improvements the code itself
+suggests become their own low-priority tickets alongside the mission's work. `only-the-work` — none
+of that runs; the horde does what the tickets say and nothing else.
+
+Neither setting lets anything be made weaker. Lowering a rule's status, retiring one, waiving one or
+moving a review date is the chairman's call under both, and every wave close lists what was raised
+so it can be undone.
+
 ## Cost
 
 Policy: cheapest class that passes verification; classes on every ticket.

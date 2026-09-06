@@ -66,8 +66,12 @@ of evidence** (scenarios, tests, films — things a verifier can reproduce, neve
 with an id — E1, E2, E3 … — because a ticket says which rows it earns by those ids, and the plan
 reports every row no ticket has taken; the nodes
 the mission touches and the nodes it creates; the decision-rights table (what beyond the standard list
-must come to you or the user); the cost policy and the optional cost limit; the base branch. Then the
-node map. The node map is the repository's Yggdrasil graph and nothing else: `node.mjs bind` reads it,
+must come to you or the user); **the quality policy — `autonomous` by default, meaning the horde raises
+rules the evidence has earned and files the improvements the code suggests wherever it works, without
+asking, while anything that would make the architecture weaker still comes to the user; `only-the-work`
+turns both off, and `tk.mjs new --no-quality` turns them off for one ticket**; the cost policy and the
+optional cost limit; the base branch. Then the node map. The node map is the repository's Yggdrasil
+graph and nothing else: `node.mjs bind` reads it,
 the horde never edits it except through `yg`. A repository that has no graph gets one at `horde init`
 — created with `yg`, and where a Grain CLI is available, proposed from the repository's own code and
 accepted, which is the only way a first graph arrives with rules describing how the code is already
@@ -179,9 +183,13 @@ team's queue and doorbells the parent steward, who merges it like a ticket.
   hub is never weaker than what it verifies: the auditor redoes merged tickets in full, as many
   per wave as the sample rate says, and the refutation rate is published at every close.
 - **The horde leaves the graph no weaker than it found it.** Better rules, raised statuses, new
-  relations and tidying after green are the horde's own to do, without asking. Anything that
-  lowers enforcement is the user's call, and the wave close catches it whether or not anyone
-  meant it.
+  relations and tidying after green are the horde's own to do, without asking. A rule climbs its
+  ladder on evidence and nothing else — `node.mjs promote <rule>` grants the next rung only when
+  the rule's own cases run clean and, for the rung that blocks, when two closed waves have seen
+  nothing new against it and nothing is outstanding — and it writes the numbers into the graph's
+  own log. Anything that lowers enforcement is the user's call: `node.mjs demote` refuses without
+  `--by user`, there is no command here for a waiver or a review date, and the wave close lists
+  every raise for the chairman to veto whether or not anyone asks.
 - **Two keys and one approval on every merge**: the author's key, the verifier's key, and the owner's
   review of every node the ticket names, all recorded on the ticket. A steward merges nothing short of
   that; when the owner authored the ticket, the architect reviews in the owner's place.

@@ -1,7 +1,7 @@
 # {{id}} · {{title}}
 
 **Status:** {{status}}
-**Node:** {{node}} · **Class:** {{class}} · **Severity:** {{severity}} · **Team:** {{team}} · **Kind:** {{kind}}
+**Node:** {{node}} · **Class:** {{class}} · **Severity:** {{severity}} · **Team:** {{team}} · **Kind:** {{kind}} · **Quality:** {{quality | autonomous}}
 **Depends on:** {{dependsOn | none}} · **Branch:** {{branch}}
 **Files:** {{files | none}}
 **Consumes:** {{consumes | none}} · **Produces:** {{produces | none}}

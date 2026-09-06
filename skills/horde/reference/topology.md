@@ -51,8 +51,14 @@ file ever conflicts in a merge.
                                     repository, never per-horde (see "Node leases" below)
   hordes/<horde>/
     charter.md                      the mission: goal, non-goals, constraints, evidence catalogue,
-                                    touched and new nodes, decision rights, cost policy and limit
+                                    touched and new nodes, decision rights, quality policy, cost
+                                    policy and limit
     roster.json (+ .md)             who is alive: role, name, model, team or node, lease, last trace
+    graph.json                      the horde's own process state about the graph: port and
+                                    graph-change proposals waiting on the architect, the status
+                                    ladder's working per rule (rung, baseline, drill, one reading
+                                    per closed wave, every move with its evidence), and which
+                                    advisories have already become tickets
     plan.md                         wave journal: starts, merges, audits, closes, cost per wave
     decisions.md                    operational rulings and lessons (architectural ones go to Yggdrasil)
     escalations.json (+ .md)        the channel up

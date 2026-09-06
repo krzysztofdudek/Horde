@@ -21,7 +21,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   hordePath, teamPath, readText, writeText, appendText, readJSON, writeJSON, readConfig, today,
-  nowIso, repoRoot, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate,
+  nowIso, repoRoot, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy,
 } from './_lib.mjs';
 import { readCostLimit, sumEntries } from './cost.mjs';
 // queue.mjs imports this file too (noteMerged, parseEvidenceRows). The cycle is deliberate and
@@ -31,7 +31,10 @@ import { readCostLimit, sumEntries } from './cost.mjs';
 // avoiding: the parallelism a wave close reports as "planned" has to be the plan's own layers.
 import { buildPlan } from './queue.mjs';
 import { addEscalation } from './escalate.mjs';
-import { ygQualityIndex } from './node.mjs';
+import {
+  ygQualityIndex, observeAspects, pendingPromotions, markPromotionsReported,
+} from './node.mjs';
+import { findTicket, ticketKind, parseField } from './tk.mjs';
 
 const START_RE = /^# Wave (\S+) — start \d{4}-\d{2}-\d{2}$/;
 const CLOSE_RE = /^# Wave (\S+) — close \d{4}-\d{2}-\d{2}$/;
@@ -65,6 +68,11 @@ commands:
       interval and the sampling rate the samples ask for next, human decisions per merged ticket
       with its trend, and — where the nodes come from a graph — the quality index with its delta
       since the last wave. A quality index that fell opens a "quality" escalation.
+      It also closes the loop on the quality ruling: it takes each watched rule's reading for
+      this wave (what the two-wave test for enforcement counts), and prints one block naming
+      every rule the horde raised this wave with the evidence that earned it, every improvement
+      of its own it finished, and the sentence telling the chairman that undoing any of it is
+      theirs to ask for. Under a charter set to only-the-work the block says none of it ran.
   evidence <id> --by "<who/what>" [--horde h]
       fills one catalogue row's "reproduced by" cell by hand — for a row no ticket verdict can
       fill, such as the mission gate; the director's call. A row in the charter's evidence catalogue counts green when its "reproduced
@@ -784,6 +792,92 @@ function qualityLine(now, prev) {
   return `${base} (Δ ${deltas.join(' · ')})`;
 }
 
+// ---- what the horde raised on its own, and how the chairman undoes it -------------------------
+//
+// The other half of the quality ruling. The index line above says whether the graph got stronger;
+// this block says WHAT the horde did to make it so, in the words of somebody who might want it
+// undone: which rules were raised and on what evidence, which improvements it filed and finished,
+// and the one sentence that says a lowering is theirs to ask for. It is the veto, and it only
+// works if it is legible — so it names rules and components, never files or commands the chairman
+// would have to be taught.
+
+// A rule promoted out of advisory stops being counted among "advisory rules with nothing against
+// them" — not because anything went wrong with it, but because it got stronger and now blocks. Read
+// literally that is a smaller number, and the close would file a `quality` escalation telling the
+// chairman the graph got weaker on the very wave the horde made it stricter. So a drop no larger
+// than the number of rules raised out of advisory this wave is accounted for and dropped from the
+// list; anything beyond it is a real fall and still goes up.
+function withoutPromotionEffects(declined, promotions, now, prev) {
+  const raised = promotions.filter((p) => p.from === 'advisory').length;
+  if (raised === 0 || !prev || !now.measured) return declined;
+  const drop = prev.advisoryClean - now.advisoryClean;
+  if (drop <= 0 || drop > raised) return declined;
+  return declined.filter((d) => !/^advisory rules with nothing against them/.test(d));
+}
+
+const RUNG_WORDS = {
+  draft: 'inert',
+  advisory: 'a warning',
+  enforced: 'blocking',
+};
+
+function rungPhrase(from, to) {
+  return `${RUNG_WORDS[from] || from} → ${RUNG_WORDS[to] || to}`;
+}
+
+// The quality tickets among this wave's merges, with what each was about.
+function qualityMergesIn(horde, mergedTickets) {
+  const out = [];
+  for (const id of mergedTickets) {
+    let found = null;
+    try { found = findTicket(horde, id); } catch { found = null; }
+    if (!found || ticketKind(found.text) !== 'quality') continue;
+    const title = (/^#\s*\S+\s*·\s*(.*)$/.exec((found.text.split('\n')[0] || '').trim()) || [])[1] || '';
+    out.push({ ticket: found.id, node: parseField(found.text, 'Node'), title });
+  }
+  return out;
+}
+
+function qualityBlock({
+  policy, promotions, qualityMerges, indexLine, observed,
+}) {
+  if (policy === 'only-the-work') {
+    return [
+      'This mission is set to only-the-work: the horde raised no rule and filed no improvement of its own this',
+      'wave, and it will not until the charter says otherwise.',
+      '',
+      `Quality index: ${indexLine}`,
+    ].join('\n');
+  }
+  const lines = [];
+  if (promotions.length === 0) {
+    lines.push('Rules raised this wave: none — no rule had earned the next step yet.');
+  } else {
+    lines.push('Rules raised this wave, and what earned it:');
+    for (const p of promotions) {
+      lines.push(`- **${p.aspect}** — ${rungPhrase(p.from, p.to)}. ${p.evidence}`);
+    }
+  }
+  if (observed.length) {
+    lines.push('', `Rules being watched: ${observed.map((o) => `${o.aspect} (${o.new} new)`).join(' · ')}`);
+  }
+  lines.push('');
+  if (qualityMerges.length === 0) {
+    lines.push('Improvements finished this wave: none.');
+  } else {
+    lines.push('Improvements finished this wave (filed by the horde, worked after everything the mission asked for):');
+    for (const q of qualityMerges) lines.push(`- ${q.ticket} · ${q.node} — ${q.title}`);
+  }
+  lines.push('', `Quality index: ${indexLine}`);
+  lines.push(
+    '',
+    'Nothing above was asked for and nothing above was made weaker — a rule only ever moved up. If you want any',
+    'of it undone, say so: lowering a rule, waiving one or moving its review date is yours alone, and the horde',
+    'has no way to do it without you.',
+  );
+  return lines.join('\n');
+}
+
 function cmdClose(horde, positional, flags) {
   const team = flags.team || 'trunk';
   const path = journalPath(horde, flags.team);
@@ -841,9 +935,25 @@ function cmdClose(horde, positional, flags) {
   const decisions = decisionsKpi(horde, journalText, openedAt, mergedTickets.size);
 
   const cfg = readConfig() || {};
+
+  // The ladder's own reading for this wave, taken before the index is measured: the two-wave test
+  // for enforcement counts CLOSED waves, so a wave close is the only thing that may record one,
+  // and the free, keyless fill it runs first is what makes the index below a reading of the code
+  // as it stands rather than of whatever was last looked at.
+  const policy = qualityPolicy(horde);
+  let observed = [];
+  try {
+    observed = observeAspects(horde, repoRoot(), cfg, n).observed;
+  } catch {
+    // A graph that cannot be read right now still gets its close; the rules simply gain no
+    // observation from a wave nobody could measure.
+    observed = [];
+  }
+  const promotions = policy === 'only-the-work' ? [] : pendingPromotions(horde);
+
   const quality = measureQuality(cfg);
   const prevQuality = previousQuality(journalText);
-  const declined = qualityDecline(quality, prevQuality);
+  const declined = withoutPromotionEffects(qualityDecline(quality, prevQuality), promotions, quality, prevQuality);
   let qualityEscalation = null;
   if (declined.length) {
     try {
@@ -870,6 +980,9 @@ function cmdClose(horde, positional, flags) {
 
   const audit = audits.length ? audits[audits.length - 1] : null;
 
+  const qualityMerges = qualityMergesIn(horde, mergedTickets);
+  const indexLine = qualityLine(quality, prevQuality);
+
   const vars = {
     n,
     date: today(),
@@ -886,7 +999,10 @@ function cmdClose(horde, positional, flags) {
     keysTransferred,
     auditLine: auditReport.line,
     decisionsLine: decisions.line,
-    qualityLine: qualityLine(quality, prevQuality),
+    qualityLine: indexLine,
+    qualityBlock: qualityBlock({
+      policy, promotions, qualityMerges, indexLine, observed,
+    }),
     runs: waveSums.runs,
     weighted: waveSums.weighted,
     cumulative: missionSums.weighted,
@@ -902,6 +1018,9 @@ function cmdClose(horde, positional, flags) {
     fail(e.message);
   }
   append(path, `\n${rendered}`);
+  // Shown to the chairman now, so the next close does not list them again and none is ever missed
+  // by falling between one wave's close and the next one's start.
+  markPromotionsReported(horde, promotions);
   emit({
     n,
     merged,
@@ -924,8 +1043,16 @@ function cmdClose(horde, positional, flags) {
     quality,
     qualityDeclined: declined,
     qualityEscalation: qualityEscalation ? qualityEscalation.id : null,
+    qualityPolicy: policy,
+    promoted: promotions.map((p) => ({
+      aspect: p.aspect, from: p.from, to: p.to, at: p.at, evidence: p.evidence,
+    })),
+    qualityMerged: qualityMerges,
+    aspectsObserved: observed,
   }, flags, () => {
     const lines = [`wave ${n} closed — gate ${gate}, ${green}/${total} evidence green`];
+    for (const p of promotions) lines.push(`rule raised: ${p.aspect} ${p.from} → ${p.to}`);
+    if (qualityMerges.length) lines.push(`improvements finished: ${qualityMerges.map((q) => q.ticket).join(', ')}`);
     if (qualityEscalation) {
       lines.push(`the quality index fell (${declined.join('; ')}) — escalation ${qualityEscalation.id} opened`);
     }
