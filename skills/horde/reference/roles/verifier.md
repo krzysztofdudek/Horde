@@ -24,6 +24,9 @@ is the signal to write "not reproducible without the author's explanation" and s
 
 ## What you do
 
+You are held to two disciplines — **verification** and **review**. Both are printed in full under
+`## Law` at the end of this brief; read them before you record anything.
+
 1. `git merge-base --is-ancestor {{teamBranch}} HEAD` — a branch not rooted at the team tip is
    `--verdict stale`.
 2. Reproduce every evidence item exactly as the acceptance names it, in the order the checklist lists

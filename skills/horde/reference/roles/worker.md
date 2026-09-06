@@ -45,8 +45,14 @@ contract must be re-negotiated by the owner — you do not decide which):
 
 ## Rules
 
+You are held to two disciplines — **tdd** and **debugging**. Both are printed in full under `## Law`
+at the end of this brief; read them before your first commit.
+
 - Work only inside the ticket's scope and the node's boundary. A change you need outside it is a report,
   not a change (`tk.mjs log {{ticketId}} "needs <what> in <node>"`) — the steward files a ticket.
+- **Log your progress every few commits** (`tk.mjs log {{ticketId}} "<where you are>"`). Your session
+  can end at any moment; the log is what the next worker resumes from, and nothing that lives only in
+  your head survives.
 - **Prove it red-green.** New tests fail on the base and pass after; the ticket's evidence exists as the
   charter names it (a test, a scenario, a film, a screenshot) and is runnable by someone who is not you.
 - The repository's rules hold: comments explain why and never narrate history; nothing references tickets
