@@ -421,12 +421,22 @@ Yggdrasil CLI (`config.ygCommand`) when its graph is the law, else a journal not
 
 ## escalate.mjs — the channel up
 
-`add "<why>" --kind charter|contract|claim|conflict|boundary|cost|unverifiable|rules|structure|adjudicate
+`add "<why>" --kind charter|contract|claim|conflict|boundary|cost|unverifiable|rules|structure|adjudicate|quality
 [--ticket NNN] [--by steward|architect|owner]` (`adjudicate` is the kind `tk.mjs status NNN
 changes` itself names as the next step once a ticket has spent every round `config.fixRounds`
-allows — a ruling to make, not another round), `list [--open]`, `show <id>`, `rule <id> "<ruling>"
+allows — a ruling to make, not another round; `quality` is the kind a wave close opens by itself
+when the graph came out of the wave weaker than it went in), `list [--open]`, `show <id>`, `rule <id> "<ruling>"
 [--by <name>] [--to-user]` (`--by` leaves a roster trace for the ruler) (records the ruling as a decision, slug `esc-<id>`; `--to-user` marks it as forwarded to
 the chairman and leaves it open until `rule` is called again with the answer).
+
+`recurring [--min <n>]` — the ruled escalations grouped by kind and by the node their ticket
+names (an escalation carries no node of its own; one with no ticket, or a ticket naming no node,
+groups under `(no node)`). A group of `<n>` (default 3, minimum 2) or more is an answer this
+horde keeps giving by hand, and the third time is not another decision — it is a rule. Each such
+group prints as a proposal: its rulings as evidence, one line of rule text quoting the latest of
+them, and the exact command that files it — `<config.ygCommand> log add --node <node> --reason
+"…"` where the graph is the law and the group has a node, `decide.mjs add` where it is not. It
+prints the command and never runs it: filing a rule is the architect's move.
 
 ## dissent.mjs — the channel of disagreement
 
