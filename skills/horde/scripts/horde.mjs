@@ -17,6 +17,7 @@ import {
   repoRoot, hordeRoot, hordePath, readConfig, writeConfig, listHordes, readJSON,
   writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
   readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
+  qualityPolicyIn, QUALITY_POLICIES,
 } from './_lib.mjs';
 import {
   currentWaveNumber, parseEvidenceRows, mentionsEvidenceId, wave1Started, lastWaveSpan, hasAuditIn,
@@ -31,6 +32,7 @@ const USAGE = `usage: horde.mjs <command> [options]
 commands:
   init <name> --base <branch> [--title "<t>"] [--test-globs <glob>[,glob…]]
        [--nodes <node>[,node…]] [--yg <command>] [--grain <command>]
+       [--quality autonomous|only-the-work]
       creates the architecture graph when the repository has none — "yg init" from the repository
       root, and, where a Grain CLI is configured or on PATH, a proposal mined from this
       repository's own code accepted with "yg adopt". Refuses outright, before anything is
@@ -45,7 +47,9 @@ commands:
       the charter's touched nodes at creation (node-lease-across-hordes): each one is leased to
       this horde in .horde/leases.json, and init refuses outright — before creating anything — a
       node already leased by another horde that is not archived, naming that horde and its last
-      activity.
+      activity. --quality writes the charter's quality policy: "autonomous" (the default — the
+      horde raises rules the evidence has earned and files the improvements it finds, without
+      asking) or "only-the-work" (neither runs). Lowering anything needs the chairman under both.
   list
       hordes on this repository: trunk, base, wave, open tickets, leased nodes, last activity.
   config get <key>
@@ -63,7 +67,9 @@ commands:
       the mission charter: "show" prints it, "edit" replaces it with what arrives on stdin and
       reports what that did to the evidence catalogue. Dropping a row is free before the mission's
       wave 1 has started; after it, dropping one refuses unless --escalation names a ruled
-      escalation whose own text mentions the row's id.
+      escalation whose own text mentions the row's id. The Quality section's "**Policy:**" line
+      must read "autonomous" or "only-the-work"; anything else is refused rather than read as the
+      default, and a charter with no such section reads as "autonomous".
   archive <name>
       moves hordes/<name> to hordes/_archive/<name>-<date>. Branches are untouched.
   done [--horde h]
@@ -289,6 +295,11 @@ function cmdInit(positional, flags) {
   const name = positional[0];
   if (!name) fail('init requires <name>');
   if (!flags.base) fail('init requires --base <branch>');
+  // Checked before anything at all exists, like every other argument here: an unusable setting is
+  // a typo to fix, not a half-created horde to clean up.
+  if (flags.quality !== undefined && !QUALITY_POLICIES.includes(flags.quality)) {
+    fail(`--quality must be one of: ${QUALITY_POLICIES.join(', ')}`);
+  }
   const root = repoRoot();
 
   // The graph comes first, before `.horde/` exists at all: a repository with no graph and no way
@@ -342,6 +353,7 @@ function cmdInit(positional, flags) {
     base: flags.base,
     date: today(),
     user,
+    ...(flags.quality ? { quality: flags.quality } : {}),
   });
   mkdirSync(dest, { recursive: true });
   writeFileSync(join(dest, 'charter.md'), charter);
@@ -539,7 +551,10 @@ function cmdCharter(positional, flags) {
   if (sub === 'show') {
     const text = readText(path);
     if (text === null) fail(`no charter for horde "${horde}"`);
-    emit({ horde, path, charter: text }, flags, () => text);
+    const shown = qualityPolicyIn(text);
+    emit({
+      horde, path, charter: text, quality: QUALITY_POLICIES.includes(shown) ? shown : QUALITY_POLICIES[0],
+    }, flags, () => text);
     return;
   }
   if (sub !== 'edit') fail('charter requires "show" or "edit"');
@@ -547,6 +562,21 @@ function cmdCharter(positional, flags) {
   const before = readText(path) || '';
   const content = readStdin();
   if (!content.trim()) fail('charter edit requires content on stdin');
+
+  // The quality policy is the one field of the charter a tool acts on rather than a person reads,
+  // so a value nothing recognises is refused here instead of silently falling back to the default
+  // and leaving the chairman believing they had turned something off. An absent section is fine —
+  // that is the ruling's own default, spelled out in the answer.
+  const policy = qualityPolicyIn(content);
+  if (policy !== null && !QUALITY_POLICIES.includes(policy)) {
+    fail(
+      `the charter's Quality section says "**Policy:** ${policy}", which is not a setting this horde has.\n`
+      + 'That line decides whether the horde improves the architecture wherever it works or sticks to the '
+      + 'tickets alone, and a word nothing recognises would quietly read as the default — the opposite of '
+      + 'what an operator writing it meant.\n'
+      + `Write one of: ${QUALITY_POLICIES.join(', ')} (or drop the section, which reads as ${QUALITY_POLICIES[0]}).`,
+    );
+  }
 
   const rowsBefore = parseEvidenceRows(before);
   const rowsAfter = parseEvidenceRows(content);
@@ -594,9 +624,10 @@ function cmdCharter(positional, flags) {
     evidenceRows: rowsAfter.length,
     evidenceReproduced: rowsAfter.filter((r) => r.reproducedBy).length,
     droppedEvidence: dropped,
+    quality: policy === null ? QUALITY_POLICIES[0] : policy,
   };
   emit(result, flags, () => [
-    `charter written: ${horde} (${content.length} bytes) — evidence catalogue: ${result.evidenceRows} row(s), ${result.evidenceReproduced} reproduced`,
+    `charter written: ${horde} (${content.length} bytes) — evidence catalogue: ${result.evidenceRows} row(s), ${result.evidenceReproduced} reproduced · quality ${result.quality}`,
     ...dropped.map((d) => `warning: ${d.id} was recorded as reproduced by ${d.was} and this text drops that — put it back with: wave.mjs evidence ${d.id} --by "${d.was}"`),
   ].join('\n'));
 }

@@ -107,6 +107,41 @@ export function hordePath(horde, ...parts) {
   return join(hordeRoot(), 'hordes', horde, ...parts);
 }
 
+// ---- the quality policy (ruling quality-always-authorised) ------------------------------------
+//
+// The charter's own answer to "may the horde improve what it was not asked to improve": the
+// `## Quality` section's `**Policy:**` line. `autonomous` (the default, and what the charter
+// template writes) means the horde raises the graph wherever the evidence allows and files the
+// improvements it finds, without asking; `only-the-work` means it does nothing beyond the tickets
+// the mission names. Neither setting ever authorises LOWERING anything — that is the chairman's,
+// under every policy.
+//
+// Read from the charter rather than kept in config.json because it is a promise made to the
+// chairman in the document they read and amend, and a second copy in a config file could disagree
+// with it. A charter written before this field existed reads as `autonomous`: that is the ruling's
+// own default, and an older mission does not silently opt out of it.
+
+export const QUALITY_POLICIES = ['autonomous', 'only-the-work'];
+
+// The `**Policy:**` line inside the charter's `## Quality` section, or null when there is none.
+// Scoped to that section on purpose: `## Cost` carries a policy line of its own, and a loose
+// search would read the cost policy as a quality setting.
+export function qualityPolicyIn(charterText) {
+  const text = String(charterText || '');
+  const start = text.search(/^##\s+Quality\s*$/m);
+  if (start === -1) return null;
+  const rest = text.slice(start);
+  const end = rest.indexOf('\n## ', 1);
+  const section = end === -1 ? rest : rest.slice(0, end);
+  const m = /^\*\*Policy:\*\*\s*([^\n·]*?)\s*(?:·|$)/m.exec(section);
+  return m ? m[1].trim() : null;
+}
+
+export function qualityPolicy(horde) {
+  const found = qualityPolicyIn(readText(hordePath(horde, 'charter.md')));
+  return QUALITY_POLICIES.includes(found) ? found : 'autonomous';
+}
+
 // Resolves a team's short LEAF name (e.g. "lark") to its full on-disk segment chain
 // (["trunk", "lark"]) by walking roster.json's steward entries' own `parent` links back to
 // "trunk" — the same lookup roster.mjs's own spawn logic does, duplicated here in miniature

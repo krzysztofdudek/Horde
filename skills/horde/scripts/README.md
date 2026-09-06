@@ -43,7 +43,8 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   by every horde on the repository — and a node another *live* horde already leases refuses the
   whole command, naming that horde and its last activity, before the branch or any of this horde's
   own state is created. See `node.mjs bind` below for the same check made any time after init, and
-  "Node leases" in `reference/topology.md` for the full contract.
+  "Node leases" in `reference/topology.md` for the full contract. `--quality autonomous|only-the-work`
+  writes the charter's quality policy; the template's own default is `autonomous`.
 - `list` — hordes with trunk, base, wave, open tickets, leased nodes, last activity.
 - `config get|set <key> [value]` — `.horde/config.json`: `base`, `gates.commit|team|trunk` (commands),
   `testGlobs[]` (the patterns this repository's tests are named under — the merge checklist refuses
@@ -72,6 +73,13 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   unless `--escalation <id>` names a ruled escalation (`escalate.mjs`) whose own text (its `why` and
   its ruling together) names every row being dropped — the reason then lives in the escalation's own
   ruling (`decisions.md`'s `esc-<id>` entry), not only in this command's own output.
+  The charter's `## Quality` section carries the one field of it a tool acts on rather than a person
+  reads: `**Policy:** autonomous` (the default, and what a charter with no such section reads as) or
+  `**Policy:** only-the-work`. Anything else is refused here rather than read as the default, since a
+  word nothing recognises would quietly mean the opposite of what an operator writing it meant. Both
+  `show` and `edit` report the resolved policy in their `--json`. `_lib.mjs`'s `qualityPolicy(horde)`
+  is the one reader of it, scoped to that section so `## Cost`'s own policy line is never mistaken
+  for it, and every tool that acts on the policy asks it rather than parsing the charter again.
 - `archive <name>` — moves `hordes/<name>` to `hordes/_archive/<name>-<date>`; branches untouched.
   Also releases every node lease the horde held (`.horde/leases.json`) — the moment it is no longer
   live, another horde can bind its nodes with no `--take` needed.
@@ -119,7 +127,7 @@ narrow it. `--json`.
 Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (counter in
 `hordes/<horde>/counter.json`).
 - `new <slug> --title "…" --node n --class haiku|sonnet|opus [--severity high|medium|low]
-  [--kind work|quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
+  [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
   [--produces <node>/<port>@<v>,…] [--evidence "…"]… [--revert-base <ref>]` — from
   `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries
   a contract between them; three or more is refused — no owner holds the whole of such a diff.
@@ -132,7 +140,13 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
   already be a row in the horde's `charter.md` evidence table — refuses otherwise, listing the
   unknown ids. `--kind` defaults to `work`; `quality` marks a self-filed improvement outside a
   wave's assigned scope (a better graph, normalization, tidy-up after green) — `queue.mjs next`
-  always ranks a `quality` ticket after every `work` ticket, whatever its severity.
+  always ranks a `quality` ticket after every `work` ticket, whatever its severity. `--no-quality`
+  writes `**Quality:** only-the-work` on this one ticket — the single-ticket form of the charter's
+  own policy, for a change delicate enough that nothing should ride along with it. Neither value ever
+  permits the opposite: nothing at any setting makes a rule weaker.
+  Ticket creation itself is one exported function (`createTicket`), so a ticket the quality pass
+  files is the same object, validated the same way, as one an owner files by hand; `setTicketBody`
+  is the same for a body, and `edit`'s own write goes through it.
 - The four structural fields — `**Files:**`, `**Consumes:**`/`**Produces:**`, `**Evidence:**` — are
   what `queue.mjs plan` computes the mission's order from, and they are validated where they are
   written: every path in `--files` must lie inside the boundary of a node the ticket names (the same
@@ -271,6 +285,19 @@ States: `queued waiting running landed merged escalated dropped`.
   dependency order, stack or no stack), and when the ticket's `**Keys:**` field lacks the author
   key, the verifier key (a `verify` record with verdict `reproduced`), or an approval for every node
   it names.
+- `quality [--from <path>] [--class c] [--dry-run]` — **the quality pass** (ruling
+  quality-always-authorised). Reads a `grain-advice/1` document — `config.grainCommand`'s own
+  `advise --json` (its progress goes to stderr; the document is what it prints on stdout), or
+  `--from` a file — and files one `--kind quality`, `--severity low` ticket per improvement it names,
+  on the node the item names, in that node's owner's name (`roster.mjs`'s own lookup), with the
+  advisory's text as the ticket's **Why** and "the architecture answered this, or the node's log says
+  why it stands" as its acceptance. Each ticket is queued immediately: **no escalation, no ruling** —
+  that is what the ruling means by autonomous. `next` already ranks them behind every work ticket.
+  An item is filed once and never twice: what has been filed is remembered by what the item says
+  (kind, nodes and the text itself), not by its position in a list Grain recomputes every run.
+  It reports and files nothing, at exit 0, when the charter's policy is `only-the-work` or no Grain
+  CLI is configured; a document that is not `grain-advice/1` is a refusal naming what was seen, never
+  a guess. `--dry-run` reads and reports without filing.
 
 ## roster.mjs — who is alive
 
@@ -424,6 +451,40 @@ merge checklist then requires — one derivation, three users.
 - `propose <kind> "…" --by <owner>` (kinds: new-node, move-boundary, rename, rule), `proposals
   [--open]`, `approve|veto <id> ["why"] --by architect`, `apply <id>`. Approval and apply record;
   filing into the graph is the architect's own `yg` calls, and `apply` prints the exact edit.
+- **The status ladder** (ruling quality-always-authorised). A rule goes draft → advisory → enforced,
+  and which rung it deserves is a question about evidence. `ladder` lists every rule the graph
+  declares with its rung, the number of cases it is drilled against, what it refuses here, the
+  baseline it was granted against and how many closed waves have seen nothing new; read-only.
+  `promote <aspect> [--by <name>] [--node <path>] [--with-reviewer]` grants the next rung when the
+  evidence carries it, and refuses naming exactly what is missing when it does not:
+  - *draft → advisory* — `yg drill --aspect <id>` runs clean over a corpus that actually has cases
+    (an empty corpus is never a pass: nothing has been run against that rule). The move records the
+    **baseline** — the refusals `yg check --json` reports for that rule once the rung makes its pairs
+    exist, after the free keyless fill — so a later reading above it is a new violation and a reading
+    at or below it is not.
+  - *advisory → enforced* — two closed waves whose reading saw nothing new **and** left nothing
+    unjudged, plus a rule that refuses nothing at all right now. The second condition is not
+    decoration: "enforced" means "blocks the merge", and granting it to a rule with outstanding
+    refusals would redden the trunk on purpose, which is the fall this ruling exists to prevent.
+  The move itself is what Yggdrasil prescribes and nothing more: the `status:` line of the rule's own
+  `yg-aspect.yaml`, then `yg log add` on every node the rule reaches, carrying the numbers in
+  self-contained prose. Which nodes those are is the graph's own answer — the units it reports pairs
+  for, falling back for a draft rule (which has no pairs at all) to the mission's own nodes asked one
+  by one; `--node <path>` names one outright, for a rule that reaches files rather than components and
+  so has no node's log to be written into. Never a lock, never a `yg-suppress`, never `review_by`. A
+  rule a reader judges costs money to drill, so `promote` refuses it until `--with-reviewer` says to
+  spend that. Under a charter set to `only-the-work`, `promote` refuses outright.
+- `demote <aspect> --to draft|advisory --by user --why "<what they said>"` — the one direction nobody
+  in the horde may take alone. Without `--by user` it refuses, and `--by architect` is refused just as
+  flatly; `--why` is required, and goes into the graph's own log. There is deliberately **no** command
+  here for a suppression or a review date: both weaken a rule, Yggdrasil already asks the user for
+  them, and the horde adds no way around that.
+- The horde's own working for all of this lives in `hordes/<horde>/graph.json` beside the proposals:
+  per rule, the rung it was last left on, when, the baseline, the drill that justified it, one
+  observation per closed wave, and every move with its evidence. `wave.mjs close` is the only thing
+  that records an observation — the two-wave test counts closed waves, so a rule cannot be promoted by
+  running a command twice in one afternoon — and it marks each raise as shown to the chairman, so no
+  raise is listed twice and none falls between one wave's close and the next one's start.
 
 ## verify.mjs — the second key
 
@@ -523,11 +584,27 @@ Beyond the counts it always carried, `close` states five figures the chairman re
 - **the quality index** — read from the graph's own CLI (`config.ygCommand`) on the tree the close
   runs on: enforced rules, advisory rules with nothing
   reported against them, blocking violations, the standing noise floor, and file coverage, each
-  with its delta from the previous wave. There is no `--json` on `yg check` or `yg aspects` — the
-  installed CLI has no such flag, verified against its own `--help` — so the index is read from
-  what those two read-only, keyless commands print, and a figure they do not state is reported as
-  unknown rather than invented. A fall in any of the five opens a `quality` escalation by itself:
-  raising enforcement is the horde's own call, lowering it is the chairman's.
+  with its delta from the previous wave. It is read from what those two read-only, keyless commands
+  print, and a figure they do not state is reported as unknown rather than invented. A fall in any of the five opens a `quality` escalation by itself:
+  raising enforcement is the horde's own call, lowering it is the chairman's. One exception, and it
+  is arithmetic rather than mercy: a rule the horde raised out of advisory this wave leaves the
+  "advisory rules with nothing against them" count by getting *stronger*, so a drop no larger than
+  the number of such raises is accounted for and not escalated; anything beyond it still goes up.
+
+`close` also carries the other half of that ruling, in a block of its own:
+
+- it takes each watched rule's **reading for this wave** — what the rule refuses now against the
+  baseline it was granted on — and records it on the horde's own ladder ledger. The close is the only
+  thing that records one, which is what makes "two consecutive closed waves" mean two waves rather
+  than two commands; it runs `yg check --approve --only-deterministic` first (free, keyless) so the
+  reading is refusals and not "nobody has looked";
+- it lists **every rung the horde raised** that no close has shown yet, each with the evidence from
+  the graph's own log, and marks them shown, so a raise is never listed twice and never falls between
+  one wave's close and the next one's start;
+- it lists the **quality tickets merged** this wave;
+- and it ends with the veto: what was raised can be undone by the chairman and by nobody else, since
+  lowering a rule, waiving one or moving a review date is theirs alone. Under a charter set to
+  `only-the-work` the block says none of it ran, and no reading is recorded at all.
 
 ## premerge.mjs — the mechanical checklist
 

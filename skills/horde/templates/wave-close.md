@@ -9,6 +9,10 @@
 **Quality index:** {{qualityLine}}
 **Cost:** {{runs}} runs · weighted {{weighted}} · mission to date {{cumulative}}{{ of limit}}
 
+## Quality — what the horde raised on its own
+
+{{qualityBlock}}
+
 ## Graph changes (architect)
 
 One line each: what changed in the graph and why. The chairman reads this list.

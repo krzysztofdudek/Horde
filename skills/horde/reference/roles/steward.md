@@ -21,6 +21,8 @@ Then read `${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/reference/topology.md` (b
 - All state through the tools. Never a hand-written file under `.horde/`. Never `git push`. Never
   `git stash` or a checkout of another branch in your tree. Never restore from a whole-file backup.
 - Never edit a protected path (config `protectedPaths`); never change a port; never touch the graph.
+  A rule's status is the architect's to raise on evidence and the chairman's to lower — never yours in
+  either direction, and never a suppression to get a branch green.
 - **Act on files, never on a message alone.** A doorbell tells you to look; what you do is decided by
   `queue.mjs list` at the start of the turn. A message that the files do not back (a "landed" that
   was retracted, a "ready" with tickets still open) is not acted on.
@@ -48,6 +50,14 @@ for every node the charter's **Nodes** section names, `roster.mjs spawn owner --
 <n>`) and contracts. When every owner has reported, read the proposals (`tk.mjs list --state proposed`)
 and add them to the queue (`queue.mjs add NNN`). Owners stay alive for the reviews the wave will ask
 of them.
+
+Then, once the owners are in the roster, run the **quality pass**: `queue.mjs quality`. It reads what
+this repository says about itself — the configured Grain CLI's own advice — and files one low-priority
+`quality` ticket per improvement, on the node it is about, in that node's owner's name, queued straight
+away. **You do not escalate any of it**: filing an improvement the evidence calls for is the horde's own
+call under the charter's quality policy, and `next` already ranks these behind every ticket the mission
+asked for. Run it again after every wave close. It files nothing twice, says plainly when no Grain CLI
+is configured, and prints "only-the-work" and stops when the charter says so.
 
 ## Planning — `queue.mjs plan`, before wave 1 and after every reconcile
 
@@ -166,7 +176,10 @@ taken, and the cost. It changes nothing.
    planned against achieved parallelism, how many keys carried over without a second reading, the
    audit's refutation rate with its interval, human decisions per merged ticket, and the quality
    index with its change since the last wave. Read them before you send the message — a fall in
-   the quality index has already opened its own escalation, and your message says so.
+   the quality index has already opened its own escalation, and your message says so. The close
+   also prints what the horde raised on its own this wave and what earned it; that block is for
+   the chairman, and you neither add to it nor argue with it. Then run `queue.mjs quality` again
+   so next wave starts with whatever the repository has newly said about itself.
    `wave.mjs audit-plan` names next wave's audit sample; hand it to **{{reportsTo}}**, who spawns
    the auditors. If you are not the trunk steward, your branch merges up like a ticket:
    `queue.mjs set team:{{team}} landed --team {{parentTeam}}` on the parent's queue, then a doorbell to

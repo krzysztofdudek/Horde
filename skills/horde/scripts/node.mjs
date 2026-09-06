@@ -22,7 +22,7 @@ import { join, relative, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   repoRoot, hordePath, readJSON, writeJSON, readText, writeText, readConfig, nowIso,
-  fail, parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, claimLease,
+  fail, parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, claimLease, qualityPolicy,
 } from './_lib.mjs';
 import { trace as traceRoster } from './roster.mjs';
 
@@ -71,6 +71,22 @@ commands:
   veto <id> "why" --by <name> [--horde h]
   apply <proposal-id> [--horde h]
       closes an approved graph-change proposal and prints the filing steps for the architect.
+  ladder [--horde h]
+      every rule the graph declares with the rung it sits on, how many cases it is drilled
+      against, what it refuses here, the baseline it was granted against and how many closed
+      waves have seen nothing new. Read-only.
+  promote <aspect> [--by <name>] [--node <path>] [--with-reviewer] [--horde h]
+      raises a rule one rung on its own evidence — draft → advisory when its case corpus runs
+      clean, advisory → enforced when two closed waves saw nothing new and it refuses nothing
+      here. Writes the rule's own status line and records why in the log of every node it
+      reaches. Refuses with what is missing when the evidence is short, and refuses outright
+      under a charter set to only-the-work. --with-reviewer is required for a rule a reader
+      judges, because re-running its cases costs money.
+  demote <aspect> --to draft|advisory --by user --why "<what they said>" [--node <path>]
+          [--horde h]
+      lowers a rule. Refuses without --by user: making the architecture weaker is the
+      chairman's call and nobody else's. There is no command here for a waiver or a review
+      date — those weaken a rule too, and Yggdrasil already asks the user for them.
 
 options: --json  --help`;
 
@@ -385,11 +401,9 @@ export function verdictCommandsFor(cfg, pair, judge) {
 //
 // Five numbers that say whether the graph got stronger or weaker over a wave, read from the two
 // read-only, keyless commands the installed Yggdrasil CLI actually has: `check` (the gate's own
-// report) and `aspects` (the rule list with each rule's status). There is deliberately no
-// `--json` here: the installed CLI has no such flag on either command — verified against its own
-// `--help` — so the honest source is what those two commands print, parsed for the figures they
-// state outright, and a figure the output does not state is reported as unknown rather than
-// invented.
+// report) and `aspects` (the rule list with each rule's status). The source is what those two
+// commands print, parsed for the figures they state outright, and a figure the output does not
+// state is reported as unknown rather than invented.
 //
 //   enforced       rules at status "enforced" — the law that actually blocks
 //   advisoryClean  advisory rules this run reported nothing against, of all advisory rules
@@ -455,6 +469,588 @@ export function ygQualityIndex(cfg, cwd) {
     nodes: Number((CHECK_NODES_RE.exec(body) || [])[1] || 0),
     aspects: Number((CHECK_ASPECTS_RE.exec(body) || [])[1] || 0),
   };
+}
+
+// ---- the status ladder (ruling quality-always-authorised) ------------------------------------
+//
+// A rule starts inert, becomes a warning, and finally blocks: draft → advisory → enforced. Which
+// rung it deserves is a question about evidence, not taste, so climbing it is the horde's own to
+// do and needs nobody — while going back down is the chairman's, always, and this file offers no
+// way around that.
+//
+// The evidence, and where each half of it comes from:
+//
+//   the drill   `yg drill --aspect <id>` re-runs the rule over its own case corpus and says how
+//               many cases answered as written. Green means the rule says what its author meant
+//               it to say; it is a regression fixture, never a measurement of the repository.
+//   the corpus  `yg check --json` (yg-check/1) says what the rule refuses HERE, right now: one
+//               pair per unit, each carrying its verdict. The count of refusals at the moment a
+//               rule entered its current rung is its BASELINE — what was already broken when the
+//               rung was granted — and every wave close since then records the count again. A
+//               reading above the baseline is a new violation; that is the whole arithmetic.
+//
+// draft → advisory needs a clean drill over a corpus that actually has cases, and records the
+// baseline as part of the move. advisory → enforced needs two consecutive closed waves that saw
+// nothing new AND a rule that refuses nothing at all right now — because "enforced" means "blocks
+// the merge", and granting that to a rule with outstanding refusals would turn the trunk red on
+// purpose, which is a fall in the very index this ruling exists to protect.
+//
+// The move itself is what Yggdrasil prescribes and nothing more: the `status:` line of the rule's
+// own `yg-aspect.yaml`, plus `yg log add` on every node the rule reaches, so the reason lives in
+// the graph's own log where a successor reads it. Never a lock, never a suppression, never a
+// review date — those lower enforcement or hide it, and the horde has no command for them at all.
+
+const ASPECT_RUNGS = ['draft', 'advisory', 'enforced'];
+const WAVES_CLEAN_FOR_ENFORCED = 2;
+
+const DRILL_SUMMARY_RE = /(\d+) pass · (\d+) MISS · (\d+) FALSE-ALARM · (\d+) unrun · (\d+) unsupported/;
+
+// `yg aspects --json` — every rule the graph declares, with the rung it sits on and the reviewer
+// kind it takes. The one answer to "what status is this rule on", asked of the graph rather than
+// read off the file, so a rule reaching its rung through any channel reads correctly.
+export function ygAspectsDoc(root, cfg) {
+  return ygDoc(root, cfg, ['aspects', '--json'], 'yg-aspects/1');
+}
+
+// `yg check --json` — the gate's own report as one document. A red run exits non-zero and still
+// prints the document, which is exactly the case this is wanted for, so the answer is read from
+// what it printed and never from its exit code.
+export function ygCheckDoc(root, cfg) {
+  return ygDoc(root, cfg, ['check', '--json'], 'yg-check/1');
+}
+
+// What one rule refuses on this repository right now, from that document: the pairs it holds a
+// refusal against, and the pairs nobody has judged yet (an LLM rule's pairs, before a reader has
+// answered them, are neither refusals nor clean — reporting them as clean would be a baseline of
+// zero that means nothing).
+export function aspectStanding(checkDoc, aspect) {
+  const pairs = asArray(checkDoc && checkDoc.pairs).filter((p) => p && p.aspect === aspect);
+  const refusals = pairs.filter((p) => p.verdict === 'refused');
+  return {
+    pairs: pairs.length,
+    refused: refusals.length,
+    unverified: pairs.filter((p) => p.verdict === 'unverified' || p.verdict === 'stale').length,
+    nodes: [...new Set(pairs.map((p) => p.node).filter(Boolean))].sort(),
+    reports: refusals.map((p) => ({ unit: p.unit ? `${p.unit.kind}:${p.unit.path}` : null, report: p.report || null })),
+  };
+}
+
+// `yg drill --aspect <id>` — the rule over its own case corpus. Text, not a document: the CLI has
+// no --json here (checked against its own --help), so the summary line it always prints is what is
+// read, and a run whose summary cannot be found is reported as unread rather than as green.
+export function runDrill(root, cfg, aspect) {
+  const { cmd, prefix, display } = ygCommand(cfg);
+  const args = ['drill', '--aspect', aspect];
+  const command = `${display} ${args.join(' ')}`;
+  const run = startCli(cmd, [...prefix, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  if (run.missing || run.spawnFailed) return { available: false, command };
+  const out = `${run.out || ''}${run.err || ''}`;
+  const m = DRILL_SUMMARY_RE.exec(out);
+  if (!m) {
+    return {
+      available: true, command, read: false, out: out.trim(), cases: 0, green: false,
+    };
+  }
+  const [, pass, miss, falseAlarm, unrun, unsupported] = m.map(Number);
+  const cases = pass + miss + falseAlarm + unrun + unsupported;
+  return {
+    available: true,
+    command,
+    read: true,
+    exit: run.code,
+    cases,
+    pass,
+    miss,
+    falseAlarm,
+    unrun,
+    unsupported,
+    // "Green" is every case answering as written, and there being cases to answer. A rule with an
+    // empty corpus exits 0 saying so, and reading that as a pass would promote a rule nothing has
+    // ever been run against.
+    green: cases > 0 && miss === 0 && falseAlarm === 0 && unrun === 0 && unsupported === 0,
+    line: (out.split('\n').map((l) => l.trim()).find((l) => DRILL_SUMMARY_RE.test(l)) || '').trim(),
+    out: out.trim(),
+  };
+}
+
+// ---- the horde's own ledger of the ladder ----------------------------------------------------
+//
+// graph.json's `aspects` list: per rule, the rung this horde last left it on, when, the baseline
+// recorded then, the drill that justified it, one observation per closed wave since, and the
+// history of every move with its evidence. Process state, not architecture — the graph itself
+// carries the status and the reasons; this is the working the horde shows.
+
+function aspectLedger(graph) {
+  if (!Array.isArray(graph.aspects)) graph.aspects = [];
+  return graph.aspects;
+}
+
+export function readAspectLedger(horde) {
+  return aspectLedger(loadGraph(horde));
+}
+
+function ledgerEntry(graph, aspect) {
+  return aspectLedger(graph).find((e) => e.aspect === aspect) || null;
+}
+
+function newLedgerEntry(aspect, status) {
+  return {
+    aspect,
+    status,
+    since: nowIso(),
+    baseline: null,
+    unverified: null,
+    drill: null,
+    observations: [],
+    history: [],
+  };
+}
+
+// The rung the graph says a rule is on, reconciled with what the ledger remembers. When the two
+// disagree somebody moved the rule outside this horde: the graph wins (it is the truth), and the
+// entry is restarted at the new rung rather than carrying evidence that was gathered about a
+// different one.
+function syncedEntry(graph, aspect, graphStatus) {
+  let entry = ledgerEntry(graph, aspect);
+  if (!entry) {
+    entry = newLedgerEntry(aspect, graphStatus);
+    aspectLedger(graph).push(entry);
+    return { entry, reset: false };
+  }
+  if (entry.status !== graphStatus) {
+    entry.status = graphStatus;
+    entry.since = nowIso();
+    entry.baseline = null;
+    entry.unverified = null;
+    entry.observations = [];
+    return { entry, reset: true };
+  }
+  return { entry, reset: false };
+}
+
+// The observations recorded since the rule entered its current rung, newest last.
+function observationsSince(entry) {
+  return asArray(entry.observations).filter((o) => o && String(o.at) > String(entry.since));
+}
+
+// ---- the aspect file: the one line this tool ever writes into the graph ------------------------
+
+export function aspectFilePath(root, aspect) {
+  return join(root, '.yggdrasil', 'aspects', aspect, 'yg-aspect.yaml');
+}
+
+// Replaces the top-level `status:` line, or writes one when the rule has none (a rule that never
+// said its status is enforced by Yggdrasil's own default, and saying so outright is the only way
+// to move it). Nothing else in the file is touched — not `review_by`, not the description, not a
+// waiver: those weaken a rule or hide it, and this tool does not offer them at any price.
+function setAspectStatusText(text, status) {
+  if (/^status:/m.test(text)) return text.replace(/^status:.*$/m, `status: ${status}`);
+  const lines = text.split('\n');
+  const at = lines[0] && lines[0].trim() === '---' ? 1 : 0;
+  lines.splice(at, 0, `status: ${status}`);
+  return lines.join('\n');
+}
+
+// `yg log add --node <p> --reason "<why>"`, run for real. Returns the nodes it reached; a node the
+// CLI would not append to is reported, never silently dropped — the log entry is half of what
+// makes a status change reviewable at wave close.
+function logToNodes(root, cfg, nodes, reason) {
+  const yg = ygCommand(cfg);
+  const logged = [];
+  const missed = [];
+  for (const node of nodes) {
+    try {
+      execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+      logged.push(node);
+    } catch {
+      missed.push(node);
+    }
+  }
+  return { logged, missed };
+}
+
+// The nodes a rule reaches, for the log entry: the units `yg check` reports pairs for, which is
+// the graph's own answer and costs nothing extra. A draft rule has no pairs at all (draft removes
+// them from the expected set), so a draft promotion falls back to the mission's own nodes, asked
+// one by one whether this rule is in force on them. `--node` overrides both, for a rule that
+// reaches files rather than components and so has no node of its own to be logged against.
+function nodesReachedBy(horde, root, cfg, aspect, standing, named) {
+  if (named) {
+    if (!nodeExists(root, cfg, named)) fail(`--node ${named}: the graph has no such component`);
+    return [named];
+  }
+  if (standing.nodes.length) return standing.nodes;
+  const out = [];
+  for (const node of missionNodes(horde, root, cfg)) {
+    const res = ygContext(root, cfg, node);
+    if (res.doc && asArray(res.doc.aspects).some((a) => a && a.id === aspect)) out.push(node);
+  }
+  return out;
+}
+
+// ---- promotion and demotion --------------------------------------------------------------------
+
+function aspectFromDoc(doc, aspect) {
+  return asArray(doc && doc.aspects).find((a) => a && a.id === aspect) || null;
+}
+
+// Reads where a rule stands and what the evidence says about the next rung. Pure — it runs the
+// drill and the check, and decides nothing.
+function ladderEvidence(horde, root, cfg, aspect, { withReviewer }) {
+  const doc = ygAspectsDoc(root, cfg);
+  const declared = aspectFromDoc(doc, aspect);
+  if (!declared) {
+    const known = asArray(doc && doc.aspects).map((a) => a.id).sort();
+    fail(
+      `the graph declares no rule called "${aspect}".\n`
+      + 'A rule is raised by name, and a name the graph does not have would move nothing.\n'
+      + `Rules this graph declares: ${known.join(', ') || '(none)'}.`,
+    );
+  }
+  const status = ASPECT_RUNGS.includes(declared.status) ? declared.status : 'enforced';
+
+  if (declared.kind === 'llm' && !withReviewer) {
+    fail(
+      `"${aspect}" is judged by a reader, not by a script, and re-running its cases means paying for that reader.\n`
+      + 'Raising a rule is free where the rule is a script; here it is a cost, and a cost this tool will not '
+      + 'spend on its own.\n'
+      + `Say so outright to spend it: node.mjs promote ${aspect} --with-reviewer`,
+    );
+  }
+
+  const drill = runDrill(root, cfg, aspect);
+  if (!drill.available) failNoCli(cfg, drill.command);
+  // The free, keyless fill first: a pair whose code has moved since it was last judged reads as
+  // unjudged until a script has looked again, and refusing to raise a rule over that would be
+  // refusing over a question a command answers for nothing.
+  fillDeterministic(cfg, root);
+  const check = ygCheckDoc(root, cfg);
+  const standing = aspectStanding(check, aspect);
+  return { declared, status, drill, standing };
+}
+
+// "1 place" / "3 places" — these sentences land in the graph's own log and in a wave close a person
+// reads, and "1 place(s)" is a machine talking.
+function places(n) {
+  return `${n} place${n === 1 ? '' : 's'}`;
+}
+
+function drillSentence(drill) {
+  if (!drill.read) return 'its cases could not be read';
+  if (drill.cases === 0) return 'it has no cases to run';
+  return `${drill.pass} of ${drill.cases} cases answered as written (${drill.miss} miss, ${drill.falseAlarm} false alarm)`;
+}
+
+function cmdPromote(horde, root, cfg, positional, flags) {
+  const aspect = positional[0];
+  if (!aspect) fail('promote requires <aspect>');
+  if (qualityPolicy(horde) === 'only-the-work') {
+    fail(
+      `this mission's charter sets the quality policy to "only-the-work", and raising "${aspect}" is quality work.\n`
+      + 'Under that policy the horde does what the tickets say and nothing else, so a rule is not raised on its '
+      + 'own evidence here.\n'
+      + 'Change the charter to autonomous (horde.mjs charter edit) if the chairman wants it back.',
+    );
+  }
+  const by = flags.by || 'architect';
+  const { status, drill, standing } = ladderEvidence(horde, root, cfg, aspect, { withReviewer: !!flags['with-reviewer'] });
+
+  const graph = loadGraph(horde);
+  const { entry, reset } = syncedEntry(graph, aspect, status);
+
+  if (status === 'enforced') {
+    saveGraph(horde, graph);
+    fail(`"${aspect}" is already enforced — it blocks the merge, and there is no rung above that.`);
+  }
+  const to = ASPECT_RUNGS[ASPECT_RUNGS.indexOf(status) + 1];
+
+  // What each rung asks for, and the refusal that names exactly what is missing.
+  const missing = [];
+  if (!drill.green) {
+    missing.push(drill.cases === 0
+      ? `its case corpus is empty — nothing has ever been run against this rule, so nothing says it means what it was written to mean (${drill.command})`
+      : `its case corpus does not run clean: ${drillSentence(drill)} (${drill.command})`);
+  }
+  // A wave counts as clean when it saw nothing new AND left nothing unjudged: a rule whose pairs
+  // nobody looked at that wave has not been shown clean, it has been left unread.
+  const clean = observationsSince(entry).filter((o) => Number(o.new) === 0 && Number(o.unjudged || 0) === 0);
+  if (to === 'enforced') {
+    if (clean.length < WAVES_CLEAN_FOR_ENFORCED) {
+      missing.push(
+        `${clean.length} of ${WAVES_CLEAN_FOR_ENFORCED} closed waves have seen nothing new against it since it became `
+        + `advisory — a rule blocks the merge once it has held for two waves, not once it looks right`,
+      );
+    }
+    if (standing.refused > 0) {
+      missing.push(
+        `it still refuses ${places(standing.refused)} here — making it block now would turn the gate red on work `
+        + 'nobody asked for, which is the fall this ruling exists to prevent; clear them first',
+      );
+    }
+    if (standing.unverified > 0) {
+      missing.push(`${standing.unverified} of its pairs have never been judged — what it refuses here is not known yet`);
+    }
+  }
+
+  if (missing.length) {
+    saveGraph(horde, graph);
+    fail(
+      `"${aspect}" cannot be raised from ${status} to ${to} yet — ${missing.join('; and ')}.\n`
+      + 'A rung is granted on evidence, never on an opinion, so the horde raises nothing it cannot show the working for.\n'
+      + `Fix what is listed and run it again: node.mjs promote ${aspect}`,
+    );
+  }
+
+  // The move. Two writes into the graph, both of them what Yggdrasil prescribes: the rule's own
+  // status line, and the reason in the log of every node the rule reaches.
+  const file = aspectFilePath(root, aspect);
+  const before = readText(file);
+  if (before === null) {
+    saveGraph(horde, graph);
+    fail(`"${aspect}" has no rule file to raise (${relative(root, file)} does not exist) — the graph declares it, but its own definition is missing.`);
+  }
+  writeText(file, setAspectStatusText(before, to));
+
+  // With the rung granted, what the rule refuses HERE is worth reading again: a draft rule had no
+  // pairs at all until this moment. The free, keyless fill records every script verdict first, so
+  // the reading is refusals and not "nobody has looked".
+  fillDeterministic(cfg, root);
+  const after = aspectStanding(ygCheckDoc(root, cfg), aspect);
+
+  const evidence = to === 'advisory'
+    ? `Rule "${aspect}" raised from draft to advisory on its own evidence: ${drillSentence(drill)}, and the `
+      + `${places(after.refused)} it already refuses here ${after.refused === 1 ? 'is' : 'are'} recorded as its `
+      + 'baseline, so anything new stands out against that. It warns from now on; it does not block. Raising a rule '
+      + 'is the horde\'s own call, lowering one is the chairman\'s.'
+    : `Rule "${aspect}" raised from advisory to enforced on its own evidence: ${clean.length} closed waves in a row `
+      + `saw nothing new against it, ${drillSentence(drill)}, and it refuses nothing here today, so blocking on it `
+      + 'breaks nothing that was already good. It blocks the merge from now on. Raising a rule is the horde\'s own '
+      + 'call, lowering one is the chairman\'s.';
+
+  const nodes = nodesReachedBy(horde, root, cfg, aspect, after.nodes.length ? after : standing, flags.node);
+  const { logged, missed } = logToNodes(root, cfg, nodes, evidence);
+
+  const at = nowIso();
+  entry.status = to;
+  entry.since = at;
+  entry.baseline = after.refused;
+  entry.unverified = after.unverified;
+  entry.drill = {
+    cases: drill.cases, pass: drill.pass, miss: drill.miss, falseAlarm: drill.falseAlarm, at,
+  };
+  entry.observations = [];
+  entry.history.push({
+    from: status, to, at, by, evidence, logged, missed, baseline: after.refused,
+  });
+  saveGraph(horde, graph);
+  traceRoster(horde, by);
+
+  emit({
+    aspect,
+    from: status,
+    to,
+    by,
+    at,
+    baseline: after.refused,
+    unverified: after.unverified,
+    drill: entry.drill,
+    cleanWaves: clean.length,
+    logged,
+    missed,
+    reset,
+    evidence,
+  }, flags, () => [
+    `"${aspect}" raised ${status} → ${to} — ${drillSentence(drill)}`
+    + (to === 'enforced' ? `, ${clean.length} clean waves, nothing outstanding` : `, baseline ${after.refused}`),
+    logged.length
+      ? `recorded in the log of: ${logged.join(', ')}`
+      : 'no component log to record it in — this rule reaches files rather than components; name one with '
+        + `node.mjs promote ${aspect} --node <path> if it should be written down somewhere`,
+    ...(missed.length ? [`could not record it on: ${missed.join(', ')}`] : []),
+    'the chairman sees it at wave close and can undo it there',
+  ].join('\n'));
+}
+
+function cmdDemote(horde, root, cfg, positional, flags) {
+  const aspect = positional[0];
+  if (!aspect) fail('demote requires <aspect>');
+  const to = flags.to;
+  if (!to || !ASPECT_RUNGS.includes(to)) fail(`demote requires --to ${ASPECT_RUNGS.join('|')}`);
+
+  // The whole point of this command: it is the one direction nobody in the horde may take alone.
+  if (flags.by !== 'user') {
+    fail(
+      `lowering "${aspect}" to ${to} would make this repository's architecture weaker, and nobody in the horde can decide that.\n`
+      + 'Raising enforcement is the horde\'s own call because evidence justifies it; lowering it is a judgement about '
+      + 'what this project is willing to let through, and that belongs to the person the mission is for.\n'
+      + `Ask them, and when they say so: node.mjs demote ${aspect} --to ${to} --by user --why "<what they said>"`,
+    );
+  }
+  const why = flags.why;
+  if (!why) fail('demote --by user requires --why "<what the chairman said>" — the reason goes into the graph\'s own log, where a successor reads it');
+
+  const doc = ygAspectsDoc(root, cfg);
+  const declared = aspectFromDoc(doc, aspect);
+  if (!declared) fail(`the graph declares no rule called "${aspect}".`);
+  const status = ASPECT_RUNGS.includes(declared.status) ? declared.status : 'enforced';
+  if (ASPECT_RUNGS.indexOf(to) >= ASPECT_RUNGS.indexOf(status)) {
+    fail(`"${aspect}" is ${status}; --to ${to} does not lower it. Raising a rule is node.mjs promote, on evidence.`);
+  }
+
+  const file = aspectFilePath(root, aspect);
+  const before = readText(file);
+  if (before === null) fail(`"${aspect}" has no rule file to lower (${relative(root, file)} does not exist).`);
+
+  // Which nodes the rule reaches is read BEFORE the move, while the rung it is being lowered from
+  // still has pairs to report: `draft` removes them from the expected set entirely, and asking
+  // afterwards would be asking a rule that has just been switched off where it used to apply.
+  const standing = aspectStanding(ygCheckDoc(root, cfg), aspect);
+  const nodes = nodesReachedBy(horde, root, cfg, aspect, standing, flags.node);
+
+  writeText(file, setAspectStatusText(before, to));
+
+  const evidence = `Rule "${aspect}" lowered from ${status} to ${to} by the chairman: ${why}. The horde does not lower `
+    + 'a rule on its own; this one was asked for.';
+  const { logged, missed } = logToNodes(root, cfg, nodes, evidence);
+
+  const graph = loadGraph(horde);
+  const { entry } = syncedEntry(graph, aspect, status);
+  const at = nowIso();
+  entry.status = to;
+  entry.since = at;
+  entry.baseline = standing.refused;
+  entry.observations = [];
+  entry.history.push({
+    from: status, to, at, by: 'user', evidence, logged, missed, why,
+  });
+  saveGraph(horde, graph);
+
+  emit({
+    aspect, from: status, to, by: 'user', why, at, logged, missed,
+  }, flags, () => [
+    `"${aspect}" lowered ${status} → ${to} on the chairman's word`,
+    logged.length ? `recorded in the log of: ${logged.join(', ')}` : 'no node log to record it in',
+  ].join('\n'));
+}
+
+function cmdLadder(horde, root, cfg, flags) {
+  const doc = ygAspectsDoc(root, cfg);
+  const check = ygCheckDoc(root, cfg);
+  const ledger = readAspectLedger(horde);
+  const rows = asArray(doc && doc.aspects).map((a) => {
+    const entry = ledger.find((e) => e.aspect === a.id) || null;
+    const standing = aspectStanding(check, a.id);
+    const clean = entry && entry.status === a.status
+      ? observationsSince(entry).filter((o) => Number(o.new) === 0 && Number(o.unjudged || 0) === 0).length
+      : 0;
+    return {
+      aspect: a.id,
+      status: a.status,
+      kind: a.kind,
+      cases: a.drills ? a.drills.total : null,
+      refuses: standing.refused,
+      unjudged: standing.unverified,
+      baseline: entry ? entry.baseline : null,
+      cleanWaves: clean,
+      next: a.status === 'enforced' ? null : ASPECT_RUNGS[ASPECT_RUNGS.indexOf(a.status) + 1],
+    };
+  });
+  emit({ policy: qualityPolicy(horde), aspects: rows }, flags, () => {
+    if (rows.length === 0) return '(the graph declares no rules)';
+    return rows.map((r) => `${r.aspect} [${r.status}] cases=${r.cases ?? '-'} refuses=${r.refuses} baseline=${r.baseline ?? '-'} clean-waves=${r.cleanWaves}`
+      + (r.next ? `  → ${r.next}` : '')).join('\n');
+  });
+}
+
+// ---- what the wave close reads back ------------------------------------------------------------
+
+// One reading per closed wave, for every rule the horde has a rung on that is not yet enforced:
+// what it refuses now, and how much of that is new since the rung was granted. This is the record
+// the two-wave rule counts, so it is written by the close and by nothing else — a rule cannot be
+// promoted by running a command twice in one afternoon.
+export function observeAspects(horde, root, cfg, wave) {
+  if (qualityPolicy(horde) === 'only-the-work') return { observed: [], policy: 'only-the-work' };
+  const graph = loadGraph(horde);
+  if (aspectLedger(graph).length === 0) return { observed: [], policy: 'autonomous' };
+  const doc = ygAspectsDoc(root, cfg);
+  // Free and keyless, and the reason it is here: a wave's work moves the code under every pair it
+  // touches, and a pair nobody has looked at since is neither clean nor refused. Filling the script
+  // verdicts first is what makes "nothing new this wave" a reading rather than a shrug.
+  fillDeterministic(cfg, root);
+  const check = ygCheckDoc(root, cfg);
+  const at = nowIso();
+  const observed = [];
+  for (const entry of aspectLedger(graph)) {
+    const declared = aspectFromDoc(doc, entry.aspect);
+    if (!declared) continue;
+    const status = ASPECT_RUNGS.includes(declared.status) ? declared.status : 'enforced';
+    const { entry: synced } = syncedEntry(graph, entry.aspect, status);
+    if (status === 'enforced') continue;
+    const standing = aspectStanding(check, entry.aspect);
+    const baseline = Number.isFinite(Number(synced.baseline)) ? Number(synced.baseline) : standing.refused;
+    const fresh = Math.max(0, standing.refused - baseline);
+    const observation = {
+      wave: String(wave), at, refused: standing.refused, baseline, new: fresh, unjudged: standing.unverified,
+    };
+    synced.observations.push(observation);
+    observed.push({ aspect: entry.aspect, status, ...observation });
+  }
+  saveGraph(horde, graph);
+  return { observed, policy: 'autonomous' };
+}
+
+// Every rung granted that no wave close has shown the chairman yet. Not "since this wave opened":
+// a rule raised in the gap between one close and the next start would fall through such a window,
+// and the whole point of the listing is that the chairman sees every raise exactly once and can
+// undo it. Marked as shown by `markPromotionsReported`, which the close calls after it prints them.
+export function pendingPromotions(horde) {
+  const out = [];
+  for (const entry of readAspectLedger(horde)) {
+    for (const h of asArray(entry.history)) {
+      if (!h || !h.at || h.reported) continue;
+      if (ASPECT_RUNGS.indexOf(h.to) <= ASPECT_RUNGS.indexOf(h.from)) continue;
+      out.push({ aspect: entry.aspect, ...h });
+    }
+  }
+  return out.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+}
+
+export function markPromotionsReported(horde, promotions) {
+  if (!promotions.length) return;
+  const shown = new Set(promotions.map((p) => `${p.aspect}@${p.at}`));
+  const graph = loadGraph(horde);
+  for (const entry of aspectLedger(graph)) {
+    for (const h of asArray(entry.history)) {
+      if (h && shown.has(`${entry.aspect}@${h.at}`)) h.reported = nowIso();
+    }
+  }
+  saveGraph(horde, graph);
+}
+
+// ---- the advisories a quality ticket is filed from --------------------------------------------
+//
+// `grain-advice/1` items the horde has already turned into a ticket, so a second pass over the same
+// document does not file the same improvement twice. Keyed by what the item actually says, not by
+// its position in a list that is recomputed every run.
+
+export function advisoryKey(item) {
+  const nodes = asArray(item && item.nodes).join('+');
+  const text = String((item && item.text) || '');
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0;
+  return `${(item && item.kind) || 'item'}:${nodes}:${(hash >>> 0).toString(16)}`;
+}
+
+export function readAdvisoryLedger(horde) {
+  const doc = loadGraph(horde);
+  return Array.isArray(doc.advisories) ? doc.advisories : [];
+}
+
+export function recordAdvisory(horde, entry) {
+  const graph = loadGraph(horde);
+  if (!Array.isArray(graph.advisories)) graph.advisories = [];
+  graph.advisories.push({ ...entry, at: nowIso() });
+  saveGraph(horde, graph);
 }
 
 // ---- where a node's own files live -----------------------------------------------------------
@@ -713,6 +1309,11 @@ function loadGraph(horde) {
   return {
     proposals: doc && Array.isArray(doc.proposals) ? doc.proposals : [],
     ports: doc && Array.isArray(doc.ports) ? doc.ports : [],
+    // The status ladder's own working (which rung each rule sits on, the baseline it was granted
+    // against, one reading per closed wave) and the advisories already turned into tickets. Both
+    // are lists like the two above, and both are carried through every write of this file.
+    aspects: doc && Array.isArray(doc.aspects) ? doc.aspects : [],
+    advisories: doc && Array.isArray(doc.advisories) ? doc.advisories : [],
   };
 }
 
@@ -1161,7 +1762,7 @@ function cmdApply(horde, root, cfg, positional, flags) {
 // ---- main ---------------------------------------------------------------------
 
 function main() {
-  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['run', 'pending', 'open', 'take'] });
+  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['run', 'pending', 'open', 'take', 'with-reviewer'] });
   const [cmd, ...rest] = allPositional;
 
   if (flags.help) { console.log(USAGE); process.exit(0); }
@@ -1193,6 +1794,9 @@ function main() {
   if (cmd === 'approve') return cmdProposalRule(horde, rest, flags, 'approved');
   if (cmd === 'veto') return cmdProposalRule(horde, rest, flags, 'vetoed');
   if (cmd === 'apply') return cmdApply(horde, root, cfg, rest, flags);
+  if (cmd === 'ladder') return cmdLadder(horde, root, cfg, flags);
+  if (cmd === 'promote') return cmdPromote(horde, root, cfg, rest, flags);
+  if (cmd === 'demote') return cmdDemote(horde, root, cfg, rest, flags);
   fail(`unknown command: ${cmd} (see --help)`);
 }
 
