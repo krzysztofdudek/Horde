@@ -12,7 +12,7 @@ import {
   hordePath, teamPath, listHordes, readConfig, readJSON, readText, git, fail, parseArgs, emit, isMain,
   readLeases,
 } from './_lib.mjs';
-import { currentWaveNumber } from './wave.mjs';
+import { currentWaveNumber, evidenceCoverage } from './wave.mjs';
 import { sumEntries, readCostLimit } from './cost.mjs';
 import { missionNodes } from './node.mjs';
 
@@ -130,6 +130,13 @@ function hordeDigest(horde, cfg, teamFilter) {
     .filter((node) => leases[node] && leases[node].horde !== horde)
     .map((node) => ({ node, horde: leases[node].horde, since: leases[node].since }));
 
+  // Every charter row, one of five states: no-ticket / queued / running / merged / reproduced —
+  // wave.mjs's own reading, shared with horde.mjs done's gate, of "does a ticket prove this row
+  // and how far has it gotten" (see wave.mjs's evidenceCoverage for what each state means).
+  const evidenceRows = evidenceCoverage(horde);
+  const evidenceByState = {};
+  for (const r of evidenceRows) evidenceByState[r.state] = (evidenceByState[r.state] || 0) + 1;
+
   return {
     name: horde,
     base: (cfg && cfg.base) || null,
@@ -143,6 +150,7 @@ function hordeDigest(horde, cfg, teamFilter) {
     lastGate,
     cost: { runs, weighted, limit, reached: limit !== null && weighted >= limit },
     leases: { foreign: foreignLeases },
+    evidence: { total: evidenceRows.length, byState: evidenceByState, rows: evidenceRows },
   };
 }
 
@@ -181,6 +189,18 @@ function printHorde(h) {
   if (h.leases.foreign.length > 0) {
     console.log('  leases held by other hordes on nodes this one touches:');
     for (const l of h.leases.foreign) console.log(`    ${l.node} -> ${l.horde} (since ${l.since})`);
+  }
+  if (h.evidence.total === 0) {
+    console.log('  evidence: (no rows in the charter yet)');
+  } else {
+    const order = ['no-ticket', 'queued', 'running', 'merged', 'reproduced'];
+    const summary = order.filter((s) => h.evidence.byState[s]).map((s) => `${s}=${h.evidence.byState[s]}`).join(' ');
+    console.log(`  evidence: ${h.evidence.rows.filter((r) => r.state === 'reproduced').length}/${h.evidence.total} reproduced — ${summary}`);
+    for (const row of h.evidence.rows) {
+      const ticketNote = row.ticket ? ` (ticket ${row.ticket})` : '';
+      const byNote = row.reproducedBy ? ` — reproduced by ${row.reproducedBy}` : '';
+      console.log(`    ${row.id} [${row.state}] ${row.evidence || '(no description)'}${row.node ? ` — ${row.node}` : ''}${ticketNote}${byNote}`);
+    }
   }
 }
 
