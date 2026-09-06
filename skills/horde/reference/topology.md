@@ -13,7 +13,8 @@
 - Team names are free (mythical creatures, stars — whatever the steward chooses); the hierarchy of
   teams is recorded in `.horde/hordes/<horde>/roster.json`, never encoded in branch names, because
   git refs cannot nest a branch under a branch.
-- Several hordes may run on one repository at once, each on its own trunk, with different missions.
+- Several hordes may run on one repository at once, each on its own trunk, with different
+  missions — but never on the same node at the same time; see "Node leases" below.
 - Merging goes up only: ticket → team → trunk → (the user's pull request into base). Nobody merges
   down except to refresh a branch from its parent (`git merge <parent>`), which every worker does as
   its first action.
@@ -45,6 +46,8 @@ file ever conflicts in a merge.
   .gitignore                        "*"
   config.json                       base branch, gate commands per level, node source, cost-class
                                     weights (`classes`), liveness thresholds, protected paths
+  leases.json (+ .md)               node -> {horde, since}: shared across every horde on this
+                                    repository, never per-horde (see "Node leases" below)
   hordes/<horde>/
     charter.md                      the mission: goal, non-goals, constraints, evidence catalogue,
                                     touched and new nodes, decision rights, cost policy and limit
@@ -62,6 +65,31 @@ file ever conflicts in a merge.
       handoff.json (+ .md)          the steward's state of intent
       teams/<sub-team>/…            recursive
 ```
+
+## Node leases — exclusive across live hordes
+
+Two hordes binding the same node get two owners with contradictory decisions, and the conflict
+surfaces only when their trunks meet the base — the most expensive moment to find it. So node
+ownership is exclusive across every live horde on one repository, tracked in the one file every
+horde shares: `.horde/leases.json`, node id -> `{horde, since}`.
+
+- `node.mjs bind <node>` leases a free node to the calling horde (`--horde`); binding a node this
+  horde already holds is a no-op. Binding a node another *live* horde holds is refused, naming
+  that horde and its last activity — the same refusal `horde.mjs init --nodes` gives when a
+  charter's touched node overlaps a live horde's lease, checked before the new horde's branch or
+  any of its own state is created.
+- `--take --escalation <id>` overrides the refusal, but only over an escalation on the taking
+  horde that has actually been ruled (`escalate.mjs rule`) — an unruled or missing id is refused
+  the same as no `--take` at all. A successful take-over is written to the node's own log (where
+  one exists to write to) and to `leases.json`'s own append-only history, so a contested node's
+  story survives past its current holder.
+- `horde.mjs archive` releases every lease the archived horde held — the moment a horde is no
+  longer live, its nodes are free for another to bind, no `--take` needed.
+- `status.mjs` surfaces a lease another live horde holds on a node this horde's own tickets touch;
+  `horde.mjs list` shows each horde's own leased nodes.
+
+Leasing a node id never requires that a graph object for it already exists — a mission is free to
+reserve the name of a node it is about to create before the architect ever files it.
 
 ## Two graph modes — the skill works with and without Yggdrasil
 

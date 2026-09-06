@@ -196,6 +196,57 @@ test('horde.mjs charter: show prints it, edit replaces it from stdin', async (t)
   assert.match(refused.stderr, /requires content on stdin/);
 });
 
+// ---- node-lease-across-hordes: init --nodes, list, archive release --------------------------
+
+test('horde.mjs: init --nodes binds the charter\'s nodes at creation; list and archive reflect it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir, 'alpha', ['--nodes', 'core,ui']);
+
+  await t.test('list shows the nodes alpha leased', () => {
+    const r = run('horde.mjs', ['list'], dir);
+    assert.equal(r.code, 0);
+    assert.deepEqual(r.json[0].leasedNodes, ['core', 'ui']);
+  });
+
+  await t.test('a second horde is refused at init over an overlapping node, before anything of its own is created', () => {
+    const r = run('horde.mjs', ['init', 'beta', '--base', 'develop', '--nodes', 'core'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /leased by horde "alpha"/);
+    assert.match(r.stderr, /last activity/);
+    assert.equal(existsSync(join(dir, '.horde', 'hordes', 'beta')), false);
+  });
+
+  await t.test('a disjoint node set inits cleanly and reports what it leased', () => {
+    const r = run('horde.mjs', ['init', 'beta', '--base', 'develop', '--test-globs', '**/*.test.*', '--nodes', 'infra'], dir);
+    assert.equal(r.code, 0);
+    assert.deepEqual(r.json.leased.map((l) => l.node), ['infra']);
+  });
+
+  await t.test('archiving alpha releases its leases; list reflects the release', () => {
+    const r = run('horde.mjs', ['archive', 'alpha'], dir);
+    assert.equal(r.code, 0);
+    assert.deepEqual(r.json.releasedLeases.sort(), ['core', 'ui']);
+
+    const list = run('horde.mjs', ['list'], dir);
+    const beta = list.json.find((h) => h.name === 'beta');
+    assert.deepEqual(beta.leasedNodes, ['infra']);
+  });
+
+  await t.test('archiving a horde with no leases says so', () => {
+    initHorde(dir, 'gamma');
+    const r = run('horde.mjs', ['archive', 'gamma'], dir, { json: false });
+    assert.equal(r.code, 0);
+    assert.match(r.stdout, /held no node leases/);
+  });
+
+  await t.test('the freed node can now be bound by beta', () => {
+    const r = run('node.mjs', ['bind', 'core', '--horde', 'beta'], dir);
+    assert.equal(r.code, 0);
+    assert.equal(r.json.status, 'claimed');
+  });
+});
+
 test('horde.mjs charter edit: a rewrite that drops a recorded verifier says so', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

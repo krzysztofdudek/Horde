@@ -70,3 +70,43 @@ test('status.mjs: no horde, then a populated digest', async (t) => {
     assert.match(bogus.stderr, /no such horde/);
   });
 });
+
+// ---- node-lease-across-hordes: leases block ---------------------------------------------------
+
+test('status.mjs: leases held by other hordes on nodes this one touches', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir, 'alpha');
+  initHorde(dir, 'beta');
+
+  // alpha leases "shared"; beta's own ticket names it too, without ever leasing it.
+  run('node.mjs', ['bind', 'shared', '--horde', 'alpha'], dir);
+  run('tk.mjs', ['new', 'use-shared', '--title', 'Use shared', '--node', 'shared', '--class', 'sonnet', '--horde', 'beta'], dir);
+
+  await t.test('beta sees alpha\'s lease on the node its own ticket touches', () => {
+    const r = run('status.mjs', ['--horde', 'beta'], dir);
+    assert.equal(r.code, 0);
+    const h = r.json.hordes[0];
+    assert.equal(h.leases.foreign.length, 1);
+    assert.equal(h.leases.foreign[0].node, 'shared');
+    assert.equal(h.leases.foreign[0].horde, 'alpha');
+    assert.ok(h.leases.foreign[0].since);
+
+    const human = run('status.mjs', ['--horde', 'beta'], dir, { json: false });
+    assert.match(human.stdout, /leases held by other hordes on nodes this one touches/);
+    assert.match(human.stdout, /shared -> alpha/);
+  });
+
+  await t.test('alpha sees no foreign lease — it is the one holding it', () => {
+    const r = run('status.mjs', ['--horde', 'alpha'], dir);
+    assert.deepEqual(r.json.hordes[0].leases.foreign, []);
+    const human = run('status.mjs', ['--horde', 'alpha'], dir, { json: false });
+    assert.doesNotMatch(human.stdout, /leases held by other hordes/);
+  });
+
+  await t.test('once alpha archives, its lease is gone and beta sees no foreign lease either', () => {
+    run('horde.mjs', ['archive', 'alpha'], dir);
+    const r = run('status.mjs', ['--horde', 'beta'], dir);
+    assert.deepEqual(r.json.hordes[0].leases.foreign, []);
+  });
+});

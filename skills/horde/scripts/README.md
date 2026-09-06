@@ -19,7 +19,8 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
 
 ## horde.mjs — hordes
 
-- `init <name> --base <branch> [--title "…"] [--graph-dir <dir>] [--test-globs <glob>[,glob…]]` —
+- `init <name> --base <branch> [--title "…"] [--graph-dir <dir>] [--test-globs <glob>[,glob…]]
+  [--nodes <node>[,node…]]` —
   creates `.horde/` if missing (with
   `.gitignore` = `*` and a default `config.json`), `hordes/<name>/` with `charter.md` from the template,
   empty roster, journals, `teams/trunk/`, and the branch `<name>/trunk` off `<base>` (no checkout of the
@@ -31,8 +32,13 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   its tests are named under (`package.json`, `pom.xml`, `build.gradle`, `Cargo.toml`, `go.mod`, a
   Python project file, a `Makefile` with a `test:` target) — and says in its result what it worked
   out, or, when it worked out nothing, that it did not and what to set. `--test-globs` names the
-  test patterns outright. Refuses an existing name.
-- `list` — hordes with trunk, base, wave, open tickets, last activity.
+  test patterns outright. Refuses an existing name. `--nodes` binds the charter's touched nodes at
+  creation (node-lease-across-hordes): each is leased to this horde in `.horde/leases.json` — shared
+  by every horde on the repository — and a node another *live* horde already leases refuses the
+  whole command, naming that horde and its last activity, before the branch or any of this horde's
+  own state is created. See `node.mjs bind` below for the same check made any time after init, and
+  "Node leases" in `reference/topology.md` for the full contract.
+- `list` — hordes with trunk, base, wave, open tickets, leased nodes, last activity.
 - `config get|set <key> [value]` — `.horde/config.json`: `base`, `gates.commit|team|trunk` (commands),
   `testGlobs[]` (the patterns this repository's tests are named under — the merge checklist refuses
   rather than guess when it is empty), `nodeSource` (`yggdrasil` | `manual`), `ygCommand` (how this
@@ -56,13 +62,17 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   the one file where what the chairman asked for lands, and it is written through a tool like
   everything else.
 - `archive <name>` — moves `hordes/<name>` to `hordes/_archive/<name>-<date>`; branches untouched.
+  Also releases every node lease the horde held (`.horde/leases.json`) — the moment it is no longer
+  live, another horde can bind its nodes with no `--take` needed.
 
 ## status.mjs — the digest
 
 One screen: hordes, for each: trunk sha and distance from base, teams with their branch tips, workers'
 branches beyond their team tip (landed, unverified, unmerged, waiting), stewards' last trace and
 liveness verdict, queue counts by state (including `waiting`), open escalations and dissents, last
-gate result per level, cost to date and limit. `--horde`, `--team` narrow it. `--json`.
+gate result per level, cost to date and limit, and any lease another *live* horde holds on a node
+this horde's own tickets touch (node-lease-across-hordes — `.horde/leases.json`, shared by every
+horde on the repository). `--horde`, `--team` narrow it. `--json`.
 
 ## handoff.mjs — state of intent
 
@@ -295,7 +305,20 @@ whose `schema` is `yg-impact/1`, and from the relations in the graph files (`yg-
 shape or schema is ignored rather than half-read. `consumersOf` is what decides a version bump's
 order in the plan and whose approval the merge checklist then requires — one derivation, three
 users.
-- `bind` — verifies the graph is readable and lists nodes; `map [--horde h]` — the mission's nodes with
+- `bind` (no node) — verifies the graph is readable and lists nodes.
+  `bind <node> [--horde h] [--take --escalation <id>]` — node-lease-across-hordes: leases `<node>`
+  to this horde in `.horde/leases.json` (node -> `{horde, since}`, shared across every horde on the
+  repository, not per-horde). Binding a node this horde already holds is a no-op (`status: held`).
+  Binding a free node claims it (`status: claimed`). Binding a node a *live* other horde holds
+  refuses, naming that horde and its last activity, and names the take-over command; `--take`
+  overrides the refusal but only with `--escalation <id>` naming an escalation on this horde that
+  has actually been **ruled** (`escalate.mjs rule`) — a missing or unruled id is refused just like
+  no `--take` (`status: taken` on success, with `from` and `escalation` in the result). A take-over
+  is written to the node's own log (manual mode: appended; Yggdrasil mode: `yg log add --reason`
+  run for real, not merely printed) as well as to `leases.json`'s own append-only history; `logged`
+  in the result says whether the node log write happened (it is skipped, never refused, when the
+  node's own graph object doesn't exist yet to log against). `horde.mjs archive` is the only place
+  a lease is released outright. `map [--horde h]` — the mission's nodes with
   owners, stamps (verified against sha), open proposals.
 - `show <node>` — boundary, **the rules in force on the node**, charter, contracts, last log entries,
   stamp. The rules are every aspect the graph attaches to this node — its own, those cascading from

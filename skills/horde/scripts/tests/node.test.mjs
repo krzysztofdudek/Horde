@@ -580,3 +580,101 @@ test('node.mjs show: a manual node map says it carries no rules rather than show
   assert.deepEqual(r.json.rules.aspects, []);
   assert.match(r.json.rules.source, /carries no rules/);
 });
+
+// ---- E16: node ownership is exclusive across live hordes on one repository --------------------
+
+test('node.mjs bind: node-lease-across-hordes — exclusive across live hordes, --take needs a ruled escalation', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir, 'alpha');
+  initHorde(dir, 'beta');
+  run('node.mjs', ['new', 'shared', '--boundary', 'src/shared/**', '--horde', 'alpha'], dir);
+
+  await t.test('the first horde binds a free node', () => {
+    const r = run('node.mjs', ['bind', 'shared', '--horde', 'alpha'], dir);
+    assert.equal(r.code, 0);
+    assert.equal(r.json.status, 'claimed');
+    assert.equal(r.json.horde, 'alpha');
+  });
+
+  await t.test('binding it again for the same horde is a no-op, not a refusal', () => {
+    const r = run('node.mjs', ['bind', 'shared', '--horde', 'alpha'], dir);
+    assert.equal(r.code, 0);
+    assert.equal(r.json.status, 'held');
+  });
+
+  let refusalText;
+  await t.test('a second live horde is refused, naming the holder and its last activity', () => {
+    const r = run('node.mjs', ['bind', 'shared', '--horde', 'beta'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /leased by horde "alpha"/);
+    assert.match(r.stderr, /last activity/);
+    assert.match(r.stderr, /not archived/);
+    refusalText = r.stderr.trim();
+  });
+
+  await t.test('the refusal names the escalation path, and --take without one is refused too', () => {
+    assert.match(refusalText, /--take --escalation <id>/);
+    const r = run('node.mjs', ['bind', 'shared', '--horde', 'beta', '--take'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--escalation <id>/);
+  });
+
+  let escalationId;
+  await t.test('--take against an escalation that has not been ruled yet is refused', () => {
+    const esc = run('escalate.mjs', ['add', 'beta needs shared', '--kind', 'conflict', '--horde', 'beta'], dir);
+    assert.equal(esc.code, 0);
+    escalationId = esc.json.id;
+    const r = run('node.mjs', ['bind', 'shared', '--horde', 'beta', '--take', '--escalation', escalationId], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /not ruled/);
+  });
+
+  await t.test('--take over a ruled escalation succeeds and logs the take-over', () => {
+    const ruled = run('escalate.mjs', ['rule', escalationId, 'beta takes "shared"; alpha no longer needs it', '--horde', 'beta'], dir);
+    assert.equal(ruled.code, 0);
+
+    const taken = run('node.mjs', ['bind', 'shared', '--horde', 'beta', '--take', '--escalation', escalationId], dir);
+    assert.equal(taken.code, 0);
+    assert.equal(taken.json.status, 'taken');
+    assert.equal(taken.json.from, 'alpha');
+    assert.equal(taken.json.escalation, escalationId);
+    assert.equal(taken.json.logged, true);
+
+    const log = readFileSync(join(dir, 'architecture', 'nodes', 'shared', 'log.md'), 'utf8');
+    assert.match(log, new RegExp(`took the lease on "shared" from horde "alpha" over escalation ${escalationId}`));
+
+    // alpha lost the lease entirely — beta is now the live holder, so alpha is refused in turn,
+    // exactly as beta was before the take-over
+    const stillAlpha = run('node.mjs', ['bind', 'shared', '--horde', 'alpha'], dir);
+    assert.equal(stillAlpha.code, 1);
+    assert.match(stillAlpha.stderr, /leased by horde "beta"/);
+  });
+});
+
+test('node.mjs bind: archiving a horde releases its leases', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir, 'gone');
+  initHorde(dir, 'stays');
+  run('node.mjs', ['bind', 'legacy', '--horde', 'gone'], dir);
+
+  await t.test('a live holder still refuses', () => {
+    const r = run('node.mjs', ['bind', 'legacy', '--horde', 'stays'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /leased by horde "gone"/);
+  });
+
+  await t.test('archiving the holder releases the lease', () => {
+    const arch = run('horde.mjs', ['archive', 'gone'], dir);
+    assert.equal(arch.code, 0);
+    assert.deepEqual(arch.json.releasedLeases, ['legacy']);
+  });
+
+  await t.test('the freed node now binds cleanly, with no --take needed', () => {
+    const r = run('node.mjs', ['bind', 'legacy', '--horde', 'stays'], dir);
+    assert.equal(r.code, 0);
+    assert.equal(r.json.status, 'claimed');
+    assert.equal(r.json.freedFrom, null);
+  });
+});
