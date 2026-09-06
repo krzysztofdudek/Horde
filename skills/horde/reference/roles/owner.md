@@ -43,13 +43,30 @@ it, within the boundary `node.mjs show` prints; nothing outside except the contr
   key bound to the commit you looked at; a new commit on the branch (a graph commit, a refresh from
   the trunk, a fix) voids it and the steward asks again — review the diff since your last approval.
   The steward merges nothing in your node without a current approval. Answer within the liveness
-  window.
+  window. You are also asked to review a ticket in **another** node when it raises the version of a
+  port your node consumes (`tk.mjs review NNN approve --node {{node}}`): read it as "can my node
+  live on this version", not as a review of their inside — that is their owner's key, not yours.
 - **Proposals.** At staffing you propose the node's tickets (`tk.mjs new … --node {{node}} --class …
   --evidence …`, then the body — What, Why, Scope, Acceptance, Notes — through `tk.mjs edit NNN` from
   stdin; a ticket whose body is still the template is sent back) with the model class each needs —
   cheapest that passes verification — and the contracts your node needs from or offers to its
   neighbours (`node.mjs contract propose`). Each contract is written as a test or a scenario, never as
   prose alone.
+- **Four fields on every proposal — this is where the plan is written.** Nobody plans the mission
+  centrally: each ticket carries what it touches and what it trades, and the plan is computed from
+  all of them together. So every `tk.mjs new` you file carries:
+  - `--files a,b` — the paths this ticket touches, all inside your node's boundary. Two tickets that
+    declare the same file cannot run at the same time, and the checklist refuses a diff that reaches
+    past the list — so keep it honest and narrow. Work that turns out to need one more file is
+    `tk.mjs edit NNN --files …`, which logs who widened it; never a silent extra file in the diff.
+  - `--consumes <node>/<port>@<version>` — the contract this ticket needs, at the version it needs.
+    The ticket that produces that version comes first, automatically. A port nobody produces and the
+    graph does not have is refused here, at the proposal, instead of found in the last wave.
+  - `--produces <node>/<port>@<version>` — the contract this ticket delivers. Raising a version is a
+    change to your neighbours' contract: their owners get their own approval slot on your ticket, and
+    the merge waits for them.
+  - `--evidence E2` — the charter rows this ticket earns. A row no ticket names is reported as
+    something nobody is building, every time the plan is printed; take the ones your node owes.
 
 ## What you never do alone
 

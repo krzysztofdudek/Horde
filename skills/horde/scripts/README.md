@@ -74,14 +74,25 @@ gate result per level, cost to date and limit. `--horde`, `--team` narrow it. `-
 Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (counter in
 `hordes/<horde>/counter.json`).
 - `new <slug> --title "…" --node n --class haiku|sonnet|opus [--severity high|medium|low]
-  [--depends NNN,…] [--evidence "…"]… [--revert-base <ref>]` — from `templates/ticket.md`; status
+  [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…] [--produces <node>/<port>@<v>,…]
+  [--evidence "…"]… [--revert-base <ref>]` — from `templates/ticket.md`; status
   `proposed`. `--node` takes one node, or two when the ticket carries a contract between them;
   three or more is refused — no owner holds the whole of such a diff. `--revert-base` names the ref where the ticket's new tests must fail (a contract test
   is green on the team tip by design; its red base is e.g. `develop`); `premerge` item 4 reads it, or
-  a "red on <ref>" phrase in the acceptance lines. Each
-  `--evidence` value becomes its own `- [ ] …` line in the ticket's `## Acceptance — evidence`
-  checklist. A catalogue id (`E1`, `E2`, …) cited inside an `--evidence` value must already be a row
-  in the horde's `charter.md` evidence table — refuses otherwise, listing the unknown ids.
+  a "red on <ref>" phrase in the acceptance lines. An
+  `--evidence` value that is nothing but catalogue ids (`E2,E5`) fills the ticket's `**Evidence:**`
+  field; any other value becomes its own `- [ ] …` line in the `## Acceptance — evidence`
+  checklist, and any id cited inside it fills the field too. A catalogue id (`E1`, `E2`, …) must
+  already be a row in the horde's `charter.md` evidence table — refuses otherwise, listing the
+  unknown ids.
+- The four structural fields — `**Files:**`, `**Consumes:**`/`**Produces:**`, `**Evidence:**` — are
+  what `queue.mjs plan` computes the mission's order from, and they are validated where they are
+  written: every path in `--files` must lie inside the boundary of a node the ticket names (the same
+  boundary reading `premerge`'s scope item uses — one function, in `node.mjs`, imported by both);
+  `--consumes`/`--produces` must read `<node>/<port>@<version>`; and a consumed port must be
+  produced by some ticket of this horde (its own team or another's) or already exist on that node in
+  the graph — refused by name otherwise. Port existence is read through `node.mjs`'s graph reading,
+  in one place, so a later change of where the graph comes from changes one function.
 - `list [--state s] [--node n] [--team t] [--review-pending] [--open]`, `show NNN [--log]`,
   `status NNN <state> ["note"]` (states: proposed queued running landed changes verified merged
   escalated dropped), `log NNN "text"`, `grep <re>`.
@@ -99,15 +110,29 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
   `landed` after the original steward died before it could set the key by hand. The verifier key is
   set only by `verify.mjs`.
 - The `**Keys:**` field holds one segment per role and per node, in the order of the `**Node:**`
-  field: `**Keys:** author X · verifier Y · <nodeA> Z · <nodeB> W`. `review … --node <n>` targets one
+  field, each segment naming its own node: `**Keys:** author X · verifier Y · <nodeA> Z · <nodeB> W`.
+  `review … --node <n>` targets one
   node of a two-node ticket; `review --by architect` without `--node` approves every node at once (the
   architect stands in where the owner is the author).
+- A ticket that `**Produces:**` a port gets one extra approval slot per node that consumes it —
+  appended after the nodes it names, found by name, created the moment that owner records the
+  approval (`review NNN approve --by <owner> --node <consumer>`). A version bump changes somebody
+  else's contract and only they can say the new version is usable; `queue.mjs plan` prints who is
+  owed one and `premerge` item 2 requires it. Who consumes a port is derived in one function
+  (`node.mjs`'s `consumersOf`), from `yg impact --node <n> --json` when the installed Yggdrasil CLI
+  produces a `yg-impact/1` document, and from the relations in the graph files otherwise.
 - `--node` on `new` is repeatable; two nodes mark a contract ticket.
 - `move NNN --team t` — relocates the issue folder (used when a sub-team takes it over).
 - `edit NNN --by <name>` — rewrites the body (everything from `## What` on) from stdin, leaving the
   header block (id/title, `**Status:**`, `**Node:**`/`**Class:**`/`**Severity:**`/`**Team:**`,
-  `**Depends on:**`/`**Branch:**`, `**Keys:**`) untouched; appends "body edited by `<name>`" to the
+  `**Depends on:**`/`**Branch:**`, `**Files:**`, `**Consumes:**`/`**Produces:**`, `**Evidence:**`,
+  `**Keys:**`) untouched; appends "body edited by `<name>`" to the
   log. What owners use to write ticket bodies, instead of editing `issue.md` by hand.
+- `edit NNN --by <name> [--files a,b] [--consumes …] [--produces …] [--evidence E1,…]` — changes
+  those fields instead of the body (no stdin needed), each with its own log line naming who changed
+  it, and validated exactly as `new` validates them. This is how a ticket is widened when the work
+  turns out to touch a file it never declared — `premerge`'s scope item refuses that diff and names
+  this command; a silent widening is what it exists to prevent.
 
 ## queue.mjs — the DAG
 
@@ -120,6 +145,22 @@ States: `queued waiting running landed merged escalated dropped`.
   tip → `landed`; a dirty worktree → `git add -A && git commit -m "wip: reclaimed"` on the ticket branch,
   then `queued` with a note; a clean worktree and no commit → `queued`, worktree removed. A `waiting`
   item is left untouched — it has nothing running to reconcile).
+- `plan [--team t] [--apply-order]` — the team's DAG, derived from the tickets and printed, never
+  dispatched. Three kinds of edge, added together and never overriding one another: a ticket that
+  `**Consumes:** <node>/<port>@<v>` comes after the ticket that `**Produces:**` that exact version
+  (in its own team or another's — a cross-team producer is reported as what the ticket waits on
+  outside the team); a ticket that raises a port's version comes before every ticket of a node that
+  consumes that port and still names the old version (who consumes it: `node.mjs`'s `consumersOf`);
+  and whatever was written by hand, on the ticket's `**Depends on:**` field and on its queue item.
+  It then reports: the layers (topological antichains), the critical path in tickets and in class
+  weight, the connected components with the tickets that hang loose on their own, tickets with no
+  order between them that claim the same file, files three or more tickets claim, the extra
+  approvals a version bump owes, consumed ports nothing produces, the charter evidence rows no
+  ticket names, the cost (Σ class weight × 2 runs per ticket) and the waves that many layers need at
+  `config.parallelism`. Merged and dropped tickets are out of the plan — it is what remains to do.
+  A circle of dependencies is a refusal, with the circle printed. `--json` is a `horde-plan/1`
+  document carrying all of it. `--apply-order` records the order `plan` proposed for a file clash
+  (fewer files first) as an ordinary dependency on the queue item, with a note saying why.
 - A dependency (`add`'s `--depends`, `dep`'s `--on`) is `NNN` (same team), `<team>:NNN` (a ticket in
   another team's queue), or `<team>:team:<name>` (that team's own merge-up item, e.g.
   `trunk:team:allies`) — `next` checks a cross-team one against that team's own `queue.json`, read
@@ -214,6 +255,16 @@ status. `nodeSource=manual`: everything lives committed under `<graphDir>/nodes/
 and the tool is the only writer. Every command below behaves identically in both modes; `new <node>
 --boundary <glob>… [--depends n…]` and `apply <proposal-id>` exist only in manual mode (in Yggdrasil
 mode they print the `yg` commands the architect must run instead).
+It is also where the other tools read the graph from, so there is one reading of it and not four:
+the boundary of a ticket's nodes and the glob matching over it (`tk.mjs`'s file validation and
+`premerge`'s scope item), the ports a node offers (`tk.mjs`'s refusal of a consumed port nothing
+produces), and `consumersOf(node, port)` — every node that consumes one node's port, from
+`<ygCommand> impact --node <n> --json` when the installed Yggdrasil CLI answers with a document
+whose `schema` is `yg-impact/1`, and from the relations in the graph files (`yg-node.yaml`'s
+`relations:`, or `node.json`'s `dependsOn` in manual mode) when it does not. A document of any other
+shape or schema is ignored rather than half-read. `consumersOf` is what decides a version bump's
+order in the plan and whose approval the merge checklist then requires — one derivation, three
+users.
 - `bind` — verifies the graph is readable and lists nodes; `map [--horde h]` — the mission's nodes with
   owners, stamps (verified against sha), open proposals.
 - `show <node>` — boundary, **the rules in force on the node**, charter, contracts, last log entries,
@@ -286,12 +337,18 @@ evidence catalogue and `cost`; `--gate` with `--sha` records the level's gate at
 
 1. base freshness — the branch is rooted at its parent branch's tip;
 2. keys — the author key and the verifier key are set, the verify verdict is `reproduced`, every
-   node the ticket names carries an approval, and every approval and the verdict itself are sha-bound
+   node the ticket names carries an approval — plus every node that consumes a port the ticket
+   produces, since a version bump is a change to their contract — and every approval and the verdict
+   itself are sha-bound
    to the branch's current tip (an approval or verdict recorded for an earlier commit is stale —
    ✗ "approval/verdict predates <sha> — re-review", not counted, even if a name is present);
-3. scope — the diff stays inside the union of the ticket's node boundaries (from `node.mjs`), each
-   node's own graph files included, and touches no protected path; Yggdrasil's committed lock files
-   (`.yggdrasil/yg-lock.*.json`) are reported as derived and left to `yg check` in the gate;
+3. scope — the diff stays inside the files the ticket declared in `**Files:**`; a ticket that
+   declared none falls back to the union of its node boundaries (from `node.mjs`), each node's own
+   graph files included, exactly as before. Either way it touches no protected path, and Yggdrasil's
+   committed lock files (`.yggdrasil/yg-lock.*.json`) are reported as derived and left to `yg check`
+   in the gate. A diff past a declared list is ✗ "declared `<n>` files, touched `<path>` outside
+   them" — the fix is `tk.mjs edit NNN --files …`, which records the widening in the log and sends
+   the ticket back through review, never a quiet pass;
 4. revert test — new test files in the diff, extracted onto the parent's tree, show at least one failure;
 5. gate — green at the branch's SHA: taken from the verifier's verdict when it names this SHA with a
    green gate, otherwise the level's gate command from `config.gates` run in the branch's worktree;

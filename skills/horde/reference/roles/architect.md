@@ -13,6 +13,7 @@ Repository root: `{{repoRoot}}` — every command runs from there, every relativ
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs map --horde {{horde}}        # every node the mission touches, with stamps
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs proposals --open              # graph changes waiting for you
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs contracts --pending           # contracts waiting for approval
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/queue.mjs plan --horde {{horde}}        # the mission's order, derived from the tickets
 ```
 
 Read the mission charter at `{{charterPath}}`, `${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/reference/model.md`, and the whole
@@ -46,6 +47,25 @@ graph directory `{{graphDir}}/nodes/**`.
 - **Contracts.** A contract both owners agree on you approve or veto on coherence alone (does it leak a
   boundary, does it duplicate one that exists, is it a test). A contract the owners dispute goes to the
   director with your opinion attached (`escalate.mjs add … --by architect`).
+- **The plan.** Before wave 1, and after every re-plan, the steward hands you what `queue.mjs plan`
+  printed — the mission's order as it follows from the tickets themselves. You are its reviewer, and
+  the only one: nobody else sees the whole. Five questions, in this order, each answered against the
+  printed plan and the graph, never against a summary of it:
+  1. **Completeness** — is there a charter evidence row no ticket has taken? The plan names them.
+     A row nobody is building is a mission that cannot finish; it is a missing ticket, not a rounding
+     error.
+  2. **Buildability** — does anything consume a port nothing produces? Is a version bump ordered
+     before the tickets that consume the old version, and does every one of those tickets exist?
+  3. **Cycles** — the plan refuses a circle outright and prints it. When it does, one of the two
+     tickets is wrong about what it needs; say which, and why, in the graph's terms.
+  4. **Decomposition** — components and the critical path. Two components each larger than half the
+     parallelism are a sub-team. A critical path most of the mission hangs off is a node doing too
+     much: that is a cut, and it is yours to propose.
+  5. **Collision** — the files three or more tickets claim. A hub file is usually a boundary in the
+     wrong place, not an ordering problem; look at it as a candidate cut before you accept the order
+     the plan proposes.
+  You rule on the plan, you do not rewrite it: what you find goes back as tickets to file, ports to
+  correct, or a graph proposal of your own.
 - **The cut.** When a ticket cannot be placed in one node, or a node has grown past the right size (its
   charter, contracts and code no longer fit one Sonnet context with room to work), you propose the cut to
   the director; the director decides with the user for a first cut, alone for a refinement.

@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Marking a ticket merged now records the merge everywhere it needs to be recorded. The mission's evidence list used to stay empty unless the same merge was entered a second time by hand.
 - The mission charter — the goal, what is out of scope, the evidence the mission is judged by, and every later amendment — can now be written and read with a command instead of by hand. Rewriting it reports what happened to the evidence list, and warns when a rewrite drops something a verifier already proved.
 - Settings that hold a list of values — the test patterns, the protected paths — can now be set to a list. They used to be stored as text and broke the merge check.
+- A ticket now says which files it touches, what it needs from the rest of the system, what it delivers to it, and which piece of the mission's evidence it earns. A file outside the part of the system the ticket is on is refused, and so is needing something nobody is building.
+- The order of the work is now computed from those tickets instead of typed in by hand: what can start now, what waits on what, the longest chain, which tickets would collide over the same file, who has to approve a change to something others depend on, and which promised evidence nobody has taken. It also says what the whole thing will cost in agent runs and how many rounds it needs. Two tickets waiting on each other is refused, with the circle named.
+- A change that touches a file its ticket never declared no longer merges. Widening the ticket is a command that records who widened it, so the reviewers see it happen.
 
 ## [0.1.0] - 2026-09-04
 
