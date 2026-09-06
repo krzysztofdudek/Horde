@@ -31,6 +31,10 @@ commands:
   config set <key> <value>
       dotted paths into .horde/config.json, e.g. "gates.trunk", "liveness.stewardMinutes". A
       list-valued key takes a comma-separated list or a JSON array.
+      "keyContext" (default 3) is how much surrounding code a review's key is bound to: an
+      owner's approval and a verifier's verdict survive a branch catching up with the team as
+      long as nothing landed within this many lines of the ticket's own change. Raise it to send
+      more tickets back for a re-review, lower it to send fewer; 1 is the lowest offered.
   charter show [--horde h]
   charter edit [--horde h]
       the mission charter: "show" prints it, "edit" replaces it with what arrives on stdin and
@@ -128,6 +132,8 @@ function defaultConfig(root) {
     ygCommand: nodeSource === 'yggdrasil' ? 'yg' : null,
     graphDir: nodeSource === 'manual' ? 'architecture/' : null,
     testGlobs: detectTestGlobs(root),
+    // How many lines of surrounding code a review's key is bound to (see _lib.mjs patchIdOf).
+    keyContext: 3,
     protectedPaths: [],
     liveness: { stewardMinutes: 60, ownerMinutes: 45 },
     classes: { ...DEFAULT_CLASSES },

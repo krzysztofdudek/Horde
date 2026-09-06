@@ -14,7 +14,7 @@
 
 import {
   readConfig, readText, writeText, appendText, today, fail, parseArgs, emit, isMain, resolveHorde,
-  renderTemplate, asArray,
+  renderTemplate, asArray, readJSON, teamPath, patchIdOf,
 } from './_lib.mjs';
 import {
   findTicket, parseField, parseKeys, setVerifierKey,
@@ -28,7 +28,7 @@ const USAGE = `usage: verify.mjs <command> [options]
 commands:
   record <ticket> --verdict <${VERDICTS.join('|')}> --by <name>
       --item "<n>|<command>|<saw>" [--item "<n2>|<command>|<saw>" …]
-      [--ran "<…>" --saw "<…>"] [--gate green|red --sha <sha>]
+      [--ran "<…>" --saw "<…>"] [--gate green|red --sha <sha>] [--branch <branch>]
       --revert failed|passed|not-run|no-new-tests [--horde h]
       appends a verdict block to the ticket's log; sets the verifier key when the verdict is
       "reproduced". <n> is the 1-based line number of the ticket's own "## Acceptance —
@@ -43,7 +43,10 @@ commands:
       --revert failed (a revert test that was not run, or passed, is not a reproduction), or
       --revert no-new-tests for a change that adds none — a refactor, a rename, a configuration
       change — which would otherwise be impossible to verify at all; the tool never fills that
-      line from the verdict.
+      line from the verdict. The verdict also records what the diff itself was at record time
+      (the ticket's branch against its team branch, read from the queue item or named with
+      --branch): the merge checklist accepts the verdict later as long as that diff is
+      unchanged, whatever else has landed on the team branch since.
   show <ticket> [--horde h]
       the ticket's recorded verdicts, most recent last.
 
@@ -51,6 +54,27 @@ options: --json  --help`;
 
 function teamBranchName(horde, team) {
   return team === 'trunk' ? `${horde}/trunk` : `${horde}/${String(team).split('/').pop()}`;
+}
+
+// The ticket's own branch, from its queue item — read straight off queue.json rather than through
+// queue.mjs, the same way tk.mjs reads it and for the same reason (queue.mjs imports tk.mjs, and
+// a two-way import would be a cycle). null when the ticket has no queue item or no branch yet.
+function ticketBranch(horde, ticket) {
+  const queue = readJSON(teamPath(horde, ticket.team, 'queue.json'), { items: [] });
+  const items = Array.isArray(queue.items) ? queue.items : [];
+  const item = items.find((i) => String(i.ticket) === ticket.id);
+  return (item && item.branch) || null;
+}
+
+// What this verdict actually judged: the identity of the ticket's diff against its team branch at
+// record time. The sha stays on the Gate line as the tree the gate ran on; this is the binding —
+// the merge checklist honours the verdict for as long as the diff is this one, so a branch that
+// only catches up with the team keeps its verdict instead of paying for a second verification.
+// null (the line then says so) when there is no branch to read, or nothing to identify.
+function verdictPatchId(horde, cfg, ticket, flags) {
+  const branch = flags.branch || ticketBranch(horde, ticket);
+  if (!branch) return null;
+  return patchIdOf(branch, teamBranchName(horde, ticket.team), { context: cfg && cfg.keyContext });
 }
 
 // The ticket's own "## Acceptance — evidence" checklist, in order — the same section tk.mjs
@@ -154,6 +178,7 @@ function cmdRecord(horde, positional, flags) {
   const cfg = readConfig();
   const gateCommand = (cfg && cfg.gates && cfg.gates.team) || '(not configured)';
   const isRepro = flags.verdict === 'reproduced';
+  const patchId = verdictPatchId(horde, cfg, ticket, flags);
 
   const vars = {
     ticketId: ticket.id,
@@ -170,6 +195,7 @@ function cmdRecord(horde, positional, flags) {
 
     gateCommand,
     green: flags.gate === 'green' ? `green at sha ${flags.sha}` : flags.gate === 'red' ? `red at sha ${flags.sha}` : 'not run',
+    ...(patchId ? { patchId } : {}),
     node: parseField(ticket.text, 'Node') || '-',
     untouched: 'untouched',
   };
@@ -193,9 +219,10 @@ function cmdRecord(horde, positional, flags) {
   traceRoster(horde, flags.by);
 
   emit(
-    { ticket: ticket.id, verdict: flags.verdict, by: flags.by },
+    { ticket: ticket.id, verdict: flags.verdict, by: flags.by, diff: patchId },
     flags,
-    () => `verdict recorded for ${ticket.id}: ${flags.verdict}${isRepro ? ' — verifier key set' : ''}`,
+    () => `verdict recorded for ${ticket.id}: ${flags.verdict}${isRepro ? ' — verifier key set' : ''}`
+      + `${patchId ? `, bound to diff ${patchId.slice(0, 7)}` : ''}`,
   );
 }
 
