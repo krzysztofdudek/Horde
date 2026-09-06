@@ -16,6 +16,7 @@ import { execFileSync, execSync } from 'node:child_process';
 import {
   repoRoot, hordeRoot, hordePath, readConfig, writeConfig, listHordes, readJSON,
   writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
+  readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
 } from './_lib.mjs';
 import {
   currentWaveNumber, parseEvidenceRows, mentionsEvidenceId, wave1Started, lastWaveSpan, hasAuditIn,
@@ -29,13 +30,18 @@ const USAGE = `usage: horde.mjs <command> [options]
 
 commands:
   init <name> --base <branch> [--title "<t>"] [--graph-dir <dir>] [--test-globs <glob>[,glob…]]
+       [--nodes <node>[,node…]]
       creates .horde/ if missing, hordes/<name>/ with a charter rendered from the template, an
       empty roster and journals, teams/trunk/, and the branch <name>/trunk off <branch> (not
       checked out). Reads the repository's build files for its gate command and the patterns its
       tests are named with, and says what it found — or what it could not work out, and how to
-      tell it. --test-globs names those patterns outright. Refuses an existing name.
+      tell it. --test-globs names those patterns outright. Refuses an existing name. --nodes binds
+      the charter's touched nodes at creation (node-lease-across-hordes): each one is leased to
+      this horde in .horde/leases.json, and init refuses outright — before creating anything — a
+      node already leased by another horde that is not archived, naming that horde and its last
+      activity.
   list
-      hordes on this repository: trunk, base, wave, open tickets, last activity.
+      hordes on this repository: trunk, base, wave, open tickets, leased nodes, last activity.
   config get <key>
   config set <key> <value>
       dotted paths into .horde/config.json, e.g. "gates.trunk", "liveness.stewardMinutes",
@@ -197,9 +203,26 @@ function cmdInit(positional, flags) {
     writeConfig(cfg);
   }
 
+  // --nodes binds the charter's touched nodes the moment this horde exists (node-lease-across-
+  // hordes): a node another live horde already leases refuses the whole init — before the branch
+  // or a single file of this horde's own state is created — naming that horde and its last
+  // activity.
+  const requestedNodes = flags.nodes ? parseListValue(flags.nodes) : [];
+  for (const node of requestedNodes) {
+    try {
+      assertLeaseAvailable(name, node);
+    } catch (e) {
+      fail(e.message);
+    }
+  }
+
   const branch = `${name}/trunk`;
   const created = git(['branch', branch, flags.base], root);
   if (created === null) fail(`could not create branch "${branch}" off "${flags.base}" — does that base exist?`);
+
+  // Already cleared above; this call cannot itself conflict (barring a concurrent claim in the
+  // instant between the check and here, which a single CLI invocation never races against).
+  const leased = requestedNodes.map((node) => claimLease(name, node));
 
   const user = git(['config', 'user.name'], root) || 'unknown';
   const charter = renderTemplate('charter', {
@@ -244,13 +267,18 @@ function cmdInit(positional, flags) {
     ? `tests recognised by: ${cfg.testGlobs.join(', ')} — change them with: horde.mjs config set testGlobs "<glob>,<glob>"`
     : 'no test convention could be worked out from this repository\'s files, so the merge checklist cannot tell a change that adds no tests from one whose tests it failed to recognise — it will refuse rather than guess. What are this repository\'s tests called? Set it: horde.mjs config set testGlobs "<glob>,<glob>".';
 
+  const leaseNote = leased.length
+    ? `leased ${leased.length} node(s): ${leased.map((l) => l.node).join(', ')}`
+    : null;
+
   emit(
     {
-      horde: name, branch, base: flags.base, graphGate, ecosystems, gates: cfg.gates, testGlobs: cfg.testGlobs,
+      horde: name, branch, base: flags.base, graphGate, ecosystems, gates: cfg.gates, testGlobs: cfg.testGlobs, leased,
     },
     flags,
     () => [
       `horde "${name}" created — trunk branch ${branch} off ${flags.base}`,
+      ...(leaseNote ? [leaseNote] : []),
       ...(graphGate ? [graphGate] : []),
       gateNote,
       globsNote,
@@ -264,24 +292,6 @@ function cmdInit(positional, flags) {
 function writeText(file, text) {
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, text);
-}
-
-function dirMtime(path) {
-  try { return statSync(path).mtimeMs; } catch { return 0; }
-}
-
-function latestActivity(dest) {
-  let latest = 0;
-  const walk = (dir) => {
-    if (!existsSync(dir)) return;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else latest = Math.max(latest, dirMtime(full));
-    }
-  };
-  walk(dest);
-  return latest;
 }
 
 // Walks teams/<team>/queue.json at every depth (sub-teams nest under teams/<team>/teams/…) and
@@ -311,18 +321,24 @@ function openTicketCount(dest) {
 function cmdList(positional, flags) {
   const hordes = listHordes();
   const cfg = readConfig();
+  const { leases } = readLeases();
   const rows = hordes.map((name) => {
     const dest = hordePath(name);
     const sha = git(['rev-parse', '--short', `${name}/trunk`]) || '-';
     const wave = currentWaveNumber(readText(join(dest, 'plan.md'))) || '-';
     const openTickets = openTicketCount(dest);
-    const lastMs = latestActivity(dest);
-    const lastActivity = lastMs ? new Date(lastMs).toISOString() : '-';
-    return { name, base: (cfg && cfg.base) || '-', trunkSha: sha, wave, openTickets, lastActivity };
+    const lastActivity = latestActivity(dest) || '-';
+    // node-lease-across-hordes: the nodes this horde currently holds — every other horde on the
+    // repository sees the same file, so this is exactly what a second horde's node.mjs bind
+    // checks against.
+    const leasedNodes = Object.entries(leases).filter(([, l]) => l.horde === name).map(([node]) => node).sort();
+    return {
+      name, base: (cfg && cfg.base) || '-', trunkSha: sha, wave, openTickets, lastActivity, leasedNodes,
+    };
   });
   emit(rows, flags, () => {
     if (rows.length === 0) return 'no horde';
-    return rows.map((r) => `${r.name}  trunk=${r.trunkSha}  base=${r.base}  wave=${r.wave}  open=${r.openTickets}  last=${r.lastActivity}`).join('\n');
+    return rows.map((r) => `${r.name}  trunk=${r.trunkSha}  base=${r.base}  wave=${r.wave}  open=${r.openTickets}  leases=${r.leasedNodes.join(',') || '-'}  last=${r.lastActivity}`).join('\n');
   });
 }
 
@@ -477,7 +493,14 @@ function cmdArchive(positional, flags) {
   const dest = join(hordeRoot(), 'hordes', '_archive', `${name}-${today()}`);
   mkdirSync(dirname(dest), { recursive: true });
   renameSync(src, dest);
-  emit({ from: src, to: dest }, flags, () => `archived: ${name} -> ${dest}`);
+  // node-lease-across-hordes: an archived horde is no longer live, so every node it held is free
+  // the moment it archives — the same instant node.mjs bind and horde.mjs init start treating it
+  // as no obstacle for another horde.
+  const releasedLeases = releaseLeasesForHorde(name);
+  emit({ from: src, to: dest, releasedLeases }, flags, () => [
+    `archived: ${name} -> ${dest}`,
+    releasedLeases.length ? `released lease(s): ${releasedLeases.join(', ')}` : 'held no node leases',
+  ].join('\n'));
 }
 
 // ---- done — the mission's final gate -----------------------------------------------

@@ -10,16 +10,19 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   hordePath, teamPath, listHordes, readConfig, readJSON, readText, git, fail, parseArgs, emit, isMain,
+  readLeases,
 } from './_lib.mjs';
 import { currentWaveNumber, evidenceCoverage } from './wave.mjs';
 import { sumEntries, readCostLimit } from './cost.mjs';
+import { missionNodes } from './node.mjs';
 
 const USAGE = `usage: status.mjs [--horde h] [--team t] [--json]
 
 One screen: hordes on this repository, and for each: trunk sha and distance from base, teams and
 their branch tips, ticket branches beyond their team tip (landed / unverified / unmerged),
 stewards' last trace and liveness verdict, queue counts by state, open escalations and dissents,
-the last recorded gate result, cost to date against the charter's limit.
+the last recorded gate result, cost to date against the charter's limit, and any lease another
+live horde holds on a node this one touches (node-lease-across-hordes).
 
 --horde narrows to one horde, --team (within it) to one team.
 
@@ -118,6 +121,15 @@ function hordeDigest(horde, cfg, teamFilter) {
   const { runs, weighted } = sumEntries(Array.isArray(cost.runs) ? cost.runs : [], weights);
   const limit = readCostLimit(horde);
 
+  // node-lease-across-hordes: leases another live horde holds on a node THIS horde touches — the
+  // exact overlap node.mjs bind would refuse if this horde tried to claim it. Read fresh every
+  // call, straight off the one file every horde on the repository shares.
+  const touchedNodes = missionNodes(horde);
+  const { leases } = readLeases();
+  const foreignLeases = touchedNodes
+    .filter((node) => leases[node] && leases[node].horde !== horde)
+    .map((node) => ({ node, horde: leases[node].horde, since: leases[node].since }));
+
   // Every charter row, one of five states: no-ticket / queued / running / merged / reproduced —
   // wave.mjs's own reading, shared with horde.mjs done's gate, of "does a ticket prove this row
   // and how far has it gotten" (see wave.mjs's evidenceCoverage for what each state means).
@@ -137,6 +149,7 @@ function hordeDigest(horde, cfg, teamFilter) {
     dissents: { open: disItems.filter((i) => i.state === 'open').length, total: disItems.length },
     lastGate,
     cost: { runs, weighted, limit, reached: limit !== null && weighted >= limit },
+    leases: { foreign: foreignLeases },
     evidence: { total: evidenceRows.length, byState: evidenceByState, rows: evidenceRows },
   };
 }
@@ -173,6 +186,10 @@ function printHorde(h) {
   }
   const limitText = h.cost.limit === null ? 'no limit' : `limit ${h.cost.limit}${h.cost.reached ? ' — REACHED' : ''}`;
   console.log(`  cost: ${h.cost.runs} runs · weighted ${h.cost.weighted} · ${limitText}`);
+  if (h.leases.foreign.length > 0) {
+    console.log('  leases held by other hordes on nodes this one touches:');
+    for (const l of h.leases.foreign) console.log(`    ${l.node} -> ${l.horde} (since ${l.since})`);
+  }
   if (h.evidence.total === 0) {
     console.log('  evidence: (no rows in the charter yet)');
   } else {
