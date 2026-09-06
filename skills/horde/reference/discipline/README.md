@@ -20,7 +20,7 @@ what an agent said. `scripts/drill.mjs` runs them; `scripts/tests/drills/` is th
 | `tdd` | tdd | on the ticket's branch, a commit's new tests fail when run on that commit's parent |
 | `verification` | verification | the verdict is `reproduced`, every row carries a command and what it printed, and the gate's sha is the branch tip |
 | `review` | review | every change request names a severity, and none of them is Minor alone |
-| `scope` | framing | the diff stays inside the nodes the ticket names, and touches no protected path |
+| `scope` | framing | the diff stays inside the files the ticket declared — or its nodes, when it declared none — and touches no protected path |
 
 ## The model
 

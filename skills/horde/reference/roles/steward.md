@@ -24,10 +24,11 @@ Then read `${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/reference/topology.md` (b
 - **Act on files, never on a message alone.** A doorbell tells you to look; what you do is decided by
   `queue.mjs list` at the start of the turn. A message that the files do not back (a "landed" that
   was retracted, a "ready" with tickets still open) is not acted on.
-- **A new commit on the branch voids the reviews; ask again.** An owner's approval and a verifier's
-  verdict are both bound to the sha they were given for; `premerge.mjs` item 2 refuses one that
-  predates the branch's current tip. Don't treat that ✗ as a bug to work around — send the ticket
-  back through `review-request` and `verify.mjs record` at the new tip.
+- **A change to the ticket's own diff voids the reviews; ask again.** An owner's approval and a
+  verifier's verdict are bound to the diff they were given, not to the branch tip: catching the
+  branch up with your branch keeps them, changing what the ticket does voids them, and `premerge.mjs`
+  item 2 says which of the two happened. Don't treat that ✗ as a bug to work around — send the ticket
+  back through `review-request` and `verify.mjs record`, scoped to what moved.
 - **Liveness by files.** Never wait on a monitor for more than one turn. A ticket branch with a commit
   beyond your tip and a clean worktree **is** a report: run `premerge` on it. Every turn: `queue list`,
   act on every landed branch first. Nothing changed for a full turn → `handoff write --by steward` with what you wait
@@ -44,14 +45,40 @@ An empty queue and no owners in the roster mean the mission was just framed. The
 for every node the charter's **Nodes** section names, `roster.mjs spawn owner --node <n> --class <c>`
 (the class the charter gives it), `brief.mjs owner <n> --name <name>`, spawn it with the Agent tool
 (model = its class) and let it read, refresh its charter and **propose** tickets (`tk.mjs new … --node
-<n>`) and contracts. When every owner has reported, read the proposals (`tk.mjs list --state proposed`),
-add them to the queue in dependency order (`queue.mjs add NNN [--depends …]`), and only then start
-wave 1. Owners stay alive for the reviews the wave will ask of them.
+<n>`) and contracts. When every owner has reported, read the proposals (`tk.mjs list --state proposed`)
+and add them to the queue (`queue.mjs add NNN`). Owners stay alive for the reviews the wave will ask
+of them.
+
+## Planning — `queue.mjs plan`, before wave 1 and after every reconcile
+
+You do not work out the order yourself. `queue.mjs plan --team {{team}}` derives it from what the
+owners declared on their own tickets — the ports they need and deliver, the files they touch, the
+evidence they earn — and prints the layers, the critical path, the components, the tickets that claim
+the same file with no order between them, the files three or more tickets claim, the approvals a
+version bump owes the nodes that consume it, ports nothing produces, the charter rows no ticket has
+taken, and the cost. It changes nothing.
+
+- Run it **before wave 1**, and again **after every `queue.mjs reconcile`** (the tickets moved; the
+  plan is a view of them, so it is stale the moment they do).
+- Its output is what the **architect** reviews before the first wave — completeness, buildability,
+  cycles, rows nobody is building. Send it as it printed; do not summarise it.
+- A refusal naming a circle of dependencies is not a bug to route around: two tickets are waiting on
+  each other, and one of them is wrong. Send both back to their owners.
+- Two tickets claiming the same file with no order between them: `queue.mjs plan --apply-order`
+  records the order it proposed, with a note. Do not dispatch both and hope.
+- A row nobody is building, or a port nothing produces, goes to the owner of the node it names as a
+  proposal to file; if there is no such node, it is an escalation, not something you decide.
+- `--depends` still exists and is still yours to use for an order the ports do not express (a
+  removal that must follow three migrations). It is added to what the plan derived, never instead
+  of it.
+- Two components each larger than half your parallelism is the evidence for a sub-team; take it
+  with `escalate.mjs add … --kind structure`.
 
 ## Your loop
 
 1. `wave.mjs current` says none → `wave.mjs start`. Take from the queue by DAG readiness, high severity
-   first, up to `{{parallelism}}` workers at once.
+   first, up to `{{parallelism}}` workers at once — the layer `queue.mjs plan` prints is what a wave
+   is meant to hold.
 2. For each ticket: `roster.mjs spawn worker --team {{team}} --class <c>` gives the name; `queue set NNN
    running --agent <name>` creates the ticket branch off your tip **and its worktree** under
    `.horde/worktrees/<horde>/t-NNN`, and prints the path; `brief.mjs worker NNN` renders the brief with that
@@ -61,7 +88,9 @@ wave 1. Owners stay alive for the reviews the wave will ask of them.
    <id>`, for every agent you spawn (owners, workers, verifiers, sub-stewards), so briefs can name you
    by id and reports never have to detour through the director.
 3. A worker lands (commit beyond tip, clean tree): `tk.mjs key NNN author --by <worker>`; request every
-   named node owner's review (`tk.mjs review-request NNN`; the architect's when the owner is the author)
+   named node owner's review — and, when the ticket raises a port's version, the owner of every node
+   that consumes it too (`queue.mjs plan` prints those under extra approvals; the merge checklist
+   requires them) — (`tk.mjs review-request NNN`; the architect's when the owner is the author)
    and spawn a **verifier** (`brief.mjs verifier NNN`; never the author; at the ticket's class or
    above, never below — a short budget is the cost escalation, not a cheaper verifier; `roster.mjs
    spawn … --ticket NNN` refuses a class below the ticket's). The verifier records `verify.mjs record NNN --verdict …`; the owner records `tk.mjs review
@@ -74,10 +103,21 @@ wave 1. Owners stay alive for the reviews the wave will ask of them.
 4. `premerge` all ✓ → `git merge --no-ff <branch>` on your branch, run the level's gate, `queue set NNN
    merged --sha` (removes the worktree, then the branch, and writes the merge into the wave journal
    itself), `tk.mjs status NNN merged`. A ✗ on **base freshness** alone is routine, not an escalation: in the ticket's worktree
-   run `git merge {{branch}}`; clean → rerun `premerge` (the gate runs again, the sha changed); a conflict
-   → `tk.mjs status NNN changes "conflict with <sha>"`, back to the author. A ✗ on **keys** whose note
-   reads "approval/verdict predates … — re-review" is routine too: a commit landed on the branch after
-   the review — `review-request` the owner again and spawn a fresh verifier, don't escalate it. A ✗ on
+   run `git merge {{branch}}`; clean → rerun `premerge` (the keys travel if the ticket's own diff is
+   unchanged — the note then reads "keys bound to diff …" — and the gate runs again either way, the
+   sha changed); a conflict → `tk.mjs status NNN changes "conflict with <sha>"`, back to the author.
+   A ✗ on **keys** is routine too, and the note says which kind: "diff changed since review at
+   <sha> — scoped re-review: <path>" means the catch-up reached into the ticket's own change, and
+   the file at that path is the difference between what was approved and what is there now — pass it
+   to both readers (`tk.mjs review-request NNN --delta <path>` for the owner, `brief.mjs verifier NNN
+   --delta <path>` for a fresh verifier), never a full re-review by reflex. "approval/verdict
+   predates … — re-review" is the older, sha-bound form of the same thing: no delta to hand over,
+   so ask for the review again in full. A missing approval for a node the ticket does not name is
+   the third kind: the ticket raises a port's version and that node consumes it, so its owner is
+   owed a say — `queue.mjs plan` names them. Neither is escalated. A ✗ on
+   **scope** reading "declared N files, touched … outside them" is the ticket having grown past what
+   its owner declared and its reviewers approved: the owner widens it with `tk.mjs edit NNN --files
+   …` (which logs the widening) and the ticket goes back through review — never merged past. A ✗ on
    **graph** is the architecture graph refusing this tree, and it is never worked around: send the
    ticket back (`tk.mjs status NNN changes "<what yg check refused>"`) so the author makes it green —
    rebuilding the free deterministic verdicts (`yg check --approve --only-deterministic`) is their
@@ -138,7 +178,8 @@ mapping with no file behind it); a change the architect made to an existing node
 architecture (once the user confirmed it) goes on your branch at once. Three things every graph commit
 owes, or the audit will find them missing:
 - **the ticket names it**: a ruling that puts files on a ticket's branch widens the ticket — `tk.mjs
-  edit NNN` its Scope to list them before the re-review, so the reviewers know what they approve;
+  edit NNN --files …` to list them before the re-review, so the reviewers know what they approve and
+  the merge checklist stops refusing the diff;
 - **a second reader for the owner's own text**: a charter or contracts refresh written by the node's
   owner is not reviewed by that owner — the architect reviews it, and with no architect staffed, the
   director does, at the tip it landed on; a charter that contradicts the code it rides with is the

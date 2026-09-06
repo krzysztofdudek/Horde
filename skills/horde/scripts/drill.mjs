@@ -30,7 +30,7 @@ import {
   repoRoot, hordePath, teamPath, readJSON, writeJSON, readText, readConfig, git, nowIso,
   fail, parseArgs, asArray, emit, isMain, resolveHorde,
 } from './_lib.mjs';
-import { findTicket } from './tk.mjs';
+import { findTicket, ticketFiles } from './tk.mjs';
 import {
   nodeExists, nodeBoundary, nodeGraphPathPrefix, ticketNodes,
 } from './node.mjs';
@@ -82,7 +82,7 @@ const DRILLS = {
   },
   scope: {
     discipline: 'framing',
-    asks: 'the diff stays inside the nodes the ticket names and touches no protected path',
+    asks: 'the diff stays inside the files the ticket declared, or its nodes when it declared none, and touches no protected path',
     check: checkScope,
   },
 };
@@ -386,17 +386,25 @@ function checkVerification(ctx) {
 
 const SEVERITIES = ['Critical', 'Important', 'Minor'];
 
-// tk.mjs writes one log line per reviewed node: "- <iso> review: <node> approve|changes by <who>
-// [at <sha>] [— <why>]". Read loosely, since only the verdict and the reason matter here.
+// tk.mjs writes one log line per reviewed node: "- <iso> review: <node> approve|changes by <who>"
+// followed by whatever notes that key carries at the time — the seat it was given under, the sha
+// and the diff it is bound to — and then "— <why>". Only the node, the verdict and the reason are
+// read here, and everything between them is kept as an opaque tail, so a new note on the key never
+// makes a review invisible to the drill.
 function reviewLines(logText) {
   const out = [];
   for (const line of (logText || '').split('\n')) {
-    const m = /review:\s*(\S+)\s+(approve|changes)\s+by\s+(\S+)(?:\s+at\s+(\S+))?(?:\s+—\s+([\s\S]*))?$/.exec(line.trim());
-    if (m) {
-      out.push({
-        node: m[1], verdict: m[2], by: m[3], sha: m[4] || null, why: (m[5] || '').trim(),
-      });
-    }
+    const m = /review:\s*(\S+)\s+(approve|changes)\s+by\s+(\S+)(.*)$/.exec(line.trim());
+    if (!m) continue;
+    const tail = m[4] || '';
+    const dash = tail.indexOf(' — ');
+    out.push({
+      node: m[1],
+      verdict: m[2],
+      by: m[3],
+      notes: (dash === -1 ? tail : tail.slice(0, dash)).trim(),
+      why: dash === -1 ? '' : tail.slice(dash + 3).trim(),
+    });
   }
   return out;
 }
@@ -452,24 +460,35 @@ function checkScope(ctx) {
   const tip = git(['rev-parse', '--verify', branch], root);
   if (!tip) return [{ name: 'branch', ok: false, note: `no such branch: ${branch}` }];
 
+  // The same two-step bound the merge checklist uses: the files the ticket declared it would
+  // touch, when it declared any, and its named nodes' boundaries otherwise. A drill that judged
+  // scope by a different rule than the checklist would pass work the checklist refuses.
   const nodes = ticketNodes(issueText);
+  const declared = ticketFiles(issueText);
   const checks = [{
-    name: 'nodes named',
-    ok: nodes.length > 0,
-    note: nodes.length ? nodes.join(', ') : 'the ticket names no node, so its diff is bounded by nothing',
+    name: 'scope declared',
+    ok: declared.length > 0 || nodes.length > 0,
+    note: declared.length
+      ? `${declared.length} file(s) declared on the ticket`
+      : nodes.length
+        ? `no files declared; bounded by the node(s) ${nodes.join(', ')}`
+        : 'the ticket declares no file and names no node, so its diff is bounded by nothing',
   }];
-  if (nodes.length === 0) return checks;
+  if (declared.length === 0 && nodes.length === 0) return checks;
 
   const files = (git(['diff', '--name-only', `${parentBranch}...${branch}`], root) || '')
     .split('\n').filter(Boolean).filter((f) => !DERIVED_LOCK.test(f));
-  const boundary = nodes.flatMap((n) => (nodeExists(root, cfg, n) ? [...nodeBoundary(root, cfg, n), nodeGraphPathPrefix(root, cfg, n)] : []));
+  const boundary = declared.length
+    ? declared
+    : nodes.flatMap((n) => (nodeExists(root, cfg, n) ? [...nodeBoundary(root, cfg, n), nodeGraphPathPrefix(root, cfg, n)] : []));
   const outside = boundary.length ? files.filter((f) => !pathInBoundary(f, boundary)) : files;
+  const inside = declared.length ? `the ${declared.length} declared file(s)` : nodes.join(', ');
   checks.push({
     name: 'diff inside the boundary',
     ok: outside.length === 0,
     note: outside.length === 0
-      ? `${files.length} file(s), all inside ${nodes.join(', ')}`
-      : `outside the ticket's nodes: ${outside.join(', ')}`,
+      ? `${files.length} file(s), all inside ${inside}`
+      : `outside ${inside}: ${outside.join(', ')}`,
   });
 
   const protectedPaths = cfg.protectedPaths || [];

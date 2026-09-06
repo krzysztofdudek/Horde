@@ -62,7 +62,9 @@ verifier can reproduce, and nothing dispatched before the frame is agreed.
 Nothing runs until the user says go. Together you write the charter (`horde.mjs init <name>` renders
 it from `templates/charter.md`; `horde.mjs charter edit` writes its content from stdin, and every
 later amendment the same way — never by hand): the goal in one paragraph; non-goals; constraints; **acceptance as a catalogue
-of evidence** (scenarios, tests, films — things a verifier can reproduce, never adjectives); the nodes
+of evidence** (scenarios, tests, films — things a verifier can reproduce, never adjectives), each row
+with an id — E1, E2, E3 … — because a ticket says which rows it earns by those ids, and the plan
+reports every row no ticket has taken; the nodes
 the mission touches and the nodes it creates; the decision-rights table (what beyond the standard list
 must come to you or the user); the cost policy and the optional cost limit; the base branch. Then the
 node map. The skill works with and without Yggdrasil: `.yggdrasil/` present → `node.mjs bind` reads the
@@ -88,9 +90,12 @@ Cutting the graph the first time is a decision you make **with** the user, not a
 A steward spawns its owners, workers, verifiers and sub-stewards. Nobody else spawns. A reclaim is
 always a fresh spawn under N+1 by the role that spawned the original; a sub-steward is a subagent of
 a subagent, and that is fine.
-- The steward composes the proposals into a **DAG of tickets** (`queue.mjs`), not a list. Disputed
-  contracts come to you as escalations with the owners' opinions attached. When the DAG is ready, the
-  steward starts wave 1. A team with more parallelism than one steward can drive gets **sub-teams**:
+- The plan is not written by a planner. Each owner declares, on each ticket, the files it touches,
+  the contract versions it needs and delivers, and the evidence rows it earns; `queue.mjs plan`
+  derives the **DAG of tickets** from all of them — layers, critical path, tickets that would collide
+  over a file, contracts nothing produces, evidence nobody is building — and the architect reviews
+  that output before wave 1. Disputed contracts come to you as escalations with the owners' opinions
+  attached. When the plan is clean, the steward starts wave 1. A team with more parallelism than one steward can drive gets **sub-teams**:
   a sub-steward on its own branch, same rules, same tools, one level down. Depth follows the work.
 
 ## While the horde runs — what you do and do not do

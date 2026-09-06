@@ -30,9 +30,10 @@ Cut ruthlessly. Anything nobody asked for comes out of every approach before you
   or look at: a test, a scenario, a recording, a screenshot, a number. Never an adjective, never
   "works correctly", never "is fast".
 - **What is out of scope is written down**, next to what is in.
-- **A ticket names at most two nodes** and the files it may touch. That is the frame the work is
-  judged against: a diff outside it is not a bigger ticket, it is a different one, and it comes back
-  as a report while the ticket lands as written.
+- **A ticket names at most two nodes, and the files it may touch.** The `Files` list is the frame the
+  work is judged against: a diff outside it is not a bigger ticket, it is a different one, and it
+  comes back as a report while the ticket lands as written. Widening it is a decision written on the
+  ticket, never a file quietly added to the diff.
 - **A frame nobody can meet is a finding, not a ticket.** Say so before the work is dispatched.
 
 ## Checklist

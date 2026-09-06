@@ -3,6 +3,9 @@
 **Status:** {{status}}
 **Node:** {{node}} · **Class:** {{class}} · **Severity:** {{severity}} · **Team:** {{team}}
 **Depends on:** {{dependsOn | none}} · **Branch:** {{branch}}
+**Files:** {{files | none}}
+**Consumes:** {{consumes | none}} · **Produces:** {{produces | none}}
+**Evidence:** {{evidence | none}}
 **Revert base:** {{revertBase | }}
 **Keys:** author — · verifier —
 
@@ -17,7 +20,8 @@ The line of the charter or the evidence catalogue this serves, or the finding th
 
 ## Scope
 
-What is in. What is explicitly out. Paths this may touch (must lie inside the node's boundary).
+What is in. What is explicitly out. The **Files:** field above is the binding list — the merge
+checklist refuses a diff that reaches past it, and widening it is `tk.mjs edit NNN --files …`.
 
 ## Acceptance — evidence
 

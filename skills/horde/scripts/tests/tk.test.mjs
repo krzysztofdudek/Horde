@@ -485,3 +485,219 @@ test('tk.mjs new: a ticket names one node, or two — never three', async (t) =>
   assert.match(three.stderr, /names one node, or two/);
   assert.match(three.stderr, /Split it into one ticket per node/);
 });
+
+test('tk.mjs: Files, Consumes, Produces and Evidence on the ticket', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedCharterEvidence(dir, 'mission1', [['E1', 'the engine denies by default', 'auth'], ['E2', 'the guard asks the engine', 'api']]);
+  run('node.mjs', ['new', 'auth', '--boundary', 'src/auth/'], dir);
+  run('node.mjs', ['new', 'api', '--boundary', 'src/api/', '--depends', 'auth'], dir);
+
+  let producer;
+  await t.test('new writes the four fields into the header', () => {
+    const r = run('tk.mjs', ['new', 'policy-engine', '--title', 'Policy engine', '--node', 'auth',
+      '--class', 'sonnet', '--files', 'src/auth/policy.ts,src/auth/policy.test.ts',
+      '--produces', 'auth/policy@2', '--evidence', 'E1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    producer = r.json.id;
+    const text = run('tk.mjs', ['show', producer], dir).json.text;
+    assert.match(text, /\*\*Files:\*\* src\/auth\/policy\.ts, src\/auth\/policy\.test\.ts/);
+    assert.match(text, /\*\*Consumes:\*\* none · \*\*Produces:\*\* auth\/policy@2/);
+    assert.match(text, /\*\*Evidence:\*\* E1/);
+  });
+
+  await t.test('a declared file outside the node boundary is refused, naming the boundary', () => {
+    const r = run('tk.mjs', ['new', 'wrong-node', '--title', 'Wrong node', '--node', 'auth',
+      '--class', 'sonnet', '--files', 'src/api/guard.ts'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /outside the boundary of auth: src\/api\/guard\.ts/);
+    assert.match(r.stderr, /the boundary is src\/auth\//);
+  });
+
+  await t.test('a port that is not <node>/<port>@<version> is refused', () => {
+    const r = run('tk.mjs', ['new', 'bad-port', '--title', 'Bad port', '--node', 'api',
+      '--class', 'sonnet', '--consumes', 'auth-policy-2'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /takes <node>\/<port>@<version>/);
+  });
+
+  await t.test('a consumed port nothing produces and the graph does not have is refused by name', () => {
+    const r = run('tk.mjs', ['new', 'no-producer', '--title', 'No producer', '--node', 'api',
+      '--class', 'sonnet', '--consumes', 'auth/sessions@1'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /nothing produces auth\/sessions@1/);
+    assert.match(r.stderr, /File the producing ticket first/);
+  });
+
+  let consumer;
+  await t.test('a consumed port another ticket produces is accepted', () => {
+    const r = run('tk.mjs', ['new', 'api-guard', '--title', 'Guard', '--node', 'api', '--class', 'sonnet',
+      '--files', 'src/api/guard.ts', '--consumes', 'auth/policy@2', '--evidence', 'E2'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    consumer = r.json.id;
+  });
+
+  await t.test('an evidence id the charter does not carry is refused', () => {
+    const r = run('tk.mjs', ['new', 'invented', '--title', 'Invented', '--node', 'api',
+      '--class', 'sonnet', '--evidence', 'E9'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /unknown evidence id/);
+  });
+
+  await t.test('edit --files widens the ticket and says in the log who did it', () => {
+    const r = run('tk.mjs', ['edit', consumer, '--by', 'owner-api', '--files', 'src/api/guard.ts,src/api/guard.test.ts'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const text = run('tk.mjs', ['show', consumer], dir).json.text;
+    assert.match(text, /\*\*Files:\*\* src\/api\/guard\.ts, src\/api\/guard\.test\.ts/);
+    const log = run('tk.mjs', ['show', consumer, '--log'], dir).json.log;
+    assert.match(log, /files: src\/api\/guard\.ts, src\/api\/guard\.test\.ts — changed by owner-api/);
+  });
+
+  await t.test('edit --files refuses a path outside the boundary, and changes nothing', () => {
+    const r = run('tk.mjs', ['edit', consumer, '--by', 'owner-api', '--files', 'src/auth/policy.ts'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /outside the boundary of api/);
+    assert.match(run('tk.mjs', ['show', consumer], dir).json.text, /\*\*Files:\*\* src\/api\/guard\.ts, src\/api\/guard\.test\.ts/);
+  });
+
+  await t.test('edit --consumes/--produces/--evidence change one field each, leaving the others', () => {
+    const r = run('tk.mjs', ['edit', consumer, '--by', 'owner-api', '--produces', 'api/guard@1', '--evidence', 'E2'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const text = run('tk.mjs', ['show', consumer], dir).json.text;
+    assert.match(text, /\*\*Consumes:\*\* auth\/policy@2 · \*\*Produces:\*\* api\/guard@1/);
+    assert.match(text, /\*\*Evidence:\*\* E2/);
+    assert.match(text, /\*\*Files:\*\* src\/api\/guard\.ts, src\/api\/guard\.test\.ts/);
+  });
+
+  await t.test('edit with a field flag needs no body on stdin, and leaves the body alone', () => {
+    const before = run('tk.mjs', ['show', producer], dir).json.text;
+    run('tk.mjs', ['edit', producer, '--by', 'owner-auth', '--evidence', 'E1'], dir);
+    const after = run('tk.mjs', ['show', producer], dir).json.text;
+    assert.equal(after.slice(after.indexOf('## What')), before.slice(before.indexOf('## What')));
+  });
+
+  await t.test('the node that consumes the port gets its own approval slot on the producing ticket', () => {
+    const wrongNode = run('tk.mjs', ['review', producer, 'approve', '--by', 'owner-auth', '--node', 'web'], dir);
+    assert.equal(wrongNode.code, 1);
+    assert.match(wrongNode.stderr, /it is reviewed by auth, api/);
+
+    const ambiguous = run('tk.mjs', ['review', producer, 'approve', '--by', 'owner-auth'], dir);
+    assert.equal(ambiguous.code, 1);
+    assert.match(ambiguous.stderr, /changes a contract api depend on/);
+
+    const own = run('tk.mjs', ['review', producer, 'approve', '--by', 'owner-auth', '--node', 'auth'], dir);
+    assert.equal(own.code, 0, own.stderr);
+    assert.match(run('tk.mjs', ['show', producer], dir).json.text, /\*\*Keys:\*\* author — · verifier — · auth owner-auth/);
+
+    const consumerApproval = run('tk.mjs', ['review', producer, 'approve', '--by', 'owner-api', '--node', 'api'], dir);
+    assert.equal(consumerApproval.code, 0, consumerApproval.stderr);
+    const text = run('tk.mjs', ['show', producer], dir).json.text;
+    assert.match(text, /\*\*Keys:\*\* author — · verifier — · auth owner-auth · api owner-api/);
+    assert.match(text, /\*\*Status:\*\* verified/);
+  });
+});
+test('tk.mjs review: an approval records the tip it was given at and the diff it read', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const created = run('tk.mjs', ['new', 'reviewed', '--title', 'Reviewed on a branch', '--node', 'core', '--class', 'sonnet'], dir);
+  const id = created.json.id;
+  run('tk.mjs', ['key', id, 'author', '--by', 'worker1'], dir);
+
+  await t.test('with no queue item yet, the approval is the bare name, as it always was', () => {
+    const r = run('tk.mjs', ['review', id, 'approve', '--by', 'owner1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.sha, null);
+    assert.equal(r.json.diff, null);
+    const show = run('tk.mjs', ['show', id], dir);
+    assert.match(show.json.text, /core owner1$/m);
+  });
+
+  await t.test('on a queued ticket with a branch, it carries both the sha and the diff', () => {
+    run('queue.mjs', ['add', id], dir);
+    const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir);
+    const { branch, worktree } = running.json;
+    writeFileSync(join(worktree, 'thing.mjs'), 'export const thing = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: worktree, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-qm', `ticket ${id}`], { cwd: worktree, stdio: 'ignore' });
+
+    const r = run('tk.mjs', ['review', id, 'approve', '--by', 'owner1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const tip = execFileSync('git', ['rev-parse', '--short', branch], { cwd: dir, encoding: 'utf8' }).trim();
+    assert.equal(r.json.sha, tip);
+    assert.match(r.json.diff, /^[0-9a-f]{40}$/);
+    const show = run('tk.mjs', ['show', id], dir);
+    assert.match(show.json.text, new RegExp(`core owner1@${tip}\\+${r.json.diff}`));
+    const log = run('tk.mjs', ['show', id, '--log'], dir);
+    assert.match(log.json.log, new RegExp(`review: core approve by owner1 at ${tip} \\(diff ${r.json.diff.slice(0, 7)}\\)`));
+  });
+
+  await t.test('a changes-request carries neither — there is nothing to hold it to', () => {
+    const r = run('tk.mjs', ['review', id, 'changes', 'not yet', '--by', 'owner1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.sha, null);
+    assert.equal(r.json.diff, null);
+    const show = run('tk.mjs', ['show', id], dir);
+    assert.match(show.json.text, /core changes:owner1/);
+  });
+});
+
+test('tk.mjs review-request --delta logs the file the owner is asked to read', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const created = run('tk.mjs', ['new', 'scoped', '--title', 'Scoped again', '--node', 'core', '--class', 'sonnet'], dir);
+  const id = created.json.id;
+
+  const plain = run('tk.mjs', ['review-request', id], dir);
+  assert.equal(plain.code, 0, plain.stderr);
+  assert.equal(plain.json.delta, null);
+
+  const scoped = run('tk.mjs', ['review-request', id, '--delta', '.horde/hordes/mission1/teams/trunk/issues/001-scoped/rereview-aaaaaaa..bbbbbbb.diff'], dir);
+  assert.equal(scoped.code, 0, scoped.stderr);
+  assert.match(scoped.json.delta, /rereview-aaaaaaa\.\.bbbbbbb\.diff$/);
+  const log = run('tk.mjs', ['show', id, '--log'], dir);
+  assert.match(log.json.log, /review requested$/m);
+  assert.match(log.json.log, /review requested — scoped re-review: .*rereview-aaaaaaa\.\.bbbbbbb\.diff/);
+});
+
+test('tk.mjs review: an approval taken from the verifier seat carries the tip and the diff like any other', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const owner = run('roster.mjs', ['spawn', 'owner', '--node', 'core', '--class', 'sonnet'], dir);
+  const ownerName = owner.json.name;
+  const verifier = run('roster.mjs', ['spawn', 'verifier', '--team', 'trunk', '--class', 'sonnet'], dir);
+  const verifierName = verifier.json.name;
+
+  const created = run('tk.mjs', ['new', 'seat-and-diff', '--title', 'Self authored, on a branch', '--node', 'core', '--class', 'sonnet'], dir);
+  const id = created.json.id;
+  run('queue.mjs', ['add', id], dir);
+  const running = run('queue.mjs', ['set', id, 'running', '--agent', ownerName], dir);
+  const { branch, worktree } = running.json;
+  writeFileSync(join(worktree, 'thing.mjs'), 'export const thing = 1;\n');
+  execFileSync('git', ['add', '-A'], { cwd: worktree, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-qm', `ticket ${id}`], { cwd: worktree, stdio: 'ignore' });
+
+  run('tk.mjs', ['key', id, 'author', '--by', ownerName], dir);
+  const tip = execFileSync('git', ['rev-parse', '--short', branch], { cwd: dir, encoding: 'utf8' }).trim();
+  const rec = run('verify.mjs', [
+    'record', id, '--verdict', 'reproduced', '--by', verifierName,
+    '--revert', 'no-new-tests', '--gate', 'green', '--sha', tip,
+  ], dir);
+  assert.equal(rec.code, 0, rec.stderr);
+  assert.match(rec.json.diff, /^[0-9a-f]{40}$/);
+
+  const r = run('tk.mjs', ['review', id, 'approve', '--by', verifierName], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.verifierSeat, true);
+  assert.equal(r.json.sha, tip);
+  // The seat says who stood in; the sha and the diff say what they read. Both, not either.
+  const show = run('tk.mjs', ['show', id], dir);
+  assert.match(show.json.text, new RegExp(`core ${verifierName}\\(verifier-seat\\)@${tip}\\+${r.json.diff}`));
+  assert.equal(r.json.diff, rec.json.diff);
+});

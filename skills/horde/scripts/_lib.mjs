@@ -23,6 +23,41 @@ export function git(args, cwd = process.cwd()) {
   }
 }
 
+// patchIdOf(branch, parent, {context, cwd}) — the 40-hex `git patch-id --stable` of what the
+// branch adds on top of the parent (`git diff -U<context> <parent>...<branch>`), or null when
+// there is nothing to identify (an empty diff, an unknown ref, no git at all). This is what a
+// key binds to: it names the CONTENT of a ticket's change, so catching the branch up with a
+// landing elsewhere leaves it identical, a landing that reaches into a hunk's own context
+// changes it, and a landing that overlaps the change conflicts before this is ever asked.
+//
+// `context` is the number of context lines the identity is computed over — the sensitivity knob
+// (`config.keyContext`, default 3): more context means a key survives fewer nearby landings, less
+// means it survives more. Zero is deliberately not offered — it calls a change on the very next
+// line the same diff, which no reviewer would — so anything that is not a whole number of at
+// least one falls back to 3.
+export function patchIdOf(branch, parent, { context = 3, cwd = process.cwd() } = {}) {
+  const asked = Math.trunc(Number(context));
+  const n = Number.isFinite(asked) && asked >= 1 ? asked : 3;
+  let diff;
+  try {
+    diff = execFileSync('git', ['diff', `-U${n}`, `${parent}...${branch}`], {
+      cwd, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024,
+    });
+  } catch {
+    return null;
+  }
+  if (diff.length === 0) return null;
+  try {
+    const out = execFileSync('git', ['patch-id', '--stable'], {
+      cwd, input: diff, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 1024 * 1024,
+    }).toString().trim();
+    const id = out.split(/\s+/)[0];
+    return /^[0-9a-f]{40}$/.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 // repoRoot() — the working tree root of the repository at the current directory, found via
 // `git rev-parse --show-toplevel`. Independent of where the scripts themselves live, so the
 // same install works against whatever repository the caller's cwd is inside.

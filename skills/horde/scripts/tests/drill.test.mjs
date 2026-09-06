@@ -47,7 +47,7 @@ const IMPL_FILE = `export async function retry(fn) {
 // A real repository under a real horde, built only through the tools: the node map is committed
 // onto the team branch (as an architect files it) so that every branch cut from that tip is judged
 // against a boundary, and ticket 001 is running in the worktree the queue made for it.
-function missionRepo(t) {
+function missionRepo(t, { files } = {}) {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir, 'mission1');
@@ -58,6 +58,7 @@ function missionRepo(t) {
 
   const created = run('tk.mjs', ['new', 'retry', '--title', 'Retry a failed call three times',
     '--node', 'core', '--class', 'sonnet',
+    ...(files ? ['--files', files] : []),
     '--evidence', 'node --test src/retry.test.mjs prints 1 pass'], dir);
   assert.equal(created.code, 0, created.stderr);
   assert.equal(run('queue.mjs', ['add', '001'], dir).code, 0);
@@ -220,6 +221,22 @@ test('drill.mjs check review: red when a change request names no severity at all
   assert.match(r.json.checks.find((c) => c.name === 'findings carry a severity').note, /name no severity/);
 });
 
+// An approval is recorded with whatever the key is bound to at the time — the sha, the diff, the
+// seat. The drill reads past all of it, so a new note on the key never makes a review invisible.
+test('drill.mjs check review: a review key carrying its sha and diff notes is still read', async (t) => {
+  const m = testFirstBranch(t);
+  assert.equal(run('tk.mjs', ['review-request', '001'], m.dir).code, 0);
+  assert.equal(run('tk.mjs', ['review', '001', 'approve', '--by', 'owner-core'], m.dir).code, 0);
+
+  const logged = readFileSync(join(m.dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk',
+    'issues', '001-retry', 'log.md'), 'utf8');
+  assert.match(logged, /review: core approve by owner-core at \w+ \(diff \w+\)/);
+
+  const r = run('drill.mjs', ['check', 'review', '--repo', m.dir, '--ticket', '001'], m.dir);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.match(r.json.checks.find((c) => c.name === 'reviews recorded').note, /core approve by owner-core/);
+});
+
 test('drill.mjs check scope: green inside the node, red on a file no node maps', async (t) => {
   const inside = testFirstBranch(t);
   const green = run('drill.mjs', ['check', 'scope', '--repo', inside.dir, '--ticket', '001'], inside.dir);
@@ -231,6 +248,26 @@ test('drill.mjs check scope: green inside the node, red on a file no node maps',
   const red = run('drill.mjs', ['check', 'scope', '--repo', outside.dir, '--ticket', '001'], outside.dir);
   assert.equal(red.code, 1);
   assert.match(red.json.checks.find((c) => c.name === 'diff inside the boundary').note, /docs\/release-notes\.md/);
+});
+
+test('drill.mjs check scope: the files the ticket declared bound it, tighter than its node', async (t) => {
+  const m = missionRepo(t, { files: 'src/retry.mjs,src/retry.test.mjs' });
+  commit(m.worktree, 'a test for retrying a failed call', { 'src/retry.test.mjs': TEST_FILE });
+  commit(m.worktree, 'retry a failed call three times', { 'src/retry.mjs': IMPL_FILE });
+  land(m.dir, m.worktree);
+  const green = run('drill.mjs', ['check', 'scope', '--repo', m.dir, '--ticket', '001'], m.dir);
+  assert.equal(green.code, 0, green.stdout + green.stderr);
+  assert.match(green.json.checks.find((c) => c.name === 'scope declared').note, /2 file\(s\) declared/);
+
+  // src/extra.mjs is inside the node's boundary and outside what the ticket said it would touch
+  const red = missionRepo(t, { files: 'src/retry.mjs,src/retry.test.mjs' });
+  commit(red.worktree, 'a test for retrying a failed call', { 'src/retry.test.mjs': TEST_FILE });
+  commit(red.worktree, 'retry a failed call three times', { 'src/retry.mjs': IMPL_FILE });
+  commit(red.worktree, 'one more file while I was in here', { 'src/extra.mjs': 'export const extra = 1;\n' });
+  land(red.dir, red.worktree);
+  const r = run('drill.mjs', ['check', 'scope', '--repo', red.dir, '--ticket', '001'], red.dir);
+  assert.equal(r.code, 1);
+  assert.match(r.json.checks.find((c) => c.name === 'diff inside the boundary').note, /src\/extra\.mjs/);
 });
 
 test('drill.mjs record: refuses a case whose state contradicts --expect', async (t) => {
