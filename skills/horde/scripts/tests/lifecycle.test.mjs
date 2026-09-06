@@ -44,7 +44,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
   t.after(() => rmRepo(dir));
 
   await t.test('1. horde init', () => {
-    const init = run('horde.mjs', ['init', 'pilot', '--base', 'develop', '--title', 'Pilot', '--graph-dir', 'architecture'], dir);
+    const init = run('horde.mjs', ['init', 'pilot', '--base', 'develop', '--title', 'Pilot', '--graph-dir', 'architecture', '--test-globs', '**/*.test.*'], dir);
     assert.equal(init.code, 0, init.stderr);
     assert.equal(existsSync(join(dir, '.horde')), true);
     assert.equal(readFileSync(join(dir, '.horde', '.gitignore'), 'utf8').trim(), '*');

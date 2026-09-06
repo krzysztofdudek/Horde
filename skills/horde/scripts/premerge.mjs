@@ -25,8 +25,6 @@ import {
   nodeBoundary, nodeExists, nodeGraphPathPrefix, ticketNodes, graphIsLaw, runYgCheck, ygCommand,
 } from './node.mjs';
 
-const DEFAULT_TEST_GLOBS = ['**/*.test.*', '**/*.spec.*'];
-
 const USAGE = `usage: premerge.mjs <branch> [--level team|trunk] [--no-gate] [--horde h]
 
 The checks, in order — ✓/✗ per line, non-zero exit on any ✗:
@@ -34,7 +32,8 @@ The checks, in order — ✓/✗ per line, non-zero exit on any ✗:
   2. keys           — author + verifier keys set, verdict reproduced, every named node approved,
                       and every approval and the verdict itself sha-bound to the branch's tip
   3. scope          — diff stays inside the ticket's node boundaries, no protected path touched
-  4. revert test    — new test files, extracted onto the parent's tree, fail there
+  4. revert test    — new test files (named by config.testGlobs), extracted onto the parent's
+                      tree, fail there; ✗ when this repository's test patterns are unknown
   5. gate           — green at this SHA (a verifier's recorded green gate, or a fresh run)
   6. graph          — "yg check" green on this branch's tree (only when the horde's nodes come
                       from a Yggdrasil graph; it runs whatever config.gates holds)
@@ -339,7 +338,17 @@ function revertBaseRef(issueText) {
 // general — see the README note this tool appends).
 function checkRevertTest(root, cfg, branch, parentBranch, files, issueText) {
   const base = revertBaseRef(issueText) || parentBranch;
-  const testGlobs = (cfg.testGlobs && cfg.testGlobs.length ? cfg.testGlobs : DEFAULT_TEST_GLOBS);
+  // "No new test files in this diff" is only a result when the patterns this repository's tests
+  // are named with are actually known. Without them the same ✓ would mean "I did not look" — the
+  // strongest guarantee against a fabricated result passing empty, and saying so — so this
+  // refuses instead, and names the one setting that fixes it.
+  const testGlobs = Array.isArray(cfg.testGlobs) ? cfg.testGlobs.filter(Boolean) : [];
+  if (testGlobs.length === 0) {
+    return {
+      ok: false,
+      note: 'cannot recognise a test file in this repository — config.testGlobs is unset, so "no new tests in the diff" would mean "not looked", not "none". Name the patterns this repository\'s tests are written under: horde.mjs config set testGlobs "<glob>,<glob>"',
+    };
+  }
   const nameStatus = (git(['diff', '--name-status', `${parentBranch}...${branch}`]) || '')
     .split('\n').filter(Boolean).map((l) => { const [status, ...p] = l.split('\t'); return { status, path: p.join('\t') }; });
   const newTestFiles = nameStatus
@@ -347,7 +356,9 @@ function checkRevertTest(root, cfg, branch, parentBranch, files, issueText) {
     .filter((e) => testGlobs.some((g) => globToRegExp(g).test(e.path)))
     .map((e) => e.path);
 
-  if (newTestFiles.length === 0) return { ok: true, note: 'no new test files in diff' };
+  if (newTestFiles.length === 0) {
+    return { ok: true, note: `no new test files in diff (looked for ${testGlobs.join(', ')})` };
+  }
 
   if (!git(['rev-parse', '--verify', base])) return { ok: false, note: `revert base not found: ${base}` };
 

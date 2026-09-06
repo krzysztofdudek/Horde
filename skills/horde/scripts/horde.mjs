@@ -19,10 +19,12 @@ const DEFAULT_CLASSES = { haiku: 1, sonnet: 3, opus: 10, fable: 30 };
 const USAGE = `usage: horde.mjs <command> [options]
 
 commands:
-  init <name> --base <branch> [--title "<t>"] [--graph-dir <dir>]
+  init <name> --base <branch> [--title "<t>"] [--graph-dir <dir>] [--test-globs <glob>[,glob…]]
       creates .horde/ if missing, hordes/<name>/ with a charter rendered from the template, an
       empty roster and journals, teams/trunk/, and the branch <name>/trunk off <branch> (not
-      checked out). Refuses an existing name.
+      checked out). Reads the repository's build files for its gate command and the patterns its
+      tests are named with, and says what it found — or what it could not work out, and how to
+      tell it. --test-globs names those patterns outright. Refuses an existing name.
   list
       hordes on this repository: trunk, base, wave, open tickets, last activity.
   config get <key>
@@ -39,21 +41,77 @@ function detectPackageManager(root) {
   return 'npm';
 }
 
-// A repository's gate commands can't be guessed reliably, but a package.json with a "gate" or
-// "test" script (and a lefthook config, for the commit-time lane) is common enough to be worth
-// defaulting from — the horde's `config set gates.*` overrides whatever this guesses.
-function detectGates(root) {
-  const pm = detectPackageManager(root);
-  const runPrefix = pm === 'npm' ? 'npm run' : `${pm} run`;
-  let scripts = {};
-  const pkgPath = join(root, 'package.json');
-  if (existsSync(pkgPath)) {
-    try { scripts = JSON.parse(readFileSync(pkgPath, 'utf8')).scripts || {}; } catch { scripts = {}; }
+// What a repository is built with, read off the files that are actually there — the build files
+// are the only honest evidence available to a tool that has never seen this repository before.
+// Each match carries the two things a horde needs and cannot invent: the command that runs the
+// tests, and the file-name patterns this ecosystem's tests are written under (which is how the
+// merge checklist tells "this change adds no tests" apart from "I did not recognise its tests").
+// Order is priority: the first match names the gate, and every match contributes its patterns.
+function detectEcosystems(root) {
+  const has = (...names) => names.some((n) => existsSync(join(root, n)));
+  const found = [];
+
+  if (has('package.json')) {
+    const pm = detectPackageManager(root);
+    const runPrefix = pm === 'npm' ? 'npm run' : `${pm} run`;
+    let scripts = {};
+    try { scripts = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scripts || {}; } catch { scripts = {}; }
+    const gate = scripts.gate ? `${runPrefix} gate` : scripts.test ? `${runPrefix} test` : '';
+    if (gate) {
+      const hasLefthook = has('lefthook.yml', '.lefthook.yml');
+      found.push({
+        name: 'npm',
+        gate,
+        commit: hasLefthook ? `${pm === 'npm' ? 'npx' : `${pm} exec`} lefthook run pre-commit` : gate,
+        testGlobs: ['**/*.test.*', '**/*.spec.*'],
+      });
+    }
   }
-  const gate = scripts.gate ? `${runPrefix} gate` : scripts.test ? `${runPrefix} test` : '';
-  const hasLefthook = existsSync(join(root, 'lefthook.yml')) || existsSync(join(root, '.lefthook.yml'));
-  const commit = hasLefthook ? `${pm === 'npm' ? 'npx' : `${pm} exec`} lefthook run pre-commit` : gate;
-  return { commit, team: gate, trunk: gate };
+  if (has('pom.xml')) {
+    found.push({
+      name: 'Maven',
+      gate: has('mvnw') ? './mvnw -B test' : 'mvn -B test',
+      testGlobs: ['**/*Test.java', '**/*Tests.java', '**/*IT.java'],
+    });
+  }
+  if (has('build.gradle', 'build.gradle.kts')) {
+    found.push({
+      name: 'Gradle',
+      gate: has('gradlew') ? './gradlew test' : 'gradle test',
+      testGlobs: ['**/*Test.java', '**/*Tests.java', '**/*Test.kt', '**/*Tests.kt'],
+    });
+  }
+  if (has('Cargo.toml')) {
+    found.push({ name: 'Cargo', gate: 'cargo test', testGlobs: ['**/tests/**/*.rs'] });
+  }
+  if (has('go.mod')) {
+    found.push({ name: 'Go', gate: 'go test ./...', testGlobs: ['**/*_test.go'] });
+  }
+  if (has('pytest.ini', 'pyproject.toml', 'setup.cfg', 'tox.ini', 'requirements.txt')) {
+    found.push({ name: 'Python', gate: 'pytest', testGlobs: ['**/test_*.py', '**/*_test.py'] });
+  }
+  if (has('Makefile')) {
+    let makefile = '';
+    try { makefile = readFileSync(join(root, 'Makefile'), 'utf8'); } catch { makefile = ''; }
+    if (/^test:/m.test(makefile)) found.push({ name: 'Make', gate: 'make test', testGlobs: [] });
+  }
+  return found;
+}
+
+// The gate commands to start from: the first ecosystem's test command, with the commit lane
+// swapped for a pre-commit hook runner where one is configured. Empty when nothing was
+// recognized — and `init` says so out loud rather than leaving a silent empty gate behind.
+function detectGates(root) {
+  const [first] = detectEcosystems(root);
+  if (!first) return { commit: '', team: '', trunk: '' };
+  return { commit: first.commit || first.gate, team: first.gate, trunk: first.gate };
+}
+
+// The file-name patterns this repository writes its tests under, from every ecosystem detected.
+// Empty means "not recognized", which is a state the checklist refuses on — never one it guesses
+// past.
+function detectTestGlobs(root) {
+  return [...new Set(detectEcosystems(root).flatMap((e) => e.testGlobs))];
 }
 
 function defaultConfig(root) {
@@ -64,6 +122,7 @@ function defaultConfig(root) {
     nodeSource,
     ygCommand: nodeSource === 'yggdrasil' ? 'yg' : null,
     graphDir: nodeSource === 'manual' ? 'architecture/' : null,
+    testGlobs: detectTestGlobs(root),
     protectedPaths: [],
     liveness: { stewardMinutes: 60, ownerMinutes: 45 },
     classes: { ...DEFAULT_CLASSES },
@@ -102,6 +161,7 @@ function cmdInit(positional, flags) {
   if (!cfg) {
     cfg = defaultConfig(root);
     cfg.base = flags.base;
+    if (flags['test-globs']) cfg.testGlobs = parseListValue(flags['test-globs']);
     writeConfig(cfg);
   }
 
@@ -140,10 +200,29 @@ function cmdInit(positional, flags) {
     ? `\`${cfg.ygCommand || 'yg'} check\` is part of every merge check on this repository — it runs on the branch's own tree, whatever the gate commands say, and a graph that refuses the tree refuses the merge.`
     : null;
 
+  // Two things a horde cannot invent and must not pretend to know: what command proves this
+  // repository still works, and what its tests are called. Say which of them were worked out and
+  // which were not, here, at the one moment somebody is reading — an empty gate or an
+  // unrecognized test convention discovered later is discovered as a checklist item that refuses.
+  const ecosystems = detectEcosystems(root).map((e) => e.name);
+  const gateNote = cfg.gates && cfg.gates.team
+    ? `gate: \`${cfg.gates.team}\`${ecosystems.length ? ` (${ecosystems[0]})` : ''} — change it with: horde.mjs config set gates.team "<command>"`
+    : 'no gate command could be worked out from this repository\'s files, and a merge checklist with an empty gate refuses rather than passes. What proves this repository still works? Set it: horde.mjs config set gates.team "<command>" (and gates.commit, gates.trunk).';
+  const globsNote = cfg.testGlobs && cfg.testGlobs.length
+    ? `tests recognised by: ${cfg.testGlobs.join(', ')} — change them with: horde.mjs config set testGlobs "<glob>,<glob>"`
+    : 'no test convention could be worked out from this repository\'s files, so the merge checklist cannot tell a change that adds no tests from one whose tests it failed to recognise — it will refuse rather than guess. What are this repository\'s tests called? Set it: horde.mjs config set testGlobs "<glob>,<glob>".';
+
   emit(
-    { horde: name, branch, base: flags.base, graphGate },
+    {
+      horde: name, branch, base: flags.base, graphGate, ecosystems, gates: cfg.gates, testGlobs: cfg.testGlobs,
+    },
     flags,
-    () => [`horde "${name}" created — trunk branch ${branch} off ${flags.base}`, ...(graphGate ? [graphGate] : [])].join('\n'),
+    () => [
+      `horde "${name}" created — trunk branch ${branch} off ${flags.base}`,
+      ...(graphGate ? [graphGate] : []),
+      gateNote,
+      globsNote,
+    ].join('\n'),
   );
 }
 
@@ -219,6 +298,19 @@ function getPath(obj, path) {
   return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
 }
 
+// A comma-separated list, or a JSON array written out in full — both are natural to type, and a
+// glob like "**/*Tests.java" contains no comma, so neither form is ambiguous in practice.
+function parseListValue(raw) {
+  const text = String(raw).trim();
+  if (text.startsWith('[')) {
+    let parsed;
+    try { parsed = JSON.parse(text); } catch { fail(`not a readable list: ${text}`); }
+    if (!Array.isArray(parsed)) fail(`not a list: ${text}`);
+    return parsed.map((v) => String(v));
+  }
+  return text.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 function setPath(obj, path, rawValue) {
   const keys = path.split('.');
   let node = obj;
@@ -229,7 +321,7 @@ function setPath(obj, path, rawValue) {
   const last = keys[keys.length - 1];
   const existing = node[last];
   let value = rawValue;
-  if (Array.isArray(existing)) value = rawValue.split(',').map((s) => s.trim()).filter(Boolean);
+  if (Array.isArray(existing)) value = parseListValue(rawValue);
   else if (typeof existing === 'number') value = Number(rawValue);
   else if (typeof existing === 'boolean') value = rawValue === 'true';
   node[last] = value;

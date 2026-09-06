@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
 
@@ -85,4 +85,56 @@ test('horde.mjs: unknown horde is refused by any tool, not just horde.mjs', () =
   } finally {
     rmRepo(dir);
   }
+});
+
+// ---- what init works out from the repository, and what it says it could not -----------
+
+function ecoRepo(files) {
+  const dir = makeRepo();
+  for (const [name, content] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, name)), { recursive: true });
+    writeFileSync(join(dir, name), content);
+  }
+  return dir;
+}
+
+const ECOSYSTEMS = [
+  ['Maven with a wrapper', { 'pom.xml': '<project/>\n', mvnw: '#!/bin/sh\n' }, './mvnw -B test', '**/*Tests.java'],
+  ['Maven without a wrapper', { 'pom.xml': '<project/>\n' }, 'mvn -B test', '**/*Test.java'],
+  ['Gradle with a wrapper', { 'build.gradle': 'plugins {}\n', gradlew: '#!/bin/sh\n' }, './gradlew test', '**/*Tests.kt'],
+  ['Cargo', { 'Cargo.toml': '[package]\n' }, 'cargo test', '**/tests/**/*.rs'],
+  ['Go', { 'go.mod': 'module x\n' }, 'go test ./...', '**/*_test.go'],
+  ['Python', { 'pyproject.toml': '[project]\n' }, 'pytest', '**/test_*.py'],
+  ['Make', { Makefile: 'test:\n\techo hi\n' }, 'make test', null],
+  ['npm', { 'package.json': '{"scripts":{"test":"node --test"}}\n' }, 'npm run test', '**/*.test.*'],
+];
+
+for (const [label, files, gate, glob] of ECOSYSTEMS) {
+  test(`horde.mjs init: works the gate out of a ${label} repository`, async (t) => {
+    const dir = ecoRepo(files);
+    t.after(() => rmRepo(dir));
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.gates.team, gate);
+    assert.equal(r.json.gates.trunk, gate);
+    if (glob) assert.ok(r.json.testGlobs.includes(glob), `${glob} not in ${JSON.stringify(r.json.testGlobs)}`);
+  });
+}
+
+test('horde.mjs init: an unrecognised repository is told so, and asked, rather than left with an empty gate', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop'], dir, { json: false });
+  assert.equal(r.code, 0);
+  assert.match(r.stdout, /no gate command could be worked out/);
+  assert.match(r.stdout, /What proves this repository still works\?/);
+  assert.match(r.stdout, /no test convention could be worked out/);
+  assert.match(r.stdout, /config set testGlobs/);
+});
+
+test('horde.mjs init: --test-globs names the test patterns outright', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--test-globs', '**/*Tests.java,**/*Test.java'], dir);
+  assert.deepEqual(r.json.testGlobs, ['**/*Tests.java', '**/*Test.java']);
 });

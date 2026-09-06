@@ -57,9 +57,13 @@ export function run(toolName, args, cwd, { json = true } = {}) {
   }
 }
 
-// initHorde(dir, name, extra) — the one setup step almost every other test needs first.
+// initHorde(dir, name, extra) — the one setup step almost every other test needs first. The
+// fixture repository is a bare git repo with no build files at all, so nothing tells `init` what
+// its tests are called; every test that reaches the merge checklist declares it here the way a
+// real adopter would, unless it passes its own --test-globs to exercise the detection itself.
 export function initHorde(dir, name = 'mission1', extra = []) {
-  const r = run('horde.mjs', ['init', name, '--base', 'develop', ...extra], dir);
+  const globs = extra.includes('--test-globs') ? [] : ['--test-globs', '**/*.test.*,**/*.spec.*'];
+  const r = run('horde.mjs', ['init', name, '--base', 'develop', ...globs, ...extra], dir);
   if (r.code !== 0) throw new Error(`initHorde failed: ${r.stderr}`);
   return r.json;
 }

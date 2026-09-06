@@ -708,3 +708,43 @@ test('premerge.mjs: a manual node map has no graph item at all', async (t) => {
   assert.equal(r.code, 0);
   assert.equal(r.json.checks.some((c) => c.name === 'graph'), false);
 });
+
+test('premerge.mjs: item 4 refuses when this repository\'s test convention is unknown', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // No --test-globs, and a fixture repo with no build files: nothing tells the checklist what a
+  // test file is called here.
+  run('horde.mjs', ['init', 'mission1', '--base', 'develop'], dir);
+  run('node.mjs', ['new', 'feature', '--boundary', 'feature-030.mjs,feature-030.test.mjs'], dir);
+
+  const branch = makeTicketBranch(dir, '030');
+  const dst = writeIssue(dir, 'trunk', '030');
+  writeVerdictLog(dst);
+  seedQueueItem(dir, 'trunk', '030', branch);
+
+  const r = run('premerge.mjs', [branch, '--no-gate'], dir);
+  assert.equal(r.code, 1);
+  const revert = r.json.checks.find((c) => c.name === 'revert test');
+  assert.equal(revert.ok, false);
+  assert.match(revert.note, /cannot recognise a test file in this repository/);
+  assert.match(revert.note, /config set testGlobs/);
+});
+
+test('premerge.mjs: item 4 says what it looked for when a diff really carries no new tests', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir, 'mission1', ['--test-globs', '**/*Tests.java']);
+  run('node.mjs', ['new', 'feature', '--boundary', 'feature-031.mjs,feature-031.test.mjs'], dir);
+
+  const branch = makeTicketBranch(dir, '031');
+  const dst = writeIssue(dir, 'trunk', '031');
+  writeVerdictLog(dst);
+  seedQueueItem(dir, 'trunk', '031', branch);
+
+  const r = run('premerge.mjs', [branch, '--no-gate'], dir);
+  const revert = r.json.checks.find((c) => c.name === 'revert test');
+  assert.equal(revert.ok, true);
+  // The Java patterns match nothing in this diff — and the note names them, so the ✓ cannot be
+  // read as "there were no tests to find" when it means "none matching these".
+  assert.match(revert.note, /no new test files in diff \(looked for \*\*\/\*Tests\.java\)/);
+});

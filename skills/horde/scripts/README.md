@@ -19,16 +19,24 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
 
 ## horde.mjs — hordes
 
-- `init <name> --base <branch> [--title "…"] [--graph-dir <dir>]` — creates `.horde/` if missing (with
+- `init <name> --base <branch> [--title "…"] [--graph-dir <dir>] [--test-globs <glob>[,glob…]]` —
+  creates `.horde/` if missing (with
   `.gitignore` = `*` and a default `config.json`), `hordes/<name>/` with `charter.md` from the template,
   empty roster, journals, `teams/trunk/`, and the branch `<name>/trunk` off `<base>` (no checkout of the
   main tree). Sets `config.nodeSource` to `yggdrasil` when `.yggdrasil/` exists, else `manual` with
   `config.graphDir` = `--graph-dir` (default `architecture/`), creating `<graphDir>/nodes/` and a README
   that says what the directory is. On a repository with a Yggdrasil graph the result also says that
-  `yg check` is now part of every merge check. Refuses an existing name.
+  `yg check` is now part of every merge check. It also reads the repository's build files for two
+  things it must not invent — the command that proves the repository still works, and the patterns
+  its tests are named under (`package.json`, `pom.xml`, `build.gradle`, `Cargo.toml`, `go.mod`, a
+  Python project file, a `Makefile` with a `test:` target) — and says in its result what it worked
+  out, or, when it worked out nothing, that it did not and what to set. `--test-globs` names the
+  test patterns outright. Refuses an existing name.
 - `list` — hordes with trunk, base, wave, open tickets, last activity.
 - `config get|set <key> [value]` — `.horde/config.json`: `base`, `gates.commit|team|trunk` (commands),
-  `nodeSource` (`yggdrasil` | `manual`), `ygCommand` (how this repository invokes the Yggdrasil CLI
+  `testGlobs[]` (the patterns this repository's tests are named under — the merge checklist refuses
+  rather than guess when it is empty), `nodeSource` (`yggdrasil` | `manual`), `ygCommand` (how this
+  repository invokes the Yggdrasil CLI
   — default `yg` on PATH; set it to e.g. `node path/to/bin.js` for a local build),
   `protectedPaths[]`, `liveness.stewardMinutes|ownerMinutes`
   (also accepts `liveness.stewardSeconds|ownerSeconds` — a `*Seconds` key wins over its `*Minutes`
@@ -305,9 +313,12 @@ scripts are not done until these pass.
 
 ## premerge.mjs's revert test — how a new test file is found and run
 
-Item 4 detects a new test file generically by name, against `config.testGlobs` (default
-`["**/*.test.*", "**/*.spec.*"]`) rather than by inspecting file content — a repository's own test
-patterns aren't otherwise knowable from this tool set. A matched file whose extension `node --test`
+Item 4 detects a new test file generically by name, against `config.testGlobs` rather than by
+inspecting file content — a repository's own test patterns aren't otherwise knowable from this tool
+set. `horde init` fills that key from the repository's build files; when it is empty the item is ✗,
+because a ✓ reading "no new test files in diff" over a repository whose tests this tool cannot
+recognize is the strongest guarantee in the checklist passing without looking. A ✓ names the
+patterns it did look for. A matched file whose extension `node --test`
 can run directly is extracted and run that way; anything else falls back to running the whole
 `config.gates.commit` command in the scratch worktree, treating any red as "this file's a failure" —
 isolating just one file's test lane out of an arbitrary configured command isn't possible in general.
