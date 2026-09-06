@@ -296,6 +296,14 @@ export function rosterEntry(horde, name) {
   return load(horde).entries.find((e) => e.name === name) || null;
 }
 
+// The most recently spawned owner entry's name for a node — any lease state, since a ticket's
+// node ownership is a roster fact, not a liveness one. tk.mjs's review command reads this to tell
+// whether a ticket's own author is that node's owner, the condition its approval seat depends on.
+export function ownerNameForNode(horde, node) {
+  const owners = load(horde).entries.filter((e) => e.role === 'owner' && e.node === node);
+  return owners.length ? owners[owners.length - 1].name : null;
+}
+
 export function trace(horde, name, agentId) {
   const doc = load(horde);
   const entry = doc.entries.find((e) => e.name === name);
@@ -508,6 +516,15 @@ function livenessVerdict(horde, doc, entry, cfg) {
   const minutes = (Date.now() - new Date(entry.lastTrace).getTime()) / 60000;
   const threshold = livenessThresholdMinutes(cfg, 'steward');
   return minutes > threshold ? 'dead' : 'alive';
+}
+
+// Whether any architect entry on the roster currently reads alive — tk.mjs's review command
+// needs to know whether the architect seat is actually staffed, not just declared through a
+// trust-based --by value nobody checks against the roster.
+export function architectIsLive(horde) {
+  const cfg = readConfig();
+  const doc = load(horde);
+  return doc.entries.some((e) => e.role === 'architect' && livenessVerdict(horde, doc, e, cfg) === 'alive');
 }
 
 function cmdList(horde, positional, flags) {

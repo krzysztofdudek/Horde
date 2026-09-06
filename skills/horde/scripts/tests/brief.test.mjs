@@ -140,6 +140,43 @@ test('brief.mjs: renders every role from a seeded charter/ticket/queue/roster', 
   });
 });
 
+test('brief.mjs worker --takeover: renders the prior worker\'s log and how many times it was attempted', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  run('node.mjs', ['new', 'nodeA', '--boundary', 'src/a/**'], dir);
+
+  const ticket = run('tk.mjs', ['new', 'takeover-thing', '--title', 'Needs a takeover', '--node', 'nodeA', '--class', 'sonnet'], dir);
+  const id = ticket.json.id;
+  const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
+  const q = JSON.parse(readFileSync(queuePath, 'utf8'));
+  q.items.push({
+    ticket: id, state: 'running', class: 'sonnet', branch: 'mission1/t-001', worktree: '.horde/worktrees/mission1/t-001', dependsOn: [], agent: null, sha: null, notes: [],
+  });
+  writeFileSync(queuePath, JSON.stringify(q, null, 2));
+
+  for (let i = 1; i <= 4; i++) {
+    assert.equal(run('tk.mjs', ['status', id, 'changes', `attempt ${i}`], dir).code, 0);
+  }
+
+  await t.test('without --takeover, no takeover section is rendered', () => {
+    const r = run('brief.mjs', ['worker', id, '--name', 'mission1-worker-trunk-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.doesNotMatch(r.json.brief, /## Takeover/);
+  });
+
+  await t.test('with --takeover, the framing names the round count and reproduces the log', () => {
+    const r = run('brief.mjs', ['worker', id, '--name', 'mission1-worker-trunk-2', '--takeover'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.takeover, true);
+    assert.match(r.json.brief, /## Takeover/);
+    assert.match(r.json.brief, /A prior worker attempted this ticket 3 times; the ticket is yours now/);
+    assert.match(r.json.brief, /attempt 4/);
+    assert.match(r.json.brief, /round 4\/5/);
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
+});
+
 test('brief.mjs: refuses with the unfilled placeholder(s) rather than print "{{…}}"', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
