@@ -200,7 +200,10 @@ cache (`fastCheckCount` from `cache/last-gate.json`, or "unknown — report the 
 node (`node.mjs`), the ticket (`worktree` and `branch` from the queue item), and the roster
 (`reportsTo`, `parentTeam`) — `reportsTo` renders as `"<name> (agent id <id>)"` once `roster.mjs` has
 recorded that agent's id, so a report can reach it from outside the spawning session; refuses to
-render with an unfilled placeholder. Records nothing —
+render with an unfilled placeholder. After the role's own text it appends a `## Law` section: the
+disciplines that role is held to, inlined from `reference/discipline/` — worker (tdd, debugging),
+verifier (verification, review), owner (review), architect (framing's checklist). The texts live
+there once, so an edit to a discipline reaches every brief that carries it. Records nothing —
 the spawn is booked by `roster.mjs spawn`. The caller copies the output into the Agent tool's prompt
 verbatim.
 
@@ -312,6 +315,45 @@ newer than the last commit.
 result under its level's key in `hordes/<horde>/cache/last-gate.json` (`{commit, team, trunk}`, each
 with sha, result, count, at).
 
+## drill.mjs — the disciplines, drilled
+
+The disciplines live in `reference/discipline/*.md` and are rendered into the briefs by `brief.mjs`.
+Four of them carry a drill: an assertion about real `.horde/` state and real branches, never about an
+agent's prose.
+
+- `list [--corpus <dir>]` — the five disciplines, the drill each carries (debugging carries none),
+  and the cases recorded for it.
+- `check <drill> --repo <dir> [--ticket NNN]` — runs the drill against that repository's live state.
+  ✓/✗ per line, non-zero on any ✗. `--ticket` may be left out when the horde has exactly one ticket.
+  - `tdd` — on the ticket's branch, a commit's newly added test files, extracted onto that commit's
+    own parent and run there, fail; and the same files pass at the branch tip. A test that already
+    passed on the tree it arrived on never showed it can fail. A branch that adds no test at all is
+    ✗ here — such a change records `no-new-tests` on its verdict and is drilled on `verification`.
+  - `verification` — the last verdict is `reproduced`, every evidence row carries both the command
+    and what it printed, and the recorded green gate names the branch's current tip.
+  - `review` — every change request names Critical, Important or Minor, and none of them carries
+    Minor findings alone.
+  - `scope` — the diff between the team branch and the ticket branch stays inside the boundaries of
+    the nodes the ticket names, and touches no protected path.
+- `run <drill> [--corpus <dir>]` — restores every corpus case into a temporary repository and checks
+  it: a `violates-` case must come out red, a `satisfies-` case green. Non-zero when any case says
+  otherwise.
+- `record <name> --discipline <d> --expect violates|satisfies [--ticket NNN] [--corpus <dir>]
+  [--note "…"]` — snapshots this repository's `.horde/` state (minus the worktrees and the gate
+  cache) and bundles the ticket's branch, its team branch and the base into a new case
+  `<corpus>/<drill>/<expect>-<name>/`. It runs the check first and refuses when the outcome
+  contradicts `--expect`, so a recorded case is always one `run` accepts. This is how a real
+  mission's hard moment becomes a fixture: record it while it is on disk.
+
+The corpus is `tests/drills/<drill>/{violates-*,satisfies-*}/`, the same convention `yg drill` uses.
+A case is a `case.json`, a `horde/` snapshot and a `repo.bundle`; nothing in it is written by hand.
+
+`drill.mjs` reads history and never writes to the repository it checks. Its revert machinery is its
+own rather than `premerge.mjs`'s: premerge asks whether a branch's new tests fail on the branch it
+is about to merge into, which is a question about the merge; the `tdd` drill asks whether the commit
+that introduced them could have failed at the moment it was written, which is a question about how
+the work was done.
+
 ## cost.mjs — runs × class
 
 `report [--wave n] [--ticket NNN] [--mission]` (runs and weighted sums from `cost.json`, which only
@@ -323,7 +365,9 @@ dispatching).
 
 `scripts/tests/*.test.mjs` with `node --test`: every tool's happy path and every refusal named above,
 on a temporary git repository created by the test itself. `npm test` in `scripts/` runs them. The
-scripts are not done until these pass.
+scripts are not done until these pass. `scripts/tests/drills/` is not a test file but the drill
+corpus: every case in it was written by `drill.mjs record` from a repository the tools built, and
+the suite runs each drill over it.
 
 ## premerge.mjs's revert test — how a new test file is found and run
 

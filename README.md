@@ -201,6 +201,14 @@ Four tools, one thesis: **make an AI coding agent prove correctness, stage by st
 
 Two more sit alongside the chain rather than inside it. **Horde** (this one) doesn't own a stage, it's what you add when a mission needs more than one agent to move through all four at once, holding every agent it raises to the same standards. **[Grain](https://github.com/krzysztofdudek/Grain)** reads the conventions a codebase actually practices instead of the ones someone declared, the same seam as Yggdrasil from the other side. Paused since 2026-09-02: the engine works, but the question that decides whether it's worth using, does it change what an agent ships, came back not demonstrated.
 
+## Acknowledgements
+
+The law each role carries — tests that can fail, finding the cause before the fix, evidence before
+the claim, findings with a severity, framing before anything runs — is modelled on
+[obra/superpowers](https://github.com/obra/superpowers) (MIT), by Jesse Vincent, and on its method of
+testing a document by the behaviour of the agent that reads it. The wording here is Horde's own, and
+the rules travel as role law enforced at the merge rather than as skills of their own.
+
 ## License
 
 MIT © [Krzysztof Dudek](https://github.com/krzysztofdudek)

@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Every role now carries the discipline it is held to, printed into its brief: how a test earns its
+  place, what to do when three fixes in a row did not work, what a claim has to be backed by, how a
+  finding is ranked, and what has to be agreed before anything is built. One text per discipline, so
+  every agent in a role is held to the same words.
+- A discipline can be drilled: point it at a repository and it answers from the files and the
+  branches, not from what an agent said. A real moment from a mission can be recorded as a case, and
+  the recorded cases are re-checked as part of the test suite.
 - On a repository whose architecture graph Yggdrasil holds, the merge checklist now runs `yg check` on the branch itself, whatever else the gate runs. A graph that refuses the change refuses the merge. Starting a horde on such a repository says so.
 - Showing a node now lists the rules its code must satisfy, each with what breaking it costs: one blocks the merge, one only warns, one is not in force yet. Owners and workers are told to read them before they touch the node.
 - Starting a horde now works out how this repository runs its tests — npm, Maven, Gradle, Cargo, Go, Python, Make — and what its tests are named, and says what it found. Where it can work out neither, it says that too and asks, instead of leaving a merge check that quietly passes on everything.
