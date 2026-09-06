@@ -48,21 +48,45 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   practical), `classes` (weights: haiku 1, sonnet 3, opus 10, fable 30 — defaults), `parallelism`.
   A list-valued key (`testGlobs`, `protectedPaths`) takes either a comma-separated list or a JSON
   array and is stored as a list either way — never as the text of one.
-- `charter show|edit` — the mission charter. `show` prints it; `edit` replaces it with what arrives
-  on stdin, the same shape as `node.mjs charter edit` for a node, and reports how many evidence rows
-  the new text carries and how many are recorded as reproduced — naming any row that was recorded
-  and is no longer, since a rewrite that drops one loses a verifier's work otherwise. This is how
-  the goal, the non-goals, the evidence catalogue and every amendment are written: the charter is
-  the one file where what the chairman asked for lands, and it is written through a tool like
-  everything else.
+- `charter show|edit [--escalation id]` — the mission charter. `show` prints it; `edit` replaces it
+  with what arrives on stdin, the same shape as `node.mjs charter edit` for a node, and reports how
+  many evidence rows the new text carries and how many are recorded as reproduced — naming any row
+  that was recorded and is no longer, since a rewrite that drops one loses a verifier's work
+  otherwise. This is how the goal, the non-goals, the evidence catalogue and every amendment are
+  written: the charter is the one file where what the chairman asked for lands, and it is written
+  through a tool like everything else. Dropping a row outright (present before, gone from the new
+  text entirely) is free before the mission's wave 1 has started; once it has, the drop refuses
+  unless `--escalation <id>` names a ruled escalation (`escalate.mjs`) whose own text (its `why` and
+  its ruling together) names every row being dropped — the reason then lives in the escalation's own
+  ruling (`decisions.md`'s `esc-<id>` entry), not only in this command's own output.
 - `archive <name>` — moves `hordes/<name>` to `hordes/_archive/<name>-<date>`; branches untouched.
+- `done [--horde h]` — the mission's final gate (ruling `evidence-is-the-plan`: "the queue is empty"
+  is never "done"). Refuses, listing every reason at once, when: any charter evidence row is not
+  reproduced (first promoting whatever a merged ticket's own verdict already proved, mission-wide
+  and regardless of wave, into the charter's "reproduced by" cell — the same reading `wave.mjs
+  close` uses for one wave, stretched over the whole mission); the empty catalogue itself is also a
+  reason (nothing to reproduce is not the same as done); `config.gates.trunk` is not green at the
+  trunk branch's tip (a matching recorded green in `cache/last-gate.json` is accepted, anything else
+  is run fresh in a scratch worktree); no audit verdict (`wave.mjs audit`) was recorded anywhere in
+  the mission's last wave — "current" once that wave is closed means "the last one", not "none
+  open"; or no run has ever been recorded in `cost.json` (nothing has run, so there is nothing to
+  report). Otherwise: the charter is already stamped (a side effect of the evidence check above),
+  the completion block (`templates/mission-close.md`) is appended to the mission's `plan.md`, and
+  the result says what to do next — push, a decision that stays the chairman's, never this tool's.
 
 ## status.mjs — the digest
 
 One screen: hordes, for each: trunk sha and distance from base, teams with their branch tips, workers'
 branches beyond their team tip (landed, unverified, unmerged, waiting), stewards' last trace and
 liveness verdict, queue counts by state (including `waiting`), open escalations and dissents, last
-gate result per level, cost to date and limit. `--horde`, `--team` narrow it. `--json`.
+gate result per level, cost to date and limit, and an **evidence** block: every row of the charter's
+evidence catalogue in one of five states — `no-ticket` (nothing claims it), `queued` (a ticket names
+it, not yet started), `running` (in flight), `merged` (a merged ticket already carries a reproduced
+verdict naming it, but the charter has not been stamped yet — that happens at the next `wave.mjs
+close`, a manual `wave.mjs evidence`, or `horde.mjs done`), and `reproduced` (the charter's own
+"reproduced by" cell already names who). This is `wave.mjs`'s own `evidenceCoverage` — the same
+reading `horde.mjs done` uses for its gate, read here without writing anything. `--horde`, `--team`
+narrow it. `--json`.
 
 ## handoff.mjs — state of intent
 
@@ -370,7 +394,10 @@ Appends to `hordes/<horde>/plan.md` (team waves to `teams/<team>/plan.md`): `sta
 evidence catalogue and `cost`; `--gate` with `--sha` records the level's gate at that tip in
 `cache/last-gate.json`; `--evidence` fills catalogue rows the green wave gate itself proves),
 `evidence <id> --by "<who/what>"` (fills one row by hand, for rows no ticket verdict can fill),
-`current [--team t]`.
+`current [--team t]`. Its one-team, one-wave judgement of "does a ticket prove this row" is also
+exported (`evidenceCoverage`, `stampMissionEvidence`) stretched mission-wide — every team, every
+wave — for `status.mjs`'s five-state evidence digest and `horde.mjs done`'s gate, so the two never
+re-derive it independently.
 
 ## premerge.mjs — the mechanical checklist
 
