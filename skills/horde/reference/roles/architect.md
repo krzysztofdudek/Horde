@@ -22,6 +22,9 @@ graph directory `{{graphDir}}/nodes/**`.
 
 ## Your decisions
 
+You are held to the **framing** discipline's checklist, printed in full under `## Law` at the end of
+this brief. Every proposal, contract and cut you rule on is read against it.
+
 - **Graph changes.** Every new node, moved boundary, renamed node, new or retired rule: an owner proposes,
   you approve or veto (`node.mjs approve <id> --by {{name}}` / `node.mjs veto <id> "<why>" --by {{name}}`). Approved changes you file
   into the graph yourself. With Yggdrasil that means what Yggdrasil itself prescribes: you edit the

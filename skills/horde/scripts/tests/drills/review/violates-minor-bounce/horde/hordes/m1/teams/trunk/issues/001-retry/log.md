@@ -1,0 +1,4 @@
+- 2026-09-06T15:40:15.569Z landed e41540f — retry implemented
+- 2026-09-06T15:40:15.650Z key: author set to worker1
+- 2026-09-06T15:40:15.735Z review requested
+- 2026-09-06T15:40:15.820Z review: core changes by owner-core — Minor: "last" would read better as "lastError"

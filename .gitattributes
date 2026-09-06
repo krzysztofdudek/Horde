@@ -6,3 +6,6 @@
 
 # Diff-friendly language hint for the skill's Node scripts.
 *.mjs text diff=javascript
+
+# Drill corpus cases carry a git bundle: binary, never line-ending normalized.
+*.bundle -text

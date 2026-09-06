@@ -194,6 +194,61 @@ test('brief.mjs: refuses with the unfilled placeholder(s) rather than print "{{�
   assert.match(r.stderr, /ticketTitle/);
 });
 
+test('brief.mjs: every role held to a discipline carries it under "## Law"', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  run('node.mjs', ['new', 'nodeA', '--boundary', 'src/a/**'], dir);
+  writeRoster(dir, 'mission1', [
+    { name: 'mission1-steward-trunk-1', role: 'steward', team: 'trunk', parent: null },
+  ]);
+  seedTicket(dir, 'mission1', 'trunk', '003', {
+    branch: 'mission1/t-003', worktree: '.horde/worktrees/mission1/t-003',
+  });
+
+  await t.test('worker — the tdd and debugging law, with their tables', () => {
+    const r = run('brief.mjs', ['worker', '003', '--name', 'mission1-worker-trunk-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, /\n## Law\n/);
+    assert.match(r.json.brief, /### Tests that can fail/);
+    assert.match(r.json.brief, /### Finding the cause before the fix/);
+    assert.match(r.json.brief, /\| What you will think \| What is true \|/);
+    assert.match(r.json.brief, /#### Red flags — stop/);
+    // the role file names its disciplines instead of repeating them
+    assert.match(r.json.brief, /held to two disciplines — \*\*tdd\*\* and \*\*debugging\*\*/);
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
+
+  await t.test('verifier — the verification and review law', () => {
+    const r = run('brief.mjs', ['verifier', '003', '--name', 'mission1-verifier-trunk-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, /### Evidence before the claim/);
+    assert.match(r.json.brief, /### Findings with a severity/);
+    assert.match(r.json.brief, /no key without the output of the command that proves it/);
+  });
+
+  await t.test('owner — the review law and nothing else', () => {
+    const r = run('brief.mjs', ['owner', 'nodeA', '--name', 'mission1-owner-nodeA-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, /### Findings with a severity/);
+    assert.doesNotMatch(r.json.brief, /### Tests that can fail/);
+  });
+
+  await t.test("architect — framing's checklist, not the whole of framing", () => {
+    const r = run('brief.mjs', ['architect', '--name', 'mission1-architect-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, /### Framing before anything runs — Checklist/);
+    assert.match(r.json.brief, /Approve unless a gap would produce the wrong plan\./);
+    assert.doesNotMatch(r.json.brief, /One question per message/);
+  });
+
+  await t.test('steward — no discipline of its own, so no Law section', () => {
+    const r = run('brief.mjs', ['steward', 'trunk', '--name', 'mission1-steward-trunk-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.doesNotMatch(r.json.brief, /\n## Law\n/);
+  });
+});
+
 test('brief.mjs verifier --delta: a scoped re-review names the delta and the findings still open', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

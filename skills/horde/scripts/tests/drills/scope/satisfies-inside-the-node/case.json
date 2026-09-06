@@ -1,0 +1,35 @@
+{
+  "schema": "horde-drill-case/1",
+  "drill": "scope",
+  "discipline": "framing",
+  "expect": "satisfies",
+  "horde": "m1",
+  "ticket": "001",
+  "branch": "m1/t-001",
+  "parentBranch": "m1/trunk",
+  "tip": "01fa5a1911a20d534b007784c1dc9ae18522586f",
+  "refs": [
+    "m1/t-001",
+    "m1/trunk",
+    "develop"
+  ],
+  "recordedAt": "2026-09-06T15:40:17.025Z",
+  "note": "the whole diff is inside the node the ticket names",
+  "saw": [
+    {
+      "name": "nodes named",
+      "ok": true,
+      "note": "core"
+    },
+    {
+      "name": "diff inside the boundary",
+      "ok": true,
+      "note": "2 file(s), all inside core"
+    },
+    {
+      "name": "no protected path",
+      "ok": true,
+      "note": "none touched"
+    }
+  ]
+}

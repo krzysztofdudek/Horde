@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Every role now carries the discipline it is held to, printed into its brief: how a test earns its
+  place, what to do when three fixes in a row did not work, what a claim has to be backed by, how a
+  finding is ranked, and what has to be agreed before anything is built. One text per discipline, so
+  every agent in a role is held to the same words.
+- A discipline can be drilled: point it at a repository and it answers from the files and the
+  branches, not from what an agent said. A real moment from a mission can be recorded as a case, and
+  the recorded cases are re-checked as part of the test suite.
 - Sending a change back for fixes no longer loops forever. The first few rounds go back to the same worker; after that, a fresh, more capable one takes over with the full history handed to it; past a further, small number of rounds it stops asking and tells you a decision is needed instead.
 - A test that passes once and fails the next time is no longer treated as an ordinary failure or silently escalated to a person. Running it again catches the flake, sends the change back with an instruction to make the test reliable, and records what happened.
 - A part of the system that only its own author can review — nobody else assigned to judge it — is no longer stuck waiting forever. Whoever independently verified the change can approve it too, but only when there truly is no one else able to.

@@ -1,0 +1,69 @@
+# Evidence before the claim
+
+**The law: no key without the output of the command that proves it.**
+
+A key is the horde's signature on a merge. It says a person who was not the author ran something and
+saw a result. If you did not run it in this turn, you have nothing to sign with.
+
+## What the record demands
+
+Every acceptance line on the ticket gets one row, and the row carries the command and what it printed:
+
+```
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/verify.mjs record NNN \
+  --verdict reproduced --by <your name> \
+  --item "1|<the command you ran>|<what it printed>" \
+  --item "2|<…>|<…>" \
+  --gate green --sha <the sha you ran it at> \
+  --revert failed
+```
+
+- **One `--item` per acceptance line**, no more and no fewer. A line nobody ran is not reproduced,
+  and the record is refused rather than written with a gap.
+- **`--ran`/`--saw`** adds one extra row for something you checked beyond the list. Use it; the thing
+  you looked at because it smelled wrong is worth recording.
+- **`--gate green --sha <sha>`** is the only place a gate result counts, and the sha ties it to a
+  commit. A sentence in `--saw` is not a gate result. A green recorded at an older sha is not this
+  branch's gate: the branch moved, so run it again.
+- **`--revert failed`** means you took the new tests, ran them on the base, and watched them fail
+  there. `no-new-tests` is for a diff that adds none — a rename, a move, a settings change — and it
+  is a statement about the diff, so read the diff before you make it.
+- A red gate is never `reproduced`, whatever the rest of the checklist showed.
+
+## Claim and proof
+
+| The claim | What proves it | What does not |
+|---|---|---|
+| The tests pass | This run's output, zero failures | An earlier run, "it should pass" |
+| The gate is green | The gate command's exit, at this sha | The tests passing, the linter passing |
+| The bug is fixed | The original symptom, retried, gone | The code changed |
+| The new test is load-bearing | Run on the base: red. Run here: green | Reading the base and concluding it would fail |
+| The change is in scope | The diff, read | The ticket saying so |
+| An agent finished | Its branch, its commit, its log | Its report |
+
+## Rationalisations
+
+Seeded from obra/superpowers' published baselines; unverified on Horde briefs until a drill run says
+otherwise.
+
+| What you will think | What is true |
+|---|---|
+| "It should work now." | Run it. "Should" is the word that appears right before a red gate. |
+| "I'm confident." | Confidence is not a command's output. |
+| "The author says it passes." | The author's report is a hypothesis. That is what you are here to test. |
+| "This item is slow, the others covered it." | The slow one is the one nobody has run in a week. |
+| "The linter is green." | A linter is not a compiler and neither is a gate. |
+| "I read the code and it clearly fails on the base." | Reading is not running. The record says `not-run` unless you ran it. |
+| "It's a small change." | Then the commands are quick. |
+| "I'd have to ask the author what they meant." | Then write "not reproducible without the author's explanation" and stop. That is a full result. |
+
+## Red flags — stop
+
+- The words "should", "probably", "looks right", "seems to".
+- Satisfaction before the output — "great", "perfect", "done".
+- About to sign with a result from before the last commit.
+- Filling a row from the author's report instead of your own run.
+- Wanting to fix what you found. You do not fix; you say what failed, not what to do.
+
+Modelled on `verification-before-completion` from [obra/superpowers](https://github.com/obra/superpowers)
+(MIT).

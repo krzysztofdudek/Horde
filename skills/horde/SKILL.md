@@ -55,6 +55,10 @@ the next wake-up starts blind.
 
 ## Framing — the only linear phase, done with the user
 
+Your law here is `reference/discipline/framing.md`: read it before the first question. One question
+per message, two or three approaches with your recommendation first, acceptance as evidence rows a
+verifier can reproduce, and nothing dispatched before the frame is agreed.
+
 Nothing runs until the user says go. Together you write the charter (`horde.mjs init <name>` renders
 it from `templates/charter.md`; `horde.mjs charter edit` writes its content from stdin, and every
 later amendment the same way — never by hand): the goal in one paragraph; non-goals; constraints; **acceptance as a catalogue
@@ -173,6 +177,10 @@ then, you present it to the user with the branch name. The pull request and the 
 - `reference/topology.md` — branches, worktrees, the `.horde/` tree, gates per level, liveness.
 - `reference/roles/*.md` — the briefs each role is spawned with (the `brief.mjs` tool renders them
   with the charter, the node context and the ticket filled in).
+- `reference/discipline/*.md` — the law each role is held to, written once and rendered into the
+  briefs that carry it: tests that can fail, finding the cause before the fix, evidence before the
+  claim, findings with a severity, framing before anything runs. `scripts/drill.mjs` drills four of
+  them against real `.horde/` state.
 - `templates/` — charter, node charter, ticket, verdict, wave close.
 - `scripts/` — the tools; every one has `--help` and `--json`. `scripts/README.md` is their contract.
 - `.horde/` — uncommitted state, one per repository, shared by every worktree. The graph — committed,

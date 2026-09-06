@@ -11,6 +11,11 @@
 //
 // Renders and prints only: no ticket log, no roster write. Cost is booked once, at spawn, by
 // roster.mjs; a second write here would double it for nothing.
+//
+// After the role's own text, the brief carries a `## Law` section: the disciplines that role is
+// held to, inlined from reference/discipline/ (see ROLE_LAW below). The texts live once, there;
+// a role file names its disciplines and never repeats them, so an edit to a discipline reaches
+// every brief that carries it without a second copy going stale.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -24,7 +29,21 @@ import {
 } from './node.mjs';
 
 const ROLES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'roles');
+const DISCIPLINE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'discipline');
 const ROLES = ['steward', 'owner', 'architect', 'worker', 'verifier', 'auditor', 'counsel'];
+
+// role → the disciplines its brief carries, in order. The texts live once, under
+// reference/discipline/; a role file names its disciplines and never repeats them. An entry may
+// narrow a discipline to one of its own sections, where the role is held to that part alone (the
+// architect gets framing's checklist, not the whole of framing). A role absent from this table
+// gets no Law section at all — the steward, the auditor and counsel are held to the charter and
+// their own briefs, not to a discipline of their own.
+const ROLE_LAW = {
+  worker: ['tdd', 'debugging'],
+  verifier: ['verification', 'review'],
+  owner: ['review'],
+  architect: [{ discipline: 'framing', section: 'Checklist' }],
+};
 
 const USAGE = `usage: brief.mjs <role> [args] --name <n> [--horde h] [--json]
 
@@ -41,7 +60,9 @@ roles:
   counsel --question "<q>" [--attach <file>]… --name <n>
 
 Prints the rendered brief for the Agent tool's prompt, verbatim. Refuses — listing every unfilled
-placeholder — rather than print one with "{{…}}" left in it.
+placeholder — rather than print one with "{{…}}" left in it. A role held to a discipline gets it
+inline, under "## Law": worker (tdd, debugging), verifier (verification, review), owner (review),
+architect (framing's checklist).
 
 --delta <path> renders the verifier's brief for a scoped re-review: the subject is the difference
 between what was already approved and what is on the branch now (the file the merge checklist
@@ -58,6 +79,57 @@ function loadRoleTemplate(role) {
   return readFileSync(file, 'utf8');
 }
 
+// ---- the Law section (reference/discipline/, appended after the role's own text) ------------
+//
+// Headings inside a discipline file are demoted by two levels so the file's own "# Title" becomes
+// an "### Title" under the brief's "## Law" — the texts are written to stand alone as files and
+// to read as sections here, without a second copy of either.
+
+function demoteHeadings(text) {
+  return text.replace(/^(#{1,4}) /gm, (whole, hashes) => `${hashes}## `);
+}
+
+function disciplineTitle(text, file) {
+  const m = /^#\s+(.+)$/m.exec(text);
+  if (!m) fail(`discipline file has no title: ${file}`);
+  return m[1].trim();
+}
+
+// One "## <name>" section of a discipline file, without its own heading line.
+function disciplineSection(text, section, file) {
+  const idx = text.indexOf(`## ${section}\n`);
+  if (idx === -1) fail(`discipline ${file} has no section "${section}"`);
+  const rest = text.slice(idx + `## ${section}\n`.length);
+  const next = rest.indexOf('\n## ');
+  return (next === -1 ? rest : rest.slice(0, next)).trim();
+}
+
+function disciplineText(entry) {
+  const name = typeof entry === 'string' ? entry : entry.discipline;
+  const file = join(DISCIPLINE_DIR, `${name}.md`);
+  if (!existsSync(file)) fail(`unknown discipline: ${name}`);
+  const text = readFileSync(file, 'utf8');
+  const title = disciplineTitle(text, `${name}.md`);
+  if (typeof entry === 'string') return demoteHeadings(text.trim());
+  return `### ${title} — ${entry.section}\n\n${demoteHeadings(disciplineSection(text, entry.section, `${name}.md`))}`;
+}
+
+function lawSection(role) {
+  const entries = ROLE_LAW[role];
+  if (!entries || entries.length === 0) return '';
+  const body = entries.map(disciplineText).join('\n\n---\n\n');
+  return [
+    '',
+    '## Law',
+    '',
+    'These hold for every ticket, whatever the ticket says. They are the same texts every agent in',
+    'this role is given, and the merge checklist enforces what can be enforced mechanically.',
+    '',
+    body,
+    '',
+  ].join('\n');
+}
+
 function renderRole(role, vars) {
   const text = loadRoleTemplate(role);
   const unfilled = [];
@@ -72,7 +144,7 @@ function renderRole(role, vars) {
   if (unfilled.length > 0) {
     fail(`brief for "${role}" has unfilled placeholder(s): ${[...new Set(unfilled)].join(', ')}`);
   }
-  return rendered;
+  return rendered.replace(/\s*$/, '\n') + lawSection(role);
 }
 
 // ---- charter / config / cache -----------------------------------------------

@@ -37,7 +37,8 @@ it, within the boundary `node.mjs show` prints; nothing outside except the contr
   charter and `contracts.md` change in the same graph commit: a charter that still says "not yet in
   the mapping" next to a mapping that has it is a lie the auditor will find. Refresh them before you
   approve the ticket that carries the change.
-- **Every change that touches your node.** The steward sends you review requests
+- **Every change that touches your node.** You are held to the **review** discipline, printed in full
+  under `## Law` at the end of this brief — read it before your first review. The steward sends you review requests
   (`tk.mjs list --review-pending --node {{node}}`); you read the diff against the charter and contracts and
   record `tk.mjs review NNN approve` or `tk.mjs review NNN changes "<what and why>"`. A review is a
   key bound to the diff you read, not to the commit it sat on: the branch catching up with work that
