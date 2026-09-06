@@ -5,7 +5,7 @@
 // repository sees the same state (a worktree's common dir points at the main checkout's .git).
 
 import {
-  existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync,
+  existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -145,6 +145,168 @@ export function teamPath(horde, team, ...parts) {
     fail(`--team "${team}" does not match "${leaf}"'s actual location ("${resolved.join('/')}") — pass just the leaf name "${leaf}"`);
   }
   return hordePath(horde, ...resolved.flatMap((s) => ['teams', s]), ...parts);
+}
+
+// ---- cross-horde node leases (node-lease-across-hordes) --------------------------------------
+// Node ownership is exclusive across every live horde on one repository: `.horde/leases.json`
+// maps a node id to the horde currently bound to it and since when. This file is NOT per-horde —
+// every horde on the repository reads and writes the one shared document, which is exactly why
+// it lives beside config.json rather than under hordes/<horde>/. `node.mjs bind <node>` is the
+// only writer of `leases`; `horde.mjs archive` is the only remover (a horde's leases are released
+// the moment it is no longer live). `history` is an append-only record of every bind/take/release
+// so a contested node's story survives past the current state.
+
+export function leasesPath() {
+  return join(hordeRoot(), 'leases.json');
+}
+
+export function readLeases() {
+  const doc = readJSON(leasesPath(), null);
+  const leases = doc && doc.leases && typeof doc.leases === 'object' ? doc.leases : {};
+  const history = doc && Array.isArray(doc.history) ? doc.history : [];
+  return { leases, history };
+}
+
+function renderLeases(doc) {
+  const entries = Object.entries(doc.leases).sort(([a], [b]) => a.localeCompare(b));
+  const lines = ['# Leases', '', '| node | horde | since |', '|---|---|---|'];
+  if (entries.length === 0) lines.push('| | | |');
+  for (const [node, lease] of entries) lines.push(`| ${node} | ${lease.horde} | ${lease.since} |`);
+  if (doc.history.length > 0) {
+    lines.push('', '## History', '');
+    for (const h of [...doc.history].reverse()) {
+      const bits = [h.at, h.event, h.node, `-> ${h.horde}`];
+      if (h.from) bits.push(`(from ${h.from})`);
+      if (h.escalation) bits.push(`escalation ${h.escalation}`);
+      lines.push(`- ${bits.join(' ')}`);
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
+export function writeLeases(doc) {
+  writeJSON(leasesPath(), doc, { render: renderLeases });
+}
+
+// releaseLeasesForHorde(horde) — drops every lease this horde holds and records a "release" entry
+// per node in the history. Called by horde.mjs archive so an archived horde's nodes are free the
+// moment it stops being live; returns the released node ids (empty when it held none).
+export function releaseLeasesForHorde(horde) {
+  const doc = readLeases();
+  const released = Object.entries(doc.leases).filter(([, l]) => l.horde === horde).map(([node]) => node);
+  if (released.length === 0) return released;
+  const at = nowIso();
+  for (const node of released) {
+    delete doc.leases[node];
+    doc.history.push({
+      node, event: 'release', horde, from: null, escalation: null, at,
+    });
+  }
+  writeLeases(doc);
+  return released;
+}
+
+// leaseConflict(horde, node) — the live holder blocking `horde` from this node, or null when
+// there is none (never leased, held by `horde` itself, or held by a horde no longer live). A pure
+// read, safe to call before mutating anything — which is exactly why horde.mjs init uses it to
+// refuse a --nodes overlap BEFORE creating the horde's branch, rather than discovering the
+// conflict after state already exists.
+export function leaseConflict(horde, node) {
+  const liveHordes = listHordes();
+  const { leases } = readLeases();
+  const existing = leases[node];
+  return existing && existing.horde !== horde && liveHordes.includes(existing.horde) ? existing : null;
+}
+
+function leaseRefusalMessage(taker, node, holder) {
+  const activity = latestActivity(hordePath(holder.horde)) || 'no recorded activity';
+  return `node "${node}" is leased by horde "${holder.horde}" (since ${holder.since}; last activity `
+    + `${activity}) and that horde is not archived — archive it (\`horde.mjs archive ${holder.horde}\`) `
+    + `or take the lease over a ruled escalation: \`node.mjs bind ${node} --take --escalation <id> --horde ${taker}\``;
+}
+
+// assertLeaseAvailable(horde, node) — throws leaseConflict's refusal, otherwise returns quietly.
+// horde.mjs init calls this for every requested node before creating anything of its own, so the
+// whole command refuses cleanly (no orphaned branch, no half-created horde) on the very message
+// node.mjs bind would give later for the same node.
+export function assertLeaseAvailable(horde, node) {
+  const conflict = leaseConflict(horde, node);
+  if (conflict) throw new Error(leaseRefusalMessage(horde, node, conflict));
+}
+
+// claimLease(horde, node, {take, escalation}) — the one path that acquires a node's lease. Node
+// ownership is exclusive across every live horde on a repository: returns {status: 'held' |
+// 'claimed' | 'taken', ...} on success; throws Error with a what/why/next-shaped message the
+// caller passes straight to fail() on any refusal. Shared by horde.mjs init (--nodes, at
+// creation, after assertLeaseAvailable has already cleared it) and node.mjs bind (<node>, any
+// time) so both tools refuse the same overlap the same way and write the same history line — one
+// derivation, two callers, per the scripts' own convention (see node.mjs's consumersOf).
+export function claimLease(horde, node, { take = false, escalation = null } = {}) {
+  const doc = readLeases();
+  const existing = doc.leases[node];
+
+  if (existing && existing.horde === horde) {
+    return { status: 'held', node, horde, since: existing.since };
+  }
+
+  const conflict = leaseConflict(horde, node);
+  if (conflict) {
+    if (!take) throw new Error(leaseRefusalMessage(horde, node, conflict));
+    if (!escalation) {
+      throw new Error('--take requires --escalation <id> — a ruled escalation on this horde justifying the take-over');
+    }
+    const escDoc = readJSON(hordePath(horde, 'escalations.json'), { items: [] });
+    const esc = (Array.isArray(escDoc.items) ? escDoc.items : []).find((it) => it.id === String(escalation));
+    if (!esc) throw new Error(`no such escalation: ${escalation} (on horde "${horde}")`);
+    if (esc.state !== 'ruled') {
+      throw new Error(`escalation ${escalation} is not ruled yet — \`escalate.mjs rule ${escalation} "<ruling>" --horde ${horde}\` first`);
+    }
+    const from = conflict.horde;
+    const at = nowIso();
+    doc.leases[node] = { horde, since: at };
+    doc.history.push({
+      node, event: 'take', horde, from, escalation: String(escalation), at,
+    });
+    writeLeases(doc);
+    return {
+      status: 'taken', node, horde, from, escalation: String(escalation), ruling: esc.ruling,
+    };
+  }
+
+  // Free: never leased, or held by a horde no longer live — archiving already releases a horde's
+  // leases, so this branch is a defensive fallback for state written before that, not the normal
+  // path.
+  const freedFrom = existing ? existing.horde : null;
+  const at = nowIso();
+  doc.leases[node] = { horde, since: at };
+  doc.history.push({
+    node, event: 'bind', horde, from: freedFrom, escalation: null, at,
+  });
+  writeLeases(doc);
+  return { status: 'claimed', node, horde, freedFrom };
+}
+
+// ---- a horde's own last activity (most recent mtime under its directory) ---------------------
+// Shared by horde.mjs list (a horde reporting its own last activity) and node.mjs bind (naming
+// the last activity of whichever horde currently holds a lease being contested), so a refusal
+// message and the `list` column agree on what "last activity" means rather than each tool
+// computing its own notion of it.
+function dirMtime(path) {
+  try { return statSync(path).mtimeMs; } catch { return 0; }
+}
+
+export function latestActivity(dest) {
+  let latest = 0;
+  const walk = (dir) => {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else latest = Math.max(latest, dirMtime(full));
+    }
+  };
+  walk(dest);
+  return latest ? new Date(latest).toISOString() : null;
 }
 
 // listHordes() — names under hordes/, excluding the archive.

@@ -16,7 +16,7 @@ import { join, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   repoRoot, hordePath, readJSON, writeJSON, readText, writeText, appendText, readConfig, nowIso,
-  fail, parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate,
+  fail, parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, claimLease,
 } from './_lib.mjs';
 import { trace as traceRoster } from './roster.mjs';
 
@@ -25,6 +25,12 @@ const USAGE = `usage: node.mjs <command> [options]
 commands:
   bind [--horde h]
       verifies the graph is readable; lists every node id.
+  bind <node> [--horde h] [--take --escalation <id>]
+      node-lease-across-hordes: leases <node> to this horde in .horde/leases.json, exclusive
+      across every live horde on the repository. Refuses a node already leased by another horde
+      that is not archived, naming that horde and its last activity. --take overrides that refusal
+      but only over a ruled escalation on this horde (--escalation <id>); the take-over is written
+      to the node's own log as well as to the lease history.
   map [--horde h]
       this mission's nodes (named by an owner in the roster or by a ticket) with owner, stamp,
       open contract proposals.
@@ -740,14 +746,64 @@ function writeContractsMd(root, cfg, horde, node, contracts) {
 
 // ---- commands ---------------------------------------------------------------
 
-function cmdBind(root, cfg, flags) {
-  const nodes = listAllNodes(root, cfg);
-  emit({ mode: mode(cfg), nodes }, flags, () => `graph readable (${mode(cfg)}) — ${nodes.length} node(s): ${nodes.join(', ') || '(none)'}`);
+// Writes a take-over to the node's own log for real (never merely prints the command, unlike
+// cmdLog's default) — a --take is something that already happened, not something an agent still
+// needs to go and do. Best-effort: a node id leased before its graph object exists (or a
+// repository whose `yg` isn't on PATH) has nothing to append to, and the lease itself — recorded
+// in .horde/leases.json's own history — is the durable record either way, so this never blocks
+// the take-over on the node's log succeeding.
+function logNodeTakeover(root, cfg, node, reason) {
+  try {
+    if (mode(cfg) === 'yggdrasil') {
+      const yg = ygCommand(cfg);
+      execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+      return true;
+    }
+    if (!nodeExists(root, cfg, node)) return false;
+    appendText(join(manualNodeDir(root, cfg, node), 'log.md'), `## [${nowIso()}]\n${reason}\n\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function cmdBind(horde, root, cfg, positional, flags) {
+  const node = positional[0];
+  if (!node) {
+    const nodes = listAllNodes(root, cfg);
+    emit({ mode: mode(cfg), nodes }, flags, () => `graph readable (${mode(cfg)}) — ${nodes.length} node(s): ${nodes.join(', ') || '(none)'}`);
+    return;
+  }
+
+  let result;
+  try {
+    result = claimLease(horde, node, { take: !!flags.take, escalation: flags.escalation || null });
+  } catch (e) {
+    fail(e.message);
+    return;
+  }
+
+  if (result.status === 'held') {
+    emit(result, flags, () => `"${node}" is already leased by "${horde}" (since ${result.since})`);
+    return;
+  }
+  if (result.status === 'taken') {
+    const reason = `took the lease on "${node}" from horde "${result.from}" over escalation ${result.escalation}: ${result.ruling}`;
+    const logged = logNodeTakeover(root, cfg, node, reason);
+    emit({ ...result, logged }, flags, () => `"${node}" taken from "${result.from}" over escalation ${result.escalation} — ${logged ? 'logged on the node' : 'recorded in the lease history only (no node log to append to)'}`);
+    return;
+  }
+  emit(result, flags, () => (result.freedFrom
+    ? `"${node}" bound to "${horde}" — its previous lease by archived horde "${result.freedFrom}" is released`
+    : `"${node}" bound to "${horde}"`));
 }
 
 // Nodes "this mission touches": named by an owner in the roster, or by a ticket anywhere under
 // teams/**/issues/*/issue.md (walked recursively for sub-teams).
-function missionNodes(horde, root, cfg) {
+// Exported for status.mjs's leases block: the nodes this horde touches are exactly the set a
+// foreign lease on one of them would matter to. root/cfg are accepted but unused — kept so the
+// signature matches every other node-reading export's own (horde, root, cfg) shape.
+export function missionNodes(horde, root, cfg) {
   const nodes = new Set();
   const roster = readJSON(hordePath(horde, 'roster.json'), { entries: [] });
   for (const e of asArray(roster.entries)) {
@@ -1155,7 +1211,7 @@ function cmdApply(horde, root, cfg, positional, flags) {
 // ---- main ---------------------------------------------------------------------
 
 function main() {
-  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['run', 'pending', 'open'] });
+  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['run', 'pending', 'open', 'take'] });
   const [cmd, ...rest] = allPositional;
 
   if (flags.help) { console.log(USAGE); process.exit(0); }
@@ -1165,7 +1221,7 @@ function main() {
   const root = repoRoot();
   const cfg = readConfig() || {};
 
-  if (cmd === 'bind') return cmdBind(root, cfg, flags);
+  if (cmd === 'bind') return cmdBind(horde, root, cfg, rest, flags);
   if (cmd === 'map') return cmdMap(horde, root, cfg, flags);
   if (cmd === 'show') return cmdShow(horde, root, cfg, rest, flags);
   if (cmd === 'charter') {
