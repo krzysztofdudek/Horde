@@ -485,3 +485,108 @@ test('tk.mjs new: a ticket names one node, or two — never three', async (t) =>
   assert.match(three.stderr, /names one node, or two/);
   assert.match(three.stderr, /Split it into one ticket per node/);
 });
+
+test('tk.mjs review: an approval records the tip it was given at and the diff it read', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const created = run('tk.mjs', ['new', 'reviewed', '--title', 'Reviewed on a branch', '--node', 'core', '--class', 'sonnet'], dir);
+  const id = created.json.id;
+  run('tk.mjs', ['key', id, 'author', '--by', 'worker1'], dir);
+
+  await t.test('with no queue item yet, the approval is the bare name, as it always was', () => {
+    const r = run('tk.mjs', ['review', id, 'approve', '--by', 'owner1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.sha, null);
+    assert.equal(r.json.diff, null);
+    const show = run('tk.mjs', ['show', id], dir);
+    assert.match(show.json.text, /core owner1$/m);
+  });
+
+  await t.test('on a queued ticket with a branch, it carries both the sha and the diff', () => {
+    run('queue.mjs', ['add', id], dir);
+    const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir);
+    const { branch, worktree } = running.json;
+    writeFileSync(join(worktree, 'thing.mjs'), 'export const thing = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: worktree, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-qm', `ticket ${id}`], { cwd: worktree, stdio: 'ignore' });
+
+    const r = run('tk.mjs', ['review', id, 'approve', '--by', 'owner1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const tip = execFileSync('git', ['rev-parse', '--short', branch], { cwd: dir, encoding: 'utf8' }).trim();
+    assert.equal(r.json.sha, tip);
+    assert.match(r.json.diff, /^[0-9a-f]{40}$/);
+    const show = run('tk.mjs', ['show', id], dir);
+    assert.match(show.json.text, new RegExp(`core owner1@${tip}\\+${r.json.diff}`));
+    const log = run('tk.mjs', ['show', id, '--log'], dir);
+    assert.match(log.json.log, new RegExp(`review: core approve by owner1 at ${tip} \\(diff ${r.json.diff.slice(0, 7)}\\)`));
+  });
+
+  await t.test('a changes-request carries neither — there is nothing to hold it to', () => {
+    const r = run('tk.mjs', ['review', id, 'changes', 'not yet', '--by', 'owner1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.sha, null);
+    assert.equal(r.json.diff, null);
+    const show = run('tk.mjs', ['show', id], dir);
+    assert.match(show.json.text, /core changes:owner1/);
+  });
+});
+
+test('tk.mjs review-request --delta logs the file the owner is asked to read', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const created = run('tk.mjs', ['new', 'scoped', '--title', 'Scoped again', '--node', 'core', '--class', 'sonnet'], dir);
+  const id = created.json.id;
+
+  const plain = run('tk.mjs', ['review-request', id], dir);
+  assert.equal(plain.code, 0, plain.stderr);
+  assert.equal(plain.json.delta, null);
+
+  const scoped = run('tk.mjs', ['review-request', id, '--delta', '.horde/hordes/mission1/teams/trunk/issues/001-scoped/rereview-aaaaaaa..bbbbbbb.diff'], dir);
+  assert.equal(scoped.code, 0, scoped.stderr);
+  assert.match(scoped.json.delta, /rereview-aaaaaaa\.\.bbbbbbb\.diff$/);
+  const log = run('tk.mjs', ['show', id, '--log'], dir);
+  assert.match(log.json.log, /review requested$/m);
+  assert.match(log.json.log, /review requested — scoped re-review: .*rereview-aaaaaaa\.\.bbbbbbb\.diff/);
+});
+
+test('tk.mjs review: an approval taken from the verifier seat carries the tip and the diff like any other', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const owner = run('roster.mjs', ['spawn', 'owner', '--node', 'core', '--class', 'sonnet'], dir);
+  const ownerName = owner.json.name;
+  const verifier = run('roster.mjs', ['spawn', 'verifier', '--team', 'trunk', '--class', 'sonnet'], dir);
+  const verifierName = verifier.json.name;
+
+  const created = run('tk.mjs', ['new', 'seat-and-diff', '--title', 'Self authored, on a branch', '--node', 'core', '--class', 'sonnet'], dir);
+  const id = created.json.id;
+  run('queue.mjs', ['add', id], dir);
+  const running = run('queue.mjs', ['set', id, 'running', '--agent', ownerName], dir);
+  const { branch, worktree } = running.json;
+  writeFileSync(join(worktree, 'thing.mjs'), 'export const thing = 1;\n');
+  execFileSync('git', ['add', '-A'], { cwd: worktree, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-qm', `ticket ${id}`], { cwd: worktree, stdio: 'ignore' });
+
+  run('tk.mjs', ['key', id, 'author', '--by', ownerName], dir);
+  const tip = execFileSync('git', ['rev-parse', '--short', branch], { cwd: dir, encoding: 'utf8' }).trim();
+  const rec = run('verify.mjs', [
+    'record', id, '--verdict', 'reproduced', '--by', verifierName,
+    '--revert', 'no-new-tests', '--gate', 'green', '--sha', tip,
+  ], dir);
+  assert.equal(rec.code, 0, rec.stderr);
+  assert.match(rec.json.diff, /^[0-9a-f]{40}$/);
+
+  const r = run('tk.mjs', ['review', id, 'approve', '--by', verifierName], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.verifierSeat, true);
+  assert.equal(r.json.sha, tip);
+  // The seat says who stood in; the sha and the diff say what they read. Both, not either.
+  const show = run('tk.mjs', ['show', id], dir);
+  assert.match(show.json.text, new RegExp(`core ${verifierName}\\(verifier-seat\\)@${tip}\\+${r.json.diff}`));
+  assert.equal(r.json.diff, rec.json.diff);
+});

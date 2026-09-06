@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
 
@@ -162,7 +162,7 @@ test('premerge.mjs: item 2 fails — a node approval\'s sha (tk.mjs review\'s "n
   assert.match(keys.note, /approval\/verdict predates .+ — re-review/);
 });
 
-test('premerge.mjs: item 2 — a real tk.mjs review approval matches the branch tip it was given for, then goes stale after a further commit', async (t) => {
+test('premerge.mjs: item 2 — a real tk.mjs review approval records the tip and the diff it was given, and a further commit that changes the diff sends it back', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -183,7 +183,7 @@ test('premerge.mjs: item 2 — a real tk.mjs review approval matches the branch 
   assert.equal(review.code, 0, review.stderr);
   const show = run('tk.mjs', ['show', id], dir);
   const tip = git(['rev-parse', '--short', branch], dir);
-  assert.match(show.json.text, new RegExp(`feature owner1@${tip}`));
+  assert.match(show.json.text, new RegExp(`feature owner1@${tip}\\+[0-9a-f]{40}`));
 
   const verdict = run('verify.mjs', ['record', id, '--verdict', 'reproduced', '--revert', 'failed', '--by', 'verifier1', '--gate', 'green', '--sha', tip], dir);
   assert.equal(verdict.code, 0, verdict.stderr);
@@ -192,8 +192,10 @@ test('premerge.mjs: item 2 — a real tk.mjs review approval matches the branch 
   const keys1 = r1.json.checks.find((c) => c.name === 'keys');
   assert.equal(keys1.ok, true, keys1.note);
 
-  // A further commit moves the branch tip — the approval and the verdict, both bound to the
-  // earlier sha, are now stale.
+  assert.match(keys1.note, /keys bound to diff [0-9a-f]{7}/);
+
+  // A further commit adds a file to the ticket's own change — this is not a catch-up, it is a
+  // different diff, and neither the approval nor the verdict covers it.
   writeFileSync(join(worktree, 'feature-010-extra.mjs'), 'export const extra = true;\n');
   git(['add', '-A'], worktree);
   git(['commit', '-qm', 'a further commit'], worktree);
@@ -201,7 +203,7 @@ test('premerge.mjs: item 2 — a real tk.mjs review approval matches the branch 
   const r2 = run('premerge.mjs', [branch, '--no-gate'], dir);
   const keys2 = r2.json.checks.find((c) => c.name === 'keys');
   assert.equal(keys2.ok, false);
-  assert.match(keys2.note, /approval\/verdict predates .+ — re-review/);
+  assert.match(keys2.note, /diff changed since review at [0-9a-f]{7} — scoped re-review: \S+/);
 });
 
 test('premerge.mjs: item 3 fails — diff touches a file outside the node boundary', async (t) => {
@@ -747,4 +749,207 @@ test('premerge.mjs: item 4 says what it looked for when a diff really carries no
   // The Java patterns match nothing in this diff — and the note names them, so the ✓ cannot be
   // read as "there were no tests to find" when it means "none matching these".
   assert.match(revert.note, /no new test files in diff \(looked for \*\*\/\*Tests\.java\)/);
+});
+
+// ---- keys bound to the ticket's own diff -------------------------------------------------
+//
+// The whole point of item 2 binding to the diff rather than to the branch tip: a team branch that
+// moves under a ticket costs it nothing, unless what moved reached into the ticket's own change.
+// These four go through the real tools (queue, tk, verify) on a real file, because what is being
+// tested is exactly the recorded shape of a key — a hand-written imitation would prove nothing.
+
+const LIB_LINES = Array.from({ length: 40 }, (_, i) => `export const v${i + 1} = ${i + 1};`);
+
+function libWith(line, value) {
+  const lines = [...LIB_LINES];
+  lines[line - 1] = `export const v${line} = ${value};`;
+  return `${lines.join('\n')}\n`;
+}
+
+// A ticket carried all the way to two live keys: a 40-line file on the team branch, one line of it
+// changed on the ticket's own branch, the author key, the owner's approval and a reproduced
+// verdict — each recorded by the tool that really records it.
+function reviewedTicket(dir, slug) {
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+  run('node.mjs', ['new', 'feature', '--boundary', 'lib.mjs,other.mjs'], dir);
+
+  git(['checkout', 'mission1/trunk'], dir);
+  writeFileSync(join(dir, 'lib.mjs'), `${LIB_LINES.join('\n')}\n`);
+  git(['add', 'lib.mjs'], dir);
+  git(['commit', '-qm', 'the file the ticket will change'], dir);
+
+  const created = run('tk.mjs', ['new', slug, '--title', 'One line in the middle', '--node', 'feature', '--class', 'sonnet'], dir);
+  const id = created.json.id;
+  run('queue.mjs', ['add', id], dir);
+  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir);
+  const { branch, worktree } = running.json;
+
+  writeFileSync(join(worktree, 'lib.mjs'), libWith(20, 2000));
+  git(['add', 'lib.mjs'], worktree);
+  git(['commit', '-qm', `ticket ${id}`], worktree);
+
+  run('tk.mjs', ['key', id, 'author', '--by', 'worker1'], dir);
+  const approve = run('tk.mjs', ['review', id, 'approve', '--by', 'owner1'], dir);
+  assert.equal(approve.code, 0, approve.stderr);
+  const tip = git(['rev-parse', '--short', branch], dir);
+  const verdict = run('verify.mjs', ['record', id, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1', '--gate', 'green', '--sha', tip], dir);
+  assert.equal(verdict.code, 0, verdict.stderr);
+  return {
+    id, branch, worktree, tip, approve, verdict,
+  };
+}
+
+// A sibling ticket landing on the team branch — what makes every other branch in flight stale.
+function landOnTeamBranch(dir, files, message = 'a sibling ticket lands') {
+  git(['checkout', 'mission1/trunk'], dir);
+  for (const [path, content] of Object.entries(files)) writeFileSync(join(dir, path), content);
+  git(['add', ...Object.keys(files)], dir);
+  git(['commit', '-qm', message], dir);
+}
+
+function tryMerge(worktree, ref) {
+  try {
+    return { ok: true, output: git(['merge', ref, '-m', `catch up with ${ref}`], worktree) };
+  } catch (e) {
+    return { ok: false, output: (e.stdout || '').toString() + (e.stderr || '').toString() };
+  }
+}
+
+test('premerge.mjs: item 2 — a landing in another file moves the tip, not the diff, and both keys travel with it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ticket = reviewedTicket(dir, 'keys-travel');
+
+  const before = run('premerge.mjs', [ticket.branch], dir);
+  assert.equal(before.json.ok, true, JSON.stringify(before.json.checks));
+
+  landOnTeamBranch(dir, { 'other.mjs': 'export const other = 1;\n' });
+  const merge = tryMerge(ticket.worktree, 'mission1/trunk');
+  assert.equal(merge.ok, true, merge.output);
+  run('tk.mjs', ['log', ticket.id, 'caught the team branch up'], dir);
+
+  const r = run('premerge.mjs', [ticket.branch], dir);
+  assert.equal(r.code, 0, JSON.stringify(r.json && r.json.checks));
+  const base = r.json.checks.find((c) => c.name === 'base freshness');
+  assert.equal(base.ok, true, base.note);
+  const keys = r.json.checks.find((c) => c.name === 'keys');
+  assert.equal(keys.ok, true, keys.note);
+  assert.match(keys.note, /keys bound to diff [0-9a-f]{7}/);
+  assert.doesNotMatch(keys.note, /re-review/);
+  // The gate is tied to the tree, not to the diff: it runs again, for free, on the new tip.
+  const gate = r.json.checks.find((c) => c.name === 'gate');
+  assert.equal(gate.ok, true);
+  assert.match(gate.note, /green \(true\)/);
+  assert.doesNotMatch(gate.note, /accepted the verifier's recorded/);
+});
+
+test('premerge.mjs: item 2 — a landing inside the reviewed hunk\'s context changes the diff and asks for a scoped re-review', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ticket = reviewedTicket(dir, 'diff-changed');
+
+  // Two lines below the ticket's own change: inside its context, so the merge is clean but what
+  // the owner and the verifier read is no longer what is on the branch.
+  landOnTeamBranch(dir, { 'lib.mjs': libWith(22, 999) });
+  const merge = tryMerge(ticket.worktree, 'mission1/trunk');
+  assert.equal(merge.ok, true, merge.output);
+  run('tk.mjs', ['log', ticket.id, 'caught the team branch up'], dir);
+
+  const r = run('premerge.mjs', [ticket.branch], dir);
+  assert.equal(r.code, 1);
+  const keys = r.json.checks.find((c) => c.name === 'keys');
+  assert.equal(keys.ok, false);
+  assert.match(keys.note, /diff changed since review at [0-9a-f]{7} — scoped re-review: \S+/);
+  assert.doesNotMatch(keys.note, /keys bound to diff/);
+
+  const path = /scoped re-review: (\S+)/.exec(keys.note)[1];
+  assert.match(path, /rereview-[0-9a-f]{7}\.\.[0-9a-f]{7}\.diff$/);
+  // The file is the commit-by-commit comparison of what was approved against what is there now:
+  // here the ticket's own commit is carried over unchanged, and what moved is the base under it.
+  const delta = readFileSync(join(dir, path), 'utf8');
+  assert.match(delta, new RegExp(`ticket ${ticket.id}`));
+});
+
+test('premerge.mjs: item 2 — an approval recorded with a sha alone stays bound to that commit, catch-up or not', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  run('node.mjs', ['new', 'feature', '--boundary', 'feature-040.mjs,feature-040.test.mjs,other-040.mjs'], dir);
+
+  const branch = makeTicketBranch(dir, '040');
+  const tip = git(['rev-parse', '--short', branch], dir);
+  const dst = writeIssue(dir, 'trunk', '040', {
+    keysLine: `**Keys:** author worker1 · verifier verifier1 · feature owner1@${tip}`,
+  });
+  writeVerdictLog(dst, { gateLine: `**Gate:** \`true\` — green at sha ${tip}` });
+  seedQueueItem(dir, 'trunk', '040', branch);
+
+  const before = run('premerge.mjs', [branch, '--no-gate'], dir);
+  const keysBefore = before.json.checks.find((c) => c.name === 'keys');
+  assert.equal(keysBefore.ok, true, keysBefore.note);
+  assert.doesNotMatch(keysBefore.note, /keys bound to diff/);
+
+  // A landing elsewhere, then the same catch-up merge that costs a diff-bound key nothing.
+  landOnTeamBranch(dir, { 'other-040.mjs': 'export const other = 1;\n' });
+  git(['checkout', branch], dir);
+  git(['merge', 'mission1/trunk', '-m', 'catch up'], dir);
+  git(['checkout', 'mission1/trunk'], dir);
+
+  const after = run('premerge.mjs', [branch, '--no-gate'], dir);
+  const keys = after.json.checks.find((c) => c.name === 'keys');
+  assert.equal(keys.ok, false);
+  assert.match(keys.note, /approval\/verdict predates [0-9a-f]{7} — re-review/);
+  assert.doesNotMatch(keys.note, /scoped re-review/);
+});
+
+test('premerge.mjs: item 2 — a landing on the adjacent line conflicts, and the ticket goes back to its author untouched', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ticket = reviewedTicket(dir, 'adjacent');
+  const tipBefore = git(['rev-parse', ticket.branch], dir);
+
+  landOnTeamBranch(dir, { 'lib.mjs': libWith(21, 999) });
+  const merge = tryMerge(ticket.worktree, 'mission1/trunk');
+  assert.equal(merge.ok, false);
+  assert.match(merge.output, /CONFLICT/);
+  git(['merge', '--abort'], ticket.worktree);
+  assert.equal(git(['rev-parse', ticket.branch], dir), tipBefore);
+
+  // Nothing was asked of the reviewers: the branch is exactly where the author left it, the keys
+  // still hold, and the only red item is the base the author must catch up with.
+  const r = run('premerge.mjs', [ticket.branch], dir);
+  assert.equal(r.code, 1);
+  const base = r.json.checks.find((c) => c.name === 'base freshness');
+  assert.equal(base.ok, false);
+  assert.match(base.note, /STALE/);
+  const keys = r.json.checks.find((c) => c.name === 'keys');
+  assert.equal(keys.ok, true, keys.note);
+  assert.match(keys.note, /keys bound to diff [0-9a-f]{7}/);
+});
+
+test('premerge.mjs: item 2 — an approval given from the verifier seat is read like any other, and travels with the diff', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ticket = reviewedTicket(dir, 'seat-travels');
+
+  // The same recorded approval, given from the verifier's seat: the marker sits in the name, so
+  // what item 2 holds it to is still the diff after it.
+  const issueDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues');
+  const dirName = readdirSync(issueDir).find((n) => n.startsWith(ticket.id));
+  const issuePath = join(issueDir, dirName, 'issue.md');
+  const seated = readFileSync(issuePath, 'utf8').replace(/(feature )([^\s@]+)@/, '$1$2(verifier-seat)@');
+  writeFileSync(issuePath, seated);
+  assert.match(seated, /feature \S+\(verifier-seat\)@[0-9a-f]+\+[0-9a-f]{40}/);
+
+  landOnTeamBranch(dir, { 'other.mjs': 'export const other = 1;\n' });
+  const merge = tryMerge(ticket.worktree, 'mission1/trunk');
+  assert.equal(merge.ok, true, merge.output);
+  run('tk.mjs', ['log', ticket.id, 'caught the team branch up'], dir);
+
+  const r = run('premerge.mjs', [ticket.branch, '--no-gate'], dir);
+  const keys = r.json.checks.find((c) => c.name === 'keys');
+  assert.equal(keys.ok, true, keys.note);
+  assert.match(keys.note, /keys bound to diff [0-9a-f]{7}/);
+  assert.match(keys.note, /\(verifier-seat\)/);
 });

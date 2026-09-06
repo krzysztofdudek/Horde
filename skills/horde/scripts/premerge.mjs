@@ -15,11 +15,11 @@ import {
   existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { execFileSync, execSync } from 'node:child_process';
 import {
-  repoRoot, hordePath, readJSON, writeJSON, readText, readConfig, git, fail, parseArgs,
-  asArray, emit, isMain, resolveHorde,
+  repoRoot, hordePath, readJSON, writeJSON, readText, writeText, readConfig, git, fail, parseArgs,
+  asArray, emit, isMain, resolveHorde, patchIdOf,
 } from './_lib.mjs';
 import {
   nodeBoundary, nodeExists, nodeGraphPathPrefix, ticketNodes, graphIsLaw, runYgCheck, ygCommand,
@@ -30,7 +30,8 @@ const USAGE = `usage: premerge.mjs <branch> [--level team|trunk] [--no-gate] [--
 The checks, in order — ✓/✗ per line, non-zero exit on any ✗:
   1. base freshness — branch rooted at its parent branch's tip
   2. keys           — author + verifier keys set, verdict reproduced, every named node approved,
-                      and every approval and the verdict itself sha-bound to the branch's tip
+                      and every approval and the verdict still bound to the diff they were given
+                      for (a key with no diff recorded is bound to the branch tip, as before)
   3. scope          — diff stays inside the ticket's node boundaries, no protected path touched
   4. revert test    — new test files (named by config.testGlobs), extracted onto the parent's
                       tree, fail there; ✗ when this repository's test patterns are unknown
@@ -153,17 +154,24 @@ function checkBaseFreshness(branch, parentBranch) {
   };
 }
 
-// tk.mjs's "approve" appends "@<sha>" to a node approval's value (the branch tip it was given
-// for); "changes:<name>" carries none. Splits the two back apart; a value with no "@<hex>" tail
-// (an approval recorded before this existed, or one with no branch context at approval time)
-// yields sha: null, which checkKeysForTicket treats as nothing to compare, not as stale.
+// tk.mjs's "approve" records "<name>@<sha>+<patch-id>" — the branch tip the review was given at,
+// and the identity of the diff that was read. Older records carry "<name>@<sha>" (sha-bound only,
+// and treated exactly as they always were), and older ones still just "<name>"; "changes:<name>"
+// carries neither. Splits all four back apart; anything unrecognised after the "@" yields
+// sha: null, which checkKeysForTicket treats as nothing to compare, not as stale. A malformed
+// patch-id half degrades to the stricter sha-only reading rather than being trusted.
 function splitNameSha(v) {
-  if (!v) return { name: null, sha: null };
+  if (!v) return { name: null, sha: null, patchId: null };
   const at = v.lastIndexOf('@');
-  if (at === -1) return { name: v, sha: null };
-  const sha = v.slice(at + 1);
-  if (!/^[0-9a-f]{4,40}$/i.test(sha)) return { name: v, sha: null };
-  return { name: v.slice(0, at), sha };
+  if (at === -1) return { name: v, sha: null, patchId: null };
+  const tail = v.slice(at + 1);
+  const plus = tail.indexOf('+');
+  const sha = plus === -1 ? tail : tail.slice(0, plus);
+  const patchId = plus === -1 ? null : tail.slice(plus + 1);
+  if (!/^[0-9a-f]{4,40}$/i.test(sha)) return { name: v, sha: null, patchId: null };
+  const name = v.slice(0, at);
+  if (patchId !== null && !/^[0-9a-f]{4,40}$/i.test(patchId)) return { name, sha, patchId: null };
+  return { name, sha, patchId };
 }
 
 // Same tolerant comparison checkGate already uses for a verifier's recorded gate sha: a short
@@ -173,33 +181,68 @@ function shaMatches(recorded, branchSha) {
   return recorded === branchSha || recorded === short(branchSha) || short(recorded) === short(branchSha);
 }
 
-// branchSha, when given, is the ticket's own branch's current tip: an approval or a reproduced
-// verdict that named an earlier sha is stale — the branch moved after the review, so what's on
-// it now was never actually reviewed. Left undefined for a team merge-up's own per-ticket check
-// (checkKeysForTeamMergeUp below), since a merged ticket's branch no longer exists to compare
-// against — that binding was already enforced once, at the moment it was merged.
-function checkKeysForTicket(issueText, logText, ticketId, nodes, branchSha) {
+// A key that records a patch-id (a diff's own identity) is valid for as long as the branch still
+// carries that diff, however often its tip has moved: catching a branch up with its team is not a
+// change to what the reviewers read, so the keys travel with it and only the gate (item 5, tied to
+// the tree) re-runs. Tolerant about length, like shaMatches, so a shortened record still compares.
+function diffMatches(recorded, current) {
+  if (!recorded || !current) return false;
+  const a = recorded.toLowerCase();
+  const b = current.toLowerCase();
+  return a === b || b.startsWith(a) || a.startsWith(b);
+}
+
+// branchSha and branchPatchId, when given, are the ticket branch's current tip and the current
+// identity of its diff against the parent branch. A key recorded with a patch-id is judged
+// against the diff; one without (an older record, or one taken with no branch context at all) is
+// judged against the tip sha exactly as before — the branch moved after the review, so what's on
+// it now was never actually reviewed. Both left undefined for a team merge-up's own per-ticket
+// check (checkKeysForTeamMergeUp below), since a merged ticket's branch no longer exists to
+// compare against — that binding was already enforced once, at the moment it was merged.
+//
+// Returns `diffChangedAt`: the shas the now-void keys were given at, for run() to write the
+// scoped re-review against — one file per distinct sha, its path then named in the note.
+function checkKeysForTicket(issueText, logText, ticketId, nodes, branchSha, branchPatchId) {
   const { author, verifier, approvals } = parseKeys(issueText, nodes);
   const verdictBlock = lastVerdictBlock(logText, ticketId);
   const verdictResult = verdictBlock ? /\*\*Result:\*\*\s*(\S+)/.exec(verdictBlock)?.[1] : null;
   const gateLine = verdictBlock ? /\*\*Gate:\*\*[^\n]*$/m.exec(verdictBlock)?.[0] || '' : '';
   const verdictSha = /at sha (\S+)/.exec(gateLine)?.[1] || null;
+  const verdictPatchId = verdictBlock ? /\*\*Diff:\*\*\s*([0-9a-f]{4,40})\b/i.exec(verdictBlock)?.[1] || null : null;
 
   // tk.mjs records a rejected review in the same slot as "changes:<name>" — a value, but not
   // an approval.
   const isApproved = (v) => !!v && !v.startsWith('changes:');
   const missingApprovals = nodes.filter((n) => !isApproved(approvals[n]));
-  const staleApprovals = branchSha
-    ? nodes.filter((n) => {
-      if (!isApproved(approvals[n])) return false;
-      const { sha } = splitNameSha(approvals[n]);
-      return sha !== null && !shaMatches(sha, branchSha);
-    })
-    : [];
-  const verdictStale = !!branchSha && verdictResult === 'reproduced' && verdictSha !== null && !shaMatches(verdictSha, branchSha);
+
+  // One verdict per key: "current" (nothing to compare, or it still matches), "diff" (bound to a
+  // diff this branch no longer carries) or "sha" (bound only to a tip this branch has moved past).
+  const judge = (sha, patchId) => {
+    if (!branchSha) return 'current';
+    if (patchId && branchPatchId) return diffMatches(patchId, branchPatchId) ? 'current' : 'diff';
+    if (sha === null) return 'current';
+    return shaMatches(sha, branchSha) ? 'current' : 'sha';
+  };
+
+  const staleByDiff = [];
+  const staleBySha = [];
+  let boundToDiff = 0;
+  const tally = (sha, patchId) => {
+    const verdict = judge(sha, patchId);
+    if (verdict === 'diff') staleByDiff.push(sha);
+    else if (verdict === 'sha') staleBySha.push(sha);
+    else if (patchId && branchPatchId) boundToDiff += 1;
+  };
+
+  for (const n of nodes) {
+    if (!isApproved(approvals[n])) continue;
+    const { sha, patchId } = splitNameSha(approvals[n]);
+    tally(sha, patchId);
+  }
+  if (verdictResult === 'reproduced') tally(verdictSha, verdictPatchId);
 
   const ok = !!author && !!verifier && verdictResult === 'reproduced'
-    && missingApprovals.length === 0 && staleApprovals.length === 0 && !verdictStale;
+    && missingApprovals.length === 0 && staleByDiff.length === 0 && staleBySha.length === 0;
 
   const parts = [
     `author=${author || 'unset'}`,
@@ -213,10 +256,31 @@ function checkKeysForTicket(issueText, logText, ticketId, nodes, branchSha) {
       return `${n}=${splitNameSha(v).name}`;
     }).join(', ')}`);
   }
-  if (staleApprovals.length || verdictStale) {
+  if (boundToDiff > 0 && staleByDiff.length === 0 && staleBySha.length === 0) {
+    parts.push(`keys bound to diff ${short(branchPatchId)}`);
+  }
+  if (staleBySha.length) {
     parts.push(`approval/verdict predates ${short(branchSha)} — re-review`);
   }
-  return { ok, note: parts.join(', ') };
+  return { ok, note: parts.join(', '), diffChangedAt: [...new Set(staleByDiff.filter(Boolean))] };
+}
+
+// The scoped re-review: what changed between the state a key was given for and the state now,
+// written beside the ticket as `git range-diff <oldBase>..<oldTip> <parent>..<tip>` — commit by
+// commit, so a reviewer sees which of the commits already approved are unchanged and exactly what
+// is new. Returns the path to name in the note, or the reason there is none (the old tip gone
+// from the repository, no common ancestor left), in which case the re-review is simply a full one.
+function writeScopedReReview(root, issueDirPath, branch, parentBranch, oldTip) {
+  const oldTipFull = git(['rev-parse', '--verify', `${oldTip}^{commit}`], root);
+  if (!oldTipFull) return { path: null, why: `commit ${short(oldTip)} is no longer in this repository` };
+  const oldBase = git(['merge-base', oldTipFull, parentBranch], root);
+  if (!oldBase) return { path: null, why: `no common ancestor of ${short(oldTip)} and ${parentBranch}` };
+  const newTip = git(['rev-parse', '--verify', branch], root);
+  const out = git(['range-diff', `${oldBase}..${oldTipFull}`, `${parentBranch}..${branch}`], root);
+  if (out === null) return { path: null, why: 'git could not produce the range-diff' };
+  const file = join(issueDirPath, `rereview-${short(oldTipFull)}..${short(newTip)}.diff`);
+  writeText(file, `${out}\n`);
+  return { path: relative(root, file), why: null };
 }
 
 // Team merge-up substitute for "keys": no single author/verifier on a branch that isn't a
@@ -524,10 +588,26 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
     ticketId = String(item.ticket);
     const issueDirName = findIssueDir(teamDir, ticketId);
     if (!issueDirName) fail(`no ticket found for ${ticketId} in team ${team}`);
-    issueText = readText(join(teamDir, 'issues', issueDirName, 'issue.md'));
-    logText = readText(join(teamDir, 'issues', issueDirName, 'log.md'));
+    const issueDirPath = join(teamDir, 'issues', issueDirName);
+    issueText = readText(join(issueDirPath, 'issue.md'));
+    logText = readText(join(issueDirPath, 'log.md'));
     nodes = ticketNodes(issueText);
-    checks.push({ name: 'keys', ...checkKeysForTicket(issueText, logText, ticketId, nodes, branchSha) });
+    const branchPatchId = patchIdOf(branch, parentBranch, { context: cfg.keyContext, cwd: root });
+    const keys = checkKeysForTicket(issueText, logText, ticketId, nodes, branchSha, branchPatchId);
+    // A key whose diff no longer holds is not an escalation and not a full re-review: write the
+    // difference between what was approved and what is here now, and name that file, so the owner
+    // and the verifier judge the delta instead of the whole change a second time.
+    const scoped = keys.diffChangedAt.map((oldTip) => {
+      const { path, why } = writeScopedReReview(root, issueDirPath, branch, parentBranch, oldTip);
+      return `diff changed since review at ${short(oldTip)} — ${path
+        ? `scoped re-review: ${path}`
+        : `full re-review (${why})`}`;
+    });
+    checks.push({
+      name: 'keys',
+      ok: keys.ok,
+      note: [keys.note, ...scoped].join(' · '),
+    });
   }
 
   checks.push({ name: 'scope', ...checkScope(root, cfg, nodes, changedFiles) });

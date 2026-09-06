@@ -38,10 +38,11 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   rather than guess when it is empty), `nodeSource` (`yggdrasil` | `manual`), `ygCommand` (how this
   repository invokes the Yggdrasil CLI
   — default `yg` on PATH; set it to e.g. `node path/to/bin.js` for a local build),
-  `protectedPaths[]`, `fixRounds.resume|fresh` (the fix-loop breaker `tk.mjs status <ticket>
-  changes` reads: rounds 1..`resume` resume the same worker, the next `fresh` rounds spawn a fresh
-  one a class up, beyond that the command refuses — defaults 3 and 2),
-  `liveness.stewardMinutes|ownerMinutes`
+  `keyContext` (how many lines of surrounding code a review's key is bound to — default 3; see
+  "keys are bound to the diff" below), `protectedPaths[]`, `fixRounds.resume|fresh` (the fix-loop
+  breaker `tk.mjs status <ticket> changes` reads: rounds 1..`resume` resume the same worker, the
+  next `fresh` rounds spawn a fresh one a class up, beyond that the command refuses — defaults 3
+  and 2), `liveness.stewardMinutes|ownerMinutes`
   (also accepts `liveness.stewardSeconds|ownerSeconds` — a `*Seconds` key wins over its `*Minutes`
   counterpart when both are set; useful for tests and fast-loop tuning where a whole minute isn't
   practical), `classes` (weights: haiku 1, sonnet 3, opus 10, fable 30 — defaults), `parallelism`.
@@ -95,16 +96,20 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
   briefed with `brief.mjs worker NNN --takeover`. Beyond that cap the command refuses outright and
   names the next step: `escalate.mjs add "<why>" --kind adjudicate --ticket NNN`, then
   `queue.mjs set NNN escalated` — a ruling, not another round. `log NNN "text"`, `grep <re>`.
-- `review-request NNN` (steward; appends to the log with a timestamp, starts the owner's liveness
-  window), `review NNN approve|changes ["why"] --by <name>` (records the approval per node in the
-  `**Keys:**` field; a ticket naming two nodes needs both owners; the architect's review counts for a
-  node whose owner is the author; refuses `--by` equal to the author key). An `approve` also reads the
-  ticket's own queue item's `branch` and appends its current tip sha to the recorded value
-  (`<name>@<sha>`) — `premerge.mjs` item 2 uses it to refuse an approval that predates a later commit.
-  No queue item or no branch yet (a ticket approved before ever being queued) records the name alone,
-  same as before. The ticket's own verifier may approve in an owner's place — marked
-  `<name>(verifier-seat)` in the Keys line — only when the ticket's author is that node's own owner
-  (roster) and the roster carries no live architect; otherwise a verifier approving is refused.
+- `review-request NNN [--delta <path>]` (steward; appends to the log with a timestamp, starts the
+  owner's liveness window; `--delta` names the file `premerge.mjs` wrote for a scoped re-review, so
+  the log records which kind of review was asked for and the owner reads the delta instead of the
+  whole change again), `review NNN approve|changes ["why"] --by <name>` (records the approval per
+  node in the `**Keys:**` field; a ticket naming two nodes needs both owners; the architect's review
+  counts for a node whose owner is the author; refuses `--by` equal to the author key). An `approve`
+  also reads the ticket's own queue item's `branch` and records what was read: the branch's current
+  tip sha and the identity of its diff against the team branch (`<name>@<sha>+<patch-id>`) —
+  `premerge.mjs` item 2 holds the approval to the diff, and to the sha alone for an older
+  `<name>@<sha>` record. No queue item or no branch yet (a ticket approved before ever being queued)
+  records the name alone, same as before. The ticket's own verifier may approve in an owner's place
+  — marked `<name>(verifier-seat)` in the Keys line — only when the ticket's author is that node's
+  own owner (roster) and the roster carries no live architect; otherwise a verifier approving is
+  refused.
 - `key NNN author --by <name>` — sets the author key in the `**Keys:**` field (the steward, when the
   branch lands). `key NNN author --from-queue` sets it instead from the ticket's own queue item's
   recorded `agent` — for a successor steward recovering a ticket `queue.mjs reconcile` marked
@@ -205,13 +210,18 @@ respawn after a reclaim).
 ## brief.mjs — rendered briefs
 
 `brief.mjs <role> [args]` prints the brief for a role, filled from `reference/roles/<role>.md`:
-`steward <team>`, `owner <node>`, `architect`, `worker NNN [--takeover]`, `verifier NNN`, `auditor
-NNN --wave n`, `counsel --question "…" [--attach file]…`. `worker --takeover` renders a takeover
-section — a prior worker attempted this ticket N times, the ticket is yours, here is its log — for
-the fresh, one-class-up worker `tk.mjs status NNN changes` hands a ticket to once its resume rounds
-(`config.fixRounds`) are spent; N and the log come from the ticket's own log, the same "round
-N/cap" line `tk.mjs` itself wrote. Fills `{{…}}` from the charter, the config (`fastCheck` =
-`gates.commit`, `gateCommand` = the level's gate, `graphDir`, `protectedPaths`, `parallelism`,
+`steward <team>`, `owner <node>`, `architect`, `worker NNN [--takeover]`, `verifier NNN [--delta
+<path>]`, `auditor NNN --wave n`, `counsel --question "…" [--attach file]…`. `worker --takeover`
+renders a takeover section — a prior worker attempted this ticket N times, the ticket is yours, here
+is its log — for the fresh, one-class-up worker `tk.mjs status NNN changes` hands a ticket to once
+its resume rounds (`config.fixRounds`) are spent; N and the log come from the ticket's own log, the
+same "round N/cap" line `tk.mjs` itself wrote. `verifier --delta <path>` renders the brief for a
+scoped re-review: the subject is the delta file `premerge.mjs` wrote, plus every finding the last
+review left open (read from the ticket's own log — the last verdict's "what failed" and each owner's
+changes-request), and the rule that what was already reproduced is not proved twice. A path naming no
+readable file is refused rather than rendered around. Without `--delta` the brief is the full
+verification, as before. Fills `{{…}}` from the charter, the config (`fastCheck` = `gates.commit`,
+`gateCommand` = the level's gate, `graphDir`, `protectedPaths`, `parallelism`,
 `fixRoundsResume|Fresh` for the steward brief), the
 cache (`fastCheckCount` from `cache/last-gate.json`, or "unknown — report the count you get"), the
 node (`node.mjs`), the ticket (`worktree` and `branch` from the queue item), and the roster
@@ -255,8 +265,8 @@ mode they print the `yg` commands the architect must run instead).
 ## verify.mjs — the second key
 
 `record NNN --verdict reproduced|not-reproduced|stale|out-of-scope --by <name>
---item "<n>|<command>|<saw>"… [--ran "…" --saw "…"] [--gate green|red --sha <sha>] --revert
-failed|passed|not-run|no-new-tests` appends a verdict
+--item "<n>|<command>|<saw>"… [--ran "…" --saw "…"] [--gate green|red --sha <sha>]
+[--branch <branch>] --revert failed|passed|not-run|no-new-tests` appends a verdict
 block (template `verdict.md`) to the ticket's log and sets the verifier key in the `**Keys:**` field
 when the verdict is `reproduced`. `<n>` is the 1-based line number of the ticket's own `## Acceptance —
 evidence` checklist (`- [ ]`/`- [x]` lines) — one `--item` is required per acceptance line, no more, no
@@ -265,7 +275,10 @@ row, in acceptance order, with the checklist line's own text in the first column
 optional and add one extra row labelled "other", for something checked beyond the acceptance list.
 Refuses when `--by` equals the ticket's author. `--verdict reproduced` requires `--gate` (the gate
 result is part of reproduction) and refuses `--gate red` — a red gate cannot be reproduced; record
-`not-reproduced` instead. `--runs <n> --results <r1,r2,…> --test "<what>"` is a check run more than
+`not-reproduced` instead. The block also carries a `**Diff:**` line: the identity of the ticket's
+diff against its team branch at record time (the branch from the ticket's queue item, or `--branch`),
+which is what `premerge.mjs` item 2 holds the verdict to; with no branch to read, the line says the
+verdict is bound to its sha alone. `--runs <n> --results <r1,r2,…> --test "<what>"` is a check run more than
 once — `--results` must list exactly `--runs` results; two that disagree force the verdict to
 `flaky` regardless of `--verdict` (none of `--item`/`--gate`/`--revert` is then needed), name the
 test in the verdict block, send the ticket to `changes` ("flaky: <what>") counting one round of
@@ -311,9 +324,12 @@ evidence catalogue and `cost`; `--gate` with `--sha` records the level's gate at
 
 1. base freshness — the branch is rooted at its parent branch's tip;
 2. keys — the author key and the verifier key are set, the verify verdict is `reproduced`, every
-   node the ticket names carries an approval, and every approval and the verdict itself are sha-bound
-   to the branch's current tip (an approval or verdict recorded for an earlier commit is stale —
-   ✗ "approval/verdict predates <sha> — re-review", not counted, even if a name is present);
+   node the ticket names carries an approval, and every approval and the verdict itself still hold:
+   one that recorded a diff is valid while the branch still carries that diff (✓ "keys bound to diff
+   `<id>`"), whatever the tip has done since; when the diff moved, ✗ "diff changed since review at
+   `<sha>` — scoped re-review: `<path>`" and the file at that path is written for the re-review; a
+   key that recorded a sha alone stays bound to that one commit and goes ✗ "approval/verdict
+   predates `<sha>` — re-review" on any new tip, as before;
 3. scope — the diff stays inside the union of the ticket's node boundaries (from `node.mjs`), each
    node's own graph files included, and touches no protected path; Yggdrasil's committed lock files
    (`.yggdrasil/yg-lock.*.json`) are reported as derived and left to `yg check` in the gate;
@@ -370,3 +386,27 @@ Gate line for either result ("green at sha …" / "red at sha …"). Premerge's 
 accepts a verifier's recorded green gate only when that sha equals the branch's current tip —
 otherwise it runs the level's gate fresh. A team merge-up (no single ticket, so no verifier verdict
 can name its branch) always runs the gate fresh.
+
+## keys are bound to the diff, not to the branch tip
+
+An owner's approval and a verifier's verdict are recorded against the identity of the ticket's own
+diff — `git patch-id --stable` over `<team branch>...<ticket branch>`, at `config.keyContext` lines
+of context (default 3). So when a ticket catches its branch up with the team branch after somebody
+else's ticket lands, item 2 asks one question: does the branch still carry the diff those keys were
+given? If it does, the keys travel with it and nothing is re-reviewed. If the landing reached inside
+the change's own context, the diff is a different one, the keys are void, and the checklist writes
+`rereview-<old7>..<new7>.diff` beside the ticket (`git range-diff <oldBase>..<oldTip>
+<parent>..<tip>`: commit by commit, what was approved against what is there now) and names the path.
+That path goes to the two readers — `tk.mjs review-request NNN --delta <path>` and `brief.mjs
+verifier NNN --delta <path>` — for a re-review of the delta rather than of the whole ticket again; a
+full re-review is what happens when the path is omitted. If the landing overlapped the change, the
+catch-up merge conflicts and the ticket goes back to its author, as it always did; the checklist is
+not consulted at all.
+
+**Transferring a key across a catch-up is exactly as safe as this repository's tests.** The gate is
+tied to the tree, not to the diff, so it runs again on the merged tree every time; the graph check
+runs again with it. What the keys carry over is the human judgement — the owner's reading of the
+diff and the verifier's reproduction of the evidence — and git has proved that diff is unchanged,
+byte for byte, at three lines of context. Nothing is taken on trust that was not taken on trust
+before. `keyContext` is the dial: raise it to send more tickets back for a scoped re-review, lower
+it to send fewer. Zero is not offered — it would call a change on the very next line the same diff.
