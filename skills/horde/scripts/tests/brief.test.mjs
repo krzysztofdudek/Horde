@@ -367,3 +367,59 @@ test('brief.mjs: a stacked ticket\'s brief names the branch it was started from,
     assert.doesNotMatch(r.json.brief, /\{\{/);
   });
 });
+
+
+test('brief.mjs: reportsTo is the agent\'s own parent, read from the roster\'s lineage', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
+
+  const trunk = run('roster.mjs', ['spawn', 'steward', '--team', 'trunk', '--class', 'sonnet'], dir);
+  assert.equal(trunk.code, 0, trunk.stderr);
+  const allies = run('roster.mjs', ['spawn', 'steward', '--team', 'allies', '--parent', 'trunk', '--class', 'sonnet'], dir);
+  assert.equal(allies.code, 0, allies.stderr);
+
+  const ticket = run('tk.mjs', ['new', 'allies-thing', '--title', 'Allies thing', '--node', 'nodeA', '--class', 'sonnet', '--team', 'allies'], dir);
+  assert.equal(ticket.code, 0, ticket.stderr);
+  assert.equal(run('queue.mjs', ['add', ticket.json.id, '--team', 'allies'], dir).code, 0);
+  const running = run('queue.mjs', ['set', ticket.json.id, 'running', '--team', 'allies'], dir);
+  assert.equal(running.code, 0, running.stderr);
+
+  await t.test('a sub-team\'s steward reports to the director that spawned it, not to the parent team', () => {
+    const r = run('brief.mjs', ['steward', 'allies', '--name', allies.json.name], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, /You report to \*\*main\*\*/);
+    assert.doesNotMatch(r.json.brief, new RegExp(`You report to \\*\\*${trunk.json.name}`));
+  });
+
+  await t.test('a worker reports to the steward that spawned it — its own team\'s, not the trunk\'s', () => {
+    const worker = run('roster.mjs', ['spawn', 'worker', '--team', 'allies', '--class', 'sonnet', '--ticket', ticket.json.id], dir);
+    assert.equal(worker.code, 0, worker.stderr);
+    const r = run('brief.mjs', ['worker', ticket.json.id, '--name', worker.json.name], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, new RegExp(`report to the steward \\*\\*${allies.json.name}\\*\\*`));
+  });
+
+  await t.test('an owner reports to the steward that spawned it, whichever team\'s ticket touches its node', () => {
+    const owner = run('roster.mjs', ['spawn', 'owner', '--node', 'nodeA', '--class', 'sonnet'], dir);
+    assert.equal(owner.code, 0, owner.stderr);
+    const r = run('brief.mjs', ['owner', 'nodeA', '--name', owner.json.name], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, new RegExp(`report to the steward \\*\\*${trunk.json.name}\\*\\*`));
+
+    const lent = run('roster.mjs', ['spawn', 'owner', '--node', 'nodeA', '--class', 'sonnet', '--spawned-by', allies.json.name], dir);
+    assert.equal(lent.code, 0, lent.stderr);
+    const lentBrief = run('brief.mjs', ['owner', 'nodeA', '--name', lent.json.name], dir);
+    assert.equal(lentBrief.code, 0, lentBrief.stderr);
+    assert.match(lentBrief.json.brief, new RegExp(`report to the steward \\*\\*${allies.json.name}\\*\\*`));
+  });
+
+  await t.test('the architect reports to the director that spawned it', () => {
+    const architect = run('roster.mjs', ['spawn', 'architect', '--class', 'opus'], dir);
+    assert.equal(architect.code, 0, architect.stderr);
+    const r = run('brief.mjs', ['architect', '--name', architect.json.name], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, /the director \*\*main\*\* by that exact name/);
+  });
+});

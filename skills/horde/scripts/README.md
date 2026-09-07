@@ -302,17 +302,26 @@ States: `queued waiting running landed merged escalated dropped`.
 
 ## roster.mjs — who is alive
 
-`hordes/<horde>/roster.json`: entries `{name, role, class, team|node, parent, agentId, spawnedAt,
-lastTrace, lease}`. `team` is always the short leaf name, unique per horde — `spawn` refuses a leaf
-already claimed under a *different* parent (the same leaf under the *same* parent is an ordinary
-respawn after a reclaim).
-- `spawn <role> [--team t | --node n] [--parent team] --class c [--ticket NNN] [--agent-id id]` —
+`hordes/<horde>/roster.json`: entries `{name, role, kind, spawnedBy, class, team|node, parent,
+agentId, spawnedAt, lastTrace, lease}`. `team` is always the short leaf name, unique per horde —
+`spawn` refuses a leaf already claimed under a *different* parent (the same leaf under the *same*
+parent is an ordinary respawn after a reclaim). `kind` is `teammate` or `subagent` and `spawnedBy`
+names the agent above it: only the top-level session creates teammates, so every steward and the
+architect are the director's (`spawnedBy: main`), while owners, workers and verifiers are subagents
+of the steward that spawned them, and the auditor and counsel subagents of the director. That is the
+lineage every other rule here follows — an agent is addressable and reclaimable by its parent alone.
+- `spawn <role> [--team t | --node n] [--parent team] --class c [--ticket NNN] [--agent-id id]
+  [--kind teammate|subagent] [--spawned-by name]` —
   reserves the next unique name `<horde>-<role>-<team|node|mission>-<N>`, books the run in `cost.json`
   (the only writer; shape `{runs: [{name, role, class, ticket|null, team|null, wave, at}]}`), and
   prints the name; the caller passes it to the Agent tool. A worker or verifier spawned with
   `--ticket` is refused below that ticket's class (`config.classes` weights order the classes). `--agent-id` records the Agent tool's own
   id when already known at spawn time — agents are addressable by name only from the spawning session,
-  by this id from anywhere. For `steward --team t --parent p` it also creates the branch `<horde>/<t>`
+  by this id from anywhere. `--kind` defaults from the role and refuses the other way round in both
+  directions: a steward or an architect is never a subagent (a teammate cannot create a teammate, so
+  that spawn belongs to the director), and no other role is ever a teammate. `--spawned-by` names the
+  parent; without it a teammate and the director's own one-shots record `main`, and a subagent records
+  the steward of its team. For `steward --team t --parent p` it also creates the branch `<horde>/<t>`
   off the parent's tip, the team directory, and the item `team:<t>` in the parent's queue — or, if the
   branch and directory already exist (a respawn after a reclaim), re-registers onto them instead of
   failing; refuses only when the branch exists but the directory doesn't. `steward --team trunk` needs
@@ -344,8 +353,10 @@ respawn after a reclaim).
   when set — for tests and fast-loop tuning, where a whole minute isn't practical to wait out.
 - `reclaim <name> ["why"] [--lesson] [--by director]` — marks the lease reclaimed; the next `spawn` for
   the same team or node gets N+1. Appends to the horde's `decisions.md` as a lesson when `--lesson` is
-  given. A mission-scoped entry (architect, or anything spawned with neither `--team` nor `--node`)
-  requires `--by director`.
+  given. A parent reclaims its own subagents; a teammate (any steward, the architect) requires
+  `--by director`, because the director is what spawns the successor and the successor rebuilds its
+  subtree from the files — as does any mission-scoped entry (anything spawned with neither `--team`
+  nor `--node`).
 - `stand-down <name>` — marks the entry retired.
 
 ## brief.mjs — rendered briefs
@@ -375,9 +386,10 @@ Fills `{{…}}` from the charter, the config (`fastCheck` = `gates.commit`,
 cache (`fastCheckCount` from `cache/last-gate.json`, or "unknown — report the count you get"), the
 component (`node.mjs`: its charter, and the ports on its border with version, test and consumers —
 what the worker must not break and the verifier is holding it to), the ticket (`worktree` and `branch` from the queue item), and the roster
-(`reportsTo`, `parentTeam`) — `reportsTo` renders as `"<name> (agent id <id>)"` once `roster.mjs` has
-recorded that agent's id, so a report can reach it from outside the spawning session; refuses to
-render with an unfilled placeholder. After the role's own text it appends a `## Law` section: the
+(`reportsTo`, `parentTeam`) — `reportsTo` is always the agent's own parent, the `spawnedBy` its roster
+entry carries, since that is the one agent it can reach; it renders as `"<name> (agent id <id>)"` once
+`roster.mjs` has recorded that agent's id, so a report can reach it from outside the spawning session.
+Refuses to render with an unfilled placeholder. After the role's own text it appends a `## Law` section: the
 disciplines that role is held to, inlined from `reference/discipline/` — worker (tdd, debugging),
 verifier (verification, review), owner (review), architect (framing's checklist). The texts live
 there once, so an edit to a discipline reaches every brief that carries it. Records nothing —
@@ -515,7 +527,10 @@ ledger did not take it. `show NNN`.
 ## escalate.mjs — the channel up
 
 `add "<why>" --kind charter|contract|claim|conflict|boundary|cost|unverifiable|rules|structure|adjudicate|quality
-[--ticket NNN] [--by steward|architect|owner]` (`adjudicate` is the kind `tk.mjs status NNN
+[--ticket NNN] [--by steward|architect|owner] [--team <new sub-team> --parent <its parent team>]`
+(`--team`, on a `structure` escalation, says which sub-team is proposed and records on the item the
+commands that raise it — the spawn, the brief, the Agent tool, `queue.mjs move` — because only the
+director can raise a steward, which is a teammate; it is refused on any other kind. `adjudicate` is the kind `tk.mjs status NNN
 changes` itself names as the next step once a ticket has spent every round `config.fixRounds`
 allows — a ruling to make, not another round; `quality` is the one kind nobody files by hand —
 `wave.mjs close` opens it when the wave's quality index came out lower than the wave before it),

@@ -115,7 +115,7 @@ test('roster.mjs: spawn, steward team creation, trace, list --dead, reclaim, sta
   await t.test('a respawn onto an existing team (branch and directory both present, after a reclaim) re-registers instead of failing, reusing the worktree left in place', () => {
     const firstAllies = run('roster.mjs', ['list'], dir).json.find((e) => e.role === 'steward' && e.team === 'allies');
     const beforeWorktrees = git(['worktree', 'list'], dir);
-    run('roster.mjs', ['reclaim', firstAllies.name, 'went quiet'], dir);
+    run('roster.mjs', ['reclaim', firstAllies.name, 'went quiet', '--by', 'director'], dir);
     assert.equal(git(['worktree', 'list'], dir), beforeWorktrees, 'reclaim must not touch the worktree');
 
     const r = run('roster.mjs', ['spawn', 'steward', '--team', 'allies', '--parent', 'trunk', '--class', 'sonnet'], dir);
@@ -449,4 +449,100 @@ test('roster.mjs: spawn never staffs a worker or verifier below its ticket\'s cl
     const above = run('roster.mjs', ['spawn', 'worker', '--team', 'trunk', '--class', 'opus', '--ticket', ticket.json.id], dir);
     assert.equal(above.code, 0, above.stderr);
   }
+});
+
+
+test('roster.mjs: every entry records which kind of agent it is and who spawned it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  let trunkSteward;
+  await t.test('a steward is a teammate of the director, whatever its team', () => {
+    const trunk = run('roster.mjs', ['spawn', 'steward', '--team', 'trunk', '--class', 'sonnet'], dir);
+    assert.equal(trunk.code, 0, trunk.stderr);
+    trunkSteward = trunk.json.name;
+    assert.equal(trunk.json.kind, 'teammate');
+    assert.equal(trunk.json.spawnedBy, 'main');
+
+    const sub = run('roster.mjs', ['spawn', 'steward', '--team', 'allies', '--parent', 'trunk', '--class', 'sonnet'], dir);
+    assert.equal(sub.code, 0, sub.stderr);
+    assert.equal(sub.json.kind, 'teammate');
+    assert.equal(sub.json.spawnedBy, 'main');
+
+    const architect = run('roster.mjs', ['spawn', 'architect', '--class', 'opus'], dir);
+    assert.equal(architect.json.kind, 'teammate');
+    assert.equal(architect.json.spawnedBy, 'main');
+  });
+
+  await t.test("owners, workers and verifiers are subagents of their team's steward", () => {
+    const owner = run('roster.mjs', ['spawn', 'owner', '--node', 'core', '--class', 'sonnet'], dir);
+    assert.equal(owner.code, 0, owner.stderr);
+    assert.equal(owner.json.kind, 'subagent');
+    assert.equal(owner.json.spawnedBy, trunkSteward);
+
+    const worker = run('roster.mjs', ['spawn', 'worker', '--team', 'allies', '--class', 'sonnet'], dir);
+    assert.equal(worker.json.kind, 'subagent');
+    assert.equal(worker.json.spawnedBy, 'mission1-steward-allies-1');
+
+    const verifier = run('roster.mjs', ['spawn', 'verifier', '--team', 'trunk', '--class', 'sonnet'], dir);
+    assert.equal(verifier.json.kind, 'subagent');
+    assert.equal(verifier.json.spawnedBy, trunkSteward);
+  });
+
+  await t.test("the auditor and counsel are the director's own subagents", () => {
+    const auditor = run('roster.mjs', ['spawn', 'auditor', '--class', 'opus'], dir);
+    assert.equal(auditor.json.kind, 'subagent');
+    assert.equal(auditor.json.spawnedBy, 'main');
+    const counsel = run('roster.mjs', ['spawn', 'counsel', '--class', 'opus'], dir);
+    assert.equal(counsel.json.kind, 'subagent');
+    assert.equal(counsel.json.spawnedBy, 'main');
+  });
+
+  await t.test('--spawned-by names the parent when it is not the one the role implies', () => {
+    const owner = run('roster.mjs', ['spawn', 'owner', '--node', 'billing', '--class', 'sonnet', '--spawned-by', 'mission1-steward-allies-1'], dir);
+    assert.equal(owner.code, 0, owner.stderr);
+    assert.equal(owner.json.spawnedBy, 'mission1-steward-allies-1');
+  });
+
+  await t.test('spawn steward --kind subagent is refused: only the top-level session creates teammates', () => {
+    const r = run('roster.mjs', ['spawn', 'steward', '--team', 'kestrel', '--parent', 'trunk', '--class', 'sonnet', '--kind', 'subagent'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /teammate, never a subagent/);
+    assert.match(r.stderr, /--kind structure/);
+    assert.equal(run('roster.mjs', ['list'], dir).json.some((e) => e.team === 'kestrel'), false);
+  });
+
+  await t.test('spawn worker --kind teammate is refused too', () => {
+    const r = run('roster.mjs', ['spawn', 'worker', '--team', 'trunk', '--class', 'sonnet', '--kind', 'teammate'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /subagent of whoever spawns it, never a teammate/);
+  });
+
+  await t.test('an unknown --kind is refused', () => {
+    const r = run('roster.mjs', ['spawn', 'worker', '--team', 'trunk', '--class', 'sonnet', '--kind', 'crew'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--kind must be one of/);
+  });
+
+  await t.test("a parent reclaims its own subagent; a teammate is the director's to reclaim", () => {
+    const worker = run('roster.mjs', ['spawn', 'worker', '--team', 'trunk', '--class', 'sonnet'], dir);
+    const reclaimed = run('roster.mjs', ['reclaim', worker.json.name, 'went quiet'], dir);
+    assert.equal(reclaimed.code, 0, reclaimed.stderr);
+    assert.equal(reclaimed.json.lease, 'reclaimed');
+
+    const refused = run('roster.mjs', ['reclaim', 'mission1-steward-allies-1', 'went quiet'], dir);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /reclaiming a teammate \(steward\) requires --by director/);
+
+    const ok = run('roster.mjs', ['reclaim', 'mission1-steward-allies-1', 'went quiet', '--by', 'director'], dir);
+    assert.equal(ok.code, 0, ok.stderr);
+    assert.equal(ok.json.lease, 'reclaimed');
+  });
+
+  await t.test('the rendered roster says the lineage of every entry', () => {
+    const rendered = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'roster.md'), 'utf8');
+    assert.match(rendered, new RegExp(`${trunkSteward}\\s+steward\\s+trunk\\s+sonnet\\s+teammate of main`));
+    assert.match(rendered, /mission1-owner-core-1\s+owner\s+core\s+sonnet\s+subagent of mission1-steward-trunk-1/);
+  });
 });
