@@ -291,8 +291,12 @@ States: `queued waiting running landed merged escalated dropped`.
   `advise --json` (its progress goes to stderr; the document is what it prints on stdout), or
   `--from` a file — and files one `--kind quality`, `--severity low` ticket per improvement it names,
   on the node the item names, in that node's owner's name (`roster.mjs`'s own lookup), with the
-  advisory's text as the ticket's **Why** and "the architecture answered this, or the node's log says
-  why it stands" as its acceptance. Each ticket is queued immediately: **no escalation, no ruling** —
+  advisory's text as the ticket's **Why** and "the architecture answered this, or [the node's log /
+  the rule's own log] says why it stands" as its acceptance — a `rule`-kind advisory (the code already
+  follows a pattern nothing enforces) points at the rule's own log once one is filed, since that is
+  where its reasoning belongs (152/153); the other three kinds (relation, split, port) are genuinely
+  about the node and keep pointing there. Each ticket is queued immediately: **no escalation, no
+  ruling** —
   that is what the ruling means by autonomous. `next` already ranks them behind every work ticket.
   An item is filed once and never twice: what has been filed is remembered by what the item says
   (kind, nodes and the text itself), not by its position in a list Grain recomputes every run.
@@ -480,18 +484,27 @@ merge checklist then requires — one derivation, three users.
     decoration: "enforced" means "blocks the merge", and granting it to a rule with outstanding
     refusals would redden the trunk on purpose, which is the fall this ruling exists to prevent.
   The move itself is what Yggdrasil prescribes and nothing more: the `status:` line of the rule's own
-  `yg-aspect.yaml`, then `yg log add` on every node the rule reaches, carrying the numbers in
-  self-contained prose. Which nodes those are is the graph's own answer — the units it reports pairs
-  for, falling back for a draft rule (which has no pairs at all) to the mission's own nodes asked one
-  by one; `--node <path>` names one outright, for a rule that reaches files rather than components and
-  so has no node's log to be written into. Never a lock, never a `yg-suppress`, never `review_by`. A
-  rule a reader judges costs money to drill, so `promote` refuses it until `--with-reviewer` says to
-  spend that. Under a charter set to `only-the-work`, `promote` refuses outright.
+  `yg-aspect.yaml`, then the numbers in self-contained prose in the rule's own log — one entry per
+  raise, `yg aspects log add --aspect <id> --reason "…" --status <rung> --evidence "…"` — never a
+  courtesy copy on every node the rule reaches. Only *advisory → enforced* also leaves a one-line
+  pointer on those nodes (found the same way: the units `yg check` reports pairs for, falling back for
+  a draft rule — which has no pairs at all — to the mission's own nodes asked one by one; `--node
+  <path>` names one outright, for a rule that reaches files rather than components), because that is
+  the raise that changes what a node's own code is held to — a fact about the node, not only about the
+  rule; *draft → advisory* touches no node at all. Never a lock, never a `yg-suppress`, never
+  `review_by`. A rule a reader judges costs money to drill, so `promote` refuses it until
+  `--with-reviewer` says to spend that. Under a charter set to `only-the-work`, `promote` refuses
+  outright. An installed `yg` that predates the rule's own log ("yg aspects log add"/"yg aspects log
+  read") is refused too, naming the release to upgrade to — the same shape 148's own refusal takes for
+  `yg-check/1`.
 - `demote <aspect> --to draft|advisory --by user --why "<what they said>"` — the one direction nobody
   in the horde may take alone. Without `--by user` it refuses, and `--by architect` is refused just as
-  flatly; `--why` is required, and goes into the graph's own log. There is deliberately **no** command
-  here for a suppression or a review date: both weaken a rule, Yggdrasil already asks the user for
-  them, and the horde adds no way around that.
+  flatly — and either refusal still leaves a best-effort note in the rule's own log saying who reached
+  for it and was told no, since that is itself worth a rule's history even though nothing moved;
+  `--why` is required for an authorized demotion, and — as before — goes into the log of every node
+  the rule reaches: a lowering is a fact about the node too, whichever rung it moves between. There
+  is deliberately **no** command here for a suppression or a review date: both weaken a rule,
+  Yggdrasil already asks the user for them, and the horde adds no way around that.
 - The horde's own working for all of this lives in `hordes/<horde>/graph.json` beside the proposals:
   per rule, the rung it was last left on, when, the baseline, the drill that justified it, one
   observation per closed wave, and every move with its evidence. `wave.mjs close` is the only thing
@@ -543,9 +556,11 @@ names (an escalation carries no node of its own; one with no ticket, or a ticket
 groups under `(no node)`). A group of `<n>` (default 3, minimum 2) or more is an answer this
 horde keeps giving by hand, and the third time is not another decision — it is a rule. Each such
 group prints as a proposal: its rulings as evidence, one line of rule text quoting the latest of
-them, and the exact command that files it — `<config.ygCommand> log add --node <node> --reason
-"…"` where the graph is the law and the group has a node, `decide.mjs add` where it is not. It
-prints the command and never runs it: filing a rule is the architect's move.
+them, and the steps that file it — where the group has a node, filing the rule itself (an
+architect's own edit — this tool makes no graph object), then `<config.ygCommand> aspects log add
+--aspect <id> --reason "…"`, since a rule's own reasoning belongs in its own log (152/153) once it
+exists, not the node's; `decide.mjs add` where the group has no node to hang a rule on at all. It
+prints those steps and never runs them: filing a rule is the architect's move.
 
 ## dissent.mjs — the channel of disagreement
 

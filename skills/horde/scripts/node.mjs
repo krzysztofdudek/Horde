@@ -78,15 +78,20 @@ commands:
   promote <aspect> [--by <name>] [--node <path>] [--with-reviewer] [--horde h]
       raises a rule one rung on its own evidence — draft → advisory when its case corpus runs
       clean, advisory → enforced when two closed waves saw nothing new and it refuses nothing
-      here. Writes the rule's own status line and records why in the log of every node it
-      reaches. Refuses with what is missing when the evidence is short, and refuses outright
-      under a charter set to only-the-work. --with-reviewer is required for a rule a reader
-      judges, because re-running its cases costs money.
+      here. Writes the rule's own status line and records why in the rule's own log (one entry
+      per raise); advisory → enforced also leaves a one-line pointer on every node it reaches,
+      since that is the raise that changes what their code is held to. Refuses with what is
+      missing when the evidence is short, refuses outright under a charter set to
+      only-the-work, and refuses an installed yg that predates the rule's own log, naming the
+      release to upgrade to. --with-reviewer is required for a rule a reader judges, because
+      re-running its cases costs money.
   demote <aspect> --to draft|advisory --by user --why "<what they said>" [--node <path>]
           [--horde h]
       lowers a rule. Refuses without --by user: making the architecture weaker is the
-      chairman's call and nobody else's. There is no command here for a waiver or a review
-      date — those weaken a rule too, and Yggdrasil already asks the user for them.
+      chairman's call and nobody else's — and a refused attempt still leaves a note in the
+      rule's own log, best-effort, saying who reached for it. There is no command here for a
+      waiver or a review date — those weaken a rule too, and Yggdrasil already asks the user
+      for them.
 
 options: --json  --help`;
 
@@ -685,6 +690,68 @@ function logToNodes(root, cfg, nodes, reason) {
   return { logged, missed };
 }
 
+// The release "aspects log" arrived after — the same shape as YG_DOCUMENTS_AFTER above, but for a
+// plain command rather than a --json document: `aspects log add` has no --json of its own, so a
+// too-old CLI is told apart by how it fails rather than by what schema it answered with.
+const ASPECT_LOG_AFTER = '5.9.0';
+
+// Commander's own two shapes for "this subcommand does not exist here": an unrecognised name, and
+// — the shape a pre-152 `aspects` prints, since it took no subcommands at all — positional
+// arguments handed to a command that accepts none. Either means the installed CLI predates the
+// rule's own log, never that the graph refused something.
+const STALE_ASPECT_LOG_RE = /unknown option|unknown command|too many arguments for/i;
+
+function failNoAspectLog(cfg, command) {
+  const { display } = ygCommand(cfg);
+  const version = ygVersion(cfg);
+  fail(
+    `\`${command}\` did not run — the Yggdrasil CLI at "${display}"${version ? ` reports version ${version} and` : ''} `
+    + `predates its own rule log ("yg aspects log add" / "yg aspects log read"), the release-after-${ASPECT_LOG_AFTER} `
+    + 'feature a rule\'s own history now lives in.\n'
+    + `Upgrade to a release later than ${ASPECT_LOG_AFTER} (npm i -g @chrisdudek/yg), or point the horde at a newer `
+    + 'build: horde.mjs config set ygCommand "node path/to/bin.js"',
+  );
+}
+
+// `yg aspects log add --aspect <id> --reason "<why>" [--status <s> --evidence "<e>"] [--by <who>]`,
+// run for real. This is the rule's own history now (152/153) — not a courtesy copy on every node it
+// touches — so unlike a node's log, a failure here is never best-effort: a CLI too old to take the
+// call, or a real refusal from the one that ran, both stop the caller rather than being swallowed.
+function logToAspect(root, cfg, aspectId, reason, { status, evidence, by } = {}) {
+  const yg = ygCommand(cfg);
+  const args = ['aspects', 'log', 'add', '--aspect', aspectId, '--reason', reason];
+  if (status) args.push('--status', status, '--evidence', evidence);
+  if (by) args.push('--by', by);
+  const command = `${yg.display} ${args.join(' ')}`;
+  const run = startCli(yg.cmd, [...yg.prefix, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  if (run.missing) { failNoCli(cfg, command); return null; }
+  if (run.spawnFailed) {
+    fail(`\`${command}\` — this machine could not start the process (${run.spawnFailed}), twice — try again with less running at once.`);
+    return null;
+  }
+  if (run.code !== 0) {
+    if (STALE_ASPECT_LOG_RE.test(run.err || '')) { failNoAspectLog(cfg, command); return null; }
+    fail(`\`${command}\` — ${(run.err || run.out || '').trim()}`);
+    return null;
+  }
+  return { command };
+}
+
+// The same write, but for a refusal that changed nothing: worth a note in the rule's own history
+// (who reached for this and was told no) but never worth blocking the refusal itself on — a stale
+// or missing CLI here means the note is not written, not that the refusal doesn't happen.
+function tryLogAspect(root, cfg, aspectId, reason, { by } = {}) {
+  try {
+    const yg = ygCommand(cfg);
+    const args = ['aspects', 'log', 'add', '--aspect', aspectId, '--reason', reason];
+    if (by) args.push('--by', by);
+    execFileSync(yg.cmd, [...yg.prefix, ...args], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // The nodes a rule reaches, for the log entry: the units `yg check` reports pairs for, which is
 // the graph's own answer and costs nothing extra. A draft rule has no pairs at all (draft removes
 // them from the expected set), so a draft promotion falls back to the mission's own nodes, asked
@@ -817,8 +884,10 @@ function cmdPromote(horde, root, cfg, positional, flags) {
     );
   }
 
-  // The move. Two writes into the graph, both of them what Yggdrasil prescribes: the rule's own
-  // status line, and the reason in the log of every node the rule reaches.
+  // The move. What Yggdrasil prescribes: the rule's own status line, and the reason in the rule's
+  // own log — its history now, not a courtesy copy on every node it touches (152/153). A node only
+  // earns a line of its own when the rung actually changes what its code is held to: enforced
+  // blocks the merge and advisory/draft do not, so that is the one transition worth a pointer there.
   const file = aspectFilePath(root, aspect);
   const before = readText(file);
   if (before === null) {
@@ -827,24 +896,52 @@ function cmdPromote(horde, root, cfg, positional, flags) {
   }
   writeText(file, setAspectStatusText(before, to));
 
-  // With the rung granted, what the rule refuses HERE is worth reading again: a draft rule had no
-  // pairs at all until this moment. The free, keyless fill records every script verdict first, so
-  // the reading is refusals and not "nobody has looked".
-  fillDeterministic(cfg, root);
-  const after = aspectStanding(ygCheckDoc(root, cfg), aspect);
-
-  const evidence = to === 'advisory'
-    ? `Rule "${aspect}" raised from draft to advisory on its own evidence: ${drillSentence(drill)}, and the `
-      + `${places(after.refused)} it already refuses here ${after.refused === 1 ? 'is' : 'are'} recorded as its `
-      + 'baseline, so anything new stands out against that. It warns from now on; it does not block. Raising a rule '
-      + 'is the horde\'s own call, lowering one is the chairman\'s.'
-    : `Rule "${aspect}" raised from advisory to enforced on its own evidence: ${clean.length} closed waves in a row `
+  // What "after" means, and when it is safe to read, differs by rung — and that difference decides
+  // the order everything below runs in:
+  //
+  // advisory → enforced changes nothing about which pairs exist, only whether they block — draft is
+  // the one rung that removes a rule's pairs entirely — so the reading `ladderEvidence` already took
+  // (before this flip, while the rule was still advisory) is still exactly what this rung refuses.
+  // Nothing more to check, so the rule's own log is written immediately.
+  //
+  // draft → advisory is the one case with something genuinely new to read: a draft rule had no
+  // pairs at all until this moment. But reading them means an approving run, and Yggdrasil's own
+  // approving run backfills a bare, generic entry into a rule's log the instant it notices a status
+  // nothing has recorded yet — landing there ahead of anything richer this tool would still write,
+  // and turning what should be one entry into two. So the order is reversed for this rung alone:
+  // the rule's own log is written FIRST, on the drill evidence already in hand, and only then does
+  // the approving run happen — by which point the log already agrees with the file, and Yggdrasil
+  // has nothing left to backfill. The baseline it finds is still recorded (in the ledger and in
+  // this command's own output), just not inside the log entry's own prose.
+  let after;
+  let evidence;
+  let evidenceClause;
+  if (to === 'enforced') {
+    after = standing;
+    evidence = `Rule "${aspect}" raised from advisory to enforced on its own evidence: ${clean.length} closed waves in a row `
       + `saw nothing new against it, ${drillSentence(drill)}, and it refuses nothing here today, so blocking on it `
       + 'breaks nothing that was already good. It blocks the merge from now on. Raising a rule is the horde\'s own '
       + 'call, lowering one is the chairman\'s.';
+    evidenceClause = `${clean.length} closed waves in a row saw nothing new against it, and it refuses nothing here today`;
+    logToAspect(root, cfg, aspect, evidence, { status: to, evidence: evidenceClause, by });
+  } else {
+    evidence = `Rule "${aspect}" raised from draft to advisory on its own evidence: ${drillSentence(drill)}. It warns `
+      + 'from now on; it does not block. Its baseline — what it already refuses here — is recorded the moment the '
+      + 'free check has looked. Raising a rule is the horde\'s own call, lowering one is the chairman\'s.';
+    evidenceClause = drillSentence(drill);
+    logToAspect(root, cfg, aspect, evidence, { status: to, evidence: evidenceClause, by });
+    fillDeterministic(cfg, root);
+    after = aspectStanding(ygCheckDoc(root, cfg), aspect);
+  }
 
   const nodes = nodesReachedBy(horde, root, cfg, aspect, after.nodes.length ? after : standing, flags.node);
-  const { logged, missed } = logToNodes(root, cfg, nodes, evidence);
+  let pointered = [];
+  let pointerMissed = [];
+  if (to === 'enforced') {
+    const pointer = `The rule "${aspect}" now blocks the merge here — its own log has why `
+      + `(${ygCommand(cfg).display} aspects log read --aspect ${aspect}).`;
+    ({ logged: pointered, missed: pointerMissed } = logToNodes(root, cfg, nodes, pointer));
+  }
 
   const at = nowIso();
   entry.status = to;
@@ -856,7 +953,7 @@ function cmdPromote(horde, root, cfg, positional, flags) {
   };
   entry.observations = [];
   entry.history.push({
-    from: status, to, at, by, evidence, logged, missed, baseline: after.refused,
+    from: status, to, at, by, evidence, nodes, pointered, pointerMissed, baseline: after.refused,
   });
   saveGraph(horde, graph);
   traceRoster(horde, by);
@@ -871,18 +968,22 @@ function cmdPromote(horde, root, cfg, positional, flags) {
     unverified: after.unverified,
     drill: entry.drill,
     cleanWaves: clean.length,
-    logged,
-    missed,
+    nodes,
+    pointered,
+    pointerMissed,
     reset,
     evidence,
   }, flags, () => [
     `"${aspect}" raised ${status} → ${to} — ${drillSentence(drill)}`
     + (to === 'enforced' ? `, ${clean.length} clean waves, nothing outstanding` : `, baseline ${after.refused}`),
-    logged.length
-      ? `recorded in the log of: ${logged.join(', ')}`
-      : 'no component log to record it in — this rule reaches files rather than components; name one with '
-        + `node.mjs promote ${aspect} --node <path> if it should be written down somewhere`,
-    ...(missed.length ? [`could not record it on: ${missed.join(', ')}`] : []),
+    `recorded in the rule's own log (${ygCommand(cfg).display} aspects log read --aspect ${aspect})`,
+    ...(to === 'enforced' ? [
+      pointered.length
+        ? `now blocks the merge on: ${pointered.join(', ')} — pointed there too`
+        : 'no component log to point from — this rule reaches files rather than components; name one with '
+          + `node.mjs promote ${aspect} --node <path> if it should be written down somewhere`,
+      ...(pointerMissed.length ? [`could not point to it on: ${pointerMissed.join(', ')}`] : []),
+    ] : []),
     'the chairman sees it at wave close and can undo it there',
   ].join('\n'));
 }
@@ -893,8 +994,17 @@ function cmdDemote(horde, root, cfg, positional, flags) {
   const to = flags.to;
   if (!to || !ASPECT_RUNGS.includes(to)) fail(`demote requires --to ${ASPECT_RUNGS.join('|')}`);
 
-  // The whole point of this command: it is the one direction nobody in the horde may take alone.
+  // The whole point of this command: it is the one direction nobody in the horde may take alone. A
+  // refused attempt is itself worth the rule's own history — nothing moved, but a later reader
+  // should see who reached for this and was told no. Best-effort: the refusal below is the answer
+  // either way, whatever a log write does.
   if (flags.by !== 'user') {
+    tryLogAspect(
+      root, cfg, aspect,
+      `A demotion to ${to} was attempted (by "${flags.by || 'someone other than the user'}") and refused: `
+      + 'lowering enforcement is the chairman\'s call alone, and nobody in the horde may take it without them.',
+      { by: flags.by || undefined },
+    );
     fail(
       `lowering "${aspect}" to ${to} would make this repository's architecture weaker, and nobody in the horde can decide that.\n`
       + 'Raising enforcement is the horde\'s own call because evidence justifies it; lowering it is a judgement about '

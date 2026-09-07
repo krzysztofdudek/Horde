@@ -357,9 +357,20 @@ const ADVICE_ASK = {
   rule: 'Propose the rule, or record why what the code does is not something to hold it to.',
 };
 
+// Where "why it stands" belongs once the advisory is answered — the node's own log for every kind
+// but one: a "rule" advisory is proposing a rule, and a rule's reasoning belongs in its own log
+// once it exists (152/153), the node earning a line only once the rung reaches enforced. The other
+// three kinds (relation, split, port) are genuinely about the node itself, so its log stays right
+// for them.
+const ADVICE_LOG_HOME = {
+  rule: 'the rule\'s own log, once it exists — or, if it does not, the node\'s',
+};
+function logHome(kind) { return ADVICE_LOG_HOME[kind] || 'the node\'s log'; }
+
 function adviceTicketBody(item, source) {
   const kind = String(item.kind || 'item');
   const ask = ADVICE_ASK[kind] || 'Act on what the evidence below says, or record why it stands as it is.';
+  const home = logHome(kind);
   return [
     '## What',
     '',
@@ -375,18 +386,18 @@ function adviceTicketBody(item, source) {
     '',
     '## Scope',
     '',
-    'The graph objects this advisory names, and the node\'s own log. No behaviour changes here — an advisory is',
-    'evidence, and what to do about it is the architect\'s to approve.',
+    `The graph objects this advisory names, and ${home}. No behaviour changes here — an advisory is evidence,`,
+    'and what to do about it is the architect\'s to approve.',
     '',
     '## Acceptance — evidence',
     '',
-    '- [ ] the advisory is answered: either the architecture changed and the change is filed, or the node\'s log',
+    `- [ ] the advisory is answered: either the architecture changed and the change is filed, or ${home}`,
     '      carries one entry saying why it stands',
     '',
     '## Notes for the worker',
     '',
     'The evidence above came from the repository\'s history, not from a person. Check it before acting on it: if',
-    'the numbers do not hold up, saying so in the node\'s log is a complete answer to this ticket.',
+    `the numbers do not hold up, saying so in ${home} is a complete answer to this ticket.`,
     '',
   ].join('\n');
 }

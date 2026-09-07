@@ -138,7 +138,7 @@ survive a second look, and how much that fraction is worth knowing at this sampl
 **Rulings that recur are law you have not written down yet.** Run `escalate.mjs recurring` at each
 close. Three rulings of the same kind on the same node is not a fourth decision waiting to happen —
 it is a rule, and the tool hands the architect the proposal with the rulings as its evidence and
-the command that files it in the graph. The KPI on the wave close is the same claim in a number:
+the steps that file it in the graph. The KPI on the wave close is the same claim in a number:
 human decisions per merged ticket, which should fall wave after wave.
 
 **A wave close that shows the graph weaker files its own escalation.** Every close reads the

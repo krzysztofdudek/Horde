@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -26,6 +26,16 @@ const planPath = (dir, horde = 'mission1') => join(dir, '.horde', 'hordes', hord
 const charterPath = (dir, horde = 'mission1') => join(dir, '.horde', 'hordes', horde, 'charter.md');
 const aspectPath = (dir, id) => join(dir, '.yggdrasil', 'aspects', id, 'yg-aspect.yaml');
 const nodeLogPath = (dir, node) => join(dir, '.yggdrasil', 'model', node, 'log.md');
+
+// The rule's own log, read for real through the real Yggdrasil CLI — `ygCmd` is the command line
+// requireYg() returns ("yg" or "node /path/to/bin.js").
+function aspectLogRead(dir, ygCmd, aspect) {
+  const parts = ygCmd.split(/\s+/);
+  const out = execFileSync(parts[0], [...parts.slice(1), 'aspects', 'log', 'read', '--aspect', aspect, '--json'], {
+    cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return JSON.parse(out);
+}
 
 const MARKER_RULE = [
   'export function check(ctx) {',
@@ -147,13 +157,22 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
     assert.equal(run('node.mjs', ['ladder'], dir).json.aspects.find((a) => a.aspect === 'no-marker').status, 'advisory');
   });
 
-  await t.test('the reason is in the graph\'s own log, self-contained, with the evidence in it', () => {
-    assert.deepEqual(advisory.json.logged, ['feature']);
-    const log = readFileSync(nodeLogPath(dir, 'feature'), 'utf8');
-    assert.match(log, /raised from draft to advisory on its own evidence/);
-    assert.match(log, /2 of 2 cases answered as written/);
-    assert.match(log, /1 place it already refuses here is recorded as its baseline/);
-    assert.match(log, /lowering one is the chairman's/);
+  await t.test('the reason is in the rule\'s own log, self-contained, with the evidence in it — and nowhere on the node', () => {
+    assert.deepEqual(advisory.json.nodes, ['feature'], 'the rule really does reach feature');
+    assert.deepEqual(advisory.json.pointered, [], 'draft → advisory changes nothing a node is held to');
+    const doc = aspectLogRead(dir, yg, 'no-marker');
+    assert.equal(doc.schema, 'yg-aspect-log/1');
+    assert.equal(doc.status, 'advisory');
+    assert.equal(doc.entries.length, 1, 'one entry in the rule\'s own log, not one per node');
+    const [entry] = doc.entries;
+    assert.deepEqual(entry.status, { from: 'draft', to: 'advisory' });
+    assert.match(entry.body, /raised from draft to advisory on its own evidence/);
+    assert.match(entry.body, /2 of 2 cases answered as written/);
+    assert.match(entry.body, /lowering one is the chairman's/);
+
+    // …and the node's own log carries nothing at all — no courtesy copy for a raise that changed
+    // nothing the node's code is held to.
+    assert.equal(existsSync(nodeLogPath(dir, 'feature')), false, 'draft → advisory writes no node log');
   });
 
   await t.test('advisory → enforced is refused until two closed waves have seen nothing new', () => {
@@ -179,6 +198,18 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
 
     // …and the rule is exactly where it was through all three refusals.
     assert.match(readFileSync(aspectPath(dir, 'no-marker'), 'utf8'), /^status: advisory$/m);
+
+    // The two unauthorized attempts still left a note in the rule's own log, best-effort, even
+    // though nothing moved — the third (--by user, just missing --why) is not an authorization
+    // refusal, so it leaves none.
+    const doc = aspectLogRead(dir, yg, 'no-marker');
+    assert.equal(doc.entries.length, 3, 'the draft → advisory raise, plus the two refused attempts');
+    const [wrongByEntry, noByEntry] = doc.entries;
+    assert.match(wrongByEntry.body, /A demotion to draft was attempted \(by "architect"\) and refused/);
+    assert.match(noByEntry.body, /A demotion to draft was attempted \(by "someone other than the user"\) and refused/);
+    for (const e of [wrongByEntry, noByEntry]) {
+      assert.equal(e.status, undefined, 'a refused attempt is a note, not a recorded status change');
+    }
   });
 
   await t.test('two waves close with nothing new, and the rule blocks from then on', () => {
@@ -201,9 +232,20 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
     assert.equal(enforced.json.to, 'enforced');
     assert.equal(enforced.json.cleanWaves, 2);
     assert.match(readFileSync(aspectPath(dir, 'no-marker'), 'utf8'), /^status: enforced$/m);
-    const log = readFileSync(nodeLogPath(dir, 'feature'), 'utf8');
-    assert.match(log, /raised from advisory to enforced on its own evidence/);
-    assert.match(log, /2 closed waves in a row saw nothing new against it/);
+
+    // The full evidence lands in the rule's own log — this is the raise that changes what the
+    // node's code is held to, so a one-line pointer lands there too, but the reasoning does not.
+    assert.deepEqual(enforced.json.pointered, ['feature']);
+    const doc = aspectLogRead(dir, yg, 'no-marker');
+    const [entry] = doc.entries;
+    assert.deepEqual(entry.status, { from: 'advisory', to: 'enforced' });
+    assert.match(entry.body, /raised from advisory to enforced on its own evidence/);
+    assert.match(entry.body, /2 closed waves in a row saw nothing new against it/);
+
+    const nodeLog = readFileSync(nodeLogPath(dir, 'feature'), 'utf8');
+    assert.doesNotMatch(nodeLog, /2 closed waves in a row saw nothing new against it/, 'no courtesy copy of the full reasoning on the node');
+    assert.match(nodeLog, /now blocks the merge here/);
+    assert.match(nodeLog, /aspects log read --aspect no-marker/, 'the pointer names where to read why');
 
     // And it really blocks now: put the marker back and the graph refuses the tree.
     writeFileSync(join(dir, 'other.mjs'), 'export const b = 2; // UNFINISHED\n');
@@ -227,6 +269,45 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
     assert.equal(r.code, 1);
     assert.match(r.stderr, /its case corpus is empty/);
     assert.match(readFileSync(aspectPath(other, 'no-marker'), 'utf8'), /^status: draft$/m);
+  });
+
+  await t.test('a real yg that predates the rule\'s own log is refused, naming the release to upgrade to', () => {
+    const other = makeRepo();
+    t.after(() => rmRepo(other));
+    graphFixture(other, yg, { status: 'draft' });
+    initHorde(other);
+
+    // A real, working CLI for everything BUT `aspects log` — the same shape a pre-152 install
+    // actually takes (that subcommand did not exist, so its own arguments read as extras `aspects`
+    // itself does not accept) — so this is the version guard alone under test, on a graph and a
+    // drill that are otherwise entirely real.
+    const passthrough = join(other, 'no-aspect-log-yg.mjs');
+    writeFileSync(passthrough, [
+      "import { execFileSync } from 'node:child_process';",
+      `const REAL = ${JSON.stringify(yg)};`,
+      'const argv = process.argv.slice(2);',
+      "if (argv[0] === 'aspects' && argv[1] === 'log') {",
+      "  process.stderr.write(\"error: too many arguments for 'aspects'. Expected 0 arguments but got \" + (argv.length - 2) + \": \" + argv.slice(2).join(', ') + \".\\n\");",
+      '  process.exit(1);',
+      '}',
+      'const real = REAL.split(/\\s+/);',
+      'try {',
+      '  execFileSync(real[0], [...real.slice(1), ...argv], { stdio: "inherit" });',
+      '} catch (e) { process.exit(e.status ?? 1); }',
+      '',
+    ].join('\n'));
+    run('horde.mjs', ['config', 'set', 'ygCommand', `node ${passthrough}`], other);
+
+    const r = run('node.mjs', ['promote', 'no-marker'], other);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /predates its own rule log/);
+    assert.match(r.stderr, /yg aspects log add.*yg aspects log read/);
+    assert.match(r.stderr, /later than 5\.9\.0/);
+    assert.match(r.stderr, /npm i -g @chrisdudek\/yg/);
+    // Nothing was left half-done: the rule file itself was already moved by the time the log call
+    // ran (the same order promote always writes in), but the horde's own working still reflects
+    // that this call failed rather than claiming a raise that has no history behind it.
+    assert.match(readFileSync(aspectPath(other, 'no-marker'), 'utf8'), /^status: advisory$/m);
   });
 
   await t.test('the user may lower it, and that too lands in the log', () => {
@@ -338,6 +419,28 @@ test('E17 — a quality ticket is filed and queued from a grain-advice/1 documen
     const r = run('queue.mjs', ['quality', '--from', wrong], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /does not hold a grain-advice\/1 document \(it is a "something-else\/1" one\)/);
+  });
+
+  await t.test('a "rule" advisory points at the rule\'s own log once it exists, not the node\'s', () => {
+    const doc = join(dir, 'rule-advice.json');
+    writeFileSync(doc, `${JSON.stringify({
+      schema: 'grain-advice/1',
+      repo: '.',
+      at: 'abc1234',
+      graph: '.yggdrasil',
+      items: [{
+        kind: 'rule',
+        nodes: ['feature'],
+        evidence: { pattern: { files: 4, matches: 4 } },
+        text: 'Every write in feature goes through one helper already — nothing enforces it yet.',
+      }],
+    }, null, 1)}\n`);
+    const ruleFiled = run('queue.mjs', ['quality', '--from', doc], dir);
+    assert.equal(ruleFiled.code, 0, ruleFiled.stderr);
+    assert.equal(ruleFiled.json.filed.length, 1);
+    const ticket = run('tk.mjs', ['show', ruleFiled.json.filed[0].ticket], dir);
+    assert.match(ticket.json.text, /the rule's own log, once it exists — or, if it does not, the node's/);
+    assert.doesNotMatch(ticket.json.text, /or the node's log\s*\n\s*carries one entry/, 'the generic node-only wording is gone for this kind');
   });
 });
 
