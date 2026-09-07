@@ -1,4 +1,35 @@
-# Topology — branches, worktrees, state, gates, liveness
+# Topology — lineage, branches, worktrees, state, gates, liveness
+
+## Lineage — who spawns whom, and who can reach whom
+
+```
+director (the top-level session)
+├── steward · trunk          teammate ─┬── owner · <node>        subagent
+│                                      ├── worker · <ticket>     subagent
+│                                      └── verifier · <ticket>   subagent
+├── steward · <sub-team>     teammate ─┬── worker, verifier      subagent
+│                                      └── (its own sub-teams are the director's to raise)
+├── architect                teammate
+├── auditor                  subagent
+└── counsel                  subagent
+```
+
+- Two kinds of agent. A **teammate** is created by the top-level session alone: a teammate can spawn
+  subagents, and those can spawn their own, but never another teammate. So every steward — the
+  trunk's and each sub-team's — and the architect are the director's teammates, while owners,
+  workers and verifiers are subagents of the steward that spawned them, and the auditor and counsel
+  subagents of the director.
+- A subagent is addressable and resumable by its parent and by nobody else. Contact that crosses a
+  lineage goes through files plus a doorbell to the parent, who carries it: a worker that needs
+  another node writes it into the ticket's log and rings its steward; an owner that needs another
+  owner writes the contract proposal or the dissent and rings its steward, who reaches the other
+  owner; a sub-team's steward reaches the parent team through the `team:<t>` item on its queue, and
+  the director if it has to be woken.
+- The roster records both facts on every entry — `kind` and `spawnedBy` — and a brief only ever
+  names the agent's own parent as the address to report to.
+- A sub-team is proposed by the steward that wants it (`escalate.mjs add … --kind structure --team
+  <name> --parent <team>`) and raised by the director, because only the director can raise a
+  teammate. The escalation carries the commands.
 
 ## Branches
 
@@ -170,12 +201,14 @@ the deliberate third opinion. Gate results are cached per level in `cache/last-g
 - Thresholds live in `config.liveness` as `stewardMinutes`/`ownerMinutes`; `stewardSeconds`/
   `ownerSeconds` win when present (tests and rehearsals set seconds).
 - A **steward** is dead when its branch shows no commit and its queue no state change for longer
-  than `liveness.stewardMinutes` while the queue is non-empty. The role that spawned it (the director
-  for the trunk, the parent steward for a sub-team) reclaims the lease (`roster.mjs reclaim`) and
-  spawns a successor under N+1 from the files; the old one is told to stand down.
+  than `liveness.stewardMinutes` while the queue is non-empty. Every steward is a teammate, so the
+  director — and only the director — reclaims the lease (`roster.mjs reclaim <name> --by director`)
+  and spawns a successor under N+1 from the files; the successor rebuilds its own subtree, its
+  owners and workers, from those same files. The old one is told to stand down. The parent steward
+  of a dead sub-team reports it and waits; it cannot replace it.
 - An **owner** is dead when it has not answered a review request within `liveness.ownerMinutes`
-  (the request is a file in the ticket's log). Its steward reclaims and spawns a successor from the
-  node's charter and log.
+  (the request is a file in the ticket's log). The steward that spawned it reclaims and spawns a
+  successor from the node's charter and log.
 - The **architect** is dead only when a graph proposal or a contract has waited for it longer than
   `liveness.ownerMinutes` with no trace since; with nothing open it is alive. Auditor and counsel are
   one-shot and never judged by the roster. Every ruling a role records through a tool leaves a trace.
@@ -183,7 +216,9 @@ the deliberate third opinion. Gate results are cached per level in `cache/last-g
   steward uses that path when it has to commit a worker's uncommitted diff.
 - Names of agents are unique per horde (`<horde>-<role>-<team|node|mission>-<N>`, N rising on
   respawn; `mission` for the roles that belong to no team or node: architect, auditor, counsel) so
-  that reports never land in a stranger's session.
+  that reports never land in a stranger's session. A name is an address only for the agent that
+  spawned it; from anywhere else what carries is the Agent tool's own id, which the roster records
+  as soon as it is known.
 
 ## Cost
 

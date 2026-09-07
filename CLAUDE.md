@@ -10,7 +10,7 @@ This repo never names or links Vision (the author's private practice hub) or the
 
 ## Requirements
 
-The skill's mechanics depend on Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams) (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, off by default, experimental, interactive sessions only). README's `## Requirements` section carries the user-facing setup step; this note is the engineering pointer behind it. Confirmed working end to end by Krzysztof on a real mission, steward spawning its own owners and workers included.
+The skill's mechanics depend on Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams) (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`, off by default, experimental, interactive sessions only). README's `## Requirements` section carries the user-facing setup step; this note is the engineering pointer behind it. Confirmed working end to end by Krzysztof on a real mission, steward spawning its own owners and workers included. Also verified there, and the constraint the skill's topology now rests on: a teammate can spawn subagents (and subagents can spawn their own) but never another teammate — teammates are created by the top-level session alone, and a subagent is resumable by its parent and by nobody else.
 
 This repo is installable as a Claude Code plugin, a GitHub Copilot CLI plugin, an OpenAI Codex CLI plugin and a Cursor plugin. Layout mirrors the convention used by sibling repos (UrdSkill, RatatoskrSkill, ResearcherSkill):
 - `.claude-plugin/plugin.json` — plugin manifest (name, version, description, keywords). `version` here MUST match the latest released version in `CHANGELOG.md` and is bumped together with it.

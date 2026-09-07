@@ -10,6 +10,10 @@
 // "ruled" — no decision is recorded yet) until `rule` is called again, without --to-user, with
 // the chairman's actual answer.
 //
+// A "structure" escalation proposing a sub-team is the one kind whose ruling nobody but the
+// director can carry out — a steward is a teammate of the director's, and a teammate cannot create
+// a teammate — so the item carries the commands that raise it, filled in from --team and --parent.
+//
 // State: hordes/<horde>/escalations.json (source of truth) + escalations.md (rendered).
 
 import {
@@ -31,7 +35,11 @@ const KINDS = ['charter', 'contract', 'claim', 'conflict', 'boundary', 'cost', '
 const USAGE = `usage: escalate.mjs <command> [options]
 
 commands:
-  add "<why>" --kind <${KINDS.join('|')}> [--ticket NNN] [--by steward|architect|owner] [--horde h]
+  add "<why>" --kind <${KINDS.join('|')}> [--ticket NNN] [--by steward|architect|owner]
+      [--team <new sub-team> --parent <its parent team>] [--horde h]
+      --team, on a "structure" escalation, says which sub-team is being proposed: the item then
+      carries the commands that raise it, since only the director can — a steward is a teammate,
+      and a teammate cannot create a teammate.
   list [--open] [--horde h]
       open and forwarded first, newest first.
   rule <id> "<ruling>" [--to-user] [--by <name>] [--horde h]
@@ -44,9 +52,10 @@ commands:
   recurring [--min <n>] [--horde h]
       the ruled escalations grouped by kind and by the node their ticket names; a group of
       <n> (default 3) or more is an answer this horde keeps giving by hand, so it prints the
-      rule proposal: the rulings as evidence, one line of rule text, and the exact command that
-      files it in the graph's own log. It prints that command rather than running it — filing a
-      rule is the architect's move, not this tool's.
+      rule proposal: the rulings as evidence, one line of rule text, and — where the group has a
+      node — the steps that file it: create the rule in the graph, then record why in its own
+      log. It prints those steps rather than running them — filing a rule is the architect's
+      move, not this tool's.
 
 options: --json  --help`;
 
@@ -81,6 +90,11 @@ function render(doc) {
     lines.push(`## ${head.join(' · ')}`);
     lines.push(`by: ${it.by} · at: ${it.at}`);
     lines.push(it.why);
+    if (Array.isArray(it.next) && it.next.length) {
+      lines.push('');
+      lines.push('the director raises it with:');
+      for (const cmd of it.next) lines.push(`- ${cmd}`);
+    }
     if (it.state === 'forwarded') {
       lines.push('');
       lines.push(`forwarded to the chairman (${it.forwardedAt}): ${it.ruling}`);
@@ -93,6 +107,18 @@ function render(doc) {
   return lines.join('\n');
 }
 
+// The commands a ruled sub-team proposal is executed with, in the order the director runs them.
+// Rendered into the item at `add`, because the steward that proposes knows the team and its parent
+// and the director should not have to reconstruct either from prose.
+function subTeamCommands(team, parent) {
+  return [
+    `roster.mjs spawn steward --team ${team} --parent ${parent} --class sonnet`,
+    `brief.mjs steward ${team} --name <the name that printed>`,
+    'spawn it with the Agent tool as a teammate, prompt = that brief',
+    `queue.mjs move <each ticket this escalation names> --team ${team}`,
+  ];
+}
+
 function nextId(doc) {
   let max = 0;
   for (const it of doc.items) {
@@ -102,16 +128,25 @@ function nextId(doc) {
   return String(max + 1);
 }
 
-// addEscalation(horde, {why, kind, ticket, by}) — opens one escalation and returns it. Exported
-// so wave.mjs's close can open the `quality` escalation a fallen quality index owes without
-// shelling out to this file; throws rather than exiting, so its caller decides how to report it.
-export function addEscalation(horde, { why, kind, ticket, by } = {}) {
+// addEscalation(horde, {why, kind, ticket, by, team, parent}) — opens one escalation and returns
+// it. Exported so wave.mjs's close can open the `quality` escalation a fallen quality index owes
+// without shelling out to this file; throws rather than exiting, so its caller decides how to
+// report it. `team` (a sub-team proposal, "structure" only) adds the commands that raise it.
+export function addEscalation(horde, {
+  why, kind, ticket, by, team, parent,
+} = {}) {
   if (!why) throw new Error('why required');
   if (typeof kind !== 'string' || !KINDS.includes(kind)) throw new Error(`kind must be one of: ${KINDS.join('|')}`);
+  if (team && kind !== 'structure') throw new Error(`--team names the sub-team a "structure" escalation proposes — it has no meaning for kind "${kind}"`);
   const doc = load(horde);
   const id = nextId(doc);
   const item = { id, kind, why, by: by || 'steward', at: nowIso(), state: 'open' };
   if (ticket) item.ticket = String(ticket);
+  if (team) {
+    item.team = String(team);
+    item.parent = String(parent || 'trunk');
+    item.next = subTeamCommands(item.team, item.parent);
+  }
   doc.items.push(item);
   save(horde, doc);
   return item;
@@ -121,9 +156,14 @@ function cmdAdd(horde, positional, flags) {
   const why = positional[0];
   if (!why) fail('add requires "<why>"');
   if (typeof flags.kind !== 'string' || !KINDS.includes(flags.kind)) fail(`--kind is required, one of: ${KINDS.join('|')}`);
-  const item = addEscalation(horde, {
-    why, kind: flags.kind, ticket: flags.ticket, by: flags.by,
-  });
+  let item;
+  try {
+    item = addEscalation(horde, {
+      why, kind: flags.kind, ticket: flags.ticket, by: flags.by, team: flags.team, parent: flags.parent,
+    });
+  } catch (e) {
+    fail(e.message);
+  }
   emit(item, flags, () => `escalation ${item.id} opened (${item.kind})`);
 }
 
@@ -148,6 +188,10 @@ function cmdShow(horde, positional, flags) {
     if (it.ticket) head.push(`ticket ${it.ticket}`);
     head.push(it.state);
     const lines = [head.join(' · '), `by ${it.by} at ${it.at}`, it.why];
+    if (Array.isArray(it.next) && it.next.length) {
+      lines.push('the director raises it with:');
+      for (const cmd of it.next) lines.push(`  ${cmd}`);
+    }
     if (it.state === 'forwarded') lines.push(`forwarded to the chairman (${it.forwardedAt}): ${it.ruling}`);
     if (it.state === 'ruled') lines.push(`ruling (${it.ruledAt}): ${it.ruling}`);
     return lines.join('\n');
@@ -214,15 +258,20 @@ function nodeOfEscalation(horde, it) {
   return nodes.length ? nodes[0] : NO_NODE;
 }
 
-// The command that files the proposal. Where the group has a node, the graph's own log is the
-// place a rule's reasoning belongs (the same redirect decide.mjs already makes for a node-tied
-// decision) — through config.ygCommand, so a checkout running a local build gets its own binary
-// named. A group with no node has nowhere in the graph to go, and the horde's own decision record
-// is the honest target.
+// The command that files the proposal. Where the group has a node, this IS proposing a rule — the
+// answer nobody should have to give a fourth time — and once it exists, its own reasoning belongs
+// in its own log (152/153), not the node's: the node only earns a line once the rule reaches a
+// rung that changes what its code is held to, which nothing here has granted yet. So the step is
+// two: the architect names and files the rule (an edit this tool does not make), then records why
+// in its own history — through config.ygCommand, so a checkout running a local build gets its own
+// binary named. A group with no node has nowhere in the graph to go, and the horde's own decision
+// record is the honest target.
 function fileItCommand(cfg, node, rule) {
   const quoted = rule.replace(/"/g, '\\"');
   if (node !== NO_NODE) {
-    return `${ygCommand(cfg).display} log add --node ${node} --reason "${quoted}"`;
+    return `file the rule (.yggdrasil/aspects/<id>/yg-aspect.yaml, attached to ${node}), then `
+      + `${ygCommand(cfg).display} aspects log add --aspect <id> --reason "${quoted}" — its own log is `
+      + 'where the reasoning belongs, not the node\'s';
   }
   return `decide.mjs add <slug> "${quoted}"`;
 }
@@ -275,7 +324,7 @@ function cmdRecurring(horde, positional, flags) {
       lines.push(`  file it: ${g.command}`);
       lines.push('');
     }
-    lines.push('The architect runs those commands — this tool proposes, it never files.');
+    lines.push('The architect does that filing — this tool proposes, it never files.');
     return lines.join('\n');
   });
 }

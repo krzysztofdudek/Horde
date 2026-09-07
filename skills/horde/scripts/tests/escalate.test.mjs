@@ -139,12 +139,18 @@ test('escalate.mjs recurring: the third ruling of a kind on one node is a rule p
     assert.equal(group.count, 3);
     assert.deepEqual(group.escalations.map((e) => e.ticket), onCheckout);
     assert.match(group.rule, /contract on checkout: answered the same way 3 times/);
-    assert.equal(group.command, 'node ./vendor/yg.mjs log add --node checkout --reason "' + group.rule + '"');
+    assert.equal(
+      group.command,
+      'file the rule (.yggdrasil/aspects/<id>/yg-aspect.yaml, attached to checkout), then '
+      + 'node ./vendor/yg.mjs aspects log add --aspect <id> --reason "' + group.rule + '"'
+      + ' — its own log is where the reasoning belongs, not the node\'s',
+    );
 
     const human = run('escalate.mjs', ['recurring'], dir, { json: false });
     assert.match(human.stdout, /contract · node checkout — 3 rulings/);
-    assert.match(human.stdout, /file it: node \.\/vendor\/yg\.mjs log add --node checkout --reason/);
-    assert.match(human.stdout, /this tool proposes, it never files/);
+    assert.match(human.stdout, /file it: file the rule \(\.yggdrasil\/aspects\/<id>\/yg-aspect\.yaml, attached to checkout\)/);
+    assert.match(human.stdout, /node \.\/vendor\/yg\.mjs aspects log add --aspect <id> --reason/);
+    assert.match(human.stdout, /The architect does that filing — this tool proposes, it never files/);
   });
 
   await t.test('a ruling of the same kind on another node is another question, not a fourth answer', () => {
@@ -173,4 +179,53 @@ test('escalate.mjs: "quality" is a kind, so a fallen quality index has a channel
   const r = run('escalate.mjs', ['add', 'the graph got weaker over this wave', '--kind', 'quality'], dir);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.json.kind, 'quality');
+});
+
+
+test('escalate.mjs: a sub-team proposal carries the commands only the director can run', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  let id;
+  await t.test('add --kind structure --team --parent records the spawn, the brief and the handover', () => {
+    const r = run('escalate.mjs', ['add', 'sub-team falcon for nodes billing, ledger', '--kind', 'structure', '--team', 'falcon', '--parent', 'trunk', '--by', 'steward'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    id = r.json.id;
+    assert.equal(r.json.team, 'falcon');
+    assert.equal(r.json.parent, 'trunk');
+    assert.deepEqual(r.json.next, [
+      'roster.mjs spawn steward --team falcon --parent trunk --class sonnet',
+      'brief.mjs steward falcon --name <the name that printed>',
+      'spawn it with the Agent tool as a teammate, prompt = that brief',
+      'queue.mjs move <each ticket this escalation names> --team falcon',
+    ]);
+  });
+
+  await t.test('the rendered channel and show both print them for the director', () => {
+    const rendered = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'escalations.md'), 'utf8');
+    assert.match(rendered, /the director raises it with:/);
+    assert.match(rendered, /roster\.mjs spawn steward --team falcon --parent trunk --class sonnet/);
+
+    const shown = run('escalate.mjs', ['show', id], dir, { json: false });
+    assert.equal(shown.code, 0, shown.stderr);
+    assert.match(shown.stdout, /roster\.mjs spawn steward --team falcon --parent trunk/);
+  });
+
+  await t.test('--parent defaults to trunk', () => {
+    const r = run('escalate.mjs', ['add', 'sub-team kite for the reporting nodes', '--kind', 'structure', '--team', 'kite'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.parent, 'trunk');
+    assert.match(r.json.next[0], /--team kite --parent trunk/);
+  });
+
+  await t.test('--team is refused on any other kind, and a structure escalation without one carries no commands', () => {
+    const wrong = run('escalate.mjs', ['add', 'the budget is spent', '--kind', 'cost', '--team', 'falcon'], dir);
+    assert.equal(wrong.code, 1);
+    assert.match(wrong.stderr, /has no meaning for kind "cost"/);
+
+    const lease = run('escalate.mjs', ['add', 'the ledger owner should hold its lease for the mission', '--kind', 'structure'], dir);
+    assert.equal(lease.code, 0, lease.stderr);
+    assert.equal(lease.json.next, undefined);
+  });
 });

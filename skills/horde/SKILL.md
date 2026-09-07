@@ -82,37 +82,51 @@ the user, not alone.
 
 ## Staffing and planning — recursive, not linear
 
-- Spawn the **steward** of the trunk team (Sonnet, long-lived, `brief.mjs steward`). The steward owns
+- Spawn the **steward** of the trunk team as your teammate (Sonnet, long-lived, `brief.mjs steward`). The steward owns
   the queue, mechanical verification and merging on its branch, and nothing that requires judgement.
 - The steward spawns an **owner** per touched node (Sonnet, or Opus for a hard node; `brief.mjs owner
   <node>`). Owners read their node, refresh its charter, and **propose** tickets and contracts. They
   decide the inside of their node; they never change a contract alone. Their lease — the whole mission
   or one wave — is a charter field you set at framing (default: mission for a node with three or more
   tickets, wave otherwise).
-- Spawn the **architect** (Opus, cross-cutting, no node of its own; `brief.mjs architect`). The
+- Spawn the **architect**, your other teammate (Opus, cross-cutting, no node of its own;
+  `brief.mjs architect`). The
   architect approves or vetoes every change to the graph — new nodes, moved boundaries, new or changed
   ports — and files graph changes into the graph. The user sees them at wave close.
 
-**Who holds the Agent tool.** You spawn the trunk steward, the architect, the auditor and counsel.
-A steward spawns its owners, workers, verifiers and sub-stewards. Nobody else spawns. A reclaim is
-always a fresh spawn under N+1 by the role that spawned the original; a sub-steward is a subagent of
-a subagent, and that is fine.
+**Who holds the Agent tool.** Two kinds of agent, and only you make the first. You create every
+**teammate** — the trunk steward, the steward of every sub-team, the architect — and the auditor and
+counsel are your own one-shot **subagents**. A steward creates only subagents: its owners, its
+workers, its verifiers. Nobody else spawns anything. A teammate cannot create a teammate, so a
+sub-team is never raised by the steward that asked for it — the steward proposes, you rule, you
+spawn its steward. A subagent is reachable and reclaimable by the agent that spawned it and by
+nobody else; a reclaim is a fresh spawn under N+1 by that same agent, and every teammate is yours to
+replace, the fresh one rebuilding its subtree from the files.
 - The plan is not written by a planner. Each owner declares, on each ticket, the files it touches,
   the contract versions it needs and delivers, and the evidence rows it earns; `queue.mjs plan`
   derives the **DAG of tickets** from all of them — layers, critical path, tickets that would collide
   over a file, contracts nothing produces, evidence nobody is building — and the architect reviews
   that output before wave 1. Disputed contracts come to you as escalations with the owners' opinions
-  attached. When the plan is clean, the steward starts wave 1. A team with more parallelism than one steward can drive gets **sub-teams**:
-  a sub-steward on its own branch, same rules, same tools, one level down. Depth follows the work.
+  attached. When the plan is clean, the steward starts wave 1. A team with more parallelism than one
+  steward can drive gets a **sub-team**: its own branch, same rules, same tools, one level down. The
+  steward proposes it and you raise its steward yourself (below). Depth follows the work.
 
 ## While the horde runs — what you do and do not do
 
 You do: rule on escalations (`escalate.mjs rule <id> "…" --by director`), answer the dissents against your own rulings once
-(`dissent.mjs answer --by director`), replace a steward the roster shows dead (`roster.mjs reclaim`,
-then re-brief), close waves (`wave.mjs close`), audit the sample `wave.mjs audit-plan` names and spawn the
+(`dissent.mjs answer --by director`), replace a steward the roster shows dead (`roster.mjs reclaim <name> --by director`,
+then re-brief and spawn it again as a teammate), close waves (`wave.mjs close`), audit the sample `wave.mjs audit-plan` names and spawn the
 **auditor** on each (Opus, `brief.mjs auditor NNN --wave n`; you read its verdict, you do not redo it),
 record each verdict with `wave.mjs audit NNN clean|findings "…"`,
 keep the charter current, and keep the horde alive (below).
+
+**A sub-team is your act, not the steward's.** A `structure` escalation asking for one is ruled like
+any other; ruled yes, you run it yourself, because only you can raise a teammate. The escalation
+carries the commands with the names already filled in: `roster.mjs spawn steward --team <name>
+--parent <the asking team> --class sonnet` (it cuts the branch off the parent's tip and puts
+`team:<name>` on the parent's queue), `brief.mjs steward <name>`, spawn it as a teammate, then
+`queue.mjs move` the tickets the escalation named onto its queue. Tell the parent steward the
+sub-team is staffed; it does the merging up from there.
 
 **The audit is a sample, not a ritual.** How many tickets to redo is not yours to pick and not a
 fixed one: `wave.mjs audit-plan` says how many and which, drawn from the wave's own merges. The
@@ -124,7 +138,7 @@ survive a second look, and how much that fraction is worth knowing at this sampl
 **Rulings that recur are law you have not written down yet.** Run `escalate.mjs recurring` at each
 close. Three rulings of the same kind on the same node is not a fourth decision waiting to happen —
 it is a rule, and the tool hands the architect the proposal with the rulings as its evidence and
-the command that files it in the graph. The KPI on the wave close is the same claim in a number:
+the steps that file it in the graph. The KPI on the wave close is the same claim in a number:
 human decisions per merged ticket, which should fall wave after wave.
 
 **A wave close that shows the graph weaker files its own escalation.** Every close reads the
@@ -149,9 +163,10 @@ Every agent of the horde lives only while your session lives. Two consequences:
   looks at every `running` ticket's branch — a commit beyond its parent's tip → `landed`; a dirty worktree
   → its diff committed as `wip: reclaimed` on the ticket branch and the item back to `queued` (the next
   worker is told); a clean worktree without a commit → `queued`, worktree removed; then you respawn
-  the trunk steward from the files, and
-  it respawns its owners on demand and its workers from the queue. Nothing is lost, because nothing
-  was in anyone's head; a cold boot costs one steward brief plus the briefs of whatever was mid-flight.
+  every team's steward from the files — the trunk's and each sub-team's, since every one of them is
+  yours — and each respawns its owners on demand and its workers from the queue. Nothing is lost,
+  because nothing was in anyone's head; a cold boot costs one brief per steward plus the briefs of
+  whatever was mid-flight.
 
 **Standard escalation list** (the steward escalates these; you rule; outside the list the steward
 acts alone and does not ask):
@@ -175,7 +190,9 @@ read the node's type in `yg-architecture.yaml` and check the file against the
 type's `when:` globs — under a strict type a mapping the globs do not admit is refused, and that
 `when:` line is the user's, so ask for it in the same breath instead of a second round trip.
 A team branch ready to merge up is **not** an escalation: the sub-steward marks it landed in the parent
-team's queue and doorbells the parent steward, who merges it like a ticket.
+team's queue, and the parent steward — which reads its queue every turn — merges it like a ticket. The
+two stewards are teammates of yours, not of each other, so nothing passes directly between them; a
+sub-team that needs its parent woken says so to you.
 
 ## Standards you do not give away
 

@@ -23,7 +23,7 @@ Run both, then `/reload-plugins` to activate it in this session (or restart Clau
 npm i -g @chrisdudek/yg
 ```
 
-Horde 0.2.0 needs a Yggdrasil newer than 5.8.0, the first release that answers with the documents Horde reads the graph through; until it is out, point the horde at a build of Yggdrasil's development branch with `horde.mjs config set ygCommand "node path/to/bin.js"`. An older Yggdrasil is refused with that instruction, never read around.
+Horde needs Yggdrasil 5.9.0 or newer, the first release that answers with the documents Horde reads the graph through. An older Yggdrasil is refused with the release to install, never read around.
 
 If your repository already has a graph, Horde reads it. If it doesn't, `horde init` makes one for you before anything else happens. With [Grain](https://github.com/krzysztofdudek/Grain) installed as well, the graph it makes is read out of your own code — the components you actually have and the rules you already follow — and it tells you up front how much of the code you have today those rules would refuse. Without Yggdrasil, Horde stops and says so.
 
@@ -39,13 +39,15 @@ If your repository already has a graph, Horde reads it. If it doesn't, `horde in
 
 Without it, Claude Code never raises a steward that stays alive and addressable for the length of a mission, so the skill has nothing to direct. It also needs an interactive session; headless mode (`-p`) won't spawn a team at all.
 
+Your own session is what raises the long-lived agents — a steward per team and the architect — and everything else runs underneath them as their own helpers, so the number of agents alive alongside you stays small and every one of them is yours to replace.
+
 ---
 
 ## See it
 
 **The mission: migrate the app's permission system from roles to a policy engine, twelve modules touched.** Alone, an agent either tries to hold all twelve modules in its head and drifts by module nine, or works through them one at a time and forgets what it agreed with itself three files back.
 
-You and Horde write the charter together first: the goal, what's out of scope, and the evidence that proves it's done (tests, scenarios, nothing vaguer than that). Then it cuts the mission into nodes with you, once, and spawns a **steward**. The steward spawns an **owner** per node and an **architect** who can veto changes to the graph. Owners read their node and propose tickets; the steward assembles the proposals into a dependency graph and starts a wave.
+You and Horde write the charter together first: the goal, what's out of scope, and the evidence that proves it's done (tests, scenarios, nothing vaguer than that). Then it cuts the mission into nodes with you, once, and spawns a **steward** and an **architect** who can veto changes to the graph. The steward spawns an **owner** per node. Owners read their node and propose tickets; the steward assembles the proposals into a dependency graph and starts a wave.
 
 Workers pick up tickets, each in its own worktree, each against a locked spec. A **verifier who never verifies its own work** reproduces the evidence before anything merges. Nothing lands without two keys and one approval: the worker's key, the verifier's key, and the owner's review of every node the ticket touches. Once a wave closes, an Opus **auditor** redoes merged tickets from scratch, because a report is a hypothesis until someone who didn't write it reproduces it. How many is a sample size, not a habit: it doubles when an audit catches something, thins out after a long clean run, and never drops to nothing — and every wave close publishes what share of audited work didn't survive the second look, with how confident that share is.
 
