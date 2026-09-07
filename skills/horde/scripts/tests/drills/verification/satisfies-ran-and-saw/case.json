@@ -1,0 +1,35 @@
+{
+  "schema": "horde-drill-case/1",
+  "drill": "verification",
+  "discipline": "verification",
+  "expect": "satisfies",
+  "horde": "m1",
+  "ticket": "001",
+  "branch": "m1/t-001",
+  "parentBranch": "m1/trunk",
+  "tip": "bb528c057bd98fd11fde8a95b6aa9c0d3883f56d",
+  "refs": [
+    "m1/t-001",
+    "m1/trunk",
+    "develop"
+  ],
+  "recordedAt": "2026-09-06T20:37:04.428Z",
+  "note": "every row carries the command and its output, and the gate names the tip",
+  "saw": [
+    {
+      "name": "verdict",
+      "ok": true,
+      "note": "result: reproduced"
+    },
+    {
+      "name": "what was run and seen",
+      "ok": true,
+      "note": "1 row(s), each with the command and what it printed"
+    },
+    {
+      "name": "gate at the tip",
+      "ok": true,
+      "note": "green at bb528c0, the tip of m1/t-001"
+    }
+  ]
+}

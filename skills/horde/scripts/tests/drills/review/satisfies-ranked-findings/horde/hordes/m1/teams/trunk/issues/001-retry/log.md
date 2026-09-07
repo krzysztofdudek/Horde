@@ -1,0 +1,2 @@
+- 2026-09-06T20:37:07.181Z key: author set to worker1
+- 2026-09-06T20:37:07.263Z review: core changes by owner-core — Important: the retry loop swallows the last error

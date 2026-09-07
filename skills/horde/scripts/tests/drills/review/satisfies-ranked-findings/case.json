@@ -1,0 +1,35 @@
+{
+  "schema": "horde-drill-case/1",
+  "drill": "review",
+  "discipline": "review",
+  "expect": "satisfies",
+  "horde": "m1",
+  "ticket": "001",
+  "branch": "m1/t-001",
+  "parentBranch": "m1/trunk",
+  "tip": "43baa9fa789507aba106b9991e3af5b50f77688d",
+  "refs": [
+    "m1/t-001",
+    "m1/trunk",
+    "develop"
+  ],
+  "recordedAt": "2026-09-06T20:37:07.388Z",
+  "note": "the change request names Important; the Minor finding went to the log",
+  "saw": [
+    {
+      "name": "reviews recorded",
+      "ok": true,
+      "note": "core changes by owner-core"
+    },
+    {
+      "name": "findings carry a severity",
+      "ok": true,
+      "note": "1 change request(s), each naming Critical/Important/Minor"
+    },
+    {
+      "name": "Minor did not bounce the ticket",
+      "ok": true,
+      "note": "no ticket sent back over Minor findings alone"
+    }
+  ]
+}

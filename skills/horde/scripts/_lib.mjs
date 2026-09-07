@@ -5,7 +5,7 @@
 // repository sees the same state (a worktree's common dir points at the main checkout's .git).
 
 import {
-  existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync,
+  existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,41 @@ const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'templ
 export function git(args, cwd = process.cwd()) {
   try {
     return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
+  } catch {
+    return null;
+  }
+}
+
+// patchIdOf(branch, parent, {context, cwd}) — the 40-hex `git patch-id --stable` of what the
+// branch adds on top of the parent (`git diff -U<context> <parent>...<branch>`), or null when
+// there is nothing to identify (an empty diff, an unknown ref, no git at all). This is what a
+// key binds to: it names the CONTENT of a ticket's change, so catching the branch up with a
+// landing elsewhere leaves it identical, a landing that reaches into a hunk's own context
+// changes it, and a landing that overlaps the change conflicts before this is ever asked.
+//
+// `context` is the number of context lines the identity is computed over — the sensitivity knob
+// (`config.keyContext`, default 3): more context means a key survives fewer nearby landings, less
+// means it survives more. Zero is deliberately not offered — it calls a change on the very next
+// line the same diff, which no reviewer would — so anything that is not a whole number of at
+// least one falls back to 3.
+export function patchIdOf(branch, parent, { context = 3, cwd = process.cwd() } = {}) {
+  const asked = Math.trunc(Number(context));
+  const n = Number.isFinite(asked) && asked >= 1 ? asked : 3;
+  let diff;
+  try {
+    diff = execFileSync('git', ['diff', `-U${n}`, `${parent}...${branch}`], {
+      cwd, stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 256 * 1024 * 1024,
+    });
+  } catch {
+    return null;
+  }
+  if (diff.length === 0) return null;
+  try {
+    const out = execFileSync('git', ['patch-id', '--stable'], {
+      cwd, input: diff, stdio: ['pipe', 'pipe', 'pipe'], maxBuffer: 1024 * 1024,
+    }).toString().trim();
+    const id = out.split(/\s+/)[0];
+    return /^[0-9a-f]{40}$/.test(id) ? id : null;
   } catch {
     return null;
   }
@@ -72,6 +107,41 @@ export function hordePath(horde, ...parts) {
   return join(hordeRoot(), 'hordes', horde, ...parts);
 }
 
+// ---- the quality policy (ruling quality-always-authorised) ------------------------------------
+//
+// The charter's own answer to "may the horde improve what it was not asked to improve": the
+// `## Quality` section's `**Policy:**` line. `autonomous` (the default, and what the charter
+// template writes) means the horde raises the graph wherever the evidence allows and files the
+// improvements it finds, without asking; `only-the-work` means it does nothing beyond the tickets
+// the mission names. Neither setting ever authorises LOWERING anything — that is the chairman's,
+// under every policy.
+//
+// Read from the charter rather than kept in config.json because it is a promise made to the
+// chairman in the document they read and amend, and a second copy in a config file could disagree
+// with it. A charter written before this field existed reads as `autonomous`: that is the ruling's
+// own default, and an older mission does not silently opt out of it.
+
+export const QUALITY_POLICIES = ['autonomous', 'only-the-work'];
+
+// The `**Policy:**` line inside the charter's `## Quality` section, or null when there is none.
+// Scoped to that section on purpose: `## Cost` carries a policy line of its own, and a loose
+// search would read the cost policy as a quality setting.
+export function qualityPolicyIn(charterText) {
+  const text = String(charterText || '');
+  const start = text.search(/^##\s+Quality\s*$/m);
+  if (start === -1) return null;
+  const rest = text.slice(start);
+  const end = rest.indexOf('\n## ', 1);
+  const section = end === -1 ? rest : rest.slice(0, end);
+  const m = /^\*\*Policy:\*\*\s*([^\n·]*?)\s*(?:·|$)/m.exec(section);
+  return m ? m[1].trim() : null;
+}
+
+export function qualityPolicy(horde) {
+  const found = qualityPolicyIn(readText(hordePath(horde, 'charter.md')));
+  return QUALITY_POLICIES.includes(found) ? found : 'autonomous';
+}
+
 // Resolves a team's short LEAF name (e.g. "lark") to its full on-disk segment chain
 // (["trunk", "lark"]) by walking roster.json's steward entries' own `parent` links back to
 // "trunk" — the same lookup roster.mjs's own spawn logic does, duplicated here in miniature
@@ -112,6 +182,168 @@ export function teamPath(horde, team, ...parts) {
   return hordePath(horde, ...resolved.flatMap((s) => ['teams', s]), ...parts);
 }
 
+// ---- cross-horde node leases (node-lease-across-hordes) --------------------------------------
+// Node ownership is exclusive across every live horde on one repository: `.horde/leases.json`
+// maps a node id to the horde currently bound to it and since when. This file is NOT per-horde —
+// every horde on the repository reads and writes the one shared document, which is exactly why
+// it lives beside config.json rather than under hordes/<horde>/. `node.mjs bind <node>` is the
+// only writer of `leases`; `horde.mjs archive` is the only remover (a horde's leases are released
+// the moment it is no longer live). `history` is an append-only record of every bind/take/release
+// so a contested node's story survives past the current state.
+
+export function leasesPath() {
+  return join(hordeRoot(), 'leases.json');
+}
+
+export function readLeases() {
+  const doc = readJSON(leasesPath(), null);
+  const leases = doc && doc.leases && typeof doc.leases === 'object' ? doc.leases : {};
+  const history = doc && Array.isArray(doc.history) ? doc.history : [];
+  return { leases, history };
+}
+
+function renderLeases(doc) {
+  const entries = Object.entries(doc.leases).sort(([a], [b]) => a.localeCompare(b));
+  const lines = ['# Leases', '', '| node | horde | since |', '|---|---|---|'];
+  if (entries.length === 0) lines.push('| | | |');
+  for (const [node, lease] of entries) lines.push(`| ${node} | ${lease.horde} | ${lease.since} |`);
+  if (doc.history.length > 0) {
+    lines.push('', '## History', '');
+    for (const h of [...doc.history].reverse()) {
+      const bits = [h.at, h.event, h.node, `-> ${h.horde}`];
+      if (h.from) bits.push(`(from ${h.from})`);
+      if (h.escalation) bits.push(`escalation ${h.escalation}`);
+      lines.push(`- ${bits.join(' ')}`);
+    }
+  }
+  return lines.join('\n') + '\n';
+}
+
+export function writeLeases(doc) {
+  writeJSON(leasesPath(), doc, { render: renderLeases });
+}
+
+// releaseLeasesForHorde(horde) — drops every lease this horde holds and records a "release" entry
+// per node in the history. Called by horde.mjs archive so an archived horde's nodes are free the
+// moment it stops being live; returns the released node ids (empty when it held none).
+export function releaseLeasesForHorde(horde) {
+  const doc = readLeases();
+  const released = Object.entries(doc.leases).filter(([, l]) => l.horde === horde).map(([node]) => node);
+  if (released.length === 0) return released;
+  const at = nowIso();
+  for (const node of released) {
+    delete doc.leases[node];
+    doc.history.push({
+      node, event: 'release', horde, from: null, escalation: null, at,
+    });
+  }
+  writeLeases(doc);
+  return released;
+}
+
+// leaseConflict(horde, node) — the live holder blocking `horde` from this node, or null when
+// there is none (never leased, held by `horde` itself, or held by a horde no longer live). A pure
+// read, safe to call before mutating anything — which is exactly why horde.mjs init uses it to
+// refuse a --nodes overlap BEFORE creating the horde's branch, rather than discovering the
+// conflict after state already exists.
+export function leaseConflict(horde, node) {
+  const liveHordes = listHordes();
+  const { leases } = readLeases();
+  const existing = leases[node];
+  return existing && existing.horde !== horde && liveHordes.includes(existing.horde) ? existing : null;
+}
+
+function leaseRefusalMessage(taker, node, holder) {
+  const activity = latestActivity(hordePath(holder.horde)) || 'no recorded activity';
+  return `node "${node}" is leased by horde "${holder.horde}" (since ${holder.since}; last activity `
+    + `${activity}) and that horde is not archived — archive it (\`horde.mjs archive ${holder.horde}\`) `
+    + `or take the lease over a ruled escalation: \`node.mjs bind ${node} --take --escalation <id> --horde ${taker}\``;
+}
+
+// assertLeaseAvailable(horde, node) — throws leaseConflict's refusal, otherwise returns quietly.
+// horde.mjs init calls this for every requested node before creating anything of its own, so the
+// whole command refuses cleanly (no orphaned branch, no half-created horde) on the very message
+// node.mjs bind would give later for the same node.
+export function assertLeaseAvailable(horde, node) {
+  const conflict = leaseConflict(horde, node);
+  if (conflict) throw new Error(leaseRefusalMessage(horde, node, conflict));
+}
+
+// claimLease(horde, node, {take, escalation}) — the one path that acquires a node's lease. Node
+// ownership is exclusive across every live horde on a repository: returns {status: 'held' |
+// 'claimed' | 'taken', ...} on success; throws Error with a what/why/next-shaped message the
+// caller passes straight to fail() on any refusal. Shared by horde.mjs init (--nodes, at
+// creation, after assertLeaseAvailable has already cleared it) and node.mjs bind (<node>, any
+// time) so both tools refuse the same overlap the same way and write the same history line — one
+// derivation, two callers, per the scripts' own convention (see node.mjs's consumersOf).
+export function claimLease(horde, node, { take = false, escalation = null } = {}) {
+  const doc = readLeases();
+  const existing = doc.leases[node];
+
+  if (existing && existing.horde === horde) {
+    return { status: 'held', node, horde, since: existing.since };
+  }
+
+  const conflict = leaseConflict(horde, node);
+  if (conflict) {
+    if (!take) throw new Error(leaseRefusalMessage(horde, node, conflict));
+    if (!escalation) {
+      throw new Error('--take requires --escalation <id> — a ruled escalation on this horde justifying the take-over');
+    }
+    const escDoc = readJSON(hordePath(horde, 'escalations.json'), { items: [] });
+    const esc = (Array.isArray(escDoc.items) ? escDoc.items : []).find((it) => it.id === String(escalation));
+    if (!esc) throw new Error(`no such escalation: ${escalation} (on horde "${horde}")`);
+    if (esc.state !== 'ruled') {
+      throw new Error(`escalation ${escalation} is not ruled yet — \`escalate.mjs rule ${escalation} "<ruling>" --horde ${horde}\` first`);
+    }
+    const from = conflict.horde;
+    const at = nowIso();
+    doc.leases[node] = { horde, since: at };
+    doc.history.push({
+      node, event: 'take', horde, from, escalation: String(escalation), at,
+    });
+    writeLeases(doc);
+    return {
+      status: 'taken', node, horde, from, escalation: String(escalation), ruling: esc.ruling,
+    };
+  }
+
+  // Free: never leased, or held by a horde no longer live — archiving already releases a horde's
+  // leases, so this branch is a defensive fallback for state written before that, not the normal
+  // path.
+  const freedFrom = existing ? existing.horde : null;
+  const at = nowIso();
+  doc.leases[node] = { horde, since: at };
+  doc.history.push({
+    node, event: 'bind', horde, from: freedFrom, escalation: null, at,
+  });
+  writeLeases(doc);
+  return { status: 'claimed', node, horde, freedFrom };
+}
+
+// ---- a horde's own last activity (most recent mtime under its directory) ---------------------
+// Shared by horde.mjs list (a horde reporting its own last activity) and node.mjs bind (naming
+// the last activity of whichever horde currently holds a lease being contested), so a refusal
+// message and the `list` column agree on what "last activity" means rather than each tool
+// computing its own notion of it.
+function dirMtime(path) {
+  try { return statSync(path).mtimeMs; } catch { return 0; }
+}
+
+export function latestActivity(dest) {
+  let latest = 0;
+  const walk = (dir) => {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else latest = Math.max(latest, dirMtime(full));
+    }
+  };
+  walk(dest);
+  return latest ? new Date(latest).toISOString() : null;
+}
+
 // listHordes() — names under hordes/, excluding the archive.
 export function listHordes() {
   const dir = join(hordeRoot(), 'hordes');
@@ -135,6 +367,34 @@ export function resolveHorde(args) {
   if (hordes.length === 1) return hordes[0];
   if (hordes.length === 0) fail('no horde exists — run horde.mjs init <name> --base <branch>');
   fail(`multiple hordes exist (${hordes.join(', ')}) — pass --horde <name>`);
+}
+
+// parentBranchOf(horde, team, item) — the branch a queue item's own branch is rooted on, merges
+// into, and is measured against. Normally the team's branch. A ticket the steward started from an
+// unmerged dependency's tip (`queue.mjs set NNN running --on MMM`, recorded as `stackedOn`) is
+// rooted on that dependency's branch instead, so a chain of three tickets does not cost three
+// waves. The stack lasts exactly as long as the dependency is unmerged: once it merges, its work
+// is on the team branch, `stackedOn` is cleared by the write that recorded the merge, its branch
+// is gone, and the parent is the team branch again. The state and branch are checked here as well
+// as cleared there, so a `stackedOn` left behind by anything resolves to the team branch — the
+// answer that is at worst stale, never one naming a branch that no longer exists.
+//
+// One function, because everything measured against a parent has to name the same one: how fresh
+// the base is, what the diff contains, the identity a key binds to, what a new test is reverted
+// onto, and what the range-diff of a moved diff is taken against. Two answers here would be a
+// ticket whose keys are recorded against one branch and checked against another.
+export function parentBranchOf(horde, team, item, { cwd } = {}) {
+  const teamBranch = `${horde}/${String(team).split('/').pop()}`;
+  const stackedOn = item && item.stackedOn ? String(item.stackedOn) : null;
+  const out = {
+    branch: teamBranch, teamBranch, stackedOn, stacked: false,
+  };
+  if (!stackedOn) return out;
+  const queue = readJSON(teamPath(horde, team, 'queue.json'), { items: [] });
+  const parent = asArray(queue.items).find((i) => String(i.ticket) === stackedOn);
+  if (!parent || parent.state === 'merged' || !parent.branch) return out;
+  if (git(['rev-parse', '--verify', parent.branch], cwd || repoRoot()) === null) return out;
+  return { ...out, branch: parent.branch, stacked: true };
 }
 
 export function readJSON(file, fallback) {

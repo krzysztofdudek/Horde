@@ -9,15 +9,25 @@
 /plugin install horde@horde-marketplace
 ```
 
-Run both, then `/reload-plugins` to activate it in this session (or restart Claude Code). Requires Node.js on your `PATH` (any recent version), since the skill's tools are plain ES modules with zero dependencies. It also needs Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams) turned on, an experimental feature that is off by default; see [Requirements](#requirements) below before you invoke it. Invoke it by handing over a mission: `/horde <mission>`, or your own words for it ("let's run this as a horde").
+Run both, then `/reload-plugins` to activate it in this session (or restart Claude Code). Requires Node.js on your `PATH` (any recent version), since the skill's tools are plain ES modules with zero dependencies. It also needs Yggdrasil, and Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams) turned on, an experimental feature that is off by default; see [Requirements](#requirements) below before you invoke it. Invoke it by handing over a mission: `/horde <mission>`, or your own words for it ("let's run this as a horde").
 
-> MIT licensed · Node scripts, zero dependencies · works with or without [Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil) · part of the [Yggdrasil family](#the-yggdrasil-family) · [full skill body](skills/horde/SKILL.md)
+> MIT licensed · Node scripts, zero dependencies · needs [Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil), and creates the graph if your repository has none · part of the [Yggdrasil family](#the-yggdrasil-family) · [full skill body](skills/horde/SKILL.md)
 
 ---
 
 ## Requirements
 
-Turn on Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams) before you hand over a mission. It's off by default and still experimental. Add this to your `settings.json`:
+**Yggdrasil.** Horde works on an architecture graph: the map it cuts the work by, the rules every ticket is held to, and the verdict that says a change is safe to merge all come from it. Install it once:
+
+```
+npm i -g @chrisdudek/yg
+```
+
+Horde 0.2.0 needs a Yggdrasil newer than 5.8.0, the first release that answers with the documents Horde reads the graph through; until it is out, point the horde at a build of Yggdrasil's development branch with `horde.mjs config set ygCommand "node path/to/bin.js"`. An older Yggdrasil is refused with that instruction, never read around.
+
+If your repository already has a graph, Horde reads it. If it doesn't, `horde init` makes one for you before anything else happens. With [Grain](https://github.com/krzysztofdudek/Grain) installed as well, the graph it makes is read out of your own code — the components you actually have and the rules you already follow — and it tells you up front how much of the code you have today those rules would refuse. Without Yggdrasil, Horde stops and says so.
+
+**Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams)**, turned on before you hand over a mission. It's off by default and still experimental. Add this to your `settings.json`:
 
 ```json
 {
@@ -37,9 +47,11 @@ Without it, Claude Code never raises a steward that stays alive and addressable 
 
 You and Horde write the charter together first: the goal, what's out of scope, and the evidence that proves it's done (tests, scenarios, nothing vaguer than that). Then it cuts the mission into nodes with you, once, and spawns a **steward**. The steward spawns an **owner** per node and an **architect** who can veto changes to the graph. Owners read their node and propose tickets; the steward assembles the proposals into a dependency graph and starts a wave.
 
-Workers pick up tickets, each in its own worktree, each against a locked spec. A **verifier who never verifies its own work** reproduces the evidence before anything merges. Nothing lands without two keys and one approval: the worker's key, the verifier's key, and the owner's review of every node the ticket touches. Once a wave closes, an Opus **auditor** redoes one merged ticket from scratch, because a report is a hypothesis until someone who didn't write it reproduces it.
+Workers pick up tickets, each in its own worktree, each against a locked spec. A **verifier who never verifies its own work** reproduces the evidence before anything merges. Nothing lands without two keys and one approval: the worker's key, the verifier's key, and the owner's review of every node the ticket touches. Once a wave closes, an Opus **auditor** redoes merged tickets from scratch, because a report is a hypothesis until someone who didn't write it reproduces it. How many is a sample size, not a habit: it doubles when an audit catches something, thins out after a long clean run, and never drops to nothing — and every wave close publishes what share of audited work didn't survive the second look, with how confident that share is.
 
 You never read a diff. What comes to you: a contract two owners can't agree on, a claim that something is a boundary and shouldn't be touched, a cost limit reached, anything genuinely unsure. Everything else, the horde rules on itself and writes down why, so the next session picks it up cold from the files, not from your memory of the conversation.
+
+Every line the horde ever merged has a custody chain: point at a file and a line and it tells you the commit that introduced it, the ticket that commit belongs to, who wrote it and who reviewed and verified it, what evidence that ticket was supposed to prove and whether it did, and what the graph currently says about the rules standing over that code. A closed mission is searched too; a line from before the horde ever touched the repository is reported as exactly that.
 
 ---
 
@@ -71,7 +83,7 @@ Roles, and what each one is not allowed to do:
 | Architect | Opus, no node of its own | approves or vetoes graph changes | implementation |
 | Worker | the cheapest model that will pass verification | implementation detail | contracts, decisions, other branches |
 | Verifier | never the author, fresh context | reproducible or not | fixing what it finds |
-| Auditor | Opus, once per wave | a process verdict on one merged ticket | nothing named |
+| Auditor | Opus, on a sample per wave | a process verdict on one merged ticket | nothing named |
 
 Every change belongs to exactly one ticket. Liveness is judged by files and branches, never by silence: a steward gone quiet for too long gets reclaimed and respawned from the same charter, not waited for. And it never pushes: starting a mission is your consent to local commits on the horde's own branches, nothing more. The pull request, and the push, stay yours.
 
@@ -139,6 +151,15 @@ Copy the whole `skills/horde/` directory (`SKILL.md`, `reference/`, `templates/`
 
 Nothing else in this repo affects behavior, all of it lives in that one directory.
 
+### The skill's own files, and your graph
+
+Dropping a skill into a repository adds several dozen files to it, and a repository under Yggdrasil
+counts every file: the new ones land outside every node's mapping and show up as uncovered, which
+drops the coverage figure without anything having gone wrong. Two ways to settle it — map the skill's
+directory to a node of its own, if you want the graph to hold your tooling to rules as well, or
+exclude it in `yg-config.yaml` if you don't. Either is a deliberate answer; leaving it is a number
+that quietly reads worse than the repository deserves.
+
 ---
 
 ## What it doesn't claim
@@ -162,7 +183,7 @@ No hidden spend: cost is booked once per spawn and summed every wave, and a char
 <details>
 <summary><b>Do I have to use Yggdrasil?</b></summary>
 
-No. With Yggdrasil present, the horde reads and writes the same architecture graph you already have. Without it, `horde init` keeps its own committed node map in a plain directory, same shape, same rules, no fewer guarantees.
+Yes, and you don't have to set it up first. Horde works on an architecture graph — that is where the components come from, where the rules over each one come from, and what says a change is safe to merge. On a repository that already has one, Horde reads it and never edits it behind your back. On a repository that doesn't, `horde init` creates the graph, and with Grain installed it reads that first graph out of your own code rather than handing you a blank one. What it will not do is invent a second, weaker map of its own and pretend that is the same thing.
 </details>
 
 <details>
@@ -190,7 +211,15 @@ Four tools, one thesis: **make an AI coding agent prove correctness, stage by st
 | **[Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil)** | code → architecture | Every change satisfies the rules that govern it, checked before the agent moves on. |
 | **[Researcher](https://github.com/krzysztofdudek/ResearcherSkill)** | code → measured result | Point it at a metric and it runs experiments, hypotheses kept and discarded. |
 
-Two more sit alongside the chain rather than inside it. **Horde** (this one) doesn't own a stage, it's what you add when a mission needs more than one agent to move through all four at once, holding every agent it raises to the same standards. **[Grain](https://github.com/krzysztofdudek/Grain)** reads the conventions a codebase actually practices instead of the ones someone declared, the same seam as Yggdrasil from the other side. Paused since 2026-09-02: the engine works, but the question that decides whether it's worth using, does it change what an agent ships, came back not demonstrated.
+Two more sit alongside the chain rather than inside it, and they stack. **[Grain](https://github.com/krzysztofdudek/Grain)** reads a codebase's own code and history and writes the first architecture graph for it, then keeps telling Yggdrasil where practice has drifted from what the graph declares; it needs Yggdrasil and nothing else. **Horde** (this one) sits on top of both: it needs Yggdrasil, uses Grain when it is installed, and is what you add when a mission needs more than one agent to move through all four stages at once, holding every agent it raises to the same standards. Each layer works without the ones above it, and none of them knows the ones above exist.
+
+## Acknowledgements
+
+The law each role carries — tests that can fail, finding the cause before the fix, evidence before
+the claim, findings with a severity, framing before anything runs — is modelled on
+[obra/superpowers](https://github.com/obra/superpowers) (MIT), by Jesse Vincent, and on its method of
+testing a document by the behaviour of the agent that reads it. The wording here is Horde's own, and
+the rules travel as role law enforced at the merge rather than as skills of their own.
 
 ## License
 

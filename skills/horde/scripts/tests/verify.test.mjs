@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde,
+  makeRepo, rmRepo, run, initHorde, yg, requireYg,
 } from './helpers.mjs';
 
 test('verify.mjs: record (one --item per acceptance line, a reproduced verdict needs a non-red gate, reproduced sets the verifier key, refuses the author, refuses missing flags), show', async (t) => {
@@ -202,5 +203,187 @@ test('verify.mjs: record (one --item per acceptance line, a reproduced verdict n
     assert.equal(record.code, 0, record.stderr);
     const log = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${ticket.json.id}-labelled-thing`, 'log.md'), 'utf8');
     assert.match(log, new RegExp(`by ${verifier.json.name} \\(opus\\)`));
+  });
+});
+
+test('verify.mjs record: --runs/--results — two disagreeing results record a flaky verdict, send the ticket to changes, and file an incident', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  await t.test('--runs and --results are given together, or not at all', () => {
+    const created = run('tk.mjs', ['new', 'flaky-a', '--title', 'Flaky A', '--node', 'core', '--class', 'sonnet'], dir);
+    run('tk.mjs', ['key', created.json.id, 'author', '--by', 'worker-a'], dir);
+    const r = run('verify.mjs', ['record', created.json.id, '--by', 'verifier-a', '--runs', '2'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--runs and --results are given together/);
+  });
+
+  await t.test('--results must list exactly --runs results', () => {
+    const created = run('tk.mjs', ['new', 'flaky-b', '--title', 'Flaky B', '--node', 'core', '--class', 'sonnet'], dir);
+    run('tk.mjs', ['key', created.json.id, 'author', '--by', 'worker-b'], dir);
+    const r = run('verify.mjs', ['record', created.json.id, '--by', 'verifier-b', '--runs', '2', '--results', 'red,green,red'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /must list exactly --runs \(2\) result\(s\), got 3/);
+  });
+
+  await t.test('a disagreeing result requires --test to name what flaked', () => {
+    const created = run('tk.mjs', ['new', 'flaky-c', '--title', 'Flaky C', '--node', 'core', '--class', 'sonnet'], dir);
+    run('tk.mjs', ['key', created.json.id, 'author', '--by', 'worker-c'], dir);
+    const r = run('verify.mjs', ['record', created.json.id, '--by', 'verifier-c', '--runs', '2', '--results', 'red,green'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /requires --test/);
+  });
+
+  await t.test('two disagreeing runs record flaky, send the ticket to changes, and file the incident', () => {
+    const created = run('tk.mjs', ['new', 'flaky-test', '--title', 'Has a flaky test', '--node', 'core', '--class', 'sonnet'], dir);
+    const id = created.json.id;
+    run('tk.mjs', ['key', id, 'author', '--by', 'worker-1'], dir);
+
+    const r = run('verify.mjs', [
+      'record', id, '--by', 'verifier-1', '--runs', '2', '--results', 'red,green', '--test', 'tests/flaky.test.mjs',
+    ], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.verdict, 'flaky');
+    assert.deepEqual(r.json.flake, { runs: 2, results: ['red', 'green'], test: 'tests/flaky.test.mjs' });
+    assert.equal(r.json.incident.recorded, true);
+    assert.match(r.json.incident.via, /incident add/);
+
+    const ticket = run('tk.mjs', ['show', id], dir);
+    assert.match(ticket.json.text, /\*\*Status:\*\* changes/);
+
+    const log = run('tk.mjs', ['show', id, '--log'], dir);
+    assert.match(log.json.log, /## Verdict · \d+/);
+    assert.match(log.json.log, /\*\*Result:\*\* flaky/);
+    assert.match(log.json.log, /\*\*Flake:\*\* tests\/flaky\.test\.mjs — runs: red, green \(2 runs\)/);
+    assert.match(log.json.log, /status: changes — flaky: tests\/flaky\.test\.mjs \(round 1\/5/);
+
+    // a flaky verdict never sets the verifier key — it did not reproduce anything
+    assert.doesNotMatch(ticket.json.text, /verifier verifier-1/);
+  });
+
+  await t.test('agreeing results are not a flake — --verdict is still required and honoured', () => {
+    const created = run('tk.mjs', ['new', 'not-flaky', '--title', 'Consistent', '--node', 'core', '--class', 'sonnet'], dir);
+    const id = created.json.id;
+    run('tk.mjs', ['key', id, 'author', '--by', 'worker-2'], dir);
+    const r = run('verify.mjs', [
+      'record', id, '--verdict', 'not-reproduced', '--by', 'verifier-2', '--runs', '2', '--results', 'red,red',
+    ], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.verdict, 'not-reproduced');
+  });
+
+  await t.test('the incident really reaches the ledger — the entry the graph now holds names the test', () => {
+    const created = run('tk.mjs', ['new', 'flaky-graph', '--title', 'Flaky again', '--node', 'core', '--class', 'sonnet'], dir);
+    const id = created.json.id;
+    run('tk.mjs', ['key', id, 'author', '--by', 'worker-3'], dir);
+
+    const r = run('verify.mjs', [
+      'record', id, '--by', 'verifier-3', '--runs', '2', '--results', 'red,green', '--test', 'tests/graph-flaky.test.mjs',
+    ], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.incident.recorded, true);
+
+    const listed = yg(dir, ['incident', 'read']);
+    assert.equal(listed.code, 0, listed.out);
+    assert.match(listed.out, /not-enforcement/);
+    // `incident read` lists cause and time; the testimony itself lives in the committed ledger.
+    const ledger = readFileSync(join(dir, '.yggdrasil', 'incidents.md'), 'utf8');
+    assert.match(ledger, new RegExp(`ticket ${id}: tests/graph-flaky\\.test\\.mjs`));
+  });
+
+  await t.test('a ledger that refuses the entry never loses the flake — it lands in the horde\'s journal, and the result says so', () => {
+    run('horde.mjs', ['config', 'set', 'ygCommand', join(dir, 'no-such-yg')], dir);
+    const created = run('tk.mjs', ['new', 'flaky-nowhere', '--title', 'Flaky with no ledger', '--node', 'core', '--class', 'sonnet'], dir);
+    const id = created.json.id;
+    run('tk.mjs', ['key', id, 'author', '--by', 'worker-4'], dir);
+
+    const r = run('verify.mjs', [
+      'record', id, '--by', 'verifier-4', '--runs', '2', '--results', 'red,green', '--test', 'tests/nowhere.test.mjs',
+    ], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.verdict, 'flaky');
+    assert.equal(r.json.incident.recorded, false);
+    assert.match(r.json.incident.reason, /written to the horde's own journal instead/);
+
+    const incidents = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'incidents.md'), 'utf8');
+    assert.match(incidents, new RegExp(`ticket ${id} — flaky test`));
+    run('horde.mjs', ['config', 'set', 'ygCommand', requireYg()], dir);
+  });
+});
+
+test('verify.mjs record: a change that adds no test can still be verified', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  run('tk.mjs', ['new', 'rename-it', '--title', 'Rename the thing', '--node', 'auth', '--class', 'sonnet', '--evidence', 'the suite is still green'], dir);
+  run('tk.mjs', ['key', '001', 'author', '--by', 'worker-1'], dir);
+
+  // The refactor case: nothing new to run on the revert base, and until now that meant the ticket
+  // could not be verified at all.
+  const refused = run('verify.mjs', [
+    'record', '001', '--verdict', 'reproduced', '--by', 'verifier-1',
+    '--item', '1|npm test|green', '--gate', 'green', '--sha', 'abc1234', '--revert', 'not-run',
+  ], dir);
+  assert.equal(refused.code, 1);
+  assert.match(refused.stderr, /--revert no-new-tests/);
+
+  const ok = run('verify.mjs', [
+    'record', '001', '--verdict', 'reproduced', '--by', 'verifier-1',
+    '--item', '1|npm test|green', '--gate', 'green', '--sha', 'abc1234', '--revert', 'no-new-tests',
+  ], dir);
+  assert.equal(ok.code, 0, ok.stderr);
+
+  const shown = run('verify.mjs', ['show', '001'], dir, { json: false });
+  assert.match(shown.stdout, /this change adds no test/);
+
+  const ticket = run('tk.mjs', ['show', '001'], dir);
+  assert.match(ticket.json.text, /verifier verifier-1/);
+});
+
+test('verify.mjs record: the verdict is bound to the diff it judged', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const created = run('tk.mjs', ['new', 'bound', '--title', 'Bound to its diff', '--node', 'core', '--class', 'sonnet'], dir);
+  const id = created.json.id;
+  run('queue.mjs', ['add', id], dir);
+  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir);
+  const { branch, worktree } = running.json;
+  writeFileSync(join(worktree, 'thing.mjs'), 'export const thing = 1;\n');
+  execFileSync('git', ['add', '-A'], { cwd: worktree, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-qm', `ticket ${id}`], { cwd: worktree, stdio: 'ignore' });
+
+  await t.test('the branch comes from the ticket\'s own queue item, and the diff goes on the verdict', () => {
+    const r = run('verify.mjs', [
+      'record', id, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1',
+      '--gate', 'green', '--sha', 'abc1234',
+    ], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.diff, /^[0-9a-f]{40}$/);
+    const log = run('verify.mjs', ['show', id], dir);
+    assert.match(log.json.verdicts.join('\n'), new RegExp(`\\*\\*Diff:\\*\\* ${r.json.diff}`));
+    // The sha stays where it was: it is the tree the gate ran on, not the binding.
+    assert.match(log.json.verdicts.join('\n'), /\*\*Gate:\*\*.*green at sha abc1234/);
+  });
+
+  await t.test('--branch names the branch when the ticket has no queue item to read it from', () => {
+    const other = run('tk.mjs', ['new', 'no-queue', '--title', 'Never queued', '--node', 'core', '--class', 'sonnet'], dir);
+    const noItem = run('verify.mjs', [
+      'record', other.json.id, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1',
+      '--gate', 'green', '--sha', 'abc1234',
+    ], dir);
+    assert.equal(noItem.code, 0, noItem.stderr);
+    assert.equal(noItem.json.diff, null);
+    const shown = run('verify.mjs', ['show', other.json.id], dir);
+    assert.match(shown.json.verdicts.join('\n'), /\*\*Diff:\*\* not recorded — this verdict is bound to its sha alone/);
+
+    const named = run('verify.mjs', [
+      'record', other.json.id, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1',
+      '--gate', 'green', '--sha', 'abc1234', '--branch', branch,
+    ], dir);
+    assert.equal(named.code, 0, named.stderr);
+    assert.match(named.json.diff, /^[0-9a-f]{40}$/);
   });
 });

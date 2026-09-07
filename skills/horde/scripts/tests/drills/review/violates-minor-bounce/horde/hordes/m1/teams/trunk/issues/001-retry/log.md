@@ -1,0 +1,2 @@
+- 2026-09-06T20:37:08.834Z key: author set to worker1
+- 2026-09-06T20:37:08.921Z review: core changes by owner-core — Minor: "last" would read better as "lastError"

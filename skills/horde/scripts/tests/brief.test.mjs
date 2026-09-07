@@ -1,8 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  makeRepo, rmRepo, run, initHorde, addNode,
+} from './helpers.mjs';
+
+const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 function writeRoster(dir, horde, entries) {
   const path = join(dir, '.horde', 'hordes', horde, 'roster.json');
@@ -26,12 +32,21 @@ function seedTicket(dir, horde, team, id, {
   writeFileSync(queuePath, JSON.stringify(existing, null, 2));
 }
 
+// A component in the real graph, with the charter the horde seeds beside it — `node.mjs charter
+// edit` with nothing on stdin writes the template, which is what a brief then quotes.
+function seedNode(dir, node, mapping, ports) {
+  addNode(dir, node, ports ? { mapping, ports } : { mapping });
+  execFileSync('node', [join(SCRIPTS_DIR, 'node.mjs'), 'charter', 'edit', node, '--json'], {
+    cwd: dir, input: '', encoding: 'utf8',
+  });
+}
+
 test('brief.mjs: renders every role from a seeded charter/ticket/queue/roster', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
 
-  run('node.mjs', ['new', 'nodeA', '--boundary', 'src/a/**'], dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
 
   const charterPath = join(dir, '.horde', 'hordes', 'mission1', 'charter.md');
   const charter = readFileSync(charterPath, 'utf8');
@@ -67,7 +82,7 @@ test('brief.mjs: renders every role from a seeded charter/ticket/queue/roster', 
   });
 
   await t.test('owner — leaseScope falls back to the default rule for a node the charter never names', () => {
-    run('node.mjs', ['new', 'nodeB', '--boundary', 'src/b/**'], dir);
+    seedNode(dir, 'nodeB', ['src/b/**']);
     const r = run('brief.mjs', ['owner', 'nodeB', '--name', 'mission1-owner-nodeA-1'], dir);
     assert.equal(r.code, 0);
     assert.match(r.json.brief, /mission when the node has three or more tickets, wave otherwise/);
@@ -140,11 +155,48 @@ test('brief.mjs: renders every role from a seeded charter/ticket/queue/roster', 
   });
 });
 
+test('brief.mjs worker --takeover: renders the prior worker\'s log and how many times it was attempted', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
+
+  const ticket = run('tk.mjs', ['new', 'takeover-thing', '--title', 'Needs a takeover', '--node', 'nodeA', '--class', 'sonnet'], dir);
+  const id = ticket.json.id;
+  const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
+  const q = JSON.parse(readFileSync(queuePath, 'utf8'));
+  q.items.push({
+    ticket: id, state: 'running', class: 'sonnet', branch: 'mission1/t-001', worktree: '.horde/worktrees/mission1/t-001', dependsOn: [], agent: null, sha: null, notes: [],
+  });
+  writeFileSync(queuePath, JSON.stringify(q, null, 2));
+
+  for (let i = 1; i <= 4; i++) {
+    assert.equal(run('tk.mjs', ['status', id, 'changes', `attempt ${i}`], dir).code, 0);
+  }
+
+  await t.test('without --takeover, no takeover section is rendered', () => {
+    const r = run('brief.mjs', ['worker', id, '--name', 'mission1-worker-trunk-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.doesNotMatch(r.json.brief, /## Takeover/);
+  });
+
+  await t.test('with --takeover, the framing names the round count and reproduces the log', () => {
+    const r = run('brief.mjs', ['worker', id, '--name', 'mission1-worker-trunk-2', '--takeover'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.takeover, true);
+    assert.match(r.json.brief, /## Takeover/);
+    assert.match(r.json.brief, /A prior worker attempted this ticket 3 times; the ticket is yours now/);
+    assert.match(r.json.brief, /attempt 4/);
+    assert.match(r.json.brief, /round 4\/5/);
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
+});
+
 test('brief.mjs: refuses with the unfilled placeholder(s) rather than print "{{…}}"', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  run('node.mjs', ['new', 'nodeA', '--boundary', 'src/a/**'], dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
 
   // A malformed ticket with no "# id · title" header — ticketTitle can't be read from it.
   seedTicket(dir, 'mission1', 'trunk', '002', {
@@ -155,4 +207,163 @@ test('brief.mjs: refuses with the unfilled placeholder(s) rather than print "{{�
   assert.equal(r.code, 1);
   assert.match(r.stderr, /unfilled placeholder/);
   assert.match(r.stderr, /ticketTitle/);
+});
+
+test('brief.mjs: every role held to a discipline carries it under "## Law"', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
+  writeRoster(dir, 'mission1', [
+    { name: 'mission1-steward-trunk-1', role: 'steward', team: 'trunk', parent: null },
+  ]);
+  seedTicket(dir, 'mission1', 'trunk', '003', {
+    branch: 'mission1/t-003', worktree: '.horde/worktrees/mission1/t-003',
+  });
+
+  await t.test('worker — the tdd and debugging law, with their tables', () => {
+    const r = run('brief.mjs', ['worker', '003', '--name', 'mission1-worker-trunk-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, /\n## Law\n/);
+    assert.match(r.json.brief, /### Tests that can fail/);
+    assert.match(r.json.brief, /### Finding the cause before the fix/);
+    assert.match(r.json.brief, /\| What you will think \| What is true \|/);
+    assert.match(r.json.brief, /#### Red flags — stop/);
+    // the role file names its disciplines instead of repeating them
+    assert.match(r.json.brief, /held to two disciplines — \*\*tdd\*\* and \*\*debugging\*\*/);
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
+
+  await t.test('verifier — the verification and review law', () => {
+    const r = run('brief.mjs', ['verifier', '003', '--name', 'mission1-verifier-trunk-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, /### Evidence before the claim/);
+    assert.match(r.json.brief, /### Findings with a severity/);
+    assert.match(r.json.brief, /no key without the output of the command that proves it/);
+  });
+
+  await t.test('owner — the review law and nothing else', () => {
+    const r = run('brief.mjs', ['owner', 'nodeA', '--name', 'mission1-owner-nodeA-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, /### Findings with a severity/);
+    assert.doesNotMatch(r.json.brief, /### Tests that can fail/);
+  });
+
+  await t.test("architect — framing's checklist, not the whole of framing", () => {
+    const r = run('brief.mjs', ['architect', '--name', 'mission1-architect-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, /### Framing before anything runs — Checklist/);
+    assert.match(r.json.brief, /Approve unless a gap would produce the wrong plan\./);
+    assert.doesNotMatch(r.json.brief, /One question per message/);
+  });
+
+  await t.test('steward — no discipline of its own, so no Law section', () => {
+    const r = run('brief.mjs', ['steward', 'trunk', '--name', 'mission1-steward-trunk-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.doesNotMatch(r.json.brief, /\n## Law\n/);
+  });
+});
+
+test('brief.mjs verifier --delta: a scoped re-review names the delta and the findings still open', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
+
+  seedTicket(dir, 'mission1', 'trunk', '001', {
+    branch: 'mission1/t-001', worktree: '.horde/worktrees/mission1/t-001',
+  });
+
+  // The record the last look at this ticket left behind: a verdict that failed on something, and
+  // the node owner's own changes-request.
+  const issueDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-sample-ticket');
+  writeFileSync(join(issueDir, 'log.md'), [
+    '- 2026-09-06T10:00:00.000Z review: nodeA changes by owner1 — the empty list is not handled',
+    '',
+    '## Verdict · 001 · 2026-09-06 · by verifier1 (sonnet)',
+    '',
+    '**Result:** not-reproduced',
+    '',
+    '**What failed, if anything** (what, not what to do):',
+    '',
+    'the second acceptance line renders nothing on a cold cache',
+    '',
+  ].join('\n'));
+
+  const deltaPath = join('.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-sample-ticket', 'rereview-aaaaaaa..bbbbbbb.diff');
+  writeFileSync(join(dir, deltaPath), '1:  aaaaaaa = 1:  bbbbbbb ticket 001\n');
+
+  await t.test('the scoped brief names the file to read and every finding to answer', () => {
+    const r = run('brief.mjs', ['verifier', '001', '--delta', deltaPath, '--name', 'mission1-verifier-trunk-2'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.delta, deltaPath);
+    assert.match(r.json.brief, /Scoped re-review/);
+    assert.match(r.json.brief, new RegExp(deltaPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.match(r.json.brief, /the second acceptance line renders nothing on a cold cache/);
+    assert.match(r.json.brief, /the empty list is not handled \(nodeA, asked by owner1\)/);
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
+
+  await t.test('without --delta the same brief is the full verification', () => {
+    const r = run('brief.mjs', ['verifier', '001', '--name', 'mission1-verifier-trunk-2'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.delta, null);
+    assert.match(r.json.brief, /Full verification/);
+    assert.doesNotMatch(r.json.brief, /Scoped re-review\.\*\*/);
+    assert.doesNotMatch(r.json.brief, /rereview-aaaaaaa/);
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
+
+  await t.test('a --delta naming no readable file is refused, not rendered around', () => {
+    const r = run('brief.mjs', ['verifier', '001', '--delta', 'nowhere/rereview-1111111..2222222.diff', '--name', 'mission1-verifier-trunk-2'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--delta names no readable file/);
+  });
+});
+
+// A worker whose ticket was started from an unmerged dependency's tip is told to merge that
+// dependency's branch, not the team's — merging the team branch would pull in what the parent has
+// not landed and change the very diff the ticket's keys are bound to. The brief is rendered from
+// real queue state, made by the real command, because what is being tested is that the first
+// action a worker takes matches where the branch actually is.
+test('brief.mjs: a stacked ticket\'s brief names the branch it was started from, and says so', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'feature', ['lib.mjs']);
+
+  const first = run('tk.mjs', ['new', 'first-link', '--title', 'First link', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
+  const second = run('tk.mjs', ['new', 'second-link', '--title', 'Second link', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
+  run('queue.mjs', ['add', first], dir);
+  run('queue.mjs', ['add', second, '--depends', first], dir);
+  const parent = run('queue.mjs', ['set', first, 'running', '--agent', 'worker1'], dir).json;
+  execFileSync('git', ['-C', parent.worktree, 'commit', '--allow-empty', '-qm', 'the first link'], { encoding: 'utf8' });
+  const stacked = run('queue.mjs', ['set', second, 'running', '--agent', 'worker2', '--on', first], dir);
+  assert.equal(stacked.code, 0, stacked.stderr);
+
+  await t.test('the worker merges the parent ticket\'s branch and is told which ticket it belongs to', () => {
+    const r = run('brief.mjs', ['worker', second, '--name', 'mission1-worker-trunk-2'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, new RegExp(`git merge mission1/t-${first}`));
+    assert.doesNotMatch(r.json.brief, /git merge mission1\/trunk/);
+    assert.match(r.json.brief, /\*\*This ticket is stacked\.\*\*/);
+    assert.match(r.json.brief, new RegExp(`Ticket ${first} has not merged yet`));
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
+
+  await t.test('the verifier is held to the same base', () => {
+    const r = run('brief.mjs', ['verifier', second, '--name', 'mission1-verifier-trunk-2'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, new RegExp(`is-ancestor mission1/t-${first} HEAD`));
+    assert.match(r.json.brief, new RegExp(`against \`mission1/t-${first}\``));
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
+
+  await t.test('an unstacked ticket\'s brief is the team branch, with no note at all', () => {
+    const r = run('brief.mjs', ['worker', first, '--name', 'mission1-worker-trunk-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, /git merge mission1\/trunk/);
+    assert.doesNotMatch(r.json.brief, /This ticket is stacked/);
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
 });

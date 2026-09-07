@@ -1,0 +1,30 @@
+{
+  "base": "develop",
+  "gates": {
+    "commit": "",
+    "team": "",
+    "trunk": ""
+  },
+  "ygCommand": null,
+  "grainCommand": null,
+  "testGlobs": [
+    "**/*.test.mjs"
+  ],
+  "keyContext": 3,
+  "protectedPaths": [],
+  "liveness": {
+    "stewardMinutes": 60,
+    "ownerMinutes": 45
+  },
+  "classes": {
+    "haiku": 1,
+    "sonnet": 3,
+    "opus": 10,
+    "fable": 30
+  },
+  "parallelism": 6,
+  "fixRounds": {
+    "resume": 3,
+    "fresh": 2
+  }
+}

@@ -21,7 +21,7 @@ import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde,
+  makeRepo, rmRepo, run, initHorde, addNode, requireYg,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -44,9 +44,12 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
   t.after(() => rmRepo(dir));
 
   await t.test('1. horde init', () => {
-    const init = run('horde.mjs', ['init', 'pilot', '--base', 'develop', '--title', 'Pilot', '--graph-dir', 'architecture'], dir);
+    const init = run('horde.mjs', ['init', 'pilot', '--base', 'develop', '--title', 'Pilot', '--yg', requireYg(), '--test-globs', '**/*.test.*'], dir);
     assert.equal(init.code, 0, init.stderr);
     assert.equal(existsSync(join(dir, '.horde')), true);
+    // horde-requires-yggdrasil: a repository with no graph gets one, made by the real CLI.
+    assert.equal(existsSync(join(dir, '.yggdrasil', 'yg-architecture.yaml')), true);
+    assert.equal(init.json.graph.created, true);
     assert.equal(readFileSync(join(dir, '.horde', '.gitignore'), 'utf8').trim(), '*');
     assert.match(git(['branch', '--list', 'pilot/trunk'], dir), /pilot\/trunk/);
     const charter = readFileSync(join(dir, '.horde', 'hordes', 'pilot', 'charter.md'), 'utf8');
@@ -57,21 +60,23 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
   // source path — premerge.mjs's scope check (item 3) treats a test file like any other diff
   // file, with no built-in exception for config.testGlobs; a node's tests live in its boundary
   // the same way premerge.test.mjs's own fixtures always pair a source glob with its test glob.
-  await t.test('2. nodes, charter, contract', () => {
-    const nodeModel = run('node.mjs', ['new', 'model', '--boundary', 'src/model/**,tests/hook.test.mjs'], dir);
-    assert.equal(nodeModel.code, 0, nodeModel.stderr);
-    const nodeUi = run('node.mjs', ['new', 'ui', '--boundary', 'src/ui/**'], dir);
-    assert.equal(nodeUi.code, 0, nodeUi.stderr);
+  await t.test('2. components, charter, a port proposed and approved', () => {
+    addNode(dir, 'model', { mapping: ['src/model/**', 'tests/hook.test.mjs'] });
+    addNode(dir, 'ui', { mapping: ['src/ui/**'], relations: [{ target: 'model', type: 'uses' }] });
 
     const edited = charterEdit(dir, 'model', '# Node · model\n\nOwns the interview state hook.\n');
     assert.ok(edited.bytes > 0);
-    assert.match(readFileSync(join(dir, 'architecture', 'nodes', 'model', 'charter.md'), 'utf8'), /Owns the interview state hook/);
+    assert.match(readFileSync(join(dir, '.yggdrasil', 'model', 'model', 'charter.md'), 'utf8'), /Owns the interview state hook/);
 
-    const contract = run('node.mjs', ['contract', 'propose', 'model', 'ui', '--as', 'tests/contract.test.mjs', 'hook surface'], dir);
-    assert.equal(contract.code, 0, contract.stderr);
-    const contractApprove = run('node.mjs', ['contract', 'approve', contract.json.id, '--by', 'architect'], dir);
-    assert.equal(contractApprove.code, 0, contractApprove.stderr);
-    assert.equal(contractApprove.json.status, 'approved');
+    // port-is-contract: the contract is a port on the component, proposed at a version and with
+    // the test that is its promise; the architect files it into the graph.
+    const port = run('node.mjs', ['contract', 'propose', 'model', 'hook-surface', 'the hook the ui reads', '--as', 'tests/contract.test.mjs', '--by', 'owner-model'], dir);
+    assert.equal(port.code, 0, port.stderr);
+    assert.equal(port.json.version, 1);
+    const approved = run('node.mjs', ['contract', 'approve', port.json.id, '--by', 'architect'], dir);
+    assert.equal(approved.code, 0, approved.stderr);
+    assert.equal(approved.json.status, 'approved');
+    assert.ok(approved.json.filing.some((f) => f.includes('yg-node.yaml')), 'the approval names the edit the architect makes');
   });
 
   let stewardName;

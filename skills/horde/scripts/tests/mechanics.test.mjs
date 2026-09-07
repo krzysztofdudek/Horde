@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde,
+  makeRepo, rmRepo, run, initHorde, addNode,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -140,7 +140,7 @@ test('sub-team merge-up: alfa off trunk, ticket lifecycle, wave close, premerge 
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir, 'mission1');
-  run('node.mjs', ['new', 'feature', '--boundary', 'feature-alfa.mjs,feature-alfa-2.mjs'], dir);
+  addNode(dir, 'feature', { mapping: ['feature-alfa.mjs', 'feature-alfa-2.mjs'] });
 
   await t.test('roster spawn steward --team alfa --parent trunk creates the branch, directory and running team: item', () => {
     const spawn = run('roster.mjs', ['spawn', 'steward', '--team', 'alfa', '--parent', 'trunk', '--class', 'sonnet'], dir);
@@ -204,7 +204,7 @@ test('sub-team merge-up: alfa off trunk, ticket lifecycle, wave close, premerge 
     assert.equal(landed.json.state, 'landed');
   });
 
-  await t.test('premerge mission1/alfa --level team --no-gate: all six checks ✓', () => {
+  await t.test('premerge mission1/alfa --level team --no-gate: every check ✓', () => {
     const pm = run('premerge.mjs', ['mission1/alfa', '--level', 'team', '--no-gate'], dir);
     assert.equal(pm.code, 0, JSON.stringify(pm.json));
     assert.equal(pm.json.ok, true);
@@ -551,19 +551,8 @@ test('owner reclaim: the lease is reclaimed, not the name, and a key remains a f
 });
 
 // ---------------------------------------------------------------------------------------------
-// 10. Yggdrasil mode, read-only
+// 10. The graph, read through the CLI and never written by the horde
 // ---------------------------------------------------------------------------------------------
-
-// Modelled on this repository's own .yggdrasil/model/frontend/yg-node.yaml shape: a scalar
-// name/type/description header, then a mapping: dash-list — the minimal shape node.mjs's own
-// parseYgNodeYaml understands (see tests/node.test.mjs's own writeYggdrasilNode fixture writer).
-function writeYggdrasilNode(dir, node, mapping) {
-  const path = join(dir, '.yggdrasil', 'model', node, 'yg-node.yaml');
-  mkdirSync(join(dir, '.yggdrasil', 'model', node), { recursive: true });
-  const lines = [`name: ${node}`, 'type: domain', `description: "fixture node ${node}"`, '', 'mapping:'];
-  for (const m of mapping) lines.push(`  - ${m}`);
-  writeFileSync(path, lines.join('\n') + '\n');
-}
 
 function nodeCharterEdit(dir, node, stdin) {
   const out = execFileSync('node', [join(SCRIPTS_DIR, 'node.mjs'), 'charter', 'edit', node, '--json'], {
@@ -572,24 +561,20 @@ function nodeCharterEdit(dir, node, stdin) {
   return JSON.parse(out);
 }
 
-test('yggdrasil mode: node.mjs is read-only against .yggdrasil/model fixtures', async (t) => {
+test('the graph: node.mjs reads it through the CLI and writes nothing into it', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  writeYggdrasilNode(dir, 'core', ['packages/core/**']);
-  writeYggdrasilNode(dir, 'frontend', ['apps/frontend/**']);
-  initHorde(dir); // auto-detects nodeSource: "yggdrasil" because .yggdrasil/ now exists
+  initHorde(dir);
+  addNode(dir, 'core', { mapping: ['packages/core/**'] });
+  addNode(dir, 'frontend', { mapping: ['apps/frontend/**'] });
 
-  const cfgMode = run('horde.mjs', ['config', 'get', 'nodeSource'], dir);
-  assert.equal(cfgMode.json.value, 'yggdrasil');
-
-  await t.test('bind lists both fixture node ids', () => {
+  await t.test('bind lists both components', () => {
     const r = run('node.mjs', ['bind'], dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.mode, 'yggdrasil');
     assert.deepEqual(r.json.nodes.sort(), ['core', 'frontend']);
   });
 
-  await t.test('map shows a node touched by a roster owner', () => {
+  await t.test('map shows a component an owner in the roster holds', () => {
     const spawn = run('roster.mjs', ['spawn', 'owner', '--node', 'core', '--class', 'sonnet'], dir);
     assert.equal(spawn.code, 0, spawn.stderr);
     const map = run('node.mjs', ['map'], dir);
@@ -599,22 +584,14 @@ test('yggdrasil mode: node.mjs is read-only against .yggdrasil/model fixtures', 
     assert.equal(row.owner, spawn.json.name);
   });
 
-  await t.test('show reads boundary from mapping:, writes nothing', () => {
+  await t.test('show reads the boundary from the component document, writes nothing', () => {
     const r = run('node.mjs', ['show', 'frontend'], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual(r.json.boundary, ['apps/frontend/**']);
-    assert.equal(existsSync(join(dir, '.yggdrasil', 'model', 'frontend', 'node.json')), false);
+    assert.equal(existsSync(join(dir, '.yggdrasil', 'model', 'frontend', 'charter.md')), false);
   });
 
-  await t.test('new prints the yg filing commands and creates no files', () => {
-    const r = run('node.mjs', ['new', 'newnode', '--boundary', 'apps/newnode/**'], dir, { json: false });
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /yg-node\.yaml/);
-    assert.match(r.stdout, /explicit confirmation/);
-    assert.equal(existsSync(join(dir, '.yggdrasil', 'model', 'newnode')), false);
-  });
-
-  await t.test('charter edit writes charter.md beside the yaml', () => {
+  await t.test('charter edit writes charter.md beside the component file', () => {
     const edited = nodeCharterEdit(dir, 'core', '# Node · core\n\nOwns the core package.\n');
     assert.ok(edited.bytes > 0);
     const charterPath = join(dir, '.yggdrasil', 'model', 'core', 'charter.md');
@@ -622,11 +599,11 @@ test('yggdrasil mode: node.mjs is read-only against .yggdrasil/model fixtures', 
     assert.match(readFileSync(charterPath, 'utf8'), /Owns the core package/);
   });
 
-  await t.test('log prints the yg log add command without running it (no --run)', () => {
+  await t.test('log prints the graph\'s own command without running it (no --run)', () => {
     const r = run('node.mjs', ['log', 'core', 'refactor complete'], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.ran, undefined);
-    assert.match(r.json.command, /^yg log add --node core --reason/);
+    assert.match(r.json.command, /log add --node core --reason/);
     assert.equal(existsSync(join(dir, '.yggdrasil', 'model', 'core', 'log.md')), false);
   });
 });
@@ -708,7 +685,7 @@ test('protected path: premerge scope check (item 3) fails a branch that touches 
   const setProtected = run('horde.mjs', ['config', 'set', 'protectedPaths', 'package.json'], dir);
   assert.equal(setProtected.code, 0, setProtected.stderr);
 
-  run('node.mjs', ['new', 'x', '--boundary', 'package.json'], dir);
+  addNode(dir, 'x', { mapping: ['package.json'] });
 
   const ticket = run('tk.mjs', ['new', 'touches-protected', '--title', 'Touches protected', '--node', 'x', '--class', 'sonnet'], dir);
   const id = ticket.json.id;

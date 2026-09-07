@@ -20,6 +20,8 @@ apply, and anything the chairman said that narrows the solution space.
 
 The mission is done when every item below is green. Each item is something a verifier can reproduce:
 a test, a scenario file, a film, a screenshot, a measurement with a threshold. Never an adjective.
+Every row gets an id — E1, E2, E3 … — because that is how a ticket says which evidence it earns
+(`**Evidence:** E2, E5`), and how the plan names the rows no ticket has taken.
 
 | id | evidence | node | reproduced by |
 |---|---|---|---|
@@ -42,6 +44,19 @@ And these go on to the chairman:
 
 - a charter change · a spent cost limit · a boundary claim · anything the director is unsure of
 - …
+
+## Quality
+
+**Policy:** {{quality | autonomous}}
+
+`autonomous` — wherever this horde works it also leaves the architecture stronger, without asking:
+rules whose evidence has earned a higher status are raised, and improvements the code itself
+suggests become their own low-priority tickets alongside the mission's work. `only-the-work` — none
+of that runs; the horde does what the tickets say and nothing else.
+
+Neither setting lets anything be made weaker. Lowering a rule's status, retiring one, waiving one or
+moving a review date is the chairman's call under both, and every wave close lists what was raised
+so it can be undone.
 
 ## Cost
 

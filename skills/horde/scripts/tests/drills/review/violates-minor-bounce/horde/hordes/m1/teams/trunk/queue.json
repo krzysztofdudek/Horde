@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "ticket": "001",
+      "state": "running",
+      "class": "sonnet",
+      "branch": "m1/t-001",
+      "worktree": "/tmp/horde-drill-BPWt3W/.horde/worktrees/m1/t-001",
+      "dependsOn": [],
+      "stackedOn": null,
+      "agent": "worker1",
+      "sha": null,
+      "notes": []
+    }
+  ]
+}

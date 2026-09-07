@@ -2,7 +2,9 @@
 
 **Result:** {{reproduced | not-reproduced | stale | out-of-scope}}
 
-**Base check:** rooted at `{{teamBranch}}` tip — {{yes | no}}
+**Flake:** {{flake | not flaky}}
+
+**Base check:** rooted at `{{parentBranch}}` tip — {{yes | no}}
 
 **Evidence reproduced:**
 
@@ -13,6 +15,8 @@
 **Revert test:** new tests on the base — {{failed as expected | passed (proves nothing)}}
 
 **Gate:** `{{gateCommand}}` — {{green | red: …}}
+
+**Diff:** {{patchId | not recorded — this verdict is bound to its sha alone}}
 
 **Scope:** diff inside {{node}} — {{yes | no: …}} · protected paths — {{untouched | touched: …}}
 
