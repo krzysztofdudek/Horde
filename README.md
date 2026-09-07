@@ -23,6 +23,8 @@ Run both, then `/reload-plugins` to activate it in this session (or restart Clau
 npm i -g @chrisdudek/yg
 ```
 
+Horde 0.2.0 needs a Yggdrasil newer than 5.8.0, the first release that answers with the documents Horde reads the graph through; until it is out, point the horde at a build of Yggdrasil's development branch with `horde.mjs config set ygCommand "node path/to/bin.js"`. An older Yggdrasil is refused with that instruction, never read around.
+
 If your repository already has a graph, Horde reads it. If it doesn't, `horde init` makes one for you before anything else happens. With [Grain](https://github.com/krzysztofdudek/Grain) installed as well, the graph it makes is read out of your own code — the components you actually have and the rules you already follow — and it tells you up front how much of the code you have today those rules would refuse. Without Yggdrasil, Horde stops and says so.
 
 **Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams)**, turned on before you hand over a mission. It's off by default and still experimental. Add this to your `settings.json`:
@@ -209,7 +211,7 @@ Four tools, one thesis: **make an AI coding agent prove correctness, stage by st
 | **[Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil)** | code → architecture | Every change satisfies the rules that govern it, checked before the agent moves on. |
 | **[Researcher](https://github.com/krzysztofdudek/ResearcherSkill)** | code → measured result | Point it at a metric and it runs experiments, hypotheses kept and discarded. |
 
-Two more sit alongside the chain rather than inside it. **Horde** (this one) doesn't own a stage, it's what you add when a mission needs more than one agent to move through all four at once, holding every agent it raises to the same standards. **[Grain](https://github.com/krzysztofdudek/Grain)** reads the conventions a codebase actually practices instead of the ones someone declared, the same seam as Yggdrasil from the other side. Paused since 2026-09-02: the engine works, but the question that decides whether it's worth using, does it change what an agent ships, came back not demonstrated.
+Two more sit alongside the chain rather than inside it, and they stack. **[Grain](https://github.com/krzysztofdudek/Grain)** reads a codebase's own code and history and writes the first architecture graph for it, then keeps telling Yggdrasil where practice has drifted from what the graph declares; it needs Yggdrasil and nothing else. **Horde** (this one) sits on top of both: it needs Yggdrasil, uses Grain when it is installed, and is what you add when a mission needs more than one agent to move through all four stages at once, holding every agent it raises to the same standards. Each layer works without the ones above it, and none of them knows the ones above exist.
 
 ## Acknowledgements
 

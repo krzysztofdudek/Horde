@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-07
+
+Experimental. This version needs a Yggdrasil newer than 5.8.0 — the first one that answers with the documents Horde now reads the graph through. Until that release is out, point the horde at a build of Yggdrasil's development branch: `horde.mjs config set ygCommand "node path/to/bin.js"`. An older Yggdrasil is refused with that instruction, never read around.
+
 ### Added
 - Horde now needs Yggdrasil, and sets it up for you. Starting a horde on a repository with no architecture graph creates one first; with Grain installed as well, that first graph is read out of your own code — the components you actually have and the rules you already follow — and you are told up front how much of the code you have today those rules would refuse. Without Yggdrasil it stops and says what to install. The old fallback, a second and weaker map the horde kept for itself, is gone: there is one architecture, the horde reads it and never writes it behind your back, and how current it is has one answer instead of two.
 - A promise between two parts of the system is now a real thing in the architecture rather than a note kept on the side, and it carries a version and the test that proves it. Proposing one — or raising its version — names that test and tells you who is still reading the old version; the architect approves it and is handed the exact change to make. Listing them shows what the architecture actually declares, not what somebody wrote down once.
@@ -56,4 +60,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - First version. A prototype, expect rough edges.
 
+[Unreleased]: https://github.com/krzysztofdudek/Horde/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/krzysztofdudek/Horde/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/krzysztofdudek/Horde/releases/tag/v0.1.0
