@@ -191,18 +191,23 @@ function withAgentId(horde, name) {
   return entry && entry.agentId ? `${name} (agent id ${entry.agentId})` : name;
 }
 
-// reportsTo — a worker/verifier reports to its own team's steward; an owner (node-scoped, not
-// team-scoped) reports to the trunk steward regardless of which team's ticket touches its node;
-// a steward/architect/auditor/counsel reports to the director, whose session name is always the
-// literal "main" — the name this harness gives the spawning session.
-function reportsToFor(role, horde, { team } = {}) {
-  let name = 'main';
+// reportsTo — always the agent's own parent, never anyone else: an agent is addressable by the one
+// that spawned it, and a brief that named anybody else would be telling it to reach a session it
+// has no way to reach. `spawnedBy`, recorded by roster.mjs at the spawn, is that parent. Without an
+// entry to read it from (a brief rendered before the name was reserved), it falls back to the same
+// shape by role: a worker or verifier to its own team's steward, an owner to the trunk steward, and
+// a steward, architect, auditor or counsel to the director, whose session name is always the
+// literal "main" — the name this harness gives the top-level session.
+function reportsToFor(role, horde, { team, name } = {}) {
+  const entry = name ? findRosterEntry(horde, name) : null;
+  if (entry && entry.spawnedBy) return withAgentId(horde, entry.spawnedBy);
+  let fallback = 'main';
   if (role === 'worker' || role === 'verifier') {
-    name = stewardFor(horde, team) || stewardFor(horde, 'trunk') || 'main';
+    fallback = stewardFor(horde, team) || stewardFor(horde, 'trunk') || 'main';
   } else if (role === 'owner') {
-    name = stewardFor(horde, 'trunk') || 'main';
+    fallback = stewardFor(horde, 'trunk') || 'main';
   }
-  return withAgentId(horde, name);
+  return withAgentId(horde, fallback);
 }
 
 // ---- tickets (found by walking every team, since a ticket's team isn't known up front) --------
@@ -419,7 +424,7 @@ function cmdSteward(horde, root, cfg, positional, flags) {
     charterPath: charterPath(root, horde),
     parallelism: cfg.parallelism,
     parentTeam: (entry && entry.parent) || 'trunk',
-    reportsTo: reportsToFor('steward', horde),
+    reportsTo: reportsToFor('steward', horde, { name }),
     fixRoundsResume: fixRounds.resume,
     fixRoundsFresh: fixRounds.fresh,
   };
@@ -436,7 +441,7 @@ function cmdOwner(horde, root, cfg, positional, flags) {
     name, horde, node,
     charterPath: charterPath(root, horde),
     leaseScope: leaseScopeFor(horde, node),
-    reportsTo: reportsToFor('owner', horde),
+    reportsTo: reportsToFor('owner', horde, { name }),
   };
   const brief = renderRole('owner', vars);
   emit({ role: 'owner', node, name, brief }, flags, () => brief);
@@ -448,7 +453,7 @@ function cmdArchitect(horde, root, cfg, flags) {
     repoRoot: root,
     name, horde,
     charterPath: charterPath(root, horde),
-    reportsTo: reportsToFor('architect', horde),
+    reportsTo: reportsToFor('architect', horde, { name }),
   };
   const brief = renderRole('architect', vars);
   emit({ role: 'architect', name, brief }, flags, () => brief);
@@ -497,7 +502,7 @@ function cmdWorker(horde, root, cfg, positional, flags) {
     nodePorts: nodesText(root, cfg, nodes, readNodePortsText, '(this ticket names no component the graph knows)'),
     protectedPaths: (cfg.protectedPaths || []).join(', ') || '(none)',
     issueDir: `teams/${t.team}/issues/${t.issueDirName}`,
-    reportsTo: reportsToFor('worker', horde, { team: t.team }),
+    reportsTo: reportsToFor('worker', horde, { team: t.team, name }),
     takeoverBlock: flags.takeover ? takeoverBlockFor(horde, t) : '',
   };
   const brief = renderRole('worker', vars);
@@ -566,7 +571,7 @@ function cmdVerifier(horde, root, cfg, positional, flags) {
     parentBranch: parent.branch,
     gateCommand: cfg.gates && cfg.gates.team,
     nodePorts: nodesText(root, cfg, nodes, readNodePortsText, '(this ticket names no component the graph knows)'),
-    reportsTo: reportsToFor('verifier', horde, { team: t.team }),
+    reportsTo: reportsToFor('verifier', horde, { team: t.team, name }),
     scope: verdictScope(root, t, flags.delta, parent.branch),
     proseVerdicts: proseVerdictsFor(cfg, t.queueItem.worktree, name),
   };
@@ -591,7 +596,7 @@ function cmdAuditor(horde, root, cfg, positional, flags) {
     wave: flags.wave,
     ticketId: t.id, ticketTitle: title,
     sha,
-    reportsTo: reportsToFor('auditor', horde),
+    reportsTo: reportsToFor('auditor', horde, { name }),
   };
   const brief = renderRole('auditor', vars);
   emit({ role: 'auditor', ticket: rawId, wave: flags.wave, name, brief }, flags, () => brief);
@@ -610,7 +615,7 @@ function cmdCounsel(horde, root, cfg, flags) {
     question: flags.question,
     charterPath: charterPath(root, horde),
     attachments,
-    reportsTo: reportsToFor('counsel', horde),
+    reportsTo: reportsToFor('counsel', horde, { name }),
   };
   const brief = renderRole('counsel', vars);
   emit({ role: 'counsel', name, brief }, flags, () => brief);

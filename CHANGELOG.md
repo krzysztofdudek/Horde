@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A mission that grows a second team no longer ends up with one nobody can reach. Your own session raises every long-lived agent; a team's manager that wants a second team asks for it instead, and you are handed the exact steps to start it. Everyone answers to whoever raised them, and anything meant for someone further away is written down and passed up, so nothing is sent to an address that cannot answer.
+
 ## [0.2.0] - 2026-09-07
 
 Experimental. This version needs a Yggdrasil newer than 5.8.0 — the first one that answers with the documents Horde now reads the graph through. Until that release is out, point the horde at a build of Yggdrasil's development branch: `horde.mjs config set ygCommand "node path/to/bin.js"`. An older Yggdrasil is refused with that instruction, never read around.

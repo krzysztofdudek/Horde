@@ -14,6 +14,14 @@
 // (cut from the parent's branch tip, short name only — hierarchy lives in this roster, never in
 // a branch name), its team directory, and a "team:<t>" item already running in the parent's
 // queue, since the branch it stands for exists from this same call.
+//
+// Every entry also records which of the two kinds of agent it is, and who spawned it. A teammate
+// is created by the top-level session alone — a teammate can spawn subagents, and those can spawn
+// their own, but never another teammate — so the stewards (trunk and every sub-team) and the
+// architect are the director's teammates, while owners, workers and verifiers are subagents of the
+// steward that spawned them, and the auditor and counsel subagents of the director. A subagent is
+// resumed and reclaimed by its parent and by nobody else, which is what `spawnedBy` records; a
+// teammate is replaced by the director, and the fresh one rebuilds its subtree from the files.
 
 import {
   existsSync, mkdirSync, readdirSync, statSync,
@@ -32,7 +40,7 @@ const USAGE = `usage: roster.mjs <command> [options]
 
 commands:
   spawn <role> [--team t | --node n] [--parent p] --class c [--ticket NNN] [--agent-id id]
-      [--horde h]
+      [--kind teammate|subagent] [--spawned-by name] [--horde h]
       reserves the next unique name "<horde>-<role>-<team|node|mission>-<N>", books the run
       against cost.json, and prints the name. "t" is always the team's short leaf name — unique
       per horde, refused if another team already claims it under a different parent. For
@@ -45,6 +53,11 @@ commands:
       it at "<hordeRoot>/worktrees/<horde>/<t>" on the team branch is created when missing and
       its path printed in the result; a reclaim leaves it in place for the successor to pick up.
       --agent-id records the Agent tool's own id for this run, when already known.
+      --kind defaults from the role — steward and architect are teammates, spawned by the director
+      alone; every other role is a subagent of whoever spawned it — and the other combination is
+      refused either way, because a teammate cannot create a teammate. --spawned-by names that
+      parent; without it, a teammate and the director's own one-shots (auditor, counsel) record
+      "main", and a subagent records the steward of its team.
   trace <name> [--agent-id id] [--horde h]
       updates lastTrace to now, and (since a trace is itself proof of life) revives a "dead"
       lease back to "active" — reclaimed and retired leases, being deliberate, are untouched.
@@ -62,9 +75,10 @@ commands:
       and counsel (one-shot roles) are never dead.
   reclaim <name> ["why"] [--lesson] [--by director] [--horde h]
       marks the lease reclaimed; the next spawn for the same team or node gets N+1. Appends
-      "why" to decisions.md as a lesson when --lesson is given (requires "why"). A mission-scoped
-      entry (architect, or anything spawned with neither --team nor --node) requires
-      --by director.
+      "why" to decisions.md as a lesson when --lesson is given (requires "why"). A parent
+      reclaims its own subagents; a teammate (any steward, the architect) is the director's to
+      reclaim and respawn, and requires --by director, as does any mission-scoped entry
+      (anything spawned with neither --team nor --node).
   stand-down <name> [--horde h]
       marks the entry retired.
   reconcile [--only-team t] [--horde h]
@@ -75,12 +89,28 @@ options: --json  --help`;
 
 function rosterPath(horde) { return hordePath(horde, 'roster.json'); }
 
+// The two kinds of agent, and the roles that can be each. A teammate is created by the top-level
+// session alone, so a steward — trunk or sub-team — and the architect are the director's; everyone
+// else is a subagent of whoever spawned it.
+const KINDS = ['teammate', 'subagent'];
+const TEAMMATE_ROLES = ['steward', 'architect'];
+// The roles the director itself spawns: its teammates, plus its own one-shots.
+const DIRECTOR_ROLES = ['steward', 'architect', 'auditor', 'counsel'];
+// The name this harness gives the top-level session, and so the parent of everything above.
+const DIRECTOR_NAME = 'main';
+
+// An entry's kind, for an entry written before the field existed too.
+function kindOf(entry) {
+  return entry.kind || (TEAMMATE_ROLES.includes(entry.role) ? 'teammate' : 'subagent');
+}
+
 function renderRoster(doc) {
   const entries = Array.isArray(doc.entries) ? doc.entries : [];
   const lines = ['# Roster', ''];
   if (entries.length === 0) lines.push('(none)');
   for (const e of entries) {
-    lines.push(`- ${e.name}  ${e.role}  ${e.team || e.node || 'mission'}  ${e.class}  lease=${e.lease}`);
+    const lineage = `${kindOf(e)} of ${e.spawnedBy || DIRECTOR_NAME}`;
+    lines.push(`- ${e.name}  ${e.role}  ${e.team || e.node || 'mission'}  ${e.class}  ${lineage}  lease=${e.lease}`);
   }
   return lines.join('\n');
 }
@@ -137,6 +167,42 @@ function rawTeamPath(horde, fullPath, ...parts) {
   return hordePath(horde, ...segments.flatMap((s) => ['teams', s]), ...parts);
 }
 
+// The steward of a team, preferring one whose lease is still active — who a subagent spawned into
+// that team reports to and is reclaimed by, when the caller did not name it with --spawned-by.
+function stewardNameFor(doc, team) {
+  const all = doc.entries.filter((e) => e.role === 'steward' && e.team === team);
+  const live = all.filter((e) => e.lease === 'active');
+  const pick = live.length ? live : all;
+  return pick.length ? pick[pick.length - 1].name : null;
+}
+
+// Which kind this spawn is, refusing the combination Agent Teams itself does not have: a teammate
+// is created by the top-level session alone, so a steward or an architect is never a subagent, and
+// no other role is ever a teammate — a steward that needs a sub-team proposes one to the director.
+function kindForSpawn(role, flags) {
+  const isTeammateRole = TEAMMATE_ROLES.includes(role);
+  if (flags.kind === undefined) return isTeammateRole ? 'teammate' : 'subagent';
+  if (typeof flags.kind !== 'string' || !KINDS.includes(flags.kind)) {
+    fail(`--kind must be one of: ${KINDS.join('|')}`);
+  }
+  if (isTeammateRole && flags.kind === 'subagent') {
+    fail(`a ${role} is a teammate, never a subagent — only the top-level session creates teammates, and a teammate cannot create one, so this spawn belongs to the director; a steward that needs a sub-team proposes it with escalate.mjs add "sub-team <name> for nodes …" --kind structure`);
+  }
+  if (!isTeammateRole && flags.kind === 'teammate') {
+    fail(`a ${role} is a subagent of whoever spawns it, never a teammate — the teammates are the stewards and the architect`);
+  }
+  return flags.kind;
+}
+
+// Who this spawn answers to: the name given, else the director for its own roles, else the steward
+// of the team the entry belongs to.
+function spawnedByFor(doc, role, flags) {
+  if (flags['spawned-by']) return String(flags['spawned-by']);
+  if (DIRECTOR_ROLES.includes(role)) return DIRECTOR_NAME;
+  const team = flags.team || flags.parent || 'trunk';
+  return stewardNameFor(doc, team) || stewardNameFor(doc, 'trunk') || DIRECTOR_NAME;
+}
+
 function bookCost(horde, run) {
   const path = hordePath(horde, 'cost.json');
   const doc = readJSON(path, { runs: [] });
@@ -159,6 +225,7 @@ function cmdSpawn(horde, positional, flags) {
   if (role === 'steward' && flags.team && flags.team !== 'trunk' && !flags.parent) {
     fail('spawn steward --team requires --parent <p> (unless --team trunk)');
   }
+  const kind = kindForSpawn(role, flags);
   // A worker or verifier is never staffed below its ticket's class: a short budget is the cost
   // escalation, an overloaded class is the waiting state — a quiet downgrade is neither.
   if ((role === 'worker' || role === 'verifier') && flags.ticket) {
@@ -188,6 +255,8 @@ function cmdSpawn(horde, positional, flags) {
   const entry = {
     name,
     role,
+    kind,
+    spawnedBy: spawnedByFor(doc, role, flags),
     class: flags.class,
     team: flags.team || null,
     node: flags.node || null,
@@ -276,7 +345,12 @@ function cmdSpawn(horde, positional, flags) {
   });
   save(horde, doc);
   emit({
-    name, team: teamPathCreated, worktree: worktreePath, agentId: entry.agentId,
+    name,
+    team: teamPathCreated,
+    worktree: worktreePath,
+    agentId: entry.agentId,
+    kind: entry.kind,
+    spawnedBy: entry.spawnedBy,
   }, flags, () => (worktreePath ? `${name}\nworktree: ${worktreePath}` : name));
 }
 
@@ -543,9 +617,15 @@ function cmdReclaim(horde, positional, flags) {
   const doc = load(horde);
   const entry = doc.entries.find((e) => e.name === name);
   if (!entry) fail(`no such roster entry: ${name}`);
-  // A mission-scoped entry (architect, or anything spawned with neither --team nor --node) has
-  // no steward or parent above it to reclaim it as a matter of course — only the director does,
-  // and says so explicitly, rather than any tool inferring it from who happens to be calling.
+  // A parent reclaims its own subagents as a matter of course. A teammate has no parent but the
+  // director — it is the director that spawned it and the director that spawns the successor,
+  // which then rebuilds its subtree from the files — so reclaiming one is said explicitly rather
+  // than inferred from who happens to be calling.
+  if (kindOf(entry) === 'teammate' && flags.by !== 'director') {
+    fail(`reclaiming a teammate (${entry.role}) requires --by director — the director spawns every teammate and replaces it`);
+  }
+  // Same for a mission-scoped entry (the auditor, counsel, or anything spawned with neither
+  // --team nor --node): there is no steward above it either.
   if (!entry.team && !entry.node && flags.by !== 'director') {
     fail(`reclaiming a mission-scope entry (${entry.role}) requires --by director`);
   }

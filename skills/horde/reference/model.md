@@ -46,19 +46,21 @@ cutting rule. The first cut of a graph is made with the user.
 
 ## Roles as functions of the graph
 
-| role | model | holds | decides | never |
-|---|---|---|---|---|
-| director | Fable or Opus (the user's session) | intent: charter, decision rights, boundary | the escalation list; charter; who audits | reads worker output; merges; dispatches tickets |
-| steward | Sonnet, long-lived, one per team branch | queue, journal, handoff, liveness of its team | scheduling, dispatch, mechanical verification, merge on its branch | judgement — escalates |
-| owner | Sonnet (Opus for a hard node), leased per mission or per wave as the charter says | the node's context: charter, contracts, log | the inside of the node; reviews every change in it; proposes tickets | contracts alone; the graph; reviewing its own ticket |
-| architect | Opus, cross-cutting, no node | coherence of the whole graph | approves or vetoes graph changes; files them into Yggdrasil | implementation |
-| worker | cheapest capable (Haiku with a checker, Sonnet with a spec) | one ticket, one worktree, one branch | implementation detail | contracts, decisions, other branches |
-| verifier | never the author; ideally another model; fresh context | the evidence | reproducible / not | fixing |
-| auditor | Opus, once per wave | one merged ticket, re-verified as the hub would | a process verdict | — |
-| counsel | Opus subagent (Fable only when the user names it) | one opinion on the director's question | nothing | implementation, scouting |
+| role | model | kind, and whose | holds | decides | never |
+|---|---|---|---|---|---|
+| director | Fable or Opus (the user's session) | the top-level session | intent: charter, decision rights, boundary | the escalation list; charter; who audits | reads worker output; merges; dispatches tickets |
+| steward | Sonnet, long-lived, one per team branch | teammate of the director — trunk and sub-team alike | queue, journal, handoff, liveness of its team | scheduling, dispatch, mechanical verification, merge on its branch | judgement — escalates; raising a sub-team |
+| owner | Sonnet (Opus for a hard node), leased per mission or per wave as the charter says | subagent of its steward | the node's context: charter, contracts, log | the inside of the node; reviews every change in it; proposes tickets | contracts alone; the graph; reviewing its own ticket |
+| architect | Opus, cross-cutting, no node | teammate of the director | coherence of the whole graph | approves or vetoes graph changes; files them into Yggdrasil | implementation |
+| worker | cheapest capable (Haiku with a checker, Sonnet with a spec) | subagent of its steward | one ticket, one worktree, one branch | implementation detail | contracts, decisions, other branches |
+| verifier | never the author; ideally another model; fresh context | subagent of its steward | the evidence | reproducible / not | fixing |
+| auditor | Opus, once per wave | subagent of the director | one merged ticket, re-verified as the hub would | a process verdict | — |
+| counsel | Opus (Fable only when the user names it) | subagent of the director | one opinion on the director's question | nothing | implementation, scouting |
 
-Depth is not configured; it follows the graph. A node with children and many tickets gets an owner who
-is a steward for its subtree. The same skill runs one level down: director : mission :: owner : node.
+Only the top-level session creates teammates; a teammate creates subagents, and a subagent answers to
+the agent that spawned it and to nobody else. Depth is not configured; it follows the graph. A node
+with children and many tickets gets an owner who is a steward for its subtree. The same skill runs one
+level down: director : mission :: owner : node.
 
 ## Context is the currency
 
@@ -72,7 +74,9 @@ graph — and reads nothing outside it:
 - verifier: the evidence and the acceptance criteria — never the author's reasoning.
 
 Briefs are rendered by a tool from these sets. Nobody gets the history. A steward is refreshed by
-respawn from files. The director reads only what comes up.
+respawn from files. The director reads only what comes up. The hierarchy also routes contact: a brief
+names one address, the agent's own parent, and anything meant for someone else travels as a file with
+a doorbell to that parent.
 
 ## Trust is manufactured in one place
 

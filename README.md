@@ -39,6 +39,8 @@ If your repository already has a graph, Horde reads it. If it doesn't, `horde in
 
 Without it, Claude Code never raises a steward that stays alive and addressable for the length of a mission, so the skill has nothing to direct. It also needs an interactive session; headless mode (`-p`) won't spawn a team at all.
 
+Your own session is what raises the long-lived agents — a steward per team and the architect — and everything else runs underneath them as their own helpers, so the number of agents alive alongside you stays small and every one of them is yours to replace.
+
 ---
 
 ## See it
