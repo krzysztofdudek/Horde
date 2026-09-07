@@ -139,12 +139,18 @@ test('escalate.mjs recurring: the third ruling of a kind on one node is a rule p
     assert.equal(group.count, 3);
     assert.deepEqual(group.escalations.map((e) => e.ticket), onCheckout);
     assert.match(group.rule, /contract on checkout: answered the same way 3 times/);
-    assert.equal(group.command, 'node ./vendor/yg.mjs log add --node checkout --reason "' + group.rule + '"');
+    assert.equal(
+      group.command,
+      'file the rule (.yggdrasil/aspects/<id>/yg-aspect.yaml, attached to checkout), then '
+      + 'node ./vendor/yg.mjs aspects log add --aspect <id> --reason "' + group.rule + '"'
+      + ' — its own log is where the reasoning belongs, not the node\'s',
+    );
 
     const human = run('escalate.mjs', ['recurring'], dir, { json: false });
     assert.match(human.stdout, /contract · node checkout — 3 rulings/);
-    assert.match(human.stdout, /file it: node \.\/vendor\/yg\.mjs log add --node checkout --reason/);
-    assert.match(human.stdout, /this tool proposes, it never files/);
+    assert.match(human.stdout, /file it: file the rule \(\.yggdrasil\/aspects\/<id>\/yg-aspect\.yaml, attached to checkout\)/);
+    assert.match(human.stdout, /node \.\/vendor\/yg\.mjs aspects log add --aspect <id> --reason/);
+    assert.match(human.stdout, /The architect does that filing — this tool proposes, it never files/);
   });
 
   await t.test('a ruling of the same kind on another node is another question, not a fourth answer', () => {
