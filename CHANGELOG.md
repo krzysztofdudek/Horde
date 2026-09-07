@@ -7,8 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-07
+
+Experimental. Needs Yggdrasil 5.9.0 or newer; an older one is refused with the release to install.
+
 ### Changed
-- Raising a rule now records why in that rule's own history instead of copying the same note onto every part of the system it touches. A part of the system only gets a note of its own when the raise actually starts holding its code to something new — moving a rule from a warning to something that blocks merges; going from not-in-force to a warning touches nothing there. An attempt to weaken a rule without permission is now recorded too, even though nothing changes, so there is a trace of who asked and was told no. This needs a newer Yggdrasil than before; an older one is refused with the exact release to install rather than silently falling back to the old, noisier way of recording it.
+- Raising a rule now records why in that rule's own history, not on every part of the system it touches; only a raise that starts blocking merges leaves a note on the parts it now holds. A refused attempt to weaken a rule is recorded too. Needs Yggdrasil 5.9.0; an older one is refused with the release to install.
 
 ### Fixed
 - A mission that grows a second team no longer ends up with one nobody can reach. Your own session raises every long-lived agent; a team's manager that wants a second team asks for it instead, and you are handed the exact steps to start it. Everyone answers to whoever raised them, and anything meant for someone further away is written down and passed up, so nothing is sent to an address that cannot answer.
@@ -66,6 +70,7 @@ Experimental. This version needs a Yggdrasil newer than 5.8.0 — the first one 
 ### Added
 - First version. A prototype, expect rough edges.
 
-[Unreleased]: https://github.com/krzysztofdudek/Horde/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/krzysztofdudek/Horde/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/krzysztofdudek/Horde/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/krzysztofdudek/Horde/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/krzysztofdudek/Horde/releases/tag/v0.1.0

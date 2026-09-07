@@ -23,7 +23,7 @@ Run both, then `/reload-plugins` to activate it in this session (or restart Clau
 npm i -g @chrisdudek/yg
 ```
 
-Horde 0.2.0 needs a Yggdrasil newer than 5.8.0, the first release that answers with the documents Horde reads the graph through; until it is out, point the horde at a build of Yggdrasil's development branch with `horde.mjs config set ygCommand "node path/to/bin.js"`. An older Yggdrasil is refused with that instruction, never read around.
+Horde needs Yggdrasil 5.9.0 or newer, the first release that answers with the documents Horde reads the graph through. An older Yggdrasil is refused with the release to install, never read around.
 
 If your repository already has a graph, Horde reads it. If it doesn't, `horde init` makes one for you before anything else happens. With [Grain](https://github.com/krzysztofdudek/Grain) installed as well, the graph it makes is read out of your own code — the components you actually have and the rules you already follow — and it tells you up front how much of the code you have today those rules would refuse. Without Yggdrasil, Horde stops and says so.
 
