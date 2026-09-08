@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Reading the architecture's verdict on a large repository no longer fails with a buffer error. The report can run to several megabytes and is now read whole.
+
+### Changed
+- A node's charter no longer records who owns it or under which lease. That is the horde's working state and lives with the roster, so the charter stays true from one mission to the next.
+
 ## [0.3.0] - 2026-09-07
 
 Experimental. Needs Yggdrasil 5.9.0 or newer; an older one is refused with the release to install.

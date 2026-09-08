@@ -193,7 +193,7 @@ function ygJson(root, cfg, args, schema) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const command = `${display} ${args.join(' ')}`;
   const run = startCli(cmd, [...prefix, ...args], {
-    cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
   });
   if (run.missing) return { state: 'no-cli', command };
   if (run.spawnFailed) {
@@ -297,7 +297,7 @@ export function runYgCheck(cfg, cwd, extra = []) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const args = ['check', ...extra];
   const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const run = startCli(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
   if (run.missing || run.spawnFailed) {
     return { available: false, ok: false, command, summary: null, out: '' };
   }
@@ -330,7 +330,7 @@ export function fillDeterministic(cfg, cwd) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const args = ['check', '--approve', '--only-deterministic'];
   const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const run = startCli(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
   if (run.missing || run.spawnFailed) return { available: false, ok: false, command, out: '' };
   return {
     available: true, ok: run.code === 0, exit: run.code, command, out: run.out + run.err,
@@ -563,7 +563,7 @@ export function runDrill(root, cfg, aspect) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const args = ['drill', '--aspect', aspect];
   const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const run = startCli(cmd, [...prefix, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
   if (run.missing || run.spawnFailed) return { available: false, command };
   const out = `${run.out || ''}${run.err || ''}`;
   const m = DRILL_SUMMARY_RE.exec(out);
@@ -723,7 +723,7 @@ function logToAspect(root, cfg, aspectId, reason, { status, evidence, by } = {})
   if (status) args.push('--status', status, '--evidence', evidence);
   if (by) args.push('--by', by);
   const command = `${yg.display} ${args.join(' ')}`;
-  const run = startCli(yg.cmd, [...yg.prefix, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const run = startCli(yg.cmd, [...yg.prefix, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
   if (run.missing) { failNoCli(cfg, command); return null; }
   if (run.spawnFailed) {
     fail(`\`${command}\` — this machine could not start the process (${run.spawnFailed}), twice — try again with less running at once.`);

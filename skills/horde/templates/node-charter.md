@@ -1,7 +1,5 @@
 # Node · {{node}}
 
-**Owner:** {{owner}} ({{class}}) · **Lease:** {{lease}}
-
 ## Why it exists
 
 Two or three sentences a newcomer needs before touching anything here.
