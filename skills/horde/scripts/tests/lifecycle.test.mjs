@@ -270,7 +270,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     const rosterAfter = run('roster.mjs', ['list'], dir);
     assert.equal(rosterAfter.json.every((e) => e.lease === 'dead'), true);
 
-    const ticket2 = run('tk.mjs', ['new', 'second-thing', '--title', 'A second thing', '--node', 'model', '--class', 'sonnet'], dir);
+    const ticket2 = run('tk.mjs', ['new', 'second-thing', '--title', 'A second thing', '--node', 'model', '--class', 'sonnet', '--evidence', 'it works'], dir);
     assert.equal(ticket2.code, 0, ticket2.stderr);
     const ticket2Id = ticket2.json.id;
     assert.equal(ticket2Id, '002');

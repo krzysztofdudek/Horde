@@ -106,7 +106,7 @@ test('premerge.mjs: all six checks pass', async (t) => {
   assert.equal(r.json.ok, true);
   for (const c of r.json.checks) assert.equal(c.ok, true, `${c.name}: ${c.note}`);
   const names = r.json.checks.map((c) => c.name);
-  assert.deepEqual(names, ['base freshness', 'keys', 'scope', 'revert test', 'gate', 'graph', 'journal']);
+  assert.deepEqual(names, ['base freshness', 'keys', 'scope', 'revert test', 'gate', 'graph', 'mapping', 'journal', 'graph text']);
 
   // A real revert test ran (this whole run happens inside our own `node --test`, so a false pass
   // via NODE_TEST_CONTEXT leaking into the nested run would show up as "no new test files").
@@ -187,7 +187,7 @@ test('premerge.mjs: item 2 — a real tk.mjs review approval records the tip and
   addNode(dir, 'feature', { mapping: ['feature-010.mjs', 'feature-010.test.mjs'] });
   commitGraph(dir);
 
-  const ticket = run('tk.mjs', ['new', 'sha-bound', '--title', 'Sha bound', '--node', 'feature', '--class', 'sonnet'], dir);
+  const ticket = run('tk.mjs', ['new', 'sha-bound', '--title', 'Sha bound', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir);
   const id = ticket.json.id;
   run('queue.mjs', ['add', id], dir);
   const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir);
@@ -204,7 +204,7 @@ test('premerge.mjs: item 2 — a real tk.mjs review approval records the tip and
   const tip = git(['rev-parse', '--short', branch], dir);
   assert.match(show.json.text, new RegExp(`feature owner1@${tip}\\+[0-9a-f]{40}`));
 
-  const verdict = run('verify.mjs', ['record', id, '--verdict', 'reproduced', '--revert', 'failed', '--by', 'verifier1', '--gate', 'green', '--sha', tip], dir);
+  const verdict = run('verify.mjs', ['record', id, '--verdict', 'reproduced', '--revert', 'failed', '--by', 'verifier1', '--gate', 'green', '--sha', tip, '--item', '1|npm test|green'], dir);
   assert.equal(verdict.code, 0, verdict.stderr);
 
   const r1 = run('premerge.mjs', [branch, '--no-gate'], dir);
@@ -912,7 +912,7 @@ function reviewedTicket(dir, slug) {
   addNode(dir, 'feature', { mapping: ['lib.mjs', 'other.mjs'] });
   commitGraph(dir);
 
-  const created = run('tk.mjs', ['new', slug, '--title', 'One line in the middle', '--node', 'feature', '--class', 'sonnet'], dir);
+  const created = run('tk.mjs', ['new', slug, '--title', 'One line in the middle', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir);
   const id = created.json.id;
   run('queue.mjs', ['add', id], dir);
   const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir);
@@ -926,7 +926,7 @@ function reviewedTicket(dir, slug) {
   const approve = run('tk.mjs', ['review', id, 'approve', '--by', 'owner1'], dir);
   assert.equal(approve.code, 0, approve.stderr);
   const tip = git(['rev-parse', '--short', branch], dir);
-  const verdict = run('verify.mjs', ['record', id, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1', '--gate', 'green', '--sha', tip], dir);
+  const verdict = run('verify.mjs', ['record', id, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1', '--gate', 'green', '--sha', tip, '--item', '1|npm test|green'], dir);
   assert.equal(verdict.code, 0, verdict.stderr);
   return {
     id, branch, worktree, tip, approve, verdict,
@@ -1141,14 +1141,14 @@ function chainOfTwo(dir, { parentLine = 5, childLine = 30 } = {}) {
   addNode(dir, 'feature', { mapping: ['lib.mjs', 'other.mjs'] });
   commitGraph(dir);
 
-  const parentId = run('tk.mjs', ['new', 'the-first-link', '--title', 'First link', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
+  const parentId = run('tk.mjs', ['new', 'the-first-link', '--title', 'First link', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
   run('queue.mjs', ['add', parentId], dir);
   const parent = run('queue.mjs', ['set', parentId, 'running', '--agent', 'worker1'], dir).json;
   writeFileSync(join(parent.worktree, 'lib.mjs'), libWithLines({ [parentLine]: 500 }));
   git(['add', 'lib.mjs'], parent.worktree);
   git(['commit', '-qm', `ticket ${parentId}`], parent.worktree);
 
-  const childId = run('tk.mjs', ['new', 'the-second-link', '--title', 'Second link', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
+  const childId = run('tk.mjs', ['new', 'the-second-link', '--title', 'Second link', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
   run('queue.mjs', ['add', childId, '--depends', parentId], dir);
   const started = run('queue.mjs', ['set', childId, 'running', '--agent', 'worker2', '--on', parentId], dir);
   assert.equal(started.code, 0, started.stderr);
@@ -1163,7 +1163,7 @@ function chainOfTwo(dir, { parentLine = 5, childLine = 30 } = {}) {
   const approve = run('tk.mjs', ['review', childId, 'approve', '--by', 'owner1'], dir);
   assert.equal(approve.code, 0, approve.stderr);
   const childTip = git(['rev-parse', '--short', child.branch], dir);
-  const verdict = run('verify.mjs', ['record', childId, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1', '--gate', 'green', '--sha', childTip], dir);
+  const verdict = run('verify.mjs', ['record', childId, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1', '--gate', 'green', '--sha', childTip, '--item', '1|npm test|green'], dir);
   assert.equal(verdict.code, 0, verdict.stderr);
 
   return { parentId, parent, childId, child };
@@ -1174,7 +1174,7 @@ function landTheParent(dir, parentId, parentBranch) {
   run('tk.mjs', ['key', parentId, 'author', '--by', 'worker1'], dir);
   run('tk.mjs', ['review', parentId, 'approve', '--by', 'owner1'], dir);
   const tip = git(['rev-parse', '--short', parentBranch], dir);
-  run('verify.mjs', ['record', parentId, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1', '--gate', 'green', '--sha', tip], dir);
+  run('verify.mjs', ['record', parentId, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1', '--gate', 'green', '--sha', tip, '--item', '1|npm test|green'], dir);
   git(['checkout', 'mission1/trunk'], dir);
   git(['merge', '--no-ff', parentBranch, '-m', `merge ${parentId}`], dir);
   const sha = git(['rev-parse', '--short', 'mission1/trunk'], dir);

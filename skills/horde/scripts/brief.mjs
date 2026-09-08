@@ -31,6 +31,18 @@ import {
 
 const ROLES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'roles');
 const DISCIPLINE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'discipline');
+
+// The role and discipline files address the skill's own scripts as
+// `${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/…`, so a person reading the raw file sees a path
+// that still works for the manual drop-in. A brief handed to a spawned agent carries the absolute
+// directory this script runs from instead: a subagent is not guaranteed to inherit
+// CLAUDE_PLUGIN_ROOT, and in a repository that installed the plugin the drop-in fallback does not
+// exist — a real mission had the director export the variable by hand into every brief.
+const SKILL_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const PLUGIN_ROOT_TOKEN = /\$\{CLAUDE_PLUGIN_ROOT(?::-[^}]*)?\}/g;
+export function absolutizePluginRoot(text, root = SKILL_ROOT) {
+  return text.replace(PLUGIN_ROOT_TOKEN, root);
+}
 const ROLES = ['steward', 'owner', 'architect', 'worker', 'verifier', 'auditor', 'counsel'];
 
 // role → the disciplines its brief carries, in order. The texts live once, under
@@ -145,7 +157,7 @@ function renderRole(role, vars) {
   if (unfilled.length > 0) {
     fail(`brief for "${role}" has unfilled placeholder(s): ${[...new Set(unfilled)].join(', ')}`);
   }
-  return rendered.replace(/\s*$/, '\n') + lawSection(role);
+  return absolutizePluginRoot(rendered.replace(/\s*$/, '\n') + lawSection(role));
 }
 
 // ---- charter / config / cache -----------------------------------------------

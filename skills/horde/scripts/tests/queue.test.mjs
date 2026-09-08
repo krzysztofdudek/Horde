@@ -13,7 +13,7 @@ function git(args, cwd) {
 
 function readyTicket(dir, slug, { severity, node = 'core' } = {}) {
   const extra = severity ? ['--severity', severity] : [];
-  const r = run('tk.mjs', ['new', slug, '--title', slug, '--node', node, '--class', 'sonnet', ...extra], dir);
+  const r = run('tk.mjs', ['new', slug, '--title', slug, '--node', node, '--class', 'sonnet', ...extra, '--evidence', 'it works'], dir);
   return r.json.id;
 }
 
@@ -29,7 +29,7 @@ function mkTicket(dir, slug, opts = {}) {
   if (files) flags.push('--files', files);
   if (depends) flags.push('--depends', depends);
   if (kind) flags.push('--kind', kind);
-  const r = run('tk.mjs', ['new', slug, '--title', slug, ...flags], dir);
+  const r = run('tk.mjs', ['new', slug, '--title', slug, ...flags, '--evidence', 'it works'], dir);
   if (r.code !== 0) throw new Error(`tk new (${slug}) failed: ${r.stderr}`);
   return r.json.id;
 }
@@ -104,7 +104,7 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
 
   await t.test('set merged refuses without a node approval', () => {
     const tip = git(['rev-parse', '--short', `mission1/t-${id1}`], dir);
-    run('verify.mjs', ['record', id1, '--verdict', 'reproduced', '--revert', 'failed', '--by', 'verifier1', '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', tip], dir);
+    run('verify.mjs', ['record', id1, '--verdict', 'reproduced', '--revert', 'failed', '--by', 'verifier1', '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', tip, '--item', '1|npm test|green'], dir);
     const r = run('queue.mjs', ['set', id1, 'merged', '--sha', 'abc123'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /missing an approval/);
@@ -171,10 +171,10 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
     run('roster.mjs', ['spawn', 'steward', '--team', 'crows', '--parent', 'trunk', '--class', 'sonnet'], dir);
     run('roster.mjs', ['spawn', 'steward', '--team', 'ravens', '--parent', 'trunk', '--class', 'sonnet'], dir);
 
-    const crowsTicket = run('tk.mjs', ['new', 'crows-thing', '--title', 'Crows thing', '--node', 'x', '--class', 'sonnet', '--team', 'crows'], dir).json.id;
+    const crowsTicket = run('tk.mjs', ['new', 'crows-thing', '--title', 'Crows thing', '--node', 'x', '--class', 'sonnet', '--team', 'crows', '--evidence', 'it works'], dir).json.id;
     run('queue.mjs', ['add', crowsTicket, '--team', 'crows'], dir);
 
-    const ravensTicket = run('tk.mjs', ['new', 'ravens-thing', '--title', 'Ravens thing', '--node', 'x', '--class', 'sonnet', '--team', 'ravens'], dir).json.id;
+    const ravensTicket = run('tk.mjs', ['new', 'ravens-thing', '--title', 'Ravens thing', '--node', 'x', '--class', 'sonnet', '--team', 'ravens', '--evidence', 'it works'], dir).json.id;
     const added = run('queue.mjs', ['add', ravensTicket, '--depends', `crows:${crowsTicket}`, '--team', 'ravens'], dir);
     assert.equal(added.code, 0, added.stderr);
     assert.deepEqual(added.json.dependsOn, [`crows:${crowsTicket}`]);
@@ -192,7 +192,7 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
     const tip = git(['rev-parse', '--short', running.json.branch], dir);
     run('tk.mjs', ['key', crowsTicket, 'author', '--by', 'w', '--team', 'crows'], dir);
     run('tk.mjs', ['review', crowsTicket, 'approve', '--by', 'architect', '--team', 'crows'], dir);
-    run('verify.mjs', ['record', crowsTicket, '--verdict', 'reproduced', '--revert', 'failed', '--by', 'v', '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', tip, '--team', 'crows'], dir);
+    run('verify.mjs', ['record', crowsTicket, '--verdict', 'reproduced', '--revert', 'failed', '--by', 'v', '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', tip, '--team', 'crows', '--item', '1|npm test|green'], dir);
     const merged = run('queue.mjs', ['set', crowsTicket, 'merged', '--sha', tip, '--team', 'crows'], dir);
     assert.equal(merged.code, 0, merged.stderr);
     const stillNotReady = run('queue.mjs', ['next', '--team', 'ravens'], dir);
@@ -469,7 +469,7 @@ test('queue.mjs next --why: every queued ticket prints its rank, or the reason i
 function keysFor(dir, ticket, { author = 'worker1', owner = 'owner1', verifier = 'verifier1', branch }) {
   run('tk.mjs', ['key', ticket, 'author', '--by', author], dir);
   const tip = git(['rev-parse', '--short', branch], dir);
-  run('verify.mjs', ['record', ticket, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', verifier, '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', tip], dir);
+  run('verify.mjs', ['record', ticket, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', verifier, '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', tip, '--item', '1|npm test|green'], dir);
   run('tk.mjs', ['review', ticket, 'approve', '--by', owner], dir);
 }
 
@@ -516,7 +516,7 @@ test('queue.mjs: a ticket started from an unmerged dependency (a stack)', async 
 
   await t.test('--on refuses a ticket in another team, and one this ticket does not depend on', () => {
     run('roster.mjs', ['spawn', 'steward', '--team', 'allies', '--parent', 'trunk', '--class', 'sonnet'], dir);
-    const away = run('tk.mjs', ['new', 'away-ticket', '--title', 'Away', '--node', 'core', '--class', 'sonnet', '--team', 'allies'], dir).json.id;
+    const away = run('tk.mjs', ['new', 'away-ticket', '--title', 'Away', '--node', 'core', '--class', 'sonnet', '--team', 'allies', '--evidence', 'it works'], dir).json.id;
     run('queue.mjs', ['add', away, '--team', 'allies'], dir);
     const otherTeam = run('queue.mjs', ['set', second, 'running', '--on', `allies:${away}`], dir);
     assert.equal(otherTeam.code, 1);

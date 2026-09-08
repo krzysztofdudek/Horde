@@ -346,7 +346,7 @@ test('verify.mjs record: the verdict is bound to the diff it judged', async (t) 
   t.after(() => rmRepo(dir));
   initHorde(dir);
 
-  const created = run('tk.mjs', ['new', 'bound', '--title', 'Bound to its diff', '--node', 'core', '--class', 'sonnet'], dir);
+  const created = run('tk.mjs', ['new', 'bound', '--title', 'Bound to its diff', '--node', 'core', '--class', 'sonnet', '--evidence', 'it works'], dir);
   const id = created.json.id;
   run('queue.mjs', ['add', id], dir);
   const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir);
@@ -358,6 +358,7 @@ test('verify.mjs record: the verdict is bound to the diff it judged', async (t) 
   await t.test('the branch comes from the ticket\'s own queue item, and the diff goes on the verdict', () => {
     const r = run('verify.mjs', [
       'record', id, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1',
+      '--item', '1|npm test|green',
       '--gate', 'green', '--sha', 'abc1234',
     ], dir);
     assert.equal(r.code, 0, r.stderr);

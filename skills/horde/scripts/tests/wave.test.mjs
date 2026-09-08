@@ -409,7 +409,7 @@ function reviewTicket(dir, id, branch, who) {
   const tip = git(['rev-parse', '--short', branch], dir);
   const verdict = run('verify.mjs', [
     'record', id, '--verdict', 'reproduced', '--revert', 'no-new-tests',
-    '--by', `verifier-${who}`, '--gate', 'green', '--sha', tip,
+    '--by', `verifier-${who}`, '--gate', 'green', '--sha', tip,, '--item', '1|npm test|green'
   ], dir);
   assert.equal(verdict.code, 0, verdict.stderr);
 }
@@ -423,9 +423,9 @@ test('E14 — a wave close states parallelism, keys transferred, the audit rate 
   initHorde(dir);
 
   // Three tickets, one of them waiting on another: the DAG the wave is planned against.
-  const alpha = run('tk.mjs', ['new', 'change-the-middle', '--title', 'One line in the middle of lib', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
-  const beta = run('tk.mjs', ['new', 'follow-on', '--title', 'The follow-on that waits', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
-  const gamma = run('tk.mjs', ['new', 'the-sibling', '--title', 'The sibling that lands first', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
+  const alpha = run('tk.mjs', ['new', 'change-the-middle', '--title', 'One line in the middle of lib', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  const beta = run('tk.mjs', ['new', 'follow-on', '--title', 'The follow-on that waits', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  const gamma = run('tk.mjs', ['new', 'the-sibling', '--title', 'The sibling that lands first', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
   run('queue.mjs', ['add', alpha], dir);
   run('queue.mjs', ['add', beta, '--depends', alpha], dir);
   run('queue.mjs', ['add', gamma], dir);

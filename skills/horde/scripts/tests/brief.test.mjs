@@ -161,7 +161,7 @@ test('brief.mjs worker --takeover: renders the prior worker\'s log and how many 
   initHorde(dir);
   seedNode(dir, 'nodeA', ['src/a/**']);
 
-  const ticket = run('tk.mjs', ['new', 'takeover-thing', '--title', 'Needs a takeover', '--node', 'nodeA', '--class', 'sonnet'], dir);
+  const ticket = run('tk.mjs', ['new', 'takeover-thing', '--title', 'Needs a takeover', '--node', 'nodeA', '--class', 'sonnet', '--evidence', 'it works'], dir);
   const id = ticket.json.id;
   const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
   const q = JSON.parse(readFileSync(queuePath, 'utf8'));
@@ -332,8 +332,8 @@ test('brief.mjs: a stacked ticket\'s brief names the branch it was started from,
   initHorde(dir);
   seedNode(dir, 'feature', ['lib.mjs']);
 
-  const first = run('tk.mjs', ['new', 'first-link', '--title', 'First link', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
-  const second = run('tk.mjs', ['new', 'second-link', '--title', 'Second link', '--node', 'feature', '--class', 'sonnet'], dir).json.id;
+  const first = run('tk.mjs', ['new', 'first-link', '--title', 'First link', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  const second = run('tk.mjs', ['new', 'second-link', '--title', 'Second link', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
   run('queue.mjs', ['add', first], dir);
   run('queue.mjs', ['add', second, '--depends', first], dir);
   const parent = run('queue.mjs', ['set', first, 'running', '--agent', 'worker1'], dir).json;
@@ -380,7 +380,7 @@ test('brief.mjs: reportsTo is the agent\'s own parent, read from the roster\'s l
   const allies = run('roster.mjs', ['spawn', 'steward', '--team', 'allies', '--parent', 'trunk', '--class', 'sonnet'], dir);
   assert.equal(allies.code, 0, allies.stderr);
 
-  const ticket = run('tk.mjs', ['new', 'allies-thing', '--title', 'Allies thing', '--node', 'nodeA', '--class', 'sonnet', '--team', 'allies'], dir);
+  const ticket = run('tk.mjs', ['new', 'allies-thing', '--title', 'Allies thing', '--node', 'nodeA', '--class', 'sonnet', '--team', 'allies', '--evidence', 'it works'], dir);
   assert.equal(ticket.code, 0, ticket.stderr);
   assert.equal(run('queue.mjs', ['add', ticket.json.id, '--team', 'allies'], dir).code, 0);
   const running = run('queue.mjs', ['set', ticket.json.id, 'running', '--team', 'allies'], dir);

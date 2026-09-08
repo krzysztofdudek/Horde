@@ -371,6 +371,21 @@ function allTeamPaths(horde) {
   return out;
 }
 
+// The acceptance lines of a ticket: every `- [ ]` (or `- [x]`) line under "## Acceptance", minus
+// the template's own placeholder. A ticket with none has nothing a verifier can reproduce, so
+// nothing can ever prove it done — `queue add` refuses it (a real mission found one at verifier
+// briefing time, after the work was already written).
+const ACCEPTANCE_PLACEHOLDER = /^- \[[ x]\]\s*(…|\.\.\.)?\s*$/;
+export function acceptanceLines(issueText) {
+  const text = String(issueText || '');
+  const idx = text.indexOf('## Acceptance');
+  if (idx === -1) return [];
+  const rest = text.slice(idx);
+  const nextHeading = rest.indexOf('\n## ', 1);
+  const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
+  return section.split('\n').map((l) => l.trim())
+    .filter((l) => /^- \[[ x]\]/.test(l) && !ACCEPTANCE_PLACEHOLDER.test(l));
+}
 export function findTicket(horde, idInput) {
   const id = padId(idInput);
   for (const team of allTeamPaths(horde)) {

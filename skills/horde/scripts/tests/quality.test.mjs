@@ -377,6 +377,14 @@ test('E17 — a quality ticket is filed and queued from a grain-advice/1 documen
 
   let filed;
   await t.test('the pass reads the real document and files one ticket per improvement', () => {
+    // An advisory on a node nobody in this horde leases stays in the feed for whichever horde
+    // does — it would sit here unowned otherwise. Unleased first, then leased.
+    const unleased = run('queue.mjs', ['quality'], dir);
+    assert.equal(unleased.code, 0, unleased.stderr);
+    assert.deepEqual(unleased.json.filed, []);
+    assert.match(unleased.json.skipped[0].why, /outside the mission/);
+    const bound = run('node.mjs', ['bind', 'feature'], dir);
+    assert.equal(bound.code, 0, bound.stderr);
     filed = run('queue.mjs', ['quality'], dir);
     assert.equal(filed.code, 0, filed.stderr);
     assert.equal(filed.json.items, 1);
@@ -408,7 +416,7 @@ test('E17 — a quality ticket is filed and queued from a grain-advice/1 documen
   });
 
   await t.test('the mission\'s own work still goes first', () => {
-    const work = run('tk.mjs', ['new', 'the-work', '--title', 'What the mission asked for', '--node', 'feature', '--class', 'sonnet', '--severity', 'low'], dir);
+    const work = run('tk.mjs', ['new', 'the-work', '--title', 'What the mission asked for', '--node', 'feature', '--class', 'sonnet', '--severity', 'low', '--evidence', 'it works'], dir);
     run('queue.mjs', ['add', work.json.id], dir);
     assert.equal(run('queue.mjs', ['next'], dir).json.ticket, work.json.id);
   });

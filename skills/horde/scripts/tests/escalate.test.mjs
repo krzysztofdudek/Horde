@@ -109,11 +109,11 @@ test('escalate.mjs recurring: the third ruling of a kind on one node is a rule p
 
   const onCheckout = [];
   for (let i = 0; i < 3; i++) {
-    const created = run('tk.mjs', ['new', `checkout-${i}`, '--title', `Checkout question ${i}`, '--node', 'checkout', '--class', 'sonnet'], dir);
+    const created = run('tk.mjs', ['new', `checkout-${i}`, '--title', `Checkout question ${i}`, '--node', 'checkout', '--class', 'sonnet', '--evidence', 'it works'], dir);
     assert.equal(created.code, 0, created.stderr);
     onCheckout.push(created.json.id);
   }
-  const onBilling = run('tk.mjs', ['new', 'billing-0', '--title', 'Billing question', '--node', 'billing', '--class', 'sonnet'], dir).json.id;
+  const onBilling = run('tk.mjs', ['new', 'billing-0', '--title', 'Billing question', '--node', 'billing', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
 
   await t.test('nothing to propose while no answer has been given three times', () => {
     for (const [i, ticket] of onCheckout.slice(0, 2).entries()) {

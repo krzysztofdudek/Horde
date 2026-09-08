@@ -11,7 +11,7 @@
 // at}] }`, no rendered sibling (it's a ledger, not a document meant to be read as prose).
 
 import {
-  hordePath, readJSON, readText, readConfig, fail, parseArgs, emit, isMain, resolveHorde,
+  hordePath, readJSON, readText, readConfig, fail, parseArgs, emit, isMain, resolveHorde, git,
 } from './_lib.mjs';
 
 const USAGE = `usage: cost.mjs <command> [options]
@@ -54,6 +54,28 @@ export function readCostLimit(horde) {
 
 // sum(runs, weights) — {runs, weighted}: each entry is one run, weighted by its class. Exported
 // for wave.mjs's own wave-close computation.
+// Reviewer calls are a cost the roster never sees: `yg check --approve` run by a landing worker
+// bills a model once per prose pair. Yggdrasil appends one line per call to its committed
+// `.yggdrasil/yg-events.llm.jsonl`, so the calls a mission caused are the lines that file gained
+// between the mission's base and its trunk tip — counted from git, never from the file on disk,
+// so a stale checkout cannot under-report. Only whole-mission: an event names a pair, not a ticket.
+export function reviewerCalls(horde) {
+  const cfg = readConfig() || {};
+  const base = cfg.base;
+  const trunk = `${horde}/trunk`;
+  if (!base) return { calls: 0, why: 'no base branch in config' };
+  const out = git(['diff', '--unified=0', `${base}...${trunk}`, '--', '.yggdrasil/yg-events.llm.jsonl']);
+  if (out === null) return { calls: 0, why: `cannot diff ${base}...${trunk}` };
+  let calls = 0;
+  for (const line of out.split('\n')) {
+    if (!line.startsWith('+{')) continue;
+    try {
+      const e = JSON.parse(line.slice(1));
+      if (e.source === 'fill' && e.kind === 'llm') calls += 1;
+    } catch { /* a diff line that is not an event */ }
+  }
+  return { calls, why: null };
+}
 export function sumEntries(runs, weights) {
   let weighted = 0;
   for (const r of runs) weighted += weights[r.class] ?? 1;
@@ -74,10 +96,15 @@ function cmdReport(horde, positional, flags) {
   const weights = classWeights();
   const { runs: runCount, weighted } = sumEntries(runs, weights);
   const limit = readCostLimit(horde);
-  const result = { scope, runs: runCount, weighted, limit, reached: limit !== null && weighted >= limit };
+  const reviewers = scope === 'mission' ? reviewerCalls(horde) : { calls: null, why: 'reviewer calls are counted per mission, not per wave or ticket' };
+  const result = {
+    scope, runs: runCount, weighted, limit, reached: limit !== null && weighted >= limit,
+    reviewerCalls: reviewers.calls, reviewerCallsNote: reviewers.why,
+  };
   emit(result, flags, () => {
     const limitText = limit === null ? 'no limit' : `limit ${limit}${result.reached ? ' — REACHED' : ''}`;
-    return `${scope}: ${runCount} runs · weighted ${weighted} · ${limitText}`;
+    const reviewerText = reviewers.calls === null ? '' : ` · ${reviewers.calls} reviewer call(s)${reviewers.why ? ` (${reviewers.why})` : ''}`;
+    return `${scope}: ${runCount} runs · weighted ${weighted}${reviewerText} · ${limitText}`;
   });
 }
 

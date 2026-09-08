@@ -173,7 +173,7 @@ test('roster.mjs: spawn, steward team creation, trace, list --dead, reclaim, sta
     // have nothing but team: items or an empty queue, and so are alive no matter the threshold).
     const steward = run('roster.mjs', ['spawn', 'steward', '--team', 'plover', '--parent', 'trunk', '--class', 'sonnet'], dir);
     assert.equal(steward.code, 0, steward.stderr);
-    const ticket = run('tk.mjs', ['new', 'plover-open', '--title', 'Plover open', '--node', 'x', '--class', 'sonnet', '--team', 'plover'], dir);
+    const ticket = run('tk.mjs', ['new', 'plover-open', '--title', 'Plover open', '--node', 'x', '--class', 'sonnet', '--team', 'plover', '--evidence', 'it works'], dir);
     assert.equal(ticket.code, 0, ticket.stderr);
     assert.equal(run('queue.mjs', ['add', ticket.json.id, '--team', 'plover'], dir).code, 0);
 
@@ -189,7 +189,7 @@ test('roster.mjs: spawn, steward team creation, trace, list --dead, reclaim, sta
     assert.equal(billingOwner.code, 0, billingOwner.stderr);
     const billingOwnerName = billingOwner.json.name;
 
-    const ticket = run('tk.mjs', ['new', 'billing-thing', '--title', 'Billing thing', '--node', 'billing', '--class', 'sonnet'], dir);
+    const ticket = run('tk.mjs', ['new', 'billing-thing', '--title', 'Billing thing', '--node', 'billing', '--class', 'sonnet', '--evidence', 'it works'], dir);
     assert.equal(ticket.code, 0, ticket.stderr);
     const ticketId = ticket.json.id;
     assert.equal(run('tk.mjs', ['review-request', ticketId], dir).code, 0);
@@ -241,7 +241,7 @@ test('roster.mjs: spawn, steward team creation, trace, list --dead, reclaim, sta
     assert.equal(steward.code, 0, steward.stderr);
 
     // a non-empty queue, so this team isn't trivially alive regardless of any threshold
-    const ticket = run('tk.mjs', ['new', 'bravo-open', '--title', 'Bravo open', '--node', 'x', '--class', 'sonnet', '--team', 'trunk/bravo'], dir);
+    const ticket = run('tk.mjs', ['new', 'bravo-open', '--title', 'Bravo open', '--node', 'x', '--class', 'sonnet', '--team', 'trunk/bravo', '--evidence', 'it works'], dir);
     assert.equal(ticket.code, 0, ticket.stderr);
     assert.equal(run('queue.mjs', ['add', ticket.json.id, '--team', 'trunk/bravo'], dir).code, 0);
 
@@ -439,7 +439,7 @@ test('roster.mjs: spawn never staffs a worker or verifier below its ticket\'s cl
   t.after(() => rmRepo(dir));
   initHorde(dir);
   {
-    const ticket = run('tk.mjs', ['new', 'classed-thing', '--title', 'Classed', '--node', 'core', '--class', 'sonnet'], dir);
+    const ticket = run('tk.mjs', ['new', 'classed-thing', '--title', 'Classed', '--node', 'core', '--class', 'sonnet', '--evidence', 'it works'], dir);
     assert.equal(ticket.code, 0, ticket.stderr);
     const below = run('roster.mjs', ['spawn', 'verifier', '--node', 'core', '--class', 'haiku', '--ticket', ticket.json.id], dir);
     assert.equal(below.code, 1);

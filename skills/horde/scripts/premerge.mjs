@@ -24,8 +24,7 @@ import {
   asArray, emit, isMain, resolveHorde, patchIdOf, parentBranchOf,
 } from './_lib.mjs';
 import {
-  ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs,
-  globToRegExp, pathInBoundary, ticketBoundary, consumersOf,
+  ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, globToRegExp, pathInBoundary, ticketBoundary, consumersOf, ygFileContext, ygAvailable,
 } from './node.mjs';
 import { ticketFiles, ticketPorts } from './tk.mjs';
 import { noteKeysTransferred } from './wave.mjs';
@@ -46,7 +45,11 @@ The checks, in order — ✓/✗ per line, non-zero exit on any ✗:
   6. graph          — the free deterministic verdicts recorded, every prose rule still waiting
                       on a judgement named, and a full "yg check" green on this branch's tree
                       (it runs whatever config.gates holds)
-  7. journal        — a log entry newer than the last commit
+  7. mapping        — every file the branch added is owned by a node on the branch's own tree
+                      (a mapping and its first file land in the same commit); skipped with --no-gate
+  8. journal        — a log entry newer than the last commit
+  9. graph text     — charters, logs and "graph:" commits touched by the branch carry no mission
+                      language (wave, ticket NNN, mission, horde, E<n>, .temp/): the graph is plan-agnostic
 
 --level selects the gate command (config.gates.team or .trunk; default team — "trunk" is only for
 a branch landing directly on <horde>/trunk). --no-gate skips items 5 and 6 (informational: pass).
@@ -615,6 +618,72 @@ function checkGraph(root, cfg, branch, noGate) {
   };
 }
 
+// The graph is plan-agnostic: a node's charter and log say what the node is and what must stay
+// true, never which wave, ticket or mission touched it. Mission language in committed graph text
+// is the working state of one horde leaking into a document every later reader treats as
+// permanent — a real mission found "mission" 63 times across 23 charters. Deterministic on
+// purpose: the words below are the ones that only a plan uses.
+const MISSION_WORDS = [
+  [/\bwave\b/i, 'wave'],
+  [/\bticket\s*\d{3}\b/i, 'ticket NNN'],
+  [/\bmission\b/i, 'mission'],
+  [/\bhorde\b/i, 'horde'],
+  [/\bE\d+\b/, 'E<n> evidence id'],
+  [/\.temp\//, '.temp/ path'],
+];
+export function missionWordsIn(text) {
+  const hits = [];
+  for (const [re, label] of MISSION_WORDS) if (re.test(String(text || ''))) hits.push(label);
+  return hits;
+}
+const GRAPH_TEXT = /^\.yggdrasil\/model\/.*\/(charter|log)\.md$/;
+function checkGraphText(root, branch, parentBranch, changedFiles) {
+  const findings = [];
+  for (const f of changedFiles.filter((x) => GRAPH_TEXT.test(x))) {
+    const text = git(['show', `${branch}:${f}`], root);
+    const hits = missionWordsIn(text);
+    if (hits.length) findings.push(`${f}: ${hits.join(', ')}`);
+  }
+  const messages = (git(['log', '--format=%s', `${parentBranch}..${branch}`], root) || '').split('\n').filter((m) => /^graph:/i.test(m));
+  for (const msg of messages) {
+    const hits = missionWordsIn(msg);
+    if (hits.length) findings.push(`commit "${msg}": ${hits.join(', ')}`);
+  }
+  return {
+    ok: findings.length === 0,
+    note: findings.length === 0
+      ? 'charters, logs and graph commits carry no mission language'
+      : `mission language in graph text — ${findings.join(' · ')} (say what the node is and what must stay true; the wave, the ticket and the horde belong in .horde/)`,
+  };
+}
+// A file the graph owns nowhere passes `yg check` in a repository that requires coverage of
+// nothing, so a new folder can land with its mapping forgotten and only the next reader finds a
+// node with no files. The mapping belongs in the same commit as the first file — this asks the
+// graph, on the branch's own tree, who owns every file the branch added.
+export function unmappedFiles(contextByFile) {
+  const out = [];
+  for (const [file, doc] of contextByFile) {
+    const kind = doc && doc.owner && doc.owner.kind;
+    if (kind !== 'node') out.push(file);
+  }
+  return out;
+}
+function checkMapping(cfg, worktree, addedFiles, noGate) {
+  if (noGate) return { ok: true, note: 'skipped (--no-gate) — the graph was not asked who owns the added files' };
+  if (!worktree) return { ok: false, note: 'no worktree checked out for this branch — cannot ask the graph who owns the added files' };
+  const graphOwn = /^\.yggdrasil\//;
+  const candidates = addedFiles.filter((f) => !graphOwn.test(f));
+  if (candidates.length === 0) return { ok: true, note: 'no files added outside the graph' };
+  if (!ygAvailable(cfg, worktree)) return { ok: false, note: 'the Yggdrasil CLI cannot be run, so the graph cannot say who owns the added files' };
+  const contexts = new Map(candidates.map((f) => [f, ygFileContext(worktree, cfg, f)]));
+  const unmapped = unmappedFiles(contexts);
+  if (unmapped.length === 0) return { ok: true, note: `${candidates.length} added file(s), every one owned by a node` };
+  const shown = unmapped.slice(0, 5).join(', ') + (unmapped.length > 5 ? '…' : '');
+  return {
+    ok: false,
+    note: `${unmapped.length} added file(s) no node owns: ${shown} — map them in the owning node's yg-node.yaml in this same branch; a mapping and its first file land together`,
+  };
+}
 function checkJournal(text, branch) {
   const lastEntry = latestTimestamp(text);
   const commitDate = git(['log', '-1', '--format=%cI', branch]);
@@ -644,6 +713,7 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
 
   const isTeamMergeUp = typeof item.ticket === 'string' && item.ticket.startsWith('team:');
   const changedFiles = (git(['diff', '--name-only', `${parentBranch}...${branch}`]) || '').split('\n').filter(Boolean);
+  const addedFiles = (git(['diff', '--name-only', '--diff-filter=A', `${parentBranch}...${branch}`]) || '').split('\n').filter(Boolean);
 
   const checks = [{ name: 'base freshness', ...checkBaseFreshness(branch, parentBranch) }];
 
@@ -715,8 +785,10 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
   }
 
   checks.push({ name: 'graph', ...checkGraph(root, cfg, branch, noGate) });
+  checks.push({ name: 'mapping', ...checkMapping(cfg, findWorktreePath(root, branch), addedFiles, noGate) });
 
   checks.push({ name: 'journal', ...checkJournal(logText, branch) });
+  checks.push({ name: 'graph text', ...checkGraphText(root, branch, parentBranch, changedFiles) });
 
   const allOk = checks.every((c) => c.ok);
   const result = {

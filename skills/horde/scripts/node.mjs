@@ -293,6 +293,14 @@ export function ygImpact(root, cfg, node) {
 // the lock and can cost money); `check` alone is read-only and keyless. `available: false` means
 // the CLI itself could not be started — a different failure from a graph that refuses the tree,
 // and the caller says so in those words.
+// True when the configured Yggdrasil CLI starts and answers --version. The merge checklist
+// asks this before an item that must read the graph, so a missing CLI is a red item with a
+// reason, never a checklist that stops halfway.
+export function ygAvailable(cfg, cwd) {
+  const { cmd, prefix } = ygCommand(cfg);
+  const run = startCli(cmd, [...prefix, '--version'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return !(run.missing || run.spawnFailed) && run.code === 0;
+}
 export function runYgCheck(cfg, cwd, extra = []) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const args = ['check', ...extra];

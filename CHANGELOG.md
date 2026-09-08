@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- A plan can be written to a file. `queue plan --out <file>` puts the whole plan where the architect reads it, instead of a summary passed on in a message. A real mission lost its critical path in that summary.
+- The cost report counts reviewer calls. A worker who runs the architecture reviewer while landing a change bills a model per rule it judges, and the roster never saw that. The report now reads those calls from the repository's own record and prints them beside the agent runs, for the whole mission.
+- A merge is refused when a file the branch added belongs to no node. The mapping and the first file land in the same commit, or the branch waits.
+- A merge is refused when a node's charter, a node's log or a commit that changes the graph carries the language of a plan: a wave, a ticket number, a mission, a horde, an evidence id, a scratch path. The graph says what a node is and what must stay true; which mission touched it stays with the mission.
+
+### Changed
+- A brief handed to a spawned agent names the skill's own scripts by their absolute path. The agent no longer depends on an environment variable it may not have been given, and the director no longer has to add that path to every brief by hand.
+- A ticket with no acceptance line cannot be queued. Nothing a verifier could reproduce means nothing could ever prove it done; the refusal names the line to add.
+- Quality advisories file tickets only for the nodes this horde leases. An advisory on another node stays in the feed for whichever horde takes that node; `--all` files them anyway.
+- A steward's turn starts by reading the rulings, then the queue. A ruling recorded while the steward was mid-turn used to sit unread until the next message woke it, and the steward's report called it "no ruling".
+
 ## [0.4.0] - 2026-09-08
 
 Experimental. Needs Yggdrasil 5.9.0 or newer; an older one is refused with the release to install.

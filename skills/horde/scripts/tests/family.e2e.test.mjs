@@ -529,7 +529,7 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     const premerge = run('premerge.mjs', ['family/t-001', '--level', 'team'], dir);
     const byName = Object.fromEntries(premerge.json.checks.map((c) => [c.name, c]));
     assert.deepEqual(Object.keys(byName), [
-      'base freshness', 'keys', 'scope', 'revert test', 'gate', 'graph', 'journal',
+      'base freshness', 'keys', 'scope', 'revert test', 'gate', 'graph', 'mapping', 'journal', 'graph text',
     ]);
     for (const [name, check] of Object.entries(byName)) {
       assert.equal(check.ok, true, `${name}: ${check.note}`);

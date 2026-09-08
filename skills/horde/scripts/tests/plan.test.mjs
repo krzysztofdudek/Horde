@@ -35,7 +35,7 @@ function startTicketsAt(dir, horde, n) {
 }
 
 function tk(dir, args) {
-  const r = run('tk.mjs', ['new', ...args], dir);
+  const r = run('tk.mjs', ['new', ...args, '--evidence', 'it works'], dir);
   if (r.code !== 0) throw new Error(`tk new failed: ${r.stderr}`);
   return r.json.id;
 }

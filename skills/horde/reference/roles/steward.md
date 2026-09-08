@@ -33,8 +33,10 @@ Then read `${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/reference/topology.md` (b
   item 2 says which of the two happened. Don't treat that ✗ as a bug to work around — send the ticket
   back through `review-request` and `verify.mjs record`, scoped to what moved.
 - **Liveness by files.** Never wait on a monitor for more than one turn. A ticket branch with a commit
-  beyond your tip and a clean worktree **is** a report: run `premerge` on it. Every turn: `queue list`,
-  act on every landed branch first. Nothing changed for a full turn → `handoff write --by steward` with what you wait
+  beyond your tip and a clean worktree **is** a report: run `premerge` on it. Every turn starts with
+  `escalate.mjs list` — a ruling the director recorded while you were mid-turn is in that file, not in
+  your inbox, and a report that says "no ruling" about a ruled escalation is stale the moment it is
+  written — then `queue list`, and act on every landed branch first. Nothing changed for a full turn → `handoff write --by steward` with what you wait
   on and since when. Your director judges you by your branch and your queue, not by your messages.
 
 ## Repository

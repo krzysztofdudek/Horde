@@ -20,7 +20,9 @@ function seedCharterEvidence(dir, horde, rows) {
 }
 
 function newTicket(dir, extra = []) {
-  return run('tk.mjs', ['new', 'my-feature', '--title', 'Do the thing', '--node', 'core', '--class', 'sonnet', ...extra], dir);
+  // A queued ticket needs an acceptance line; a caller that states its own evidence keeps it.
+  const evidence = extra.includes('--evidence') ? [] : ['--evidence', 'it works'];
+  return run('tk.mjs', ['new', 'my-feature', '--title', 'Do the thing', '--node', 'core', '--class', 'sonnet', ...evidence, ...extra], dir);
 }
 
 // tk.mjs edit reads its new body from stdin, which the run() helper (a plain argv exec) can't
@@ -630,7 +632,7 @@ test('tk.mjs review: an approval records the tip it was given at and the diff it
   t.after(() => rmRepo(dir));
   initHorde(dir);
 
-  const created = run('tk.mjs', ['new', 'reviewed', '--title', 'Reviewed on a branch', '--node', 'core', '--class', 'sonnet'], dir);
+  const created = run('tk.mjs', ['new', 'reviewed', '--title', 'Reviewed on a branch', '--node', 'core', '--class', 'sonnet', '--evidence', 'it works'], dir);
   const id = created.json.id;
   run('tk.mjs', ['key', id, 'author', '--by', 'worker1'], dir);
 
@@ -702,7 +704,7 @@ test('tk.mjs review: an approval taken from the verifier seat carries the tip an
   const verifier = run('roster.mjs', ['spawn', 'verifier', '--team', 'trunk', '--class', 'sonnet'], dir);
   const verifierName = verifier.json.name;
 
-  const created = run('tk.mjs', ['new', 'seat-and-diff', '--title', 'Self authored, on a branch', '--node', 'core', '--class', 'sonnet'], dir);
+  const created = run('tk.mjs', ['new', 'seat-and-diff', '--title', 'Self authored, on a branch', '--node', 'core', '--class', 'sonnet', '--evidence', 'it works'], dir);
   const id = created.json.id;
   run('queue.mjs', ['add', id], dir);
   const running = run('queue.mjs', ['set', id, 'running', '--agent', ownerName], dir);
@@ -715,6 +717,7 @@ test('tk.mjs review: an approval taken from the verifier seat carries the tip an
   const tip = execFileSync('git', ['rev-parse', '--short', branch], { cwd: dir, encoding: 'utf8' }).trim();
   const rec = run('verify.mjs', [
     'record', id, '--verdict', 'reproduced', '--by', verifierName,
+      '--item', '1|npm test|green',
     '--revert', 'no-new-tests', '--gate', 'green', '--sha', tip,
   ], dir);
   assert.equal(rec.code, 0, rec.stderr);

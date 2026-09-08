@@ -23,13 +23,10 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  hordePath, teamPath, hordeRoot, repoRoot, readJSON, writeJSON, readText, readConfig, nowIso,
-  fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray,
+  hordePath, teamPath, hordeRoot, repoRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, readLeases,
 } from './_lib.mjs';
 import {
-  findTicket, parseField, padId, parseKeys, hasAuthor, hasVerifier, allNodesApproved,
-  allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind,
-  createTicket, setTicketBody,
+  findTicket, parseField, padId, parseKeys, hasAuthor, hasVerifier, allNodesApproved, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, createTicket, setTicketBody, acceptanceLines,
 } from './tk.mjs';
 import { noteMerged, parseEvidenceRows } from './wave.mjs';
 import {
@@ -94,7 +91,9 @@ commands:
       started now from one of their tips ("set <ticket> running --on <that one>"). Such an item
       comes back marked stack-ready, naming the tickets it could start from. A file lock is a
       refusal there too — the tip it would start from is the very ticket holding the file.
-  plan [--team t] [--apply-order] [--horde h]
+  plan [--team t] [--apply-order] [--out <file>] [--horde h]
+      --out writes the plan (rendered, or JSON with --json) to a file instead of stdout, for a reader
+      who must see it whole — the architect — rather than a summary relayed through a message
       derives the team's DAG from the tickets themselves and prints it; dispatches nothing.
       Edges come from the ports the tickets declare (a ticket consuming <node>/<port>@<v> comes
       after the one producing it), from the graph (a version bump comes before every ticket of a
@@ -234,6 +233,9 @@ function cmdAdd(horde, positional, flags) {
   const team = flags.team || 'trunk';
   const ticket = findTicket(horde, idRaw);
   if (!ticket) fail(`no such ticket: ${idRaw}`);
+  if (acceptanceLines(ticket.text).length === 0) {
+    fail(`ticket ${ticket.id} has no acceptance line — nothing a verifier could reproduce, so nothing could ever prove it done. Add at least one "- [ ] …" line under "## Acceptance" (tk.mjs new --evidence "<what a verifier reproduces>", or edit the issue), then add it to the queue.`);
+  }
   const doc = load(horde, team);
   if (doc.items.some((i) => i.ticket === ticket.id)) fail(`ticket ${ticket.id} is already queued in team ${team}`);
   let dependsOn = [];
@@ -402,6 +404,11 @@ function adviceTicketBody(item, source) {
   ].join('\n');
 }
 
+function leasedBy(node) {
+  const { leases } = readLeases();
+  const lease = leases[node];
+  return lease && lease.horde ? lease.horde : null;
+}
 function cmdQuality(horde, positional, flags) {
   const team = flags.team || 'trunk';
   const policy = qualityPolicy(horde);
@@ -440,6 +447,13 @@ function cmdQuality(horde, positional, flags) {
     const node = nodes[0];
     if (!nodeExists(root, cfg, node)) {
       skipped.push({ key, node, why: 'the graph has no such component' });
+      continue;
+    }
+    // An advisory on a node this horde does not lease has no owner here to hand it to and no
+    // ticket of this mission touching it: it stays in the feed for whichever horde leases that
+    // node, instead of sitting in this queue unowned. --all files them anyway.
+    if (!flags.all && leasedBy(node) !== horde) {
+      skipped.push({ key, node, why: `outside the mission — ${leasedBy(node) ? `leased by horde ${leasedBy(node)}` : 'leased by no horde'}` });
       continue;
     }
     const kind = String(item.kind || 'item');
@@ -1181,6 +1195,16 @@ function cmdPlan(horde, positional, flags) {
   const plan = buildPlan(horde, team, cfg);
   if (plan.cycles.length && plan.cycles[0].length) {
     fail(`the tickets depend on each other in a circle: ${plan.cycles[0].join(' → ')} — a plan cannot start any of them. Drop one of those dependencies (queue.mjs is not the place: the ticket that should not wait is edited with tk.mjs edit --consumes, or the manual --depends is removed) and run plan again`);
+  }
+  // --out writes the plan to a file the architect reads whole: a plan relayed through a message
+  // gets summarised on the way (a real mission lost its critical path that way), and a steward
+  // cannot message the architect directly in any case. JSON with --json, else the terminal
+  // rendering; stdout then carries only where it went.
+  if (flags.out) {
+    const path = String(flags.out);
+    writeText(path, flags.json ? `${JSON.stringify(plan, null, 2)}\n` : `${renderPlan(plan)}\n`);
+    console.log(`plan written to ${path} — ${plan.tickets.length} ticket(s)`);
+    return;
   }
   if (flags['apply-order']) {
     const applied = applyOrder(horde, team, plan);
