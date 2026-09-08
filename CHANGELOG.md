@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-08
+
+Experimental. Needs Yggdrasil 5.9.0 or newer; an older one is refused with the release to install.
+
 ### Fixed
 - Reading the architecture's verdict on a large repository no longer fails with a buffer error. The report can run to several megabytes and is now read whole.
 
@@ -76,7 +80,8 @@ Experimental. This version needs a Yggdrasil newer than 5.8.0 — the first one 
 ### Added
 - First version. A prototype, expect rough edges.
 
-[Unreleased]: https://github.com/krzysztofdudek/Horde/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/krzysztofdudek/Horde/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/krzysztofdudek/Horde/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/krzysztofdudek/Horde/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/krzysztofdudek/Horde/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/krzysztofdudek/Horde/releases/tag/v0.1.0
