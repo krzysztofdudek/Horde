@@ -4,6 +4,8 @@
 
 **A mission is too big for one agent's context, so you either watch it lose track of its own earlier decisions, or you split it up yourself and babysit every piece.** Horde does the splitting for you: it turns your coding agent into a director, and the director raises a horde.
 
+[![ci](https://github.com/krzysztofdudek/Horde/actions/workflows/ci.yml/badge.svg)](https://github.com/krzysztofdudek/Horde/actions/workflows/ci.yml)
+
 ```
 /plugin marketplace add krzysztofdudek/Horde
 /plugin install horde@horde-marketplace

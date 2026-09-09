@@ -1,0 +1,42 @@
+# The gate: the full Horde test suite (skills/horde/scripts/tests/*.test.mjs), on every push and
+# PR, against a real Yggdrasil build linked onto PATH. Horde requires Yggdrasil at runtime, and the
+# suite refuses to fake it: requireYg() in tests/helpers.mjs throws rather than skip when it can't
+# find one.
+name: ci
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    name: tests (node ${{ matrix.node }})
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: git identity for test fixtures
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@invalid
+          git config --global init.defaultBranch main
+      - name: checkout Yggdrasil
+        uses: actions/checkout@v4
+        with:
+          repository: krzysztofdudek/Yggdrasil
+          path: yggdrasil
+      - name: build and link Yggdrasil's CLI
+        working-directory: yggdrasil/source/cli
+        run: |
+          npm install
+          npm run build
+          npm link
+      - name: run suite
+        working-directory: skills/horde/scripts
+        run: node --test tests/*.test.mjs

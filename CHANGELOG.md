@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The cost report counts reviewer calls. A worker who runs the architecture reviewer while landing a change bills a model per rule it judges, and the roster never saw that. The report now reads those calls from the repository's own record and prints them beside the agent runs, for the whole mission.
 - A merge is refused when a file the branch added belongs to no node. The mapping and the first file land in the same commit, or the branch waits.
 - A merge is refused when a node's charter, a node's log or a commit that changes the graph carries the language of a plan: a wave, a ticket number, a mission, a horde, an evidence id, a scratch path. The graph says what a node is and what must stay true; which mission touched it stays with the mission.
+- Every change now runs the full test suite automatically, against a real Yggdrasil build. A regression used to only surface if someone ran the suite by hand.
 
 ### Changed
 - A brief handed to a spawned agent names the skill's own scripts by their absolute path. The agent no longer depends on an environment variable it may not have been given, and the director no longer has to add that path to every brief by hand.
