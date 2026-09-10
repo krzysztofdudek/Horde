@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every change now runs the full test suite automatically, against a real Yggdrasil build. A regression used to only surface if someone ran the suite by hand.
 
 ### Changed
+- A port-change approval is now required only from the neighbours who actually named that port, not from every neighbour of the shared component. A relation that named no port used to be treated as depending on every one of that component's ports; it is now read for what it says, and only counts toward the port it actually named.
 - A brief handed to a spawned agent names the skill's own scripts by their absolute path. The agent no longer depends on an environment variable it may not have been given, and the director no longer has to add that path to every brief by hand.
 - A ticket with no acceptance line cannot be queued. Nothing a verifier could reproduce means nothing could ever prove it done; the refusal names the line to add.
 - Quality advisories file tickets only for the nodes this horde leases. An advisory on another node stays in the feed for whichever horde takes that node; `--all` files them anyway.

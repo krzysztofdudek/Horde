@@ -310,6 +310,177 @@ test('node.mjs contract: a contract is a port on a component, proposed at a vers
   });
 });
 
+// ---- consumersOf narrows to the port a relation actually names -----------------------------
+//
+// Yggdrasil normalizes a relation that names no port to portNames: ['default'], so consumersOf
+// no longer treats an unnamed relation as a match for every port — only 'default' picks it up.
+
+test('node.mjs contracts: consumersOf narrows to the exact port a relation names, not every port on a shared node', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const LEAF_COUNT = 30;
+  addNode(dir, 'shared', {
+    mapping: ['src/shared/**'],
+    ports: {
+      p: { description: 'The p promise.' },
+      default: { description: 'The default promise.' },
+      ghost: { description: 'Declared, but nothing relates to it.' },
+    },
+  });
+  for (let i = 0; i < LEAF_COUNT; i++) {
+    addNode(dir, `leaf${i}`, { mapping: [`src/leaf${i}/**`], relations: [{ target: 'shared', type: 'uses' }] });
+  }
+
+  const declaredByPort = () => {
+    const r = run('node.mjs', ['contracts', '--node', 'shared'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    return Object.fromEntries(r.json.declared.map((d) => [d.port, d]));
+  };
+
+  await t.test('thirty relations naming no port: the named port has no consumers, default has all thirty', () => {
+    const declared = declaredByPort();
+    assert.deepEqual(declared.p.consumers, []);
+    assert.deepEqual(declared.default.consumers, Array.from({ length: LEAF_COUNT }, (_, i) => `leaf${i}`).sort());
+  });
+
+  await t.test('one relation naming the port explicitly: it alone consumes it, default drops by one', () => {
+    addNode(dir, 'leaf0', { mapping: ['src/leaf0/**'], relations: [{ target: 'shared', type: 'uses', consumes: ['p'] }] });
+    const declared = declaredByPort();
+    assert.deepEqual(declared.p.consumers, ['leaf0']);
+    assert.equal(declared.default.consumers.length, LEAF_COUNT - 1);
+    assert.ok(!declared.default.consumers.includes('leaf0'));
+  });
+
+  await t.test('a relation naming both ports counts the node as a consumer of each, once', () => {
+    addNode(dir, 'leaf-both', { mapping: ['src/leaf-both/**'], relations: [{ target: 'shared', type: 'uses', consumes: ['default', 'p'] }] });
+    const declared = declaredByPort();
+    assert.equal(declared.p.consumers.filter((n) => n === 'leaf-both').length, 1);
+    assert.equal(declared.default.consumers.filter((n) => n === 'leaf-both').length, 1);
+  });
+
+  await t.test('a port with no relation pointing at it has no consumers, and the command does not crash on a missing dependents list', () => {
+    const declared = declaredByPort();
+    assert.deepEqual(declared.ghost.consumers, []);
+  });
+
+  await t.test('a node with zero ports declared returns an empty declared list, not a refusal', () => {
+    addNode(dir, 'bare', { mapping: ['src/bare/**'] });
+    const r = run('node.mjs', ['contracts', '--node', 'bare'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.json.declared, []);
+  });
+
+  await t.test('yg impact unavailable refuses with a CLI message, not a stack trace', () => {
+    run('horde.mjs', ['config', 'set', 'ygCommand', join(dir, 'no-such-yg')], dir);
+    const r = run('node.mjs', ['contracts', '--node', 'shared'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /could not be started/);
+    assert.match(r.stderr, /config set ygCommand/);
+    run('horde.mjs', ['config', 'set', 'ygCommand', requireYg()], dir);
+  });
+
+  await t.test('a yg-impact document at a version Horde does not know is refused by name, not silently emptied', () => {
+    const real = requireYg();
+    const stub = join(dir, 'stale-impact-yg.mjs');
+    writeFileSync(stub, [
+      "import { execFileSync } from 'node:child_process';",
+      'const args = process.argv.slice(2);',
+      "if (args[0] === 'impact' && args.includes('--json')) {",
+      "  console.log(JSON.stringify({ schema: 'yg-impact/2' }));",
+      '  process.exit(0);',
+      '}',
+      `const real = ${JSON.stringify(real)}.split(/\\s+/);`,
+      'try {',
+      "  const out = execFileSync(real[0], [...real.slice(1), ...args], { stdio: ['ignore', 'pipe', 'pipe'] });",
+      '  process.stdout.write(out);',
+      '} catch (e) {',
+      '  if (e.stdout) process.stdout.write(e.stdout);',
+      '  if (e.stderr) process.stderr.write(e.stderr);',
+      '  process.exit(e.status || 1);',
+      '}',
+      '',
+    ].join('\n'));
+    run('horde.mjs', ['config', 'set', 'ygCommand', `node ${stub}`], dir);
+    const r = run('node.mjs', ['contracts', '--node', 'shared'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /predates/);
+    assert.match(r.stderr, /yg-impact\/1/);
+    run('horde.mjs', ['config', 'set', 'ygCommand', real], dir);
+  });
+
+  await t.test('relations[].ports present but not an array does not crash — asArray is the only defense against a document that does not match its own schema', () => {
+    const real = requireYg();
+    const stub = join(dir, 'malformed-ports-yg.mjs');
+    writeFileSync(stub, [
+      "import { execFileSync } from 'node:child_process';",
+      'const args = process.argv.slice(2);',
+      "if (args[0] === 'impact' && args.includes('--json')) {",
+      "  console.log(JSON.stringify({ schema: 'yg-impact/1', ports: [], dependents: [{ node: 'leaf-malformed', relations: [{ ports: 'default' }] }] }));",
+      '  process.exit(0);',
+      '}',
+      `const real = ${JSON.stringify(real)}.split(/\\s+/);`,
+      'try {',
+      "  const out = execFileSync(real[0], [...real.slice(1), ...args], { stdio: ['ignore', 'pipe', 'pipe'] });",
+      '  process.stdout.write(out);',
+      '} catch (e) {',
+      '  if (e.stdout) process.stdout.write(e.stdout);',
+      '  if (e.stderr) process.stderr.write(e.stderr);',
+      '  process.exit(e.status || 1);',
+      '}',
+      '',
+    ].join('\n'));
+    run('horde.mjs', ['config', 'set', 'ygCommand', `node ${stub}`], dir);
+    const r = run('node.mjs', ['contracts', '--node', 'shared'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const declared = Object.fromEntries(r.json.declared.map((d) => [d.port, d]));
+    assert.deepEqual(declared.p.consumers, []);
+    run('horde.mjs', ['config', 'set', 'ygCommand', real], dir);
+  });
+});
+
+// The mission charter's evidence catalogue, written from stdin through horde.mjs — separate from
+// charterEdit() above, which writes a single node's charter through node.mjs.
+function hordeCharter(dir, body) {
+  return execFileSync('node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit', '--json'], {
+    cwd: dir, input: body, encoding: 'utf8',
+  });
+}
+
+test('queue.mjs plan: a ticket\'s approvals follow consumersOf\'s exact port match, not every neighbour of the node it touches', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  hordeCharter(dir, [
+    '# Mission · port narrowing', '',
+    '## Goal', '', 'Prove a ticket\'s approvals follow the port it names, not every neighbour.', '',
+    '## Acceptance — the evidence catalogue', '',
+    '| id | evidence | node | reproduced by |', '|---|---|---|---|',
+    '| E1 | the shared node ships a p port | shared | |', '',
+    '## Nodes', '', 'shared, named1, named2, plain1, plain2', '',
+  ].join('\n'));
+  addNode(dir, 'shared', { mapping: ['src/shared/**'] });
+  addNode(dir, 'named1', { mapping: ['src/named1/**'], relations: [{ target: 'shared', type: 'uses', consumes: ['p'] }] });
+  addNode(dir, 'named2', { mapping: ['src/named2/**'], relations: [{ target: 'shared', type: 'uses', consumes: ['p'] }] });
+  addNode(dir, 'plain1', { mapping: ['src/plain1/**'], relations: [{ target: 'shared', type: 'uses' }] });
+  addNode(dir, 'plain2', { mapping: ['src/plain2/**'], relations: [{ target: 'shared', type: 'uses' }] });
+
+  const newTicket = (args) => {
+    const r = run('tk.mjs', ['new', ...args, '--evidence', 'E1'], dir);
+    if (r.code !== 0) throw new Error(`tk new failed: ${r.stderr}`);
+    return r.json.id;
+  };
+  const id = newTicket(['bump-p', '--title', 'bump p', '--node', 'shared', '--class', 'sonnet', '--files', 'src/shared/p.ts', '--produces', 'shared/p@1']);
+  run('queue.mjs', ['add', id], dir);
+
+  const r = run('queue.mjs', ['plan'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const ticket = r.json.tickets.find((t2) => t2.id === id);
+  assert.ok(ticket, 'the ticket appears in the plan');
+  assert.deepEqual([...ticket.approvals].sort(), ['named1', 'named2', 'shared']);
+});
+
 // ---- graph-change proposals ----------------------------------------------------------------
 
 test('node.mjs propose/approve/apply: the horde records the decision, the architect files it', async (t) => {

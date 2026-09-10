@@ -1292,8 +1292,8 @@ export function portExists(root, cfg, node, port) {
 // consumersOf(node, port) — every node that consumes one node's port, from `yg impact`. The one
 // derivation of this, because three things depend on the same answer: which tickets a version
 // bump must come before, whose owner has to approve it, and what the merge checklist then
-// requires. A relation that names no port at all consumes the node as a whole, so a bump reaches
-// it too — the safe direction.
+// requires. Yggdrasil normalizes a relation that names no port to portNames: ['default'], so an
+// empty `ports` list here means the relation named nothing at all — never a match for any port.
 export function consumersOf(root, cfg, node, port) {
   const out = new Set();
   const doc = ygImpact(root, cfg, node);
@@ -1305,7 +1305,7 @@ export function consumersOf(root, cfg, node, port) {
     if (!d || !d.node) continue;
     for (const r of asArray(d.relations)) {
       const ports = asArray(r && r.ports);
-      if (ports.length === 0 || ports.includes(port)) out.add(d.node);
+      if (ports.includes(port)) out.add(d.node);
     }
   }
   return [...out].sort();
