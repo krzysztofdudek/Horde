@@ -9,8 +9,8 @@
 //   ## <YYYY-MM-DD> · <slug> [· ticket NNN] [· node n]
 //   <ruling text, may be multi-line>
 //
-// Exports `appendDecision` so escalate.mjs and dissent.mjs can record a ruling/answer in the
-// same format without shelling out to this file.
+// Exports `appendDecision` so escalate.mjs can record a ruling in the same format without
+// shelling out to this file.
 
 import { join } from 'node:path';
 import {

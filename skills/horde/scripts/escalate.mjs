@@ -10,44 +10,32 @@
 // "ruled" — no decision is recorded yet) until `rule` is called again, without --to-user, with
 // the chairman's actual answer.
 //
-// A "structure" escalation proposing a sub-team is the one kind whose ruling nobody but the
-// director can carry out — a steward is a teammate of the director's, and a teammate cannot create
-// a teammate — so the item carries the commands that raise it, filled in from --team and --parent.
-//
 // State: hordes/<horde>/escalations.json (source of truth) + escalations.md (rendered).
 
 import {
   hordePath, readConfig, readJSON, writeJSON, nowIso, fail, parseArgs, emit, isMain, resolveHorde,
 } from './_lib.mjs';
 import { appendDecision } from './decide.mjs';
-import { trace as traceRoster } from './roster.mjs';
 import { findTicket, nodesOf } from './tk.mjs';
 import { ygCommand } from './node.mjs';
 
-// "adjudicate" is not a finding to rule on so much as a ticket the fix-loop breaker gave up on:
-// tk.mjs status <ticket> changes refuses past config.fixRounds' cap and names this exact command
-// as the next step, so the director rules a way forward instead of another round. "quality" is
-// the one kind nobody files by hand: wave.mjs close opens it when the wave's quality index came
-// out lower than the wave before it, because a graph that got weaker is the chairman's business
-// (ruling quality-always-authorised — raising enforcement is autonomous, lowering it is not).
-const KINDS = ['charter', 'contract', 'claim', 'conflict', 'boundary', 'cost', 'unverifiable', 'rules', 'structure', 'adjudicate', 'quality'];
+// "quality" is the one kind nobody files by hand: wave.mjs close opens it when the wave's quality
+// index came out lower than the wave before it, because a graph that got weaker is the chairman's
+// business (ruling quality-always-authorised — raising enforcement is autonomous, lowering it is
+// not).
+const KINDS = ['charter', 'contract', 'claim', 'conflict', 'boundary', 'cost', 'unverifiable', 'rules', 'quality'];
 
 const USAGE = `usage: escalate.mjs <command> [options]
 
 commands:
   add "<why>" --kind <${KINDS.join('|')}> [--ticket NNN] [--by steward|architect|owner]
-      [--team <new sub-team> --parent <its parent team>] [--horde h]
-      --team, on a "structure" escalation, says which sub-team is being proposed: the item then
-      carries the commands that raise it, since only the director can — a steward is a teammate,
-      and a teammate cannot create a teammate.
+      [--horde h]
   list [--open] [--horde h]
       open and forwarded first, newest first.
   rule <id> "<ruling>" [--to-user] [--by <name>] [--horde h]
       without --to-user: rules the escalation, recording the ruling as a decision (esc-<id>) and
       closing it. With --to-user: marks it "forwarded" to the chairman — still open, no decision
       recorded yet — until rule is called again on the same id with the chairman's answer.
-      --by traces that name in the roster when it is one (optional; a director ruling directly
-      often isn't).
   show <id> [--horde h]
   recurring [--min <n>] [--horde h]
       the ruled escalations grouped by kind and by the node their ticket names; a group of
@@ -107,18 +95,6 @@ function render(doc) {
   return lines.join('\n');
 }
 
-// The commands a ruled sub-team proposal is executed with, in the order the director runs them.
-// Rendered into the item at `add`, because the steward that proposes knows the team and its parent
-// and the director should not have to reconstruct either from prose.
-function subTeamCommands(team, parent) {
-  return [
-    `roster.mjs spawn steward --team ${team} --parent ${parent} --class sonnet`,
-    `brief.mjs steward ${team} --name <the name that printed>`,
-    'spawn it with the Agent tool as a teammate, prompt = that brief',
-    `queue.mjs move <each ticket this escalation names> --team ${team}`,
-  ];
-}
-
 function nextId(doc) {
   let max = 0;
   for (const it of doc.items) {
@@ -128,25 +104,18 @@ function nextId(doc) {
   return String(max + 1);
 }
 
-// addEscalation(horde, {why, kind, ticket, by, team, parent}) — opens one escalation and returns
-// it. Exported so wave.mjs's close can open the `quality` escalation a fallen quality index owes
-// without shelling out to this file; throws rather than exiting, so its caller decides how to
-// report it. `team` (a sub-team proposal, "structure" only) adds the commands that raise it.
+// addEscalation(horde, {why, kind, ticket, by}) — opens one escalation and returns it. Exported so
+// wave.mjs's close can open the `quality` escalation a fallen quality index owes without shelling
+// out to this file; throws rather than exiting, so its caller decides how to report it.
 export function addEscalation(horde, {
-  why, kind, ticket, by, team, parent,
+  why, kind, ticket, by,
 } = {}) {
   if (!why) throw new Error('why required');
   if (typeof kind !== 'string' || !KINDS.includes(kind)) throw new Error(`kind must be one of: ${KINDS.join('|')}`);
-  if (team && kind !== 'structure') throw new Error(`--team names the sub-team a "structure" escalation proposes — it has no meaning for kind "${kind}"`);
   const doc = load(horde);
   const id = nextId(doc);
   const item = { id, kind, why, by: by || 'steward', at: nowIso(), state: 'open' };
   if (ticket) item.ticket = String(ticket);
-  if (team) {
-    item.team = String(team);
-    item.parent = String(parent || 'trunk');
-    item.next = subTeamCommands(item.team, item.parent);
-  }
   doc.items.push(item);
   save(horde, doc);
   return item;
@@ -159,7 +128,7 @@ function cmdAdd(horde, positional, flags) {
   let item;
   try {
     item = addEscalation(horde, {
-      why, kind: flags.kind, ticket: flags.ticket, by: flags.by, team: flags.team, parent: flags.parent,
+      why, kind: flags.kind, ticket: flags.ticket, by: flags.by,
     });
   } catch (e) {
     fail(e.message);
@@ -211,7 +180,6 @@ function cmdRule(horde, positional, flags) {
     it.ruling = ruling;
     it.forwardedAt = nowIso();
     save(horde, doc);
-    if (flags.by) traceRoster(horde, flags.by);
     emit(it, flags, () => `escalation ${id} forwarded to the chairman`);
     return;
   }
@@ -226,7 +194,6 @@ function cmdRule(horde, positional, flags) {
   } catch (e) {
     fail(`escalation ${id} marked ruled, but recording the decision failed: ${e.message}`);
   }
-  if (flags.by) traceRoster(horde, flags.by);
   emit(it, flags, () => `escalation ${id} ruled — recorded as esc-${id}`);
 }
 

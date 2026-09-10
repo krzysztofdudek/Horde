@@ -244,28 +244,6 @@ test('queue.mjs plan: a consumed port nobody produces is named', async (t) => {
   assert.match(human.stdout, /consumes without a producer: \d+ needs auth\/policy@2/);
 });
 
-test('queue.mjs plan: a producer in another team resolves, and the edge points out of the team', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-  run('node.mjs', ['new', 'auth', '--boundary', 'src/auth/'], dir);
-  run('node.mjs', ['new', 'api', '--boundary', 'src/api/'], dir);
-  run('roster.mjs', ['spawn', 'steward', '--team', 'alfa', '--parent', 'trunk', '--class', 'sonnet'], dir);
-
-  const producer = tk(dir, ['engine', '--title', 'engine', '--node', 'auth', '--class', 'sonnet',
-    '--team', 'alfa', '--produces', 'auth/policy@2']);
-  const consumer = tk(dir, ['guard', '--title', 'guard', '--node', 'api', '--class', 'sonnet',
-    '--consumes', 'auth/policy@2']);
-  run('queue.mjs', ['add', consumer], dir);
-  run('queue.mjs', ['add', producer, '--team', 'alfa'], dir);
-
-  const plan = run('queue.mjs', ['plan'], dir).json;
-  assert.equal(plan.tickets.length, 1);
-  assert.deepEqual(plan.edges.map((e) => `${e.from}->${e.on}`), [`${consumer}->alfa:${producer}`]);
-  assert.deepEqual(plan.tickets[0].waitsOnOutside, [`alfa:${producer}`]);
-  assert.deepEqual(plan.consumesWithoutProducer, []);
-});
-
 // --- the graph's own edge, both ways of reading it ---------------------------------
 //
 // "Who consumes this port" has exactly one authority — `yg impact --node <p> --json`, the

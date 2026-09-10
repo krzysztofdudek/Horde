@@ -35,13 +35,11 @@ a new coupling somewhere else, or each one needs a change that is really a redes
 **Do not attempt a fourth.** Write it down instead:
 
 ```
-node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/dissent.mjs add \
-  "<the three fixes, what each one revealed, and what you now think is wrong>" \
-  --ticket NNN --by <your name>
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tk.mjs log NNN \
+  "<the three fixes, what each one revealed, and what you now think is wrong>"
 ```
 
-A dissent is recorded, answered once, and blocks nothing. It is how the horde learns something from
-inside the node that nobody above the node could see. "I cannot, because …" in one line is a good
+Then stop and wait for the director to read it. "I cannot, because …" in one line is a good
 report; a fourth fix is not.
 
 ## Rationalisations

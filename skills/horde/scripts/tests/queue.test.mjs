@@ -34,7 +34,7 @@ function mkTicket(dir, slug, opts = {}) {
   return r.json.id;
 }
 
-test('queue.mjs: add, set (running/merged with real branches+worktrees), next, rm, move, reconcile', async (t) => {
+test('queue.mjs: add, set (running/merged with real branches+worktrees), next, rm, reconcile', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -89,46 +89,21 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
     assert.match(worktrees, new RegExp(`t-${id1}`));
   });
 
-  await t.test('set merged refuses without an author key', () => {
-    const r = run('queue.mjs', ['set', id1, 'merged', '--sha', 'abc123'], dir);
+  await t.test('set merged refuses without --sha — no approval/keys gate exists any more', () => {
+    const r = run('queue.mjs', ['set', id1, 'merged'], dir);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /no author key/);
+    assert.match(r.stderr, /requires --sha/);
   });
 
-  await t.test('set merged refuses without a verifier key', () => {
-    run('tk.mjs', ['key', id1, 'author', '--by', 'worker1'], dir);
-    const r = run('queue.mjs', ['set', id1, 'merged', '--sha', 'abc123'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /no verifier key/);
-  });
-
-  await t.test('set merged refuses without a node approval', () => {
-    const tip = git(['rev-parse', '--short', `mission1/t-${id1}`], dir);
-    run('verify.mjs', ['record', id1, '--verdict', 'reproduced', '--revert', 'failed', '--by', 'verifier1', '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', tip, '--item', '1|npm test|green'], dir);
-    const r = run('queue.mjs', ['set', id1, 'merged', '--sha', 'abc123'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /missing an approval/);
-  });
-
-  await t.test('set merged succeeds once all keys are present, removing the worktree then the branch', () => {
-    run('tk.mjs', ['review', id1, 'approve', '--by', 'owner1'], dir);
+  await t.test('set merged succeeds with just --sha once dependencies are satisfied, removing the worktree then the branch', () => {
     const sha = git(['rev-parse', '--short', `mission1/t-${id1}`], dir);
     const r = run('queue.mjs', ['set', id1, 'merged', '--sha', sha], dir);
-    assert.equal(r.code, 0);
+    assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.worktree, null);
     const branches = git(['branch', '--list', `mission1/t-${id1}`], dir);
     assert.equal(branches, '');
     const worktrees = git(['worktree', 'list'], dir);
     assert.doesNotMatch(worktrees, new RegExp(`t-${id1}(?!\\d)`));
-  });
-
-  await t.test('move relocates the item to another team\'s queue', () => {
-    run('roster.mjs', ['spawn', 'steward', '--team', 'allies', '--parent', 'trunk', '--class', 'sonnet'], dir);
-    const third = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket !== id1 && !i.ticket.startsWith('team:'));
-    const r = run('queue.mjs', ['move', third.ticket, '--team', 'trunk/allies'], dir);
-    assert.equal(r.code, 0);
-    const destList = run('queue.mjs', ['list', '--team', 'trunk/allies'], dir);
-    assert.equal(destList.json.some((i) => i.ticket === third.ticket), true);
   });
 
   await t.test('dep adds a dependency; a running item that gains one goes back to queued, keeping its worktree', () => {
@@ -167,60 +142,19 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
     assert.match(cycle.stderr, /cycle/);
   });
 
-  await t.test('cross-team dependencies: <team>:NNN and <team>:team:<name> are satisfied only once merged in their own team\'s queue.json', () => {
-    run('roster.mjs', ['spawn', 'steward', '--team', 'crows', '--parent', 'trunk', '--class', 'sonnet'], dir);
-    run('roster.mjs', ['spawn', 'steward', '--team', 'ravens', '--parent', 'trunk', '--class', 'sonnet'], dir);
-
-    const crowsTicket = run('tk.mjs', ['new', 'crows-thing', '--title', 'Crows thing', '--node', 'x', '--class', 'sonnet', '--team', 'crows', '--evidence', 'it works'], dir).json.id;
-    run('queue.mjs', ['add', crowsTicket, '--team', 'crows'], dir);
-
-    const ravensTicket = run('tk.mjs', ['new', 'ravens-thing', '--title', 'Ravens thing', '--node', 'x', '--class', 'sonnet', '--team', 'ravens', '--evidence', 'it works'], dir).json.id;
-    const added = run('queue.mjs', ['add', ravensTicket, '--depends', `crows:${crowsTicket}`, '--team', 'ravens'], dir);
-    assert.equal(added.code, 0, added.stderr);
-    assert.deepEqual(added.json.dependsOn, [`crows:${crowsTicket}`]);
-
-    const alsoOnMergeUp = run('queue.mjs', ['dep', ravensTicket, '--on', 'trunk:team:crows', '--team', 'ravens'], dir);
-    assert.equal(alsoOnMergeUp.code, 0, alsoOnMergeUp.stderr);
-
-    // neither dependency is merged yet — ravens' ticket is not ready
-    const notReady = run('queue.mjs', ['next', '--team', 'ravens'], dir);
-    assert.equal(notReady.json, null);
-
-    // merge the crows ticket itself — still not ready, because trunk:team:crows isn't merged
-    const running = run('queue.mjs', ['set', crowsTicket, 'running', '--agent', 'w', '--team', 'crows'], dir);
-    git(['-C', running.json.worktree, 'commit', '--allow-empty', '-qm', 'work']);
-    const tip = git(['rev-parse', '--short', running.json.branch], dir);
-    run('tk.mjs', ['key', crowsTicket, 'author', '--by', 'w', '--team', 'crows'], dir);
-    run('tk.mjs', ['review', crowsTicket, 'approve', '--by', 'architect', '--team', 'crows'], dir);
-    run('verify.mjs', ['record', crowsTicket, '--verdict', 'reproduced', '--revert', 'failed', '--by', 'v', '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', tip, '--team', 'crows', '--item', '1|npm test|green'], dir);
-    const merged = run('queue.mjs', ['set', crowsTicket, 'merged', '--sha', tip, '--team', 'crows'], dir);
-    assert.equal(merged.code, 0, merged.stderr);
-    const stillNotReady = run('queue.mjs', ['next', '--team', 'ravens'], dir);
-    assert.equal(stillNotReady.json, null);
-
-    // merge crows' own team: item into trunk — now both dependencies are satisfied
-    const teamMerged = run('queue.mjs', ['set', 'team:crows', 'merged', '--sha', 'def456', '--team', 'trunk'], dir);
-    assert.equal(teamMerged.code, 0, teamMerged.stderr);
-    const ready = run('queue.mjs', ['next', '--team', 'ravens'], dir);
-    assert.equal(ready.json.ticket, ravensTicket);
+  await t.test('add --depends refuses a colon-bearing dependency — team-scoped dependencies no longer exist', () => {
+    const freshTicket = readyTicket(dir, 'fresh-for-add-refusal', { severity: 'medium' });
+    const r = run('queue.mjs', ['add', freshTicket, '--depends', 'sometat:007'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /team-scoped dependencies no longer exist/);
   });
 
-  await t.test('dep and add refuse a cross-team dependency naming an unknown team or an unknown item in it', () => {
+  await t.test('dep --on refuses a colon-bearing dependency — team-scoped dependencies no longer exist', () => {
     const own = readyTicket(dir, 'own-tick', { severity: 'medium' });
     run('queue.mjs', ['add', own], dir);
-
-    const unknownTeam = run('queue.mjs', ['dep', own, '--on', 'nosuchteam:001'], dir);
-    assert.equal(unknownTeam.code, 1);
-    assert.match(unknownTeam.stderr, /no such team/);
-
-    const unknownItem = run('queue.mjs', ['dep', own, '--on', 'trunk:team:nosuchteam'], dir);
-    assert.equal(unknownItem.code, 1);
-    assert.match(unknownItem.stderr, /no such dependency/);
-
-    const freshTicket = readyTicket(dir, 'fresh-for-add-refusal', { severity: 'medium' });
-    const addRefused = run('queue.mjs', ['add', freshTicket, '--depends', 'trunk:team:nosuchteam'], dir);
-    assert.equal(addRefused.code, 1);
-    assert.match(addRefused.stderr, /no such dependency/);
+    const r = run('queue.mjs', ['dep', own, '--on', 'someteam:team:x'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /team-scoped dependencies no longer exist/);
   });
 
   await t.test('reconcile: a running item with a commit beyond the tip lands; a clean one without a commit goes back to queued and loses its worktree; a dirty one is committed as wip and goes back to queued keeping its worktree', async () => {
@@ -466,13 +400,6 @@ test('queue.mjs next --why: every queued ticket prints its rank, or the reason i
 // instead, the second is written and reviewed while the first is still in flight, and only the
 // merge order still waits.
 
-function keysFor(dir, ticket, { author = 'worker1', owner = 'owner1', verifier = 'verifier1', branch }) {
-  run('tk.mjs', ['key', ticket, 'author', '--by', author], dir);
-  const tip = git(['rev-parse', '--short', branch], dir);
-  run('verify.mjs', ['record', ticket, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', verifier, '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', tip, '--item', '1|npm test|green'], dir);
-  run('tk.mjs', ['review', ticket, 'approve', '--by', owner], dir);
-}
-
 test('queue.mjs: a ticket started from an unmerged dependency (a stack)', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -514,13 +441,10 @@ test('queue.mjs: a ticket started from an unmerged dependency (a stack)', async 
     assert.match(printed.stdout, new RegExp(`stack-ready on ${first}`));
   });
 
-  await t.test('--on refuses a ticket in another team, and one this ticket does not depend on', () => {
-    run('roster.mjs', ['spawn', 'steward', '--team', 'allies', '--parent', 'trunk', '--class', 'sonnet'], dir);
-    const away = run('tk.mjs', ['new', 'away-ticket', '--title', 'Away', '--node', 'core', '--class', 'sonnet', '--team', 'allies', '--evidence', 'it works'], dir).json.id;
-    run('queue.mjs', ['add', away, '--team', 'allies'], dir);
-    const otherTeam = run('queue.mjs', ['set', second, 'running', '--on', `allies:${away}`], dir);
-    assert.equal(otherTeam.code, 1);
-    assert.match(otherTeam.stderr, /belongs to team allies, not trunk/);
+  await t.test('--on refuses a colon-bearing (team-scoped) dependency, and a ticket this one does not depend on', () => {
+    const colonRef = run('queue.mjs', ['set', second, 'running', '--on', 'allies:999'], dir);
+    assert.equal(colonRef.code, 1);
+    assert.match(colonRef.stderr, /team-scoped dependencies no longer exist/);
 
     const notADep = run('queue.mjs', ['set', loose, 'running', '--on', first], dir);
     assert.equal(notADep.code, 1);
@@ -549,15 +473,13 @@ test('queue.mjs: a ticket started from an unmerged dependency (a stack)', async 
     assert.match(md, new RegExp(`stacked on ${first}`));
   });
 
-  await t.test('merged is refused while the dependency has not merged, keys or no keys', () => {
-    keysFor(dir, second, { author: 'w2', branch: child.branch });
+  await t.test('merged is refused while the dependency has not merged', () => {
     const r = run('queue.mjs', ['set', second, 'merged', '--sha', 'abc1234'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, new RegExp(`${second} depends on ${first}, still unmerged`));
   });
 
   await t.test('the dependency merging clears the stack, by the same write', () => {
-    keysFor(dir, first, { author: 'w1', branch: parent.json.branch });
     git(['checkout', 'mission1/trunk'], dir);
     git(['merge', '--no-ff', parent.json.branch, '-m', `merge ${first}`], dir);
     const sha = git(['rev-parse', '--short', 'mission1/trunk'], dir);

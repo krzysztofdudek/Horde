@@ -3,6 +3,13 @@
 // the file. Every scenario here is driven through the real tools against a real
 // temporary git repository — no fixture is hand-typed into ticket/log files — and the merge
 // itself is a real `git merge --no-ff`, exactly as a steward would do it.
+//
+// tk.mjs's `key`/`review` and the deleted verify tool itself are gone (task 014 — seat cassation): a new-format
+// ticket carries neither a **Keys:** line nor a ## Verdict block any more. blame.mjs keeps its own
+// read-only copy of the old key-parsing logic so it can still walk a PRE-migration ticket's custody
+// chain, so the fixtures below that need one write it directly to disk — the only way left to
+// construct that shape at all, and exactly the scenario blame.mjs's backward-compat reading exists
+// for.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,20 +44,47 @@ function writeLockVerdict(dir, aspectId, unitKey, verdict) {
   }, null, 2) + '\n');
 }
 
-// One ticket, worked, reviewed, verified and merged into trunk by a real `git merge --no-ff` —
-// the same sequence lifecycle.test.mjs drives, trimmed to only what blame.mjs's own fields read
-// (no gate command, no revert test: verify.mjs's own --revert no-new-tests is the honest verdict
-// for a fixture that adds no test file).
+function issuePathOf(dir, horde, team, dirName) {
+  return join(dir, '.horde', 'hordes', horde, 'teams', team, 'issues', dirName, 'issue.md');
+}
+
+function logPathOf(dir, horde, team, dirName) {
+  return join(dir, '.horde', 'hordes', horde, 'teams', team, 'issues', dirName, 'log.md');
+}
+
+// A pre-migration "## Verdict" block, in the exact shape the deleted verify tool's own templates/verdict.md
+// used to render — heading, Result line, and the evidence table blame.mjs's parseVerdictBlock
+// reads back.
+function renderVerdictBlock({
+  ticketId, verifier, cls, result, rows,
+}) {
+  const lines = [
+    `## Verdict · ${ticketId} · 2024-01-01 · by ${verifier} (${cls})`,
+    '',
+    `**Result:** ${result}`,
+    '',
+    '| item | command | saw |',
+    '|---|---|---|',
+    ...rows.map(({ text, command, saw }) => `| ${text} | ${command} | ${saw} |`),
+    '',
+  ];
+  return lines.join('\n');
+}
+
+// One ticket, worked and merged into trunk by a real `git merge --no-ff` — the same sequence
+// lifecycle.test.mjs drives, trimmed to only what blame.mjs's own fields read. tk.mjs's key/review
+// and the deleted verify tool record are gone, so the pre-migration **Keys:** line and ## Verdict block this
+// scenario needs are written straight to the ticket's own files afterwards, simulating a ticket
+// that predates the migration — exactly the shape blame.mjs's backward-compat reading exists for.
 function landOneTicket(dir, horde) {
   const ticket = run('tk.mjs', [
     'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'sonnet',
     '--evidence', 'the hook returns hooked',
   ], dir);
   assert.equal(ticket.code, 0, ticket.stderr);
-  const id = ticket.json.id;
+  const { id, dirName, team } = ticket.json;
 
   assert.equal(run('queue.mjs', ['add', id], dir).code, 0);
-  assert.equal(run('wave.mjs', ['start'], dir).code, 0);
 
   const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker-1'], dir);
   assert.equal(running.code, 0, running.stderr);
@@ -62,16 +96,27 @@ function landOneTicket(dir, horde) {
   git(['commit', '-qm', 'extract the hook'], worktree);
   const landedSha = git(['rev-parse', '--short', `${horde}/t-${id}`], dir);
 
-  assert.equal(run('tk.mjs', ['key', id, 'author', '--by', 'worker-1'], dir).code, 0);
-  assert.equal(run('tk.mjs', ['review-request', id], dir).code, 0);
-  const review = run('tk.mjs', ['review', id, 'approve', '--by', 'owner-1'], dir);
-  assert.equal(review.code, 0, review.stderr);
+  // Pre-migration Keys line: author, verifier, and one owner approval per node, exactly the shape
+  // tk.mjs's own writeKeys() used to produce.
+  const issuePath = issuePathOf(dir, horde, team, dirName);
+  const issueText = readFileSync(issuePath, 'utf8');
+  writeFileSync(
+    issuePath,
+    `${issueText.trimEnd()}\n\n**Keys:** author worker-1 · verifier verifier-1 · model owner-1@${landedSha}\n`,
+  );
 
-  const verdict = run('verify.mjs', [
-    'record', id, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier-1',
-    '--item', '1|manual check|hooked', '--gate', 'green', '--sha', landedSha,
-  ], dir);
-  assert.equal(verdict.code, 0, verdict.stderr);
+  // Pre-migration verdict block, appended to the ticket's own log the way the deleted verify tool record used
+  // to append it.
+  const logPath = logPathOf(dir, horde, team, dirName);
+  const block = renderVerdictBlock({
+    ticketId: id,
+    verifier: 'verifier-1',
+    cls: 'sonnet',
+    result: 'reproduced',
+    rows: [{ text: 'the hook returns hooked', command: 'manual check', saw: 'hooked' }],
+  });
+  const existingLog = readFileSync(logPath, 'utf8');
+  writeFileSync(logPath, `${existingLog.trimEnd()}\n\n${block}`.trimStart());
 
   git(['checkout', `${horde}/trunk`], dir);
   git(['merge', '--no-ff', `${horde}/t-${id}`, '-m', `merge ticket ${id}`], dir);
@@ -81,7 +126,9 @@ function landOneTicket(dir, horde) {
   assert.equal(merged.code, 0, merged.stderr);
   assert.equal(run('tk.mjs', ['status', id, 'merged'], dir).code, 0);
 
-  return { id, landedSha, mergeSha };
+  return {
+    id, dirName, team, landedSha, mergeSha,
+  };
 }
 
 test('blame.mjs: E15 — full custody chain for a line a merged ticket introduced, and rule verdicts', async (t) => {
@@ -136,6 +183,74 @@ test('blame.mjs: E15 — full custody chain for a line a merged ticket introduce
   assert.match(human.stdout, /owner-1@/);
   assert.match(human.stdout, /the hook returns hooked — reproduced — saw: hooked/);
   assert.match(human.stdout, /house\/no-console \[enforced\] — approved/);
+});
+
+test('blame.mjs: a ticket with an old ## Verdict block but no **Keys:** line at all — the new-ticket shape — falls back to the last verdict instead of throwing', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const horde = 'mission1';
+  const ticket = run('tk.mjs', [
+    'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'sonnet',
+    '--evidence', 'the hook returns hooked',
+  ], dir);
+  assert.equal(ticket.code, 0, ticket.stderr);
+  const { id, dirName, team } = ticket.json;
+
+  // A genuinely new-format ticket never gets a **Keys:** line written to it any more — confirm
+  // the fixture really has none before leaning on that shape below.
+  const issueText = readFileSync(issuePathOf(dir, horde, team, dirName), 'utf8');
+  assert.doesNotMatch(issueText, /\*\*Keys:\*\*/);
+
+  assert.equal(run('queue.mjs', ['add', id], dir).code, 0);
+  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker-1'], dir);
+  assert.equal(running.code, 0, running.stderr);
+  const worktree = running.json.worktree;
+
+  mkdirSync(join(worktree, 'src', 'model'), { recursive: true });
+  writeFileSync(join(worktree, 'src', 'model', 'hook.mjs'), "export function useHook() { return 'hooked'; }\n");
+  git(['add', join('src', 'model', 'hook.mjs')], worktree);
+  git(['commit', '-qm', 'extract the hook'], worktree);
+
+  // A pre-migration verdict block, sitting in this new-format ticket's log with no Keys line to
+  // match it against — the shape a verdict left over from before the migration would have.
+  const logPath = logPathOf(dir, horde, team, dirName);
+  const block = renderVerdictBlock({
+    ticketId: id,
+    verifier: 'verifier-1',
+    cls: 'sonnet',
+    result: 'reproduced',
+    rows: [{ text: 'the hook returns hooked', command: 'manual check', saw: 'hooked' }],
+  });
+  const existingLog = readFileSync(logPath, 'utf8');
+  writeFileSync(logPath, `${existingLog.trimEnd()}\n\n${block}`.trimStart());
+
+  git(['checkout', `${horde}/trunk`], dir);
+  git(['merge', '--no-ff', `${horde}/t-${id}`, '-m', `merge ticket ${id}`], dir);
+  const mergeSha = git(['rev-parse', '--short', 'HEAD'], dir);
+  const merged = run('queue.mjs', ['set', id, 'merged', '--sha', mergeSha], dir);
+  assert.equal(merged.code, 0, merged.stderr);
+
+  const blame = run('blame.mjs', ['src/model/hook.mjs:1'], dir);
+  assert.equal(blame.code, 0, blame.stderr);
+  const r = blame.json;
+
+  assert.ok(r.ticket, 'a ticket should own this line');
+  assert.equal(r.ticket.id, id);
+  // No Keys line at all means author/verifier read back as the unset marker …
+  assert.equal(r.ticket.author, '—');
+  assert.equal(r.ticket.verifier.name, '—');
+  // … but verifierVerdict() falls back to the last verdict block in the log rather than finding
+  // nothing, so its class and result still come through.
+  assert.equal(r.ticket.verifier.class, 'sonnet');
+  assert.equal(r.ticket.evidence.length, 1);
+  assert.equal(r.ticket.evidence[0].state, 'reproduced');
+  assert.equal(r.ticket.evidence[0].saw, 'hooked');
+
+  const human = run('blame.mjs', ['src/model/hook.mjs:1'], dir, { json: false });
+  assert.equal(human.code, 0, human.stderr);
+  assert.match(human.stdout, /the hook returns hooked — reproduced — saw: hooked/);
 });
 
 test('blame.mjs: a pre-horde line reports plainly that no ticket owns it', async (t) => {

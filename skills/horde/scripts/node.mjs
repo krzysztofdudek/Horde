@@ -17,14 +17,13 @@
 // process state — port proposals and graph-change proposals, uncommitted, per horde, in
 // hordes/<horde>/graph.json — until an approval turns one into a filing the architect makes.
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   repoRoot, hordePath, readJSON, writeJSON, readText, writeText, readConfig, nowIso,
-  fail, parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, claimLease, qualityPolicy,
+  fail, parseArgs, asArray, emit, isMain, resolveHorde, claimLease, qualityPolicy,
 } from './_lib.mjs';
-import { trace as traceRoster } from './roster.mjs';
 
 const USAGE = `usage: node.mjs <command> [options]
 
@@ -42,10 +41,7 @@ commands:
       ports they publish, and open port proposals.
   show <node> [--horde h]
       boundary, the rules in force on the node (with the status word that says what a refusal
-      costs), the ports it publishes with version and test, charter, last log entries.
-  charter edit <node> [--horde h]
-      writes charter.md beside the node's yg-node.yaml; seeds it from the template first when
-      the node has none yet and stdin is empty.
+      costs), the ports it publishes with version and test, last log entries.
   log <node> "<reason>" [--run] [--horde h]
       prints the "yg log add --reason" command for the node's own log; runs it too with --run.
   contract propose <node> <port> "<text>" --as <test-path> [--version <n>] --by <owner> [--horde h]
@@ -964,7 +960,6 @@ function cmdPromote(horde, root, cfg, positional, flags) {
     from: status, to, at, by, evidence, nodes, pointered, pointerMissed, baseline: after.refused,
   });
   saveGraph(horde, graph);
-  traceRoster(horde, by);
 
   emit({
     aspect,
@@ -1221,21 +1216,13 @@ export function nodeBoundary(root, cfg, node) {
   return doc ? asArray(doc.mapping) : [];
 }
 
-// The repo-root-relative directory a node's own graph files live in (yg-node.yaml, charter.md,
-// log.md), trailing slash included — the prefix premerge.mjs's scope check treats as inside a
-// ticket's node, alongside its code boundary. Nothing else under .yggdrasil/
-// (yg-architecture.yaml, aspects, locks, config) is a node's own files, so this names only that
-// one directory, never the graph root.
+// The repo-root-relative directory a node's own graph files live in (yg-node.yaml, log.md),
+// trailing slash included — the prefix premerge.mjs's scope check treats as inside a ticket's
+// node, alongside its code boundary. Nothing else under .yggdrasil/ (yg-architecture.yaml,
+// aspects, locks, config) is a node's own files, so this names only that one directory, never the
+// graph root.
 export function nodeGraphPathPrefix(root, cfg, node) {
   return `${relative(root, nodeDir(root, node))}/`;
-}
-
-export function nodeCharterPath(root, cfg, node) {
-  return join(nodeDir(root, node), 'charter.md');
-}
-
-export function readNodeCharterText(root, cfg, node) {
-  return readText(nodeCharterPath(root, cfg, node));
 }
 
 // ---- boundary matching (shared with premerge.mjs and tk.mjs) ---------------
@@ -1367,17 +1354,6 @@ function aspectsFromContext(doc) {
       via: channels.length ? channels.join(' · ') : null,
     };
   });
-}
-
-// The section a node's charter carries naming the rules that reach its files from above — written
-// by whoever generated the graph, not by this tool, and reproduced verbatim when it is there.
-export function charterInheritedRules(charterText) {
-  if (!charterText) return null;
-  const idx = charterText.search(/^##\s+Rules inherited from above\s*$/m);
-  if (idx === -1) return null;
-  const rest = charterText.slice(idx);
-  const next = rest.indexOf('\n## ', 1);
-  return (next === -1 ? rest : rest.slice(0, next)).trim();
 }
 
 // The rules in force on one node.
@@ -1592,7 +1568,6 @@ function cmdShow(horde, root, cfg, positional, flags) {
   if (!nodeExists(root, cfg, node)) fail(`no such node in the graph: ${node}`);
   const doc = ygNode(root, cfg, node);
   const boundary = asArray(doc.mapping);
-  const charter = readNodeCharterText(root, cfg, node) || '(no charter yet)';
   const ports = renderNodePorts(root, cfg, node);
   let log = '(no log yet)';
   try {
@@ -1600,52 +1575,24 @@ function cmdShow(horde, root, cfg, positional, flags) {
     log = execFileSync(cmd, [...prefix, 'log', 'read', '--node', node], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim() || log;
   } catch { /* no entries yet — keep the placeholder */ }
   const rules = nodeRules(root, cfg, node);
-  const inherited = charterInheritedRules(readNodeCharterText(root, cfg, node));
   const result = {
     node,
     type: doc.type || null,
     description: doc.description || null,
     boundary,
     ports: doc.ports || {},
-    rules: { ...rules, charterInherited: inherited },
-    charter,
+    rules,
     log,
   };
   emit(result, flags, () => [
     `# ${node}${doc.type ? ` [${doc.type}]` : ''}`, '',
     `**Boundary:** ${boundary.join(', ') || '(none)'}`, '',
     '## Rules — what this node\'s code must satisfy', '',
-    renderRules(rules, inherited), '',
+    renderRules(rules), '',
     '## Ports — what it promises its neighbours', '',
     ports, '',
-    '## Charter', charter, '',
     '## Log', log,
   ].join('\n'));
-}
-
-function readStdin() {
-  try {
-    return readFileSync(0, 'utf8');
-  } catch {
-    return '';
-  }
-}
-
-function cmdCharterEdit(horde, root, cfg, positional, flags) {
-  const node = positional[0];
-  if (!node) fail('charter edit requires <node>');
-  if (!nodeExists(root, cfg, node)) {
-    fail(`no such node in the graph: ${node} — a new node is filed with \`${ygCommand(cfg).display}\` by the architect, not seeded here`);
-  }
-  const stdin = readStdin();
-  let content = stdin;
-  if (!content.trim()) {
-    content = renderTemplate('node-charter', {
-      node, owner: '(unassigned)', class: '(unassigned)', lease: '(unassigned)',
-    });
-  }
-  writeText(nodeCharterPath(root, cfg, node), content);
-  emit({ node, bytes: content.length }, flags, () => `charter written: ${node} (${content.length} bytes)`);
 }
 
 function cmdLog(horde, root, cfg, positional, flags) {
@@ -1728,7 +1675,6 @@ function cmdContractRule(horde, root, cfg, positional, flags, verdict) {
   p.rulingBy = flags.by;
   p.ruledAt = nowIso();
   saveGraph(horde, graph);
-  traceRoster(horde, flags.by);
   const steps = verdict === 'approved' ? portFilingSteps(cfg, p) : [];
   emit({ ...p, filing: steps }, flags, () => [
     `port proposal ${id} ${verdict} — ${p.node}/${p.port}@${p.version}`,
@@ -1866,7 +1812,6 @@ function cmdProposalRule(horde, positional, flags, verdict) {
   p.rulingBy = flags.by;
   p.ruledAt = nowIso();
   saveGraph(horde, graph);
-  traceRoster(horde, flags.by);
   emit(p, flags, () => `proposal ${id} ${verdict}`);
 }
 
@@ -1909,10 +1854,6 @@ function main() {
   if (cmd === 'bind') return cmdBind(horde, root, cfg, rest, flags);
   if (cmd === 'map') return cmdMap(horde, root, cfg, flags);
   if (cmd === 'show') return cmdShow(horde, root, cfg, rest, flags);
-  if (cmd === 'charter') {
-    if (rest[0] !== 'edit') fail('charter requires "edit"');
-    return cmdCharterEdit(horde, root, cfg, rest.slice(1), flags);
-  }
   if (cmd === 'log') return cmdLog(horde, root, cfg, rest, flags);
   if (cmd === 'contract') {
     const [sub, ...subRest] = rest;

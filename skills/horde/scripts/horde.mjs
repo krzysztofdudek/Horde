@@ -20,7 +20,7 @@ import {
   qualityPolicyIn, QUALITY_POLICIES,
 } from './_lib.mjs';
 import {
-  currentWaveNumber, parseEvidenceRows, mentionsEvidenceId, wave1Started, lastWaveSpan, hasAuditIn,
+  currentWaveNumber, parseEvidenceRows, mentionsEvidenceId, wave1Started,
   stampMissionEvidence,
 } from './wave.mjs';
 import { sumEntries, readCostLimit } from './cost.mjs';
@@ -74,10 +74,10 @@ commands:
       moves hordes/<name> to hordes/_archive/<name>-<date>. Branches are untouched.
   done [--horde h]
       the mission's final gate. Refuses, listing every reason, when any evidence row is not
-      reproduced, the trunk gate (config.gates.trunk) is not green at the trunk tip, no audit
-      verdict was recorded for the mission's last wave, or no cost has ever been recorded.
-      Otherwise stamps the charter, appends the completion block to the mission journal, and
-      prints what to do next (push — that decision is the chairman's, never this tool's).
+      reproduced, the trunk gate (config.gates.trunk) is not green at the trunk tip, or no cost
+      has ever been recorded. Otherwise stamps the charter, appends the completion block to the
+      mission journal, and prints what to do next (push — that decision is the chairman's, never
+      this tool's).
 
 options: --json  --help`;
 
@@ -653,8 +653,8 @@ function cmdArchive(positional, flags) {
 // ---- done — the mission's final gate -----------------------------------------------
 //
 // evidence-is-the-plan: "done" is never "the queue is empty" — it is every promised proof
-// reproduced, the trunk gate green at the trunk tip, the mission's last wave audited, and a cost
-// report on file. Refuses listing every reason at once (never one at a time, forcing a retry
+// reproduced, the trunk gate green at the trunk tip, and a cost report on file. Refuses listing
+// every reason at once (never one at a time, forcing a retry
 // loop); on success it stamps the charter (via stampMissionEvidence, already called for the
 // evidence check itself), appends the completion block to the mission journal, and prints what
 // the chairman does next.
@@ -686,14 +686,6 @@ function runGateAt(root, cmd, branch) {
     try { execFileSync('git', ['worktree', 'remove', tmp, '--force'], { cwd: root, stdio: 'pipe' }); } catch { rmSync(tmp, { recursive: true, force: true }); }
   }
   return { ok };
-}
-
-// The verdict word of the last "audit: <ticket> clean|findings — …" bullet in a wave's span —
-// "pending" when hasAuditIn already refused (never reached from cmdDone in that case, but kept
-// honest rather than assuming).
-function lastAuditVerdict(spanText) {
-  const matches = [...spanText.matchAll(/^- \S+ audit: \S+ (clean|findings) — /gm)];
-  return matches.length ? matches[matches.length - 1][1] : 'pending';
 }
 
 function cmdDone(positional, flags) {
@@ -744,20 +736,7 @@ function cmdDone(positional, flags) {
     }
   }
 
-  // 3. An audit verdict for the mission's last wave — "current" once the final wave is closed
-  // means "the last one", not "none open".
-  const missionPlan = readText(hordePath(horde, 'plan.md')) || '';
-  const span = lastWaveSpan(missionPlan);
-  let auditVerdict = null;
-  if (!span) {
-    reasons.push('no wave has ever been started for this mission — wave.mjs start');
-  } else if (!hasAuditIn(span.text)) {
-    reasons.push(`no audit verdict recorded for wave ${span.n} — wave.mjs audit <ticket> clean|findings "<text>"`);
-  } else {
-    auditVerdict = lastAuditVerdict(span.text);
-  }
-
-  // 4. A cost report on file — cost.json always exists once a horde is init'd, so "missing" here
+  // 3. A cost report on file — cost.json always exists once a horde is init'd, so "missing" here
   // means nobody has ever spawned an agent against it.
   const costDoc = readJSON(hordePath(horde, 'cost.json'), { runs: [] });
   const runsArr = Array.isArray(costDoc.runs) ? costDoc.runs : [];
@@ -779,8 +758,6 @@ function cmdDone(positional, flags) {
     total: coverage.length,
     gate: 'green',
     sha: short(trunkSha),
-    auditWave: span.n,
-    auditVerdict,
     runs,
     weighted,
     horde,
@@ -792,12 +769,11 @@ function cmdDone(positional, flags) {
     horde,
     evidence: { green: coverage.length, total: coverage.length },
     gate: { level: 'trunk', sha: trunkSha, result: 'green' },
-    audit: { wave: String(span.n), verdict: auditVerdict },
     cost: { runs, weighted, limit },
   };
   emit(result, flags, () => [
     `mission "${horde}" is done — evidence ${coverage.length}/${coverage.length} green, trunk gate green at ${short(trunkSha)}, `
-      + `wave ${span.n} audit ${auditVerdict}, cost ${runs} runs (weighted ${weighted}).`,
+      + `cost ${runs} runs (weighted ${weighted}).`,
     `Push when ready: git push <remote> ${trunkBranch} — and open the pull request. That decision is the chairman's, never this tool's.`,
   ].join('\n'));
 }

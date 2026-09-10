@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Quality advisories file tickets only for the nodes this horde leases. An advisory on another node stays in the feed for whichever horde takes that node; `--all` files them anyway.
 - A steward's turn starts by reading the rulings, then the queue. A ruling recorded while the steward was mid-turn used to sit unread until the next message woke it, and the steward's report called it "no ruling".
 
+### Removed
+- There is no cast any more. A mission runs on two roles, a worker per ticket and one architect — no steward, no owner, no verifier, no auditor, no counsel, no sub-teams. The director now dispatches workers and rules on escalations directly.
+- There are no signatures on a ticket any more. Merging no longer needs an author key, a verifier key, or a per-node approval; a ticket merges once its dependencies are in and its branch is named.
+- There is no document at a node any more. A node's rules, ports and log still show through `node show`; the separate charter file beside it is gone.
+- There is no audit sample any more. A wave close and the mission's own "done" check no longer ask for one.
+- A mission still running the previous release keeps working: its old tickets, its old logs, and its old roster and dissent records are read as history, never as something new to act on.
+
 ## [0.4.0] - 2026-09-08
 
 Experimental. Needs Yggdrasil 5.9.0 or newer; an older one is refused with the release to install.

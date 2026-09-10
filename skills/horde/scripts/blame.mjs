@@ -2,11 +2,11 @@
 // horde skill — blame.mjs
 //
 // Chain of custody for one line: git blame -> the commit that introduced it -> the ticket whose
-// recorded branch tip (a Keys-line approval, a verify.mjs verdict block's Gate line, or the
-// team journal's own "merged: NNN <sha>" bullet) contains that commit as an ancestor -> the
-// ticket's author key, verifier key and class, owner approvals, the evidence it named and what
-// became of it, and — when this repository carries a graph — the rule verdicts standing against
-// the file's owning node. A line no ticket's recorded shas reach says so plainly: pre-horde code.
+// recorded branch tip (a pre-migration Keys-line approval, a pre-migration verdict block's Gate
+// line, or the team journal's own "merged: NNN <sha>" bullet) contains that commit as an
+// ancestor -> the ticket's class, evidence it named and what became of it, and — when this
+// repository carries a graph — the rule verdicts standing against the file's owning node. A line
+// no ticket's recorded shas reach says so plainly: pre-horde code.
 //
 // Read-only: this tool writes nothing, so it needs none of the write-through-the-tools discipline
 // the rest of the skill enforces. It searches every horde on the repository, live and archived
@@ -29,10 +29,45 @@ import {
   parseArgs, emit, isMain, repoRoot,
 } from './_lib.mjs';
 import {
-  allTickets, parseKeys, nodesOf, parseField,
+  allTickets, nodesOf, parseField,
 } from './tk.mjs';
 import { parseEvidenceRows } from './wave.mjs';
 import { fileRules } from './node.mjs';
+
+// A ticket written before this migration can still carry a "**Keys:** author X · verifier Y ·
+// <node> Z …" line — tk.mjs no longer writes or reads one, but this tool's own custody chain still
+// has to walk it on old history, so it keeps its own read-only copy rather than depending on a
+// live-Keys mechanism that no longer exists. Unchanged from tk.mjs's own parser.
+const KEYS_LINE_RE = /^\*\*Keys:\*\*\s*(.*)$/m;
+function parseKeys(text) {
+  const nodes = nodesOf(text);
+  const m = KEYS_LINE_RE.exec(text);
+  const parts = (m ? m[1] : '').split('·').map((s) => s.trim()).filter(Boolean);
+  const takeVal = (seg) => {
+    const sp = seg.indexOf(' ');
+    const v = sp === -1 ? '' : seg.slice(sp + 1).trim();
+    return v || '—';
+  };
+  const segments = parts.slice(2).map((seg) => {
+    const sp = seg.indexOf(' ');
+    return { name: sp === -1 ? seg.trim() : seg.slice(0, sp).trim(), value: takeVal(seg) };
+  });
+  const named = segments.some((s) => nodes.includes(s.name));
+  const nodeApprovals = {};
+  nodes.forEach((n, i) => {
+    const byName = segments.find((s) => s.name === n);
+    if (named) nodeApprovals[n] = byName ? byName.value : '—';
+    else nodeApprovals[n] = segments[i] ? segments[i].value : '—';
+  });
+  if (named) {
+    for (const s of segments) if (!(s.name in nodeApprovals)) nodeApprovals[s.name] = s.value;
+  }
+  return {
+    author: parts[0] ? takeVal(parts[0]) : '—',
+    verifier: parts[1] ? takeVal(parts[1]) : '—',
+    nodeApprovals,
+  };
+}
 
 const USAGE = `usage: blame.mjs <file>:<line> [--horde h] [--json]
 
@@ -100,11 +135,11 @@ function allHordeIds(filter) {
 
 // ---- candidate shas per ticket ----------------------------------------------
 //
-// Three places a ticket's own branch tip is recorded, per scripts/README.md's "keys are bound to
-// the diff" section and wave.mjs's journal: a Keys-line node approval ("<name>@<sha>+<patch-id>"
-// or "<name>@<sha>"), a verify.mjs verdict block's "**Gate:** ... at sha <sha>" line, and the
-// team's own journal "merged: <ticket> <sha>" bullet queue.mjs writes at merge time. Any of the
-// three names a commit that was, at some point, this ticket's own branch tip.
+// Three places a ticket's own branch tip is recorded, from before this migration and after: a
+// pre-migration Keys-line node approval ("<name>@<sha>+<patch-id>" or "<name>@<sha>"), a
+// pre-migration verdict block's "**Gate:** ... at sha <sha>" line, and the team's own journal
+// "merged: <ticket> <sha>" bullet queue.mjs writes at merge time. Any of the three names a commit
+// that was, at some point, this ticket's own branch tip.
 
 function shasFromApprovals(nodeApprovals) {
   const out = [];
@@ -213,7 +248,7 @@ function verifierVerdict(logText, verifierName) {
 }
 
 // The ticket's own "## Acceptance — evidence" checklist lines, in order — the same section
-// verify.mjs's --item indices number and wave.mjs scans for catalogue ids.
+// a pre-migration verdict's --item indices numbered and wave.mjs scans for catalogue ids.
 function acceptanceLines(ticketText) {
   const idx = ticketText.indexOf('## Acceptance');
   if (idx === -1) return [];
@@ -229,9 +264,9 @@ function acceptanceLines(ticketText) {
 }
 
 // Evidence rows the ticket named and their state: each acceptance line, paired (by the same
-// 1-based order verify.mjs's own --item contract uses) with what the ticket's verdict recorded
-// for it, plus the charter catalogue ids the Evidence field cites and whether the charter shows
-// them reproduced.
+// 1-based order a pre-migration verdict's --item contract used) with what the ticket's verdict
+// recorded for it, plus the charter catalogue ids the Evidence field cites and whether the
+// charter shows them reproduced.
 function evidenceRows(hordeId, ticket, logText) {
   const verdict = verifierVerdict(logText, parseKeys(ticket.text).verifier);
   const lines = acceptanceLines(ticket.text).map((l, i) => ({

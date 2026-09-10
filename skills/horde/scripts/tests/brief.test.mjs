@@ -2,13 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import {
   makeRepo, rmRepo, run, initHorde, addNode,
 } from './helpers.mjs';
-
-const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 function writeRoster(dir, horde, entries) {
   const path = join(dir, '.horde', 'hordes', horde, 'roster.json');
@@ -32,16 +29,16 @@ function seedTicket(dir, horde, team, id, {
   writeFileSync(queuePath, JSON.stringify(existing, null, 2));
 }
 
-// A component in the real graph, with the charter the horde seeds beside it — `node.mjs charter
-// edit` with nothing on stdin writes the template, which is what a brief then quotes.
+// A component in the real graph. Node charters (charter.md, node.mjs's own "charter edit"
+// command) are gone entirely as of task 014 — this used to also seed one via `node.mjs charter
+// edit` so a worker's brief had something to embed; that placeholder is gone from the worker
+// template too, so seedNode is now just addNode under the name every call site below already
+// uses.
 function seedNode(dir, node, mapping, ports) {
   addNode(dir, node, ports ? { mapping, ports } : { mapping });
-  execFileSync('node', [join(SCRIPTS_DIR, 'node.mjs'), 'charter', 'edit', node, '--json'], {
-    cwd: dir, input: '', encoding: 'utf8',
-  });
 }
 
-test('brief.mjs: renders every role from a seeded charter/ticket/queue/roster', async (t) => {
+test('brief.mjs: renders worker and architect from a seeded ticket, queue and roster', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -55,37 +52,16 @@ test('brief.mjs: renders every role from a seeded charter/ticket/queue/roster', 
     '## Nodes\n\nTouched: nodeA (sonnet, mission) — the widget layer.\n',
   ));
 
+  // A pre-migration mission can still carry a roster.json with a steward entry (nothing writes
+  // one any more, but old ones must not break reportsTo) — kept here only for the worker
+  // reportsTo assertion below; steward and owner are no longer roles brief.mjs renders at all.
   writeRoster(dir, 'mission1', [
     { name: 'mission1-steward-trunk-1', role: 'steward', team: 'trunk', parent: null },
-    { name: 'mission1-owner-nodeA-1', role: 'owner', node: 'nodeA' },
     { name: 'mission1-architect-1', role: 'architect' },
   ]);
 
   seedTicket(dir, 'mission1', 'trunk', '001', {
     branch: 'mission1/t-001', worktree: '.horde/worktrees/mission1/t-001', sha: 'abc1234def',
-  });
-
-  await t.test('steward', () => {
-    const r = run('brief.mjs', ['steward', 'trunk', '--name', 'mission1-steward-trunk-1'], dir);
-    assert.equal(r.code, 0);
-    assert.match(r.json.brief, /You are \*\*mission1-steward-trunk-1\*\*/);
-    assert.match(r.json.brief, /Your branch is `mission1\/trunk`/);
-    assert.match(r.json.brief, /report to \*\*main\*\*/);
-    assert.doesNotMatch(r.json.brief, /\{\{/);
-  });
-
-  await t.test('owner — leaseScope reads the charter\'s Nodes line naming the node', () => {
-    const r = run('brief.mjs', ['owner', 'nodeA', '--name', 'mission1-owner-nodeA-1'], dir);
-    assert.equal(r.code, 0);
-    assert.match(r.json.brief, /Touched: nodeA \(sonnet, mission\) — the widget layer\./);
-    assert.match(r.json.brief, /report to the steward \*\*mission1-steward-trunk-1\*\*/);
-  });
-
-  await t.test('owner — leaseScope falls back to the default rule for a node the charter never names', () => {
-    seedNode(dir, 'nodeB', ['src/b/**']);
-    const r = run('brief.mjs', ['owner', 'nodeB', '--name', 'mission1-owner-nodeA-1'], dir);
-    assert.equal(r.code, 0);
-    assert.match(r.json.brief, /mission when the node has three or more tickets, wave otherwise/);
   });
 
   await t.test('architect', () => {
@@ -102,32 +78,6 @@ test('brief.mjs: renders every role from a seeded charter/ticket/queue/roster', 
     assert.match(r.json.brief, /worktree is `\.horde\/worktrees\/mission1\/t-001`/);
     assert.match(r.json.brief, /branch `mission1\/t-001`/);
     assert.match(r.json.brief, /unknown — report the count you get/);
-    assert.match(r.json.brief, /# Node · nodeA/); // nodeCharter embedded
-    assert.doesNotMatch(r.json.brief, /\{\{/);
-  });
-
-  await t.test('verifier', () => {
-    const r = run('brief.mjs', ['verifier', '001', '--name', 'mission1-verifier-trunk-1'], dir);
-    assert.equal(r.code, 0);
-    assert.match(r.json.brief, /verifier of ticket \*\*001 · Sample ticket\*\*/);
-    assert.match(r.json.brief, /it works/); // acceptance section
-    assert.doesNotMatch(r.json.brief, /\{\{/);
-  });
-
-  await t.test('auditor — sha taken from the queue item', () => {
-    const r = run('brief.mjs', ['auditor', '001', '--wave', '1', '--name', 'mission1-auditor-1'], dir);
-    assert.equal(r.code, 0);
-    assert.match(r.json.brief, /wave \*\*1\*\*/);
-    assert.match(r.json.brief, /at the merge commit `abc1234def`/);
-    assert.doesNotMatch(r.json.brief, /\{\{/);
-  });
-
-  await t.test('counsel — attaches a file\'s content', () => {
-    writeFileSync(join(dir, 'notes.txt'), 'the trade-off in one line');
-    const r = run('brief.mjs', ['counsel', '--question', 'should we split this node?', '--attach', 'notes.txt', '--name', 'mission1-counsel-1'], dir);
-    assert.equal(r.code, 0);
-    assert.match(r.json.brief, /should we split this node\?/);
-    assert.match(r.json.brief, /the trade-off in one line/);
     assert.doesNotMatch(r.json.brief, /\{\{/);
   });
 
@@ -137,21 +87,32 @@ test('brief.mjs: renders every role from a seeded charter/ticket/queue/roster', 
     assert.match(r.stderr, /--name/);
   });
 
-  await t.test('reportsTo carries the agent id, once roster.mjs has recorded one for the steward being reported to', () => {
+  await t.test('reportsTo carries the agent id, once a pre-migration roster.json still names the steward being reported to', () => {
     writeRoster(dir, 'mission1', [
       {
         name: 'mission1-steward-trunk-1', role: 'steward', team: 'trunk', parent: null, agentId: 'a-999',
       },
-      { name: 'mission1-owner-nodeA-1', role: 'owner', node: 'nodeA' },
       { name: 'mission1-architect-1', role: 'architect' },
     ]);
     const worker = run('brief.mjs', ['worker', '001', '--name', 'mission1-worker-trunk-1'], dir);
     assert.equal(worker.code, 0, worker.stderr);
     assert.match(worker.json.brief, /report to the steward \*\*mission1-steward-trunk-1 \(agent id a-999\)\*\*/);
+  });
+});
 
-    const owner = run('brief.mjs', ['owner', 'nodeA', '--name', 'mission1-owner-nodeA-1'], dir);
-    assert.equal(owner.code, 0, owner.stderr);
-    assert.match(owner.json.brief, /report to the steward \*\*mission1-steward-trunk-1 \(agent id a-999\)\*\*/);
+test('brief.mjs: steward, owner, verifier, auditor and counsel are gone — unknown role, naming what remains', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
+
+  await t.test('each retired role is refused as "unknown role", listing only the roles that still exist', () => {
+    for (const role of ['steward', 'owner', 'verifier', 'auditor', 'counsel']) {
+      const r = run('brief.mjs', [role, 'x', '--name', 'someone'], dir);
+      assert.equal(r.code, 1, `${role} should be refused`);
+      assert.match(r.stderr, /unknown role: /);
+      assert.match(r.stderr, /roles: worker, architect/);
+    }
   });
 });
 
@@ -214,9 +175,6 @@ test('brief.mjs: every role held to a discipline carries it under "## Law"', asy
   t.after(() => rmRepo(dir));
   initHorde(dir);
   seedNode(dir, 'nodeA', ['src/a/**']);
-  writeRoster(dir, 'mission1', [
-    { name: 'mission1-steward-trunk-1', role: 'steward', team: 'trunk', parent: null },
-  ]);
   seedTicket(dir, 'mission1', 'trunk', '003', {
     branch: 'mission1/t-003', worktree: '.horde/worktrees/mission1/t-003',
   });
@@ -234,90 +192,12 @@ test('brief.mjs: every role held to a discipline carries it under "## Law"', asy
     assert.doesNotMatch(r.json.brief, /\{\{/);
   });
 
-  await t.test('verifier — the verification and review law', () => {
-    const r = run('brief.mjs', ['verifier', '003', '--name', 'mission1-verifier-trunk-1'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.json.brief, /### Evidence before the claim/);
-    assert.match(r.json.brief, /### Findings with a severity/);
-    assert.match(r.json.brief, /no key without the output of the command that proves it/);
-  });
-
-  await t.test('owner — the review law and nothing else', () => {
-    const r = run('brief.mjs', ['owner', 'nodeA', '--name', 'mission1-owner-nodeA-1'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.json.brief, /### Findings with a severity/);
-    assert.doesNotMatch(r.json.brief, /### Tests that can fail/);
-  });
-
   await t.test("architect — framing's checklist, not the whole of framing", () => {
     const r = run('brief.mjs', ['architect', '--name', 'mission1-architect-1'], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.json.brief, /### Framing before anything runs — Checklist/);
     assert.match(r.json.brief, /Approve unless a gap would produce the wrong plan\./);
     assert.doesNotMatch(r.json.brief, /One question per message/);
-  });
-
-  await t.test('steward — no discipline of its own, so no Law section', () => {
-    const r = run('brief.mjs', ['steward', 'trunk', '--name', 'mission1-steward-trunk-1'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.doesNotMatch(r.json.brief, /\n## Law\n/);
-  });
-});
-
-test('brief.mjs verifier --delta: a scoped re-review names the delta and the findings still open', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-  seedNode(dir, 'nodeA', ['src/a/**']);
-
-  seedTicket(dir, 'mission1', 'trunk', '001', {
-    branch: 'mission1/t-001', worktree: '.horde/worktrees/mission1/t-001',
-  });
-
-  // The record the last look at this ticket left behind: a verdict that failed on something, and
-  // the node owner's own changes-request.
-  const issueDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-sample-ticket');
-  writeFileSync(join(issueDir, 'log.md'), [
-    '- 2026-09-06T10:00:00.000Z review: nodeA changes by owner1 — the empty list is not handled',
-    '',
-    '## Verdict · 001 · 2026-09-06 · by verifier1 (sonnet)',
-    '',
-    '**Result:** not-reproduced',
-    '',
-    '**What failed, if anything** (what, not what to do):',
-    '',
-    'the second acceptance line renders nothing on a cold cache',
-    '',
-  ].join('\n'));
-
-  const deltaPath = join('.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-sample-ticket', 'rereview-aaaaaaa..bbbbbbb.diff');
-  writeFileSync(join(dir, deltaPath), '1:  aaaaaaa = 1:  bbbbbbb ticket 001\n');
-
-  await t.test('the scoped brief names the file to read and every finding to answer', () => {
-    const r = run('brief.mjs', ['verifier', '001', '--delta', deltaPath, '--name', 'mission1-verifier-trunk-2'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.delta, deltaPath);
-    assert.match(r.json.brief, /Scoped re-review/);
-    assert.match(r.json.brief, new RegExp(deltaPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assert.match(r.json.brief, /the second acceptance line renders nothing on a cold cache/);
-    assert.match(r.json.brief, /the empty list is not handled \(nodeA, asked by owner1\)/);
-    assert.doesNotMatch(r.json.brief, /\{\{/);
-  });
-
-  await t.test('without --delta the same brief is the full verification', () => {
-    const r = run('brief.mjs', ['verifier', '001', '--name', 'mission1-verifier-trunk-2'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.delta, null);
-    assert.match(r.json.brief, /Full verification/);
-    assert.doesNotMatch(r.json.brief, /Scoped re-review\.\*\*/);
-    assert.doesNotMatch(r.json.brief, /rereview-aaaaaaa/);
-    assert.doesNotMatch(r.json.brief, /\{\{/);
-  });
-
-  await t.test('a --delta naming no readable file is refused, not rendered around', () => {
-    const r = run('brief.mjs', ['verifier', '001', '--delta', 'nowhere/rereview-1111111..2222222.diff', '--name', 'mission1-verifier-trunk-2'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /--delta names no readable file/);
   });
 });
 
@@ -351,14 +231,6 @@ test('brief.mjs: a stacked ticket\'s brief names the branch it was started from,
     assert.doesNotMatch(r.json.brief, /\{\{/);
   });
 
-  await t.test('the verifier is held to the same base', () => {
-    const r = run('brief.mjs', ['verifier', second, '--name', 'mission1-verifier-trunk-2'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.json.brief, new RegExp(`is-ancestor mission1/t-${first} HEAD`));
-    assert.match(r.json.brief, new RegExp(`against \`mission1/t-${first}\``));
-    assert.doesNotMatch(r.json.brief, /\{\{/);
-  });
-
   await t.test('an unstacked ticket\'s brief is the team branch, with no note at all', () => {
     const r = run('brief.mjs', ['worker', first, '--name', 'mission1-worker-trunk-1'], dir);
     assert.equal(r.code, 0, r.stderr);
@@ -368,58 +240,18 @@ test('brief.mjs: a stacked ticket\'s brief names the branch it was started from,
   });
 });
 
-
-test('brief.mjs: reportsTo is the agent\'s own parent, read from the roster\'s lineage', async (t) => {
+// the deleted roster tool (spawn/list) is deleted, and with it every way this used to build a multi-level
+// lineage (a director spawning a sub-team's steward, that steward spawning a worker or lending
+// out an owner). Sub-teams, stewards and owners are all gone along with it, so the only surviving,
+// reconstructable piece of what this test covered is the architect's own fallback: it always
+// reports to the director "main", with no roster at all involved.
+test('brief.mjs: reportsTo — the architect always reports to the director "main"', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
   seedNode(dir, 'nodeA', ['src/a/**']);
 
-  const trunk = run('roster.mjs', ['spawn', 'steward', '--team', 'trunk', '--class', 'sonnet'], dir);
-  assert.equal(trunk.code, 0, trunk.stderr);
-  const allies = run('roster.mjs', ['spawn', 'steward', '--team', 'allies', '--parent', 'trunk', '--class', 'sonnet'], dir);
-  assert.equal(allies.code, 0, allies.stderr);
-
-  const ticket = run('tk.mjs', ['new', 'allies-thing', '--title', 'Allies thing', '--node', 'nodeA', '--class', 'sonnet', '--team', 'allies', '--evidence', 'it works'], dir);
-  assert.equal(ticket.code, 0, ticket.stderr);
-  assert.equal(run('queue.mjs', ['add', ticket.json.id, '--team', 'allies'], dir).code, 0);
-  const running = run('queue.mjs', ['set', ticket.json.id, 'running', '--team', 'allies'], dir);
-  assert.equal(running.code, 0, running.stderr);
-
-  await t.test('a sub-team\'s steward reports to the director that spawned it, not to the parent team', () => {
-    const r = run('brief.mjs', ['steward', 'allies', '--name', allies.json.name], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.json.brief, /You report to \*\*main\*\*/);
-    assert.doesNotMatch(r.json.brief, new RegExp(`You report to \\*\\*${trunk.json.name}`));
-  });
-
-  await t.test('a worker reports to the steward that spawned it — its own team\'s, not the trunk\'s', () => {
-    const worker = run('roster.mjs', ['spawn', 'worker', '--team', 'allies', '--class', 'sonnet', '--ticket', ticket.json.id], dir);
-    assert.equal(worker.code, 0, worker.stderr);
-    const r = run('brief.mjs', ['worker', ticket.json.id, '--name', worker.json.name], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.json.brief, new RegExp(`report to the steward \\*\\*${allies.json.name}\\*\\*`));
-  });
-
-  await t.test('an owner reports to the steward that spawned it, whichever team\'s ticket touches its node', () => {
-    const owner = run('roster.mjs', ['spawn', 'owner', '--node', 'nodeA', '--class', 'sonnet'], dir);
-    assert.equal(owner.code, 0, owner.stderr);
-    const r = run('brief.mjs', ['owner', 'nodeA', '--name', owner.json.name], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.json.brief, new RegExp(`report to the steward \\*\\*${trunk.json.name}\\*\\*`));
-
-    const lent = run('roster.mjs', ['spawn', 'owner', '--node', 'nodeA', '--class', 'sonnet', '--spawned-by', allies.json.name], dir);
-    assert.equal(lent.code, 0, lent.stderr);
-    const lentBrief = run('brief.mjs', ['owner', 'nodeA', '--name', lent.json.name], dir);
-    assert.equal(lentBrief.code, 0, lentBrief.stderr);
-    assert.match(lentBrief.json.brief, new RegExp(`report to the steward \\*\\*${allies.json.name}\\*\\*`));
-  });
-
-  await t.test('the architect reports to the director that spawned it', () => {
-    const architect = run('roster.mjs', ['spawn', 'architect', '--class', 'opus'], dir);
-    assert.equal(architect.code, 0, architect.stderr);
-    const r = run('brief.mjs', ['architect', '--name', architect.json.name], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.match(r.json.brief, /the director \*\*main\*\* by that exact name/);
-  });
+  const r = run('brief.mjs', ['architect', '--name', 'mission1-architect-1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.json.brief, /the director \*\*main\*\*/);
 });

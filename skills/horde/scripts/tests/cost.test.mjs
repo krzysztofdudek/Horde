@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeRepo, rmRepo, run, initHorde, writeCostRuns } from './helpers.mjs';
 
-test('cost.mjs: report, limit-reached (cost.json is read-only from here — roster.mjs spawn writes it)', async (t) => {
+test('cost.mjs: report, limit-reached (cost.json is read-only from here — the deleted roster tool spawn writes it)', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);

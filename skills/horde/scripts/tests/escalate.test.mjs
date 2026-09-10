@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
 
@@ -68,30 +68,22 @@ test('escalate.mjs: add, list, rule (direct and via --to-user), show, refusals',
     assert.match(r.stderr, /no such escalation/);
   });
 
-  await t.test('add accepts kind "adjudicate" — the fix-loop breaker\'s own next step past its cap', () => {
-    const r = run('escalate.mjs', ['add', 'ticket stuck past the fix-loop cap', '--kind', 'adjudicate', '--ticket', '7'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.kind, 'adjudicate');
-    assert.equal(r.json.ticket, '7');
+  await t.test('add refuses kind "structure" and "adjudicate" — sub-teams and the old fix-loop escalation no longer exist', () => {
+    const structure = run('escalate.mjs', ['add', 'a sub-team for this', '--kind', 'structure'], dir);
+    assert.equal(structure.code, 1);
+    assert.match(structure.stderr, /--kind is required, one of:/);
+    assert.doesNotMatch(structure.stderr, /structure/);
+
+    const adjudicate = run('escalate.mjs', ['add', 'ticket stuck past the fix-loop cap', '--kind', 'adjudicate', '--ticket', '7'], dir);
+    assert.equal(adjudicate.code, 1);
+    assert.match(adjudicate.stderr, /--kind is required, one of:/);
+    assert.doesNotMatch(adjudicate.stderr, /adjudicate/);
   });
 
-  await t.test('rule --by traces that name in the roster when it is one', () => {
-    const architect = run('roster.mjs', ['spawn', 'architect', '--class', 'opus'], dir);
-    assert.equal(architect.code, 0, architect.stderr);
-    const architectName = architect.json.name;
-
-    const rosterPath = join(dir, '.horde', 'hordes', 'mission1', 'roster.json');
-    const roster = JSON.parse(readFileSync(rosterPath, 'utf8'));
-    const staleAt = new Date(Date.now() - 120 * 60000).toISOString();
-    roster.entries.find((e) => e.name === architectName).lastTrace = staleAt;
-    writeFileSync(rosterPath, JSON.stringify(roster, null, 2));
-
-    const opened = run('escalate.mjs', ['add', 'traced ruling', '--kind', 'rules'], dir);
-    const ruled = run('escalate.mjs', ['rule', opened.json.id, 'ruling text', '--by', architectName], dir);
+  await t.test('rule --by records the ruler\'s name without any roster to trace', () => {
+    const opened = run('escalate.mjs', ['add', 'ruling to attribute', '--kind', 'rules'], dir);
+    const ruled = run('escalate.mjs', ['rule', opened.json.id, 'ruling text', '--by', 'architect'], dir);
     assert.equal(ruled.code, 0, ruled.stderr);
-
-    const after = run('roster.mjs', ['list'], dir).json.find((e) => e.name === architectName);
-    assert.notEqual(after.lastTrace, staleAt);
   });
 });
 
@@ -179,53 +171,4 @@ test('escalate.mjs: "quality" is a kind, so a fallen quality index has a channel
   const r = run('escalate.mjs', ['add', 'the graph got weaker over this wave', '--kind', 'quality'], dir);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.json.kind, 'quality');
-});
-
-
-test('escalate.mjs: a sub-team proposal carries the commands only the director can run', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-
-  let id;
-  await t.test('add --kind structure --team --parent records the spawn, the brief and the handover', () => {
-    const r = run('escalate.mjs', ['add', 'sub-team falcon for nodes billing, ledger', '--kind', 'structure', '--team', 'falcon', '--parent', 'trunk', '--by', 'steward'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    id = r.json.id;
-    assert.equal(r.json.team, 'falcon');
-    assert.equal(r.json.parent, 'trunk');
-    assert.deepEqual(r.json.next, [
-      'roster.mjs spawn steward --team falcon --parent trunk --class sonnet',
-      'brief.mjs steward falcon --name <the name that printed>',
-      'spawn it with the Agent tool as a teammate, prompt = that brief',
-      'queue.mjs move <each ticket this escalation names> --team falcon',
-    ]);
-  });
-
-  await t.test('the rendered channel and show both print them for the director', () => {
-    const rendered = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'escalations.md'), 'utf8');
-    assert.match(rendered, /the director raises it with:/);
-    assert.match(rendered, /roster\.mjs spawn steward --team falcon --parent trunk --class sonnet/);
-
-    const shown = run('escalate.mjs', ['show', id], dir, { json: false });
-    assert.equal(shown.code, 0, shown.stderr);
-    assert.match(shown.stdout, /roster\.mjs spawn steward --team falcon --parent trunk/);
-  });
-
-  await t.test('--parent defaults to trunk', () => {
-    const r = run('escalate.mjs', ['add', 'sub-team kite for the reporting nodes', '--kind', 'structure', '--team', 'kite'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.parent, 'trunk');
-    assert.match(r.json.next[0], /--team kite --parent trunk/);
-  });
-
-  await t.test('--team is refused on any other kind, and a structure escalation without one carries no commands', () => {
-    const wrong = run('escalate.mjs', ['add', 'the budget is spent', '--kind', 'cost', '--team', 'falcon'], dir);
-    assert.equal(wrong.code, 1);
-    assert.match(wrong.stderr, /has no meaning for kind "cost"/);
-
-    const lease = run('escalate.mjs', ['add', 'the ledger owner should hold its lease for the mission', '--kind', 'structure'], dir);
-    assert.equal(lease.code, 0, lease.stderr);
-    assert.equal(lease.json.next, undefined);
-  });
 });

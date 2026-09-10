@@ -4,7 +4,6 @@
 **Evidence catalogue:** {{green}}/{{total}} green (Δ {{delta}} since wave {{n-1}})
 **Parallelism:** planned {{plannedParallelism}} · achieved {{achievedParallelism}}
 **Keys transferred:** {{keysTransferred}} without re-review
-**Audit:** {{auditLine}}
 **Decisions per merged ticket:** {{decisionsLine}}
 **Quality index:** {{qualityLine}}
 **Cost:** {{runs}} runs · weighted {{weighted}} · mission to date {{cumulative}}{{ of limit}}
@@ -16,10 +15,6 @@
 ## Graph changes (architect)
 
 One line each: what changed in the graph and why. The chairman reads this list.
-
-## Audit
-
-Ticket {{auditTicket}} — {{clean | findings}}: …
 
 ## Lessons recorded
 

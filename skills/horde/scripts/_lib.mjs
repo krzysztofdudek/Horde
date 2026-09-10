@@ -144,11 +144,11 @@ export function qualityPolicy(horde) {
 
 // Resolves a team's short LEAF name (e.g. "lark") to its full on-disk segment chain
 // (["trunk", "lark"]) by walking roster.json's steward entries' own `parent` links back to
-// "trunk" — the same lookup roster.mjs's own spawn logic does, duplicated here in miniature
-// (rather than importing roster.mjs, which would make this foundational module depend on
-// something that itself depends on it) because every tool needs it and leaf names are the only
-// address that stays correct no matter how deep a team is nested — a caller never has to know or
-// spell out its ancestry. "trunk" is the implicit root and needs no roster lookup at all.
+// "trunk". Nothing writes a steward entry any more — there is only ever "trunk" — so this always
+// takes the "trunk" fast path below in practice; kept as a lookup rather than hard-coded because
+// leaf names are the only address that stays correct no matter how deep a team is nested, and a
+// pre-migration mission's roster.json may still carry a real chain worth resolving. "trunk" is
+// the implicit root and needs no roster lookup at all.
 function resolveTeamSegments(horde, leaf, seen = new Set()) {
   if (!leaf || leaf === 'trunk') return ['trunk'];
   if (seen.has(leaf)) fail(`team "${leaf}" has a cyclical parent chain in roster.json`);

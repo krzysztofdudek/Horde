@@ -2,12 +2,10 @@
 // horde skill — status.mjs
 //
 // The session-start digest: every horde on this repository, one screen each. Reads across every
-// other tool's state files directly (queue.json, roster.json, escalations.json, dissents.json,
-// cost.json, cache/last-gate.json) rather than importing their tools, since it only ever reads —
-// nothing here mutates state, so there's no journal-format contract to share.
+// other tool's state files directly (queue.json, escalations.json, cost.json,
+// cache/last-gate.json) rather than importing their tools, since it only ever reads — nothing
+// here mutates state, so there's no journal-format contract to share.
 
-import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import {
   hordePath, teamPath, listHordes, readConfig, readJSON, readText, git, fail, parseArgs, emit, isMain,
   readLeases,
@@ -18,11 +16,10 @@ import { missionNodes } from './node.mjs';
 
 const USAGE = `usage: status.mjs [--horde h] [--team t] [--json]
 
-One screen: hordes on this repository, and for each: trunk sha and distance from base, teams and
-their branch tips, ticket branches beyond their team tip (landed / unverified / unmerged),
-stewards' last trace and liveness verdict, queue counts by state, open escalations and dissents,
-the last recorded gate result, cost to date against the charter's limit, and any lease another
-live horde holds on a node this one touches (node-lease-across-hordes).
+One screen: hordes on this repository, and for each: trunk sha and distance from base, its branch
+tip, ticket branches beyond it (landed / unverified / unmerged), queue counts by state, open
+escalations, the last recorded gate result, cost to date against the charter's limit, and any
+lease another live horde holds on a node this one touches (node-lease-across-hordes).
 
 --horde narrows to one horde, --team (within it) to one team.
 
@@ -34,12 +31,6 @@ function aheadBehind(base, branch) {
   if (!out) return { ahead: null, behind: null };
   const [behind, ahead] = out.split(/\s+/).map(Number);
   return { ahead, behind };
-}
-
-function listTeamNames(horde) {
-  const dir = hordePath(horde, 'teams');
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
 }
 
 function branchCategory(state) {
@@ -72,25 +63,9 @@ function teamDigest(horde, team) {
 
 function queueTotals(horde) {
   const totals = {};
-  const walk = (team) => {
-    const q = readJSON(teamPath(horde, team, 'queue.json'), { items: [] });
-    for (const it of (Array.isArray(q.items) ? q.items : [])) totals[it.state] = (totals[it.state] || 0) + 1;
-    const subDir = teamPath(horde, team, 'teams');
-    if (existsSync(subDir)) {
-      for (const d of readdirSync(subDir, { withFileTypes: true })) {
-        if (d.isDirectory()) walk(`${team}/${d.name}`);
-      }
-    }
-  };
-  for (const t of listTeamNames(horde)) walk(t);
+  const q = readJSON(teamPath(horde, 'trunk', 'queue.json'), { items: [] });
+  for (const it of (Array.isArray(q.items) ? q.items : [])) totals[it.state] = (totals[it.state] || 0) + 1;
   return totals;
-}
-
-function stewardLiveness(entry, cfg) {
-  if (!entry.lastTrace) return 'no-trace';
-  const minutes = (Date.now() - new Date(entry.lastTrace).getTime()) / 60000;
-  const threshold = (cfg && cfg.liveness && cfg.liveness.stewardMinutes) ?? 60;
-  return minutes > threshold ? 'dead' : 'alive';
 }
 
 function hordeDigest(horde, cfg, teamFilter) {
@@ -98,19 +73,11 @@ function hordeDigest(horde, cfg, teamFilter) {
   const trunkSha = git(['rev-parse', '--short', trunkBranch]);
   const { ahead, behind } = aheadBehind(cfg && cfg.base, trunkBranch);
 
-  let teamNames = listTeamNames(horde);
-  if (teamFilter) teamNames = teamNames.filter((t) => t === teamFilter);
+  const teamNames = (!teamFilter || teamFilter === 'trunk') ? ['trunk'] : [];
   const teams = teamNames.map((t) => teamDigest(horde, t));
-
-  const roster = readJSON(hordePath(horde, 'roster.json'), { entries: [] });
-  const stewards = (Array.isArray(roster.entries) ? roster.entries : [])
-    .filter((e) => e.role === 'steward')
-    .map((e) => ({ name: e.name, team: e.team || e.node, lastTrace: e.lastTrace || null, verdict: stewardLiveness(e, cfg) }));
 
   const escalations = readJSON(hordePath(horde, 'escalations.json'), { items: [] });
   const escItems = Array.isArray(escalations.items) ? escalations.items : [];
-  const dissents = readJSON(hordePath(horde, 'dissents.json'), { items: [] });
-  const disItems = Array.isArray(dissents.items) ? dissents.items : [];
 
   // Keyed by level: {commit, team, trunk}, each {sha, result, count, at} when premerge.mjs has
   // run at that level; absent levels simply aren't shown.
@@ -143,10 +110,8 @@ function hordeDigest(horde, cfg, teamFilter) {
     trunk: { branch: trunkBranch, sha: trunkSha || null, ahead, behind },
     wave: currentWaveNumber(readText(hordePath(horde, 'plan.md'))) || null,
     teams,
-    stewards,
     queue: { byState: queueTotals(horde), total: Object.values(queueTotals(horde)).reduce((a, b) => a + b, 0) },
     escalations: { open: escItems.filter((i) => i.state !== 'ruled').length, total: escItems.length },
-    dissents: { open: disItems.filter((i) => i.state === 'open').length, total: disItems.length },
     lastGate,
     cost: { runs, weighted, limit, reached: limit !== null && weighted >= limit },
     leases: { foreign: foreignLeases },
@@ -167,14 +132,9 @@ function printHorde(h) {
       }
     }
   }
-  if (h.stewards.length > 0) {
-    console.log('  stewards:');
-    for (const s of h.stewards) console.log(`    ${s.name} (${s.team})  last=${s.lastTrace || '-'}  ${s.verdict}`);
-  }
   const qParts = Object.entries(h.queue.byState).map(([k, v]) => `${k}=${v}`).join(' ') || '(empty)';
   console.log(`  queue: total ${h.queue.total} — ${qParts}`);
   console.log(`  escalations: ${h.escalations.open} open / ${h.escalations.total} total`);
-  console.log(`  dissents: ${h.dissents.open} open / ${h.dissents.total} total`);
   const gateLevels = ['commit', 'team', 'trunk'].filter((lvl) => h.lastGate[lvl]);
   if (gateLevels.length === 0) {
     console.log('  last gate: (none recorded)');

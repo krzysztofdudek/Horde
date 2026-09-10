@@ -4,15 +4,13 @@
 
 ```
 director (the top-level session)
-├── steward · trunk          teammate ─┬── owner · <node>        subagent
-│                                      ├── worker · <ticket>     subagent
-│                                      └── verifier · <ticket>   subagent
-├── steward · <sub-team>     teammate ─┬── worker, verifier      subagent
-│                                      └── (its own sub-teams are the director's to raise)
 ├── architect                teammate
-├── auditor                  subagent
-└── counsel                  subagent
+└── worker · <ticket>        subagent
 ```
+
+Interim shape: only these two roles exist right now (steward, owner, verifier, auditor and counsel
+are being rebuilt one at a time in later releases, not kept alive behind a flag) — the director
+spawns the architect as its one teammate and every worker as its own subagent, one per ticket.
 
 - Two kinds of agent. A **teammate** is created by the top-level session alone: a teammate can spawn
   subagents, and those can spawn their own, but never another teammate. So every steward — the
@@ -57,12 +55,6 @@ director (the top-level session)
 - Every worker gets its own worktree on its ticket branch, cut from its team branch at the tip.
   First action, always: `git merge <team-branch>`, then `git status` must be clean — a worktree that
   is not clean after the merge is a stale base or somebody else's diff, and the worker stops and reports.
-- Stewards work in their own worktree on their team branch (the trunk steward on the trunk), created
-  by `roster.mjs spawn steward` at `<hordeRoot>/worktrees/<horde>/<team>`. They never `git stash`,
-  never check out another branch in their tree, never restore a file from a whole-file backup.
-- A completion notice of a grandchild agent (an owner or worker spawned by a steward) can reach the
-  director's session as well as the steward's. The director ignores it: the steward acts on files,
-  and the director acts on escalations.
 - The director works in the main checkout and touches no branch of the horde.
 
 ## The `.horde/` tree — uncommitted, one per repository
@@ -197,34 +189,21 @@ the deliberate third opinion. Gate results are cached per level in `cache/last-g
 ## Liveness — by files, never by silence
 
 - A **worker** is done when its branch carries a commit beyond its parent's tip and its worktree is
-  clean; a report without a commit is not a report. The steward checks branches every turn.
-- Thresholds live in `config.liveness` as `stewardMinutes`/`ownerMinutes`; `stewardSeconds`/
-  `ownerSeconds` win when present (tests and rehearsals set seconds).
-- A **steward** is dead when its branch shows no commit and its queue no state change for longer
-  than `liveness.stewardMinutes` while the queue is non-empty. Every steward is a teammate, so the
-  director — and only the director — reclaims the lease (`roster.mjs reclaim <name> --by director`)
-  and spawns a successor under N+1 from the files; the successor rebuilds its own subtree, its
-  owners and workers, from those same files. The old one is told to stand down. The parent steward
-  of a dead sub-team reports it and waits; it cannot replace it.
-- An **owner** is dead when it has not answered a review request within `liveness.ownerMinutes`
-  (the request is a file in the ticket's log). The steward that spawned it reclaims and spawns a
-  successor from the node's charter and log.
+  clean; a report without a commit is not a report. The director checks branches every turn.
+- A dead worker (its branch and its queue item both silent past its own turn) is replaced by the
+  director from the queue and the ticket's own log; nothing is lost, because nothing was in its head.
 - The **architect** is dead only when a graph proposal or a contract has waited for it longer than
-  `liveness.ownerMinutes` with no trace since; with nothing open it is alive. Auditor and counsel are
-  one-shot and never judged by the roster. Every ruling a role records through a tool leaves a trace.
-- A ticket's worktree path is recorded on its queue item when the steward sets it `running`; the
-  steward uses that path when it has to commit a worker's uncommitted diff.
-- Names of agents are unique per horde (`<horde>-<role>-<team|node|mission>-<N>`, N rising on
-  respawn; `mission` for the roles that belong to no team or node: architect, auditor, counsel) so
+  a turn with no trace since; with nothing open it is alive.
+- Names of agents are unique per horde (`<horde>-<role>-<ticket|mission>-<N>`, N rising on
+  respawn; `mission` for the roles that belong to no ticket: the architect) so
   that reports never land in a stranger's session. A name is an address only for the agent that
-  spawned it; from anywhere else what carries is the Agent tool's own id, which the roster records
-  as soon as it is known.
+  spawned it; from anywhere else what carries is the Agent tool's own id.
 
 ## Cost
 
-Every spawn is booked once, by `roster.mjs spawn … --class [--ticket NNN]`, which is the only writer
-of `cost.json`; stewards, owners and the architect are booked without a ticket. `cost.mjs` sums runs ×
-class weight per ticket, wave and mission. The account's
+`cost.json` is a ledger of runs, shape `{name, role, class, ticket|null, wave, at}` — the
+architect's own entries carry no ticket. `cost.mjs` sums runs ×
+class weight per ticket, wave and mission, whatever the ledger holds. The account's
 rate limits are invisible from a session; the chairman watches those. When the charter carries a limit
 and it is reached, the horde stops after the running tickets land and reports; when it carries none,
 nobody asks — the cost appears in every wave close.

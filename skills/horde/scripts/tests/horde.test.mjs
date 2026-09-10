@@ -361,7 +361,6 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
     const r = run('horde.mjs', ['done'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /evidence catalogue is empty/);
-    assert.match(r.stderr, /no wave has ever been started/);
     assert.match(r.stderr, /no cost has ever been recorded/);
   });
 
@@ -383,27 +382,13 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
   writeFileSync(join(ticketDir, 'issue.md'), '# 001 · slug\n\n**Status:** merged\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
   writeFileSync(join(ticketDir, 'log.md'), '## Verdict · 001 · 2026-01-01 · by verifier-1 (sonnet)\n\n**Result:** reproduced\n');
 
-  await t.test('refuses naming the missing audit and cost once evidence and gate are clear', () => {
+  await t.test('refuses naming the missing cost report once evidence and gate are clear', () => {
+    // The audit condition (and the "no wave has ever been started" check that gated it) is gone
+    // entirely — done's gate is now just evidence, trunk gate, cost — so with evidence reproduced
+    // and the gate green, cost is the only reason left.
     const r = run('horde.mjs', ['done'], dir);
     assert.equal(r.code, 1);
     assert.doesNotMatch(r.stderr, /evidence row\(s\) not reproduced/);
-    assert.match(r.stderr, /no wave has ever been started/);
-  });
-
-  run('wave.mjs', ['start'], dir);
-
-  await t.test('refuses naming the missing audit specifically, once a wave is open', () => {
-    const r = run('horde.mjs', ['done'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /no audit verdict recorded for wave 1/);
-    assert.match(r.stderr, /no cost has ever been recorded/);
-  });
-
-  run('wave.mjs', ['audit', '001', 'clean', 'reproduced evidence'], dir);
-
-  await t.test('refuses naming the missing cost report last', () => {
-    const r = run('horde.mjs', ['done'], dir);
-    assert.equal(r.code, 1);
     assert.match(r.stderr, /no cost has ever been recorded/);
   });
 
@@ -417,8 +402,6 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
     assert.equal(r.json.evidence.green, 1);
     assert.equal(r.json.evidence.total, 1);
     assert.equal(r.json.gate.result, 'green');
-    assert.equal(r.json.audit.wave, '1');
-    assert.equal(r.json.audit.verdict, 'clean');
     assert.equal(r.json.cost.runs, 1);
 
     const stamped = readFileSync(charterPath, 'utf8');

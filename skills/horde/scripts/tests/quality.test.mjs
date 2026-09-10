@@ -372,8 +372,8 @@ test('E17 — a quality ticket is filed and queued from a grain-advice/1 documen
   const stub = join(dir, 'grain-advise-stub.mjs');
   writeFileSync(stub, GRAIN_ADVISE_STUB);
   run('horde.mjs', ['config', 'set', 'grainCommand', `node ${stub}`], dir);
-  run('roster.mjs', ['spawn', 'owner', '--node', 'feature', '--class', 'sonnet'], dir);
-  const owner = run('roster.mjs', ['list'], dir).json.find((e) => e.role === 'owner').name;
+  // No owner role exists any more — a quality ticket's "owner" is just the node's own name now.
+  const owner = 'feature';
 
   let filed;
   await t.test('the pass reads the real document and files one ticket per improvement', () => {

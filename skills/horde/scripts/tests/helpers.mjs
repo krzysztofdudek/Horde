@@ -248,9 +248,9 @@ function locateRealYg() {
   return null;
 }
 
-// writeCostRuns(dir, horde, runs) — cost.json is written only by roster.mjs spawn (out of this
+// writeCostRuns(dir, horde, runs) — cost.json is written only by the deleted roster tool spawn (out of this
 // half's scope), so tests that need spawned-run cost data seed the file directly in the shape
-// roster.mjs is contracted to write: {runs: [{name, role, class, ticket, team, wave, at}]}.
+// the deleted roster tool is contracted to write: {runs: [{name, role, class, ticket, team, wave, at}]}.
 export function writeCostRuns(dir, horde, runs) {
   const path = join(dir, '.horde', 'hordes', horde, 'cost.json');
   mkdirSync(dirname(path), { recursive: true });

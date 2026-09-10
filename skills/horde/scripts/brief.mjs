@@ -3,14 +3,13 @@
 //
 // Renders reference/roles/<role>.md, filled from the charter, config, the gate-run cache, the
 // node (via node.mjs's own read helpers — imported, not shelled out, since both live in this
-// tool set), the ticket (found by walking every team's issues/ and queue.json, since a ticket
-// number is unique per horde but its team is not known up front) and the roster. A brief is never
-// printed with an unfilled `{{…}}` — the same collect-every-miss approach _lib's renderTemplate
-// uses, reimplemented here because the role files live under reference/roles/, not templates/,
-// which renderTemplate is hard-coded to.
+// tool set) and the ticket (found by walking every team's issues/ and queue.json, since a ticket
+// number is unique per horde but its team is not known up front). A brief is never printed with an
+// unfilled `{{…}}` — the same collect-every-miss approach _lib's renderTemplate uses, reimplemented
+// here because the role files live under reference/roles/, not templates/, which renderTemplate is
+// hard-coded to.
 //
-// Renders and prints only: no ticket log, no roster write. Cost is booked once, at spawn, by
-// roster.mjs; a second write here would double it for nothing.
+// Renders and prints only: no ticket log, no state write of any kind.
 //
 // After the role's own text, the brief carries a `## Law` section: the disciplines that role is
 // held to, inlined from reference/discipline/ (see ROLE_LAW below). The texts live once, there;
@@ -24,10 +23,7 @@ import {
   repoRoot, hordePath, teamPath, readJSON, readText, readConfig, fail, parseArgs, asArray, emit,
   isMain, resolveHorde, parentBranchOf,
 } from './_lib.mjs';
-import {
-  nodeExists, readNodeCharterText, readNodePortsText, ticketNodes,
-  pendingProsePairs, verdictCommandsFor, ygCommand,
-} from './node.mjs';
+import { nodeExists, readNodePortsText, ticketNodes } from './node.mjs';
 
 const ROLES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'roles');
 const DISCIPLINE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'discipline');
@@ -43,44 +39,29 @@ const PLUGIN_ROOT_TOKEN = /\$\{CLAUDE_PLUGIN_ROOT(?::-[^}]*)?\}/g;
 export function absolutizePluginRoot(text, root = SKILL_ROOT) {
   return text.replace(PLUGIN_ROOT_TOKEN, root);
 }
-const ROLES = ['steward', 'owner', 'architect', 'worker', 'verifier', 'auditor', 'counsel'];
+const ROLES = ['worker', 'architect'];
 
 // role → the disciplines its brief carries, in order. The texts live once, under
 // reference/discipline/; a role file names its disciplines and never repeats them. An entry may
 // narrow a discipline to one of its own sections, where the role is held to that part alone (the
-// architect gets framing's checklist, not the whole of framing). A role absent from this table
-// gets no Law section at all — the steward, the auditor and counsel are held to the charter and
-// their own briefs, not to a discipline of their own.
+// architect gets framing's checklist, not the whole of framing).
 const ROLE_LAW = {
   worker: ['tdd', 'debugging'],
-  verifier: ['verification', 'review'],
-  owner: ['review'],
   architect: [{ discipline: 'framing', section: 'Checklist' }],
 };
 
 const USAGE = `usage: brief.mjs <role> [args] --name <n> [--horde h] [--json]
 
 roles:
-  steward <team> --name <n>
-  owner <node> --name <n>
   architect --name <n>
   worker <ticket> --name <n> [--takeover]
       --takeover renders a takeover section — a prior worker attempted this ticket N times; the
       ticket is yours; here is its log — for the fresh, one-class-up worker tk.mjs status <ticket>
       changes hands a ticket to once its resume rounds are spent.
-  verifier <ticket> --name <n> [--delta <path>]
-  auditor <ticket> --wave <n> --name <n>
-  counsel --question "<q>" [--attach <file>]… --name <n>
 
 Prints the rendered brief for the Agent tool's prompt, verbatim. Refuses — listing every unfilled
 placeholder — rather than print one with "{{…}}" left in it. A role held to a discipline gets it
-inline, under "## Law": worker (tdd, debugging), verifier (verification, review), owner (review),
-architect (framing's checklist).
-
---delta <path> renders the verifier's brief for a scoped re-review: the subject is the difference
-between what was already approved and what is on the branch now (the file the merge checklist
-writes when a ticket's diff moved), together with every finding the last review left open. Without
-it the brief is the full verification, as before.
+inline, under "## Law": worker (tdd, debugging), architect (framing's checklist).
 
 options: --json  --help`;
 
@@ -194,9 +175,10 @@ function stewardFor(horde, team) {
 }
 
 // Agents are addressable by name only from the session that spawned them, but by their raw
-// Agent-tool id from anywhere — so a brief that names who to report to also carries that id,
-// once roster.mjs (via spawn --agent-id or trace --agent-id) has recorded one, for a report sent
-// from a different session's context than the one that did the spawning.
+// Agent-tool id from anywhere — so a brief that names who to report to also carries that id, for a
+// report sent from a different session's context than the one that did the spawning. Nothing in
+// this tool set writes roster.json any more; this reads it only for backward compatibility with a
+// mission still carrying one from before this migration.
 function withAgentId(horde, name) {
   if (name === 'main') return name;
   const entry = findRosterEntry(horde, name);
@@ -205,20 +187,14 @@ function withAgentId(horde, name) {
 
 // reportsTo — always the agent's own parent, never anyone else: an agent is addressable by the one
 // that spawned it, and a brief that named anybody else would be telling it to reach a session it
-// has no way to reach. `spawnedBy`, recorded by roster.mjs at the spawn, is that parent. Without an
-// entry to read it from (a brief rendered before the name was reserved), it falls back to the same
-// shape by role: a worker or verifier to its own team's steward, an owner to the trunk steward, and
-// a steward, architect, auditor or counsel to the director, whose session name is always the
-// literal "main" — the name this harness gives the top-level session.
+// has no way to reach. The architect is always a direct report of the director, whose session name
+// is always the literal "main" — the name this harness gives the top-level session. `spawnedBy` and
+// a live steward for the worker's team are only ever found in a roster.json a pre-migration mission
+// left on disk; a fresh mission never writes one, so a worker's fallback is "main" too.
 function reportsToFor(role, horde, { team, name } = {}) {
   const entry = name ? findRosterEntry(horde, name) : null;
   if (entry && entry.spawnedBy) return withAgentId(horde, entry.spawnedBy);
-  let fallback = 'main';
-  if (role === 'worker' || role === 'verifier') {
-    fallback = stewardFor(horde, team) || stewardFor(horde, 'trunk') || 'main';
-  } else if (role === 'owner') {
-    fallback = stewardFor(horde, 'trunk') || 'main';
-  }
+  const fallback = role === 'worker' ? (stewardFor(horde, team) || stewardFor(horde, 'trunk') || 'main') : 'main';
   return withAgentId(horde, fallback);
 }
 
@@ -277,87 +253,6 @@ function ticketBody(issueText) {
   return lines.join('\n').trim();
 }
 
-function ticketSection(issueText, heading) {
-  if (!issueText) return null;
-  const idx = issueText.indexOf(`## ${heading}`);
-  if (idx === -1) return null;
-  const rest = issueText.slice(idx + `## ${heading}`.length);
-  const next = rest.indexOf('\n## ');
-  const section = next === -1 ? rest : rest.slice(0, next);
-  return section.trim();
-}
-
-// sha for a merged ticket — the queue item's own `sha`, else the "merged: NNN <sha>" bullet in
-// the team's wave journal (whichever named this ticket last).
-function ticketSha(horde, team, ticket, queueItem) {
-  if (queueItem && queueItem.sha) return queueItem.sha;
-  const isTrunk = !team || team === 'trunk';
-  const journal = readText(isTrunk ? hordePath(horde, 'plan.md') : teamPath(horde, team, 'plan.md')) || '';
-  const re = new RegExp(`^- \\S+ merged: ${ticket} (\\S+)`, 'm');
-  const m = re.exec(journal);
-  return m ? m[1] : null;
-}
-
-// ---- previous findings, for a scoped re-review ---------------------------------------
-//
-// What the last look at this ticket left open, read from the ticket's own log: the "What failed"
-// prose of the most recent verdict, and every changes-request an owner recorded. Nothing else is
-// carried over — an approval or a reproduction needs no answer, only a finding does. Read from the
-// files rather than passed in, so a scoped brief cannot be rendered with a friendlier list of
-// findings than the record actually holds.
-function previousFindings(logText) {
-  const out = [];
-  if (!logText) return out;
-  const verdicts = logText.split(/\n(?=## Verdict)/).filter((b) => b.trim().startsWith('## Verdict'));
-  const last = verdicts.length ? verdicts[verdicts.length - 1] : null;
-  if (last) {
-    const idx = last.indexOf('**What failed, if anything**');
-    if (idx !== -1) {
-      const after = last.slice(idx).split('\n').slice(1);
-      for (const line of after) {
-        const t = line.replace(/^[-*]\s*/, '').trim();
-        if (t && !t.startsWith('<!--')) out.push(t);
-      }
-    }
-  }
-  for (const m of logText.matchAll(/^- \S+ review: (\S+) changes by (\S+)[^—\n]*— (.+)$/gm)) {
-    out.push(`${m[3]} (${m[1]}, asked by ${m[2]})`);
-  }
-  return out;
-}
-
-// The one paragraph that says what this verdict is about: the whole change, or — when the steward
-// passes the delta file the merge checklist wrote — only what moved since the last review, with
-// the open findings to answer one by one. Everything about HOW a scoped re-review is judged lives
-// in the role brief itself; this fills in which one it is and what it is about.
-function verdictScope(root, t, delta, parentBranch) {
-  if (delta === true) fail('--delta requires the path of the file to re-review (the merge checklist prints it)');
-  const deltaPath = typeof delta === 'string' ? delta : null;
-  if (!deltaPath) {
-    return `Full verification: every acceptance line above, over the whole of \`${t.queueItem.branch}\` `
-      + `against \`${parentBranch}\`.`;
-  }
-  if (readText(join(root, deltaPath)) === null && readText(deltaPath) === null) {
-    fail(`--delta names no readable file: ${deltaPath} — run the merge checklist on the branch again to have it written, or drop --delta for a full re-review`);
-  }
-  const findings = previousFindings(t.logText);
-  const lines = [
-    `**Scoped re-review.** This ticket was reviewed once already. Since then its branch caught up with`,
-    `the team and its own diff moved, so what you judge is the difference — recorded in \`${deltaPath}\`.`,
-    'Read that file first: it is the subject of this verdict. Everything the earlier review already',
-    'reproduced stands; you do not prove it a second time, and for an acceptance line the delta does',
-    'not touch, the record is that line, reproduced earlier and unchanged by the delta (the tool still',
-    'takes one item per acceptance line).',
-    '',
-    'Findings left open by the last review, each needing its own verdict — addressed, or not addressed:',
-    '',
-  ];
-  lines.push(...(findings.length
-    ? findings.map((f) => `- ${f}`)
-    : ['- (none recorded — the last review left nothing open; then judge the delta alone)']));
-  return lines.join('\n');
-}
-
 // ---- node text, joined across every node a ticket names -----------------------------
 
 function nodesText(root, cfg, nodes, reader, fallback) {
@@ -365,22 +260,6 @@ function nodesText(root, cfg, nodes, reader, fallback) {
     .filter((n) => nodeExists(root, cfg, n))
     .map((n) => reader(root, cfg, n) || fallback);
   return parts.length ? parts.join('\n\n---\n\n') : fallback;
-}
-
-// ---- charter's "## Nodes" section — the lease line naming a given node, or the template's own
-// default rule when nobody has written one yet.
-const DEFAULT_LEASE_RULE = 'mission when the node has three or more tickets, wave otherwise (no line '
-  + 'found for this node in the charter\'s Nodes section)';
-
-function leaseScopeFor(horde, node) {
-  const charter = readText(hordePath(horde, 'charter.md')) || '';
-  const idx = charter.indexOf('## Nodes');
-  if (idx === -1) return DEFAULT_LEASE_RULE;
-  const rest = charter.slice(idx);
-  const next = rest.indexOf('\n## ', 1);
-  const section = next === -1 ? rest : rest.slice(0, next);
-  const line = section.split('\n').find((l) => l.includes(node));
-  return line ? line.trim() : DEFAULT_LEASE_RULE;
 }
 
 // ---- role command builders -----------------------------------------------------------
@@ -421,42 +300,6 @@ function takeoverBlockFor(horde, t) {
     logText.trim() || '(empty)',
     '```',
   ].join('\n');
-}
-
-function cmdSteward(horde, root, cfg, positional, flags) {
-  const team = positional[0];
-  if (!team) fail('steward requires <team>');
-  const name = requireName(flags);
-  const entry = findRosterEntry(horde, name);
-  const fixRounds = cfg.fixRounds || { resume: 3, fresh: 2 };
-  const vars = {
-    repoRoot: root,
-    name, horde, team,
-    branch: `${horde}/${team}`,
-    charterPath: charterPath(root, horde),
-    parallelism: cfg.parallelism,
-    parentTeam: (entry && entry.parent) || 'trunk',
-    reportsTo: reportsToFor('steward', horde, { name }),
-    fixRoundsResume: fixRounds.resume,
-    fixRoundsFresh: fixRounds.fresh,
-  };
-  const brief = renderRole('steward', vars);
-  emit({ role: 'steward', team, name, brief }, flags, () => brief);
-}
-
-function cmdOwner(horde, root, cfg, positional, flags) {
-  const node = positional[0];
-  if (!node) fail('owner requires <node>');
-  const name = requireName(flags);
-  const vars = {
-    repoRoot: root,
-    name, horde, node,
-    charterPath: charterPath(root, horde),
-    leaseScope: leaseScopeFor(horde, node),
-    reportsTo: reportsToFor('owner', horde, { name }),
-  };
-  const brief = renderRole('owner', vars);
-  emit({ role: 'owner', node, name, brief }, flags, () => brief);
 }
 
 function cmdArchitect(horde, root, cfg, flags) {
@@ -510,7 +353,6 @@ function cmdWorker(horde, root, cfg, positional, flags) {
     fastCheck: cfg.gates && cfg.gates.commit,
     fastCheckCount: fastCheckCount(horde),
     ticketBody: ticketBody(t.issueText),
-    nodeCharter: nodesText(root, cfg, nodes, readNodeCharterText, '(no charter yet)'),
     nodePorts: nodesText(root, cfg, nodes, readNodePortsText, '(this ticket names no component the graph knows)'),
     protectedPaths: (cfg.protectedPaths || []).join(', ') || '(none)',
     issueDir: `teams/${t.team}/issues/${t.issueDirName}`,
@@ -523,115 +365,6 @@ function cmdWorker(horde, root, cfg, positional, flags) {
   }, flags, () => brief);
 }
 
-// verifier-is-yggdrasil-reviewer: the prose rules standing over this ticket's tree that no judge
-// has answered yet, with the two commands that answer each one. The free half of the graph gate —
-// every rule a script can decide — the verifier runs itself; what is left is judgement, and in a
-// horde the judge is the verifier, recording under its own name so `yg check` re-proves it in CI
-// without a key and says whose judgement it rests on. Read live from the ticket's own worktree,
-// because a pair is pending against a tree, not against a ticket.
-function proseVerdictsFor(cfg, worktree, judge) {
-  const { display } = ygCommand(cfg);
-  if (!worktree) {
-    return 'No worktree is recorded for this ticket yet, so the pending prose rules could not be listed. '
-      + `Once you are in yours, run: ${display} check --approve --only-deterministic, then `
-      + `${display} check --details.`;
-  }
-  const res = pendingProsePairs(cfg, worktree);
-  if (!res.available) {
-    return `\`${res.command}\` could not be started — the Yggdrasil CLI is how the graph is read, and `
-      + 'without it this ticket cannot be verified at all. Tell the steward.';
-  }
-  if (res.pairs.length === 0) {
-    return res.green
-      ? 'None. Every rule over this tree already holds a verdict bound to this code — run the graph '
-        + 'command in step 5 anyway, because the tree moves under you.'
-      : 'None waiting on a judgement. The graph is still red for a reason no judgement fixes — read '
-        + `\`${display} check\` in your worktree and record what you see.`;
-  }
-  const lines = [
-    `${res.pairs.length} prose rule(s) over this tree have no verdict yet. You are the judge. For each:`,
-    'read the package, decide, and record under your own name — the hash in the package is what the',
-    'verdict binds to, so it is copied, never composed.',
-    '',
-    '```',
-  ];
-  for (const pair of res.pairs) {
-    const cmds = verdictCommandsFor(cfg, pair, judge);
-    lines.push(`# ${pair.aspect} on ${pair.unitKind}:${pair.unit}`, cmds.package, cmds.record, '');
-  }
-  lines.push('```');
-  return lines.join('\n');
-}
-
-function cmdVerifier(horde, root, cfg, positional, flags) {
-  const rawId = positional[0];
-  if (!rawId) fail('verifier requires <ticket>');
-  const name = requireName(flags);
-  const t = findTicket(horde, rawId);
-  if (!t) fail(`no such ticket: ${rawId}`);
-  if (!t.queueItem) fail(`ticket ${rawId} has no queue item yet`);
-  const nodes = ticketNodes(t.issueText);
-  const title = ticketTitle(t.issueText);
-  const parent = parentBranchOf(horde, t.team, t.queueItem, { cwd: root });
-  const vars = {
-    repoRoot: root,
-    name, horde,
-    ticketId: t.id, ticketTitle: title,
-    ticketAcceptance: ticketSection(t.issueText, 'Acceptance — evidence'),
-    branch: t.queueItem.branch,
-    worktree: t.queueItem.worktree,
-    parentBranch: parent.branch,
-    gateCommand: cfg.gates && cfg.gates.team,
-    nodePorts: nodesText(root, cfg, nodes, readNodePortsText, '(this ticket names no component the graph knows)'),
-    reportsTo: reportsToFor('verifier', horde, { team: t.team, name }),
-    scope: verdictScope(root, t, flags.delta, parent.branch),
-    proseVerdicts: proseVerdictsFor(cfg, t.queueItem.worktree, name),
-  };
-  const brief = renderRole('verifier', vars);
-  emit({
-    role: 'verifier', ticket: rawId, name, delta: typeof flags.delta === 'string' ? flags.delta : null, brief,
-  }, flags, () => brief);
-}
-
-function cmdAuditor(horde, root, cfg, positional, flags) {
-  const rawId = positional[0];
-  if (!rawId) fail('auditor requires <ticket>');
-  if (!flags.wave) fail('auditor requires --wave <n>');
-  const name = requireName(flags);
-  const t = findTicket(horde, rawId);
-  if (!t) fail(`no such ticket: ${rawId}`);
-  const title = ticketTitle(t.issueText);
-  const sha = ticketSha(horde, t.team, t.id, t.queueItem);
-  const vars = {
-    repoRoot: root,
-    name, horde,
-    wave: flags.wave,
-    ticketId: t.id, ticketTitle: title,
-    sha,
-    reportsTo: reportsToFor('auditor', horde, { name }),
-  };
-  const brief = renderRole('auditor', vars);
-  emit({ role: 'auditor', ticket: rawId, wave: flags.wave, name, brief }, flags, () => brief);
-}
-
-function cmdCounsel(horde, root, cfg, flags) {
-  if (!flags.question) fail('counsel requires --question "<q>"');
-  const name = requireName(flags);
-  const files = asArray(flags.attach);
-  const attachments = files.length
-    ? files.map((f) => `### ${f}\n\n${readText(join(root, f)) ?? readText(f) ?? '(could not read this file)'}`).join('\n\n')
-    : '(none attached)';
-  const vars = {
-    repoRoot: root,
-    name, horde,
-    question: flags.question,
-    charterPath: charterPath(root, horde),
-    attachments,
-    reportsTo: reportsToFor('counsel', horde, { name }),
-  };
-  const brief = renderRole('counsel', vars);
-  emit({ role: 'counsel', name, brief }, flags, () => brief);
-}
 
 // ---- main -----------------------------------------------------------------------
 
@@ -648,13 +381,8 @@ function main() {
   const cfg = readConfig() || {};
 
   switch (role) {
-    case 'steward': return cmdSteward(horde, root, cfg, positional, flags);
-    case 'owner': return cmdOwner(horde, root, cfg, positional, flags);
     case 'architect': return cmdArchitect(horde, root, cfg, flags);
     case 'worker': return cmdWorker(horde, root, cfg, positional, flags);
-    case 'verifier': return cmdVerifier(horde, root, cfg, positional, flags);
-    case 'auditor': return cmdAuditor(horde, root, cfg, positional, flags);
-    case 'counsel': return cmdCounsel(horde, root, cfg, flags);
     default: fail(`unknown role: ${role}`);
   }
 }

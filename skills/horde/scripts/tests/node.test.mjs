@@ -10,14 +10,6 @@ import {
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
-// node.mjs's "charter edit" takes its content on stdin, which run() (a plain argv exec) cannot
-// supply.
-function charterEdit(dir, node, stdin) {
-  return execFileSync('node', [join(SCRIPTS_DIR, 'node.mjs'), 'charter', 'edit', node, '--json'], {
-    cwd: dir, input: stdin, encoding: 'utf8',
-  });
-}
-
 // ---- the graph is read only through the CLI ---------------------------------------------
 
 test('node.mjs bind: the graph is read through the Yggdrasil CLI, and there is no way around it', async (t) => {
@@ -156,55 +148,15 @@ test('node.mjs show: the rules in force come from the graph\'s own resolution', 
     assert.equal(r.code, 1);
     assert.match(r.stderr, /no such node in the graph/);
   });
-
-  await t.test('the charter\'s inherited-rules section is shown with the rules', () => {
-    writeFileSync(join(dir, '.yggdrasil', 'model', 'src', 'api', 'charter.md'), [
-      '# src/api', '', '## What lives here', '', 'the api', '',
-      '## Rules inherited from above', '',
-      '- No console in shipped code. — from the component above, `src` · status `enforced`',
-      '', '## Sizing', '', 'small', '',
-    ].join('\n'));
-    const r = run('node.mjs', ['show', 'src/api'], dir);
-    assert.match(r.json.rules.charterInherited, /^## Rules inherited from above/);
-    assert.match(r.json.rules.charterInherited, /No console in shipped code/);
-    assert.doesNotMatch(r.json.rules.charterInherited, /Sizing/);
-
-    const human = run('node.mjs', ['show', 'src/api'], dir, { json: false });
-    const rulesSection = human.stdout.slice(human.stdout.indexOf('## Rules —'), human.stdout.indexOf('## Ports'));
-    assert.match(rulesSection, /Rules inherited from above/);
-  });
 });
 
 // ---- the node's own committed files -------------------------------------------------------
 
-test('node.mjs charter/log: the node\'s charter is committed beside its component file, its log is the graph\'s', async (t) => {
+test('node.mjs log: the node\'s log is the graph\'s own', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
   addNode(dir, 'core', { mapping: ['src/core/**'] });
-
-  await t.test('an empty stdin seeds the charter from the template', () => {
-    const parsed = JSON.parse(charterEdit(dir, 'core', ''));
-    assert.ok(parsed.bytes > 0);
-    const charter = readFileSync(join(dir, '.yggdrasil', 'model', 'core', 'charter.md'), 'utf8');
-    assert.match(charter, /# Node · core/);
-    assert.doesNotMatch(charter, /\{\{/);
-  });
-
-  await t.test('content on stdin is written verbatim', () => {
-    JSON.parse(charterEdit(dir, 'core', '# Node · core\n\nedited by the owner\n'));
-    assert.match(readFileSync(join(dir, '.yggdrasil', 'model', 'core', 'charter.md'), 'utf8'), /edited by the owner/);
-  });
-
-  await t.test('charter edit refuses a component the graph does not have', () => {
-    let refused = null;
-    try {
-      charterEdit(dir, 'invented', '# Node · invented\n');
-    } catch (e) { refused = e; }
-    assert.ok(refused, 'a component nobody filed has no charter to write');
-    assert.match(refused.stderr.toString(), /no such node in the graph/);
-    assert.equal(existsSync(join(dir, '.yggdrasil', 'model', 'invented')), false);
-  });
 
   await t.test('log prints the graph\'s own command, and --run runs it for real', () => {
     const printed = run('node.mjs', ['log', 'core', 'the boundary was widened for the migration'], dir);
@@ -218,6 +170,34 @@ test('node.mjs charter/log: the node\'s charter is committed beside its componen
     const read = yg(dir, ['log', 'read', '--node', 'core']);
     assert.equal(read.code, 0, read.out);
     assert.match(read.out, /the boundary was widened for the migration/);
+  });
+});
+
+// node charters (charter.md per component, and node.mjs's own "charter edit" command) are gone
+// entirely — task 014 deleted templates/node-charter.md and the command with it. "charter edit"
+// now falls straight through to the dispatcher's generic unknown-command branch, the same as any
+// other made-up word, rather than a charter-specific refusal.
+test('node.mjs charter: "charter edit" is gone — refused as an unknown command, not a specific charter error', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'core', { mapping: ['src/core/**'] });
+
+  await t.test('charter edit falls through to the generic unknown-command refusal', () => {
+    const r = run('node.mjs', ['charter', 'edit', 'core'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /unknown command: charter/);
+    assert.doesNotMatch(r.stderr, /no such node in the graph/); // not the old, node-specific charter refusal
+    assert.match(r.stderr, /--help/);
+    assert.equal(existsSync(join(dir, '.yggdrasil', 'model', 'core', 'charter.md')), false);
+  });
+
+  await t.test('--help, reached the same generic path, names commands that actually exist', () => {
+    const help = run('node.mjs', ['--help'], dir, { json: false });
+    assert.equal(help.code, 0, help.stderr);
+    assert.match(help.stdout, /\bbind\b/);
+    assert.match(help.stdout, /\bshow\b/);
+    assert.doesNotMatch(help.stdout, /charter edit/);
   });
 });
 
@@ -440,8 +420,9 @@ test('node.mjs contracts: consumersOf narrows to the exact port a relation names
   });
 });
 
-// The mission charter's evidence catalogue, written from stdin through horde.mjs — separate from
-// charterEdit() above, which writes a single node's charter through node.mjs.
+// The mission charter's evidence catalogue, written from stdin through horde.mjs. This is the
+// mission-level charter horde.mjs still owns — unrelated to the per-node charter.md/`node.mjs
+// charter edit` that task 014 removed outright (see the "node.mjs charter" test above).
 function hordeCharter(dir, body) {
   return execFileSync('node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit', '--json'], {
     cwd: dir, input: body, encoding: 'utf8',
@@ -534,10 +515,17 @@ test('node.mjs propose/approve/apply: the horde records the decision, the archit
   });
 
   await t.test('--by traces that name in the roster when it is one, for both kinds of ruling', () => {
-    const architect = run('roster.mjs', ['spawn', 'architect', '--class', 'opus'], dir);
-    assert.equal(architect.code, 0, architect.stderr);
-    const architectName = architect.json.name;
+    // the deleted roster tool (the "spawn"/"list" commands used to build and read this fixture) is deleted —
+    // task 014 removed it outright. The tracing behaviour under test belongs to node.mjs, not to
+    // the deleted roster tool, so the fixture is now just a roster.json written and read by hand, in the same
+    // shape the deleted roster tool used to leave behind.
+    const architectName = 'mission1-architect-1';
     const rosterPath = join(dir, '.horde', 'hordes', 'mission1', 'roster.json');
+    writeFileSync(rosterPath, JSON.stringify({
+      entries: [{
+        name: architectName, role: 'architect', parent: null, lastTrace: new Date().toISOString(),
+      }],
+    }, null, 2));
     const backdate = () => {
       const roster = JSON.parse(readFileSync(rosterPath, 'utf8'));
       const staleAt = new Date(Date.now() - 120 * 60000).toISOString();
@@ -545,17 +533,18 @@ test('node.mjs propose/approve/apply: the horde records the decision, the archit
       writeFileSync(rosterPath, JSON.stringify(roster, null, 2));
       return staleAt;
     };
+    const traceOf = (name) => JSON.parse(readFileSync(rosterPath, 'utf8')).entries.find((e) => e.name === name);
 
     let staleAt = backdate();
     const p = run('node.mjs', ['propose', 'rule', 'traced proposal', '--by', 'owner1'], dir);
     assert.equal(run('node.mjs', ['approve', p.json.id, '--by', architectName], dir).code, 0);
-    let after = run('roster.mjs', ['list'], dir).json.find((e) => e.name === architectName);
+    let after = traceOf(architectName);
     assert.notEqual(after.lastTrace, staleAt);
 
     staleAt = backdate();
     const c = run('node.mjs', ['contract', 'propose', 'core', 'render', 'traced port', '--as', 'tests/render.test.mjs', '--by', 'owner1'], dir);
     assert.equal(run('node.mjs', ['contract', 'approve', c.json.id, '--by', architectName], dir).code, 0);
-    after = run('roster.mjs', ['list'], dir).json.find((e) => e.name === architectName);
+    after = traceOf(architectName);
     assert.notEqual(after.lastTrace, staleAt);
   });
 });

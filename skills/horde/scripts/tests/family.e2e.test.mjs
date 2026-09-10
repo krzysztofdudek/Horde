@@ -3,15 +3,21 @@
 // Every other test in this suite drives one tool over a fixture some other tool built. This one
 // drives the LAYERS: a bare repository with real commit history, Grain reading that history into
 // a proposed graph, Yggdrasil accepting it and baselining it, and only then a horde on top —
-// charter, ticket, plan, worktree, two keys, the merge checklist with the graph's own verdict in
-// it, a merge, a wave close, the mission's final gate and the chain of custody for one line.
+// charter, ticket, plan, worktree, the merge checklist, a merge, a wave close, the mission's
+// final gate and the chain of custody for one line.
 //
 // The point of it is the seams. A layer's own suite proves the layer; nothing but a walk like
-// this proves that what Grain writes is what Yggdrasil accepts, that the node identity Yggdrasil
-// hands back is the one a ticket is filed against, and that the keys a review leaves behind still
-// name the diff the merge checklist reads at the end. Nothing here is stood in for: the graph is
-// mined by the real `grain propose`, accepted by the real `yg adopt`, and the merge checklist's
-// graph item is the real `yg check` on the branch's own worktree.
+// this proves that what Grain writes is what Yggdrasil accepts, and that the node identity
+// Yggdrasil hands back is the one a ticket is filed against and the merge checklist's own graph
+// item reads at the end. Nothing here is stood in for: the graph is mined by the real
+// `grain propose`, accepted by the real `yg adopt`, and the merge checklist's graph item is the
+// real `yg check` on the branch's own worktree.
+//
+// (Task 014 — "seat cassation" — deleted the deleted roster tool, the deleted verify tool and the deleted dissent tool outright, and
+// removed tk.mjs's `key`/`review` commands: the two-key mechanism this walk used to exercise
+// between landing and merging — an author key, an independent verifier's verdict bound to the
+// diff, and per-node owner approval — no longer exists as product behavior. Every step below that
+// depended on it is reworked or removed; see the inline notes at each one.)
 //
 // It is skipped — loudly, with the reason and the path it looked at printed — when either build
 // is missing, and never silently: a family test that quietly measures nothing is worse than no
@@ -27,7 +33,9 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { run, findRealYg } from './helpers.mjs';
+import {
+  run, findRealYg, writeCostRuns,
+} from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -334,10 +342,9 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     assert.equal(runCommandLine(YG.cmd, ['check'], { cwd: dir }).code, 0, 'the accepted graph is green on the tree it was mined from');
   });
 
-  let ownerName;
-  let consumerOwnerName;
+  // Workers and architects are the only two roles left (brief.mjs's ROLES); neither is tracked in
+  // a roster any more, so a "worker" is just a name string used for --agent/branch naming.
   let workerName;
-  let verifierName;
   let stewardWorktree;
 
   await t.test('3. horde init on the graph the family just made, and the nodes it binds', () => {
@@ -370,29 +377,26 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     assert.deepEqual(show.json.boundary, ['src/orders']);
   });
 
-  await t.test('4. the charter, its two evidence rows, and the roster that will fill them', () => {
+  await t.test('4. the charter, its two evidence rows, and a worktree on the team branch', () => {
     const charter = stdinRun('horde.mjs', ['charter', 'edit'], dir, CHARTER);
     assert.equal(charter.code, 0, charter.stderr);
     assert.equal(charter.json.evidenceRows, 2);
     assert.match(readFileSync(join(dir, '.horde', 'hordes', 'family', 'charter.md'), 'utf8'), /\| E2 \|/);
 
-    const steward = run('roster.mjs', ['spawn', 'steward', '--team', 'trunk', '--class', 'sonnet'], dir);
-    assert.equal(steward.code, 0, steward.stderr);
-    stewardWorktree = steward.json.worktree;
+    // Formerly a "steward" spawned via the deleted roster tool held a persistent worktree on the team branch —
+    // there is no steward role and no the deleted roster tool any more, and nothing else creates that worktree,
+    // so it is created directly here, the same way lifecycle.test.mjs and mechanics.test.mjs do.
+    stewardWorktree = mkdtempSync(join(tmpdir(), 'family-trunk-'));
+    git(['worktree', 'add', stewardWorktree, 'family/trunk'], dir);
     assert.equal(existsSync(stewardWorktree), true);
 
-    const owner = run('roster.mjs', ['spawn', 'owner', '--node', 'src/orders', '--class', 'sonnet'], dir);
-    assert.equal(owner.code, 0, owner.stderr);
-    ownerName = owner.json.name;
-
-    // The graph says `tests` uses `src/orders`, so the ticket below — which raises a port on
-    // src/orders — changes a contract that node depends on, and its owner is owed a say.
-    const consumerOwner = run('roster.mjs', ['spawn', 'owner', '--node', 'tests', '--class', 'sonnet'], dir);
-    assert.equal(consumerOwner.code, 0, consumerOwner.stderr);
-    consumerOwnerName = consumerOwner.json.name;
+    // Formerly this step also spawned two owners (the deleted roster tool spawn owner --node src/orders /
+    // --node tests) so the ticket below's node approvals had someone to approve them. The owner
+    // role and the deleted roster tool are both gone, and queue.mjs's merge no longer checks any node approval
+    // at all, so there is nothing left here to set up.
   });
 
-  await t.test('5. the owner files a ticket with Files, Produces and Evidence; the plan is one layer', () => {
+  await t.test('5. a ticket is filed with Files, Produces and Evidence; the plan is one layer', () => {
     const ticket = run('tk.mjs', [
       'new', 'order-discount', '--title', 'An order can carry a discount',
       '--node', 'src/orders', '--class', 'sonnet',
@@ -425,12 +429,11 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
 
   let worktree;
   let tipSha;
-  let patchId;
 
   await t.test('6. the worker gets a worktree, and lands a test that fails without the change', () => {
-    const worker = run('roster.mjs', ['spawn', 'worker', '--team', 'trunk', '--class', 'sonnet', '--ticket', '001'], dir);
-    assert.equal(worker.code, 0, worker.stderr);
-    workerName = worker.json.name;
+    // A worker is no longer a roster entry — the deleted roster tool is deleted outright — it is just a name
+    // string used for --agent/branch naming, same as any other worker.
+    workerName = 'w-order-discount';
 
     const running = run('queue.mjs', ['set', '001', 'running', '--agent', workerName], dir);
     assert.equal(running.code, 0, running.stderr);
@@ -470,66 +473,29 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     );
 
     assert.equal(run('tk.mjs', ['log', '001', `landed ${tipSha.slice(0, 7)}`], dir).code, 0);
-    const key = run('tk.mjs', ['key', '001', 'author', '--by', workerName], dir);
-    assert.equal(key.code, 0, key.stderr);
-  });
-
-  await t.test('7. two keys: the verifier\'s verdict bound to the diff, and the owner\'s approval', () => {
-    const verifier = run('roster.mjs', ['spawn', 'verifier', '--team', 'trunk', '--class', 'sonnet', '--ticket', '001'], dir);
-    assert.equal(verifier.code, 0, verifier.stderr);
-    verifierName = verifier.json.name;
-
-    // keys-bind-to-patch-id: what the verdict is held to is the identity of the ticket's own diff
-    // against the branch it merges into, computed here the same way _lib.mjs computes it.
-    const diff = execFileSync('git', ['diff', '-U3', `family/trunk...family/t-001`], {
-      cwd: dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
-    });
-    patchId = execFileSync('git', ['patch-id', '--stable'], { cwd: dir, input: diff, encoding: 'utf8' }).trim().split(/\s+/)[0];
-    assert.match(patchId, /^[0-9a-f]{40}$/);
-
-    const verdict = run('verify.mjs', [
-      'record', '001', '--verdict', 'reproduced', '--revert', 'failed', '--by', verifierName,
-      '--item', '1|node --test src/orders/discount.test.mjs|1 pass 0 fail',
-      '--item', '2|node --test|7 pass 0 fail',
-      '--ran', 'node --test src/orders/discount.test.mjs on the parent tree',
-      '--saw', 'ERR_MODULE_NOT_FOUND — the test cannot pass without the change',
-      '--gate', 'green', '--sha', tipSha,
-    ], dir);
-    assert.equal(verdict.code, 0, verdict.stderr);
-    assert.equal(verdict.json.diff, patchId);
-
-    const log = readFileSync(join(
-      dir, '.horde', 'hordes', 'family', 'teams', 'trunk', 'issues', '001-order-discount', 'log.md',
-    ), 'utf8');
-    assert.match(log, new RegExp(`\\*\\*Diff:\\*\\* ${patchId}`));
-    assert.match(log, new RegExp(`\\*\\*Gate:\\*\\*.*green at sha ${tipSha.slice(0, 7)}`));
-
+    // review-request still exists (it only appends a log note now) — kept for the realistic flow,
+    // even though nothing downstream reads it any more.
     assert.equal(run('tk.mjs', ['review-request', '001'], dir).code, 0);
-    // port-is-contract: the ticket raises a port, so the node the graph says consumes it is owed
-    // an approval of its own — naming the node is how each owner says which one they speak for.
-    const bare = run('tk.mjs', ['review', '001', 'approve', '--by', ownerName], dir);
-    assert.equal(bare.code, 1, 'an unnamed approval on a ticket that owes two is refused');
-
-    const review = run('tk.mjs', ['review', '001', 'approve', '--by', ownerName, '--node', 'src/orders'], dir);
-    assert.equal(review.code, 0, review.stderr);
-    assert.deepEqual(review.json.nodes, ['src/orders']);
-    const consumerReview = run('tk.mjs', ['review', '001', 'approve', '--by', consumerOwnerName, '--node', 'tests'], dir);
-    assert.equal(consumerReview.code, 0, consumerReview.stderr);
-
-    const issue = readFileSync(join(
-      dir, '.horde', 'hordes', 'family', 'teams', 'trunk', 'issues', '001-order-discount', 'issue.md',
-    ), 'utf8');
-    assert.match(issue, new RegExp(`author ${workerName}`));
-    assert.match(issue, new RegExp(`verifier ${verifierName}`));
-    assert.match(issue, new RegExp(`src/orders ${ownerName}@[0-9a-f]+\\+${patchId}`));
-    assert.match(issue, new RegExp(`tests ${consumerOwnerName}@[0-9a-f]+\\+${patchId}`));
   });
 
-  await t.test('8. the merge checklist, graph item included, is green through the real yg check', () => {
-    const premerge = run('premerge.mjs', ['family/t-001', '--level', 'team'], dir);
+  // Formerly there was a step 7 here — "two keys: the verifier's verdict bound to the diff, and
+  // the owner's approval" — spawning a verifier via the deleted roster tool, computing the ticket's patch-id,
+  // recording a the deleted verify tool verdict bound to it, and getting a per-node tk.mjs review approval from
+  // each of the two owners the ticket's port touches. the deleted roster tool, the deleted verify tool and tk.mjs's own
+  // `review` command are all deleted outright, and queue.mjs's merge no longer checks any key or
+  // approval at all — so none of that mechanism, or the coverage it gave (independent reproduction
+  // of the evidence; per-node consent before a contract-changing merge), exists in the product any
+  // more. It is not replaced with anything; the walk goes straight from landing to the merge
+  // checklist.
+
+  await t.test('7. the merge checklist is green through the real yg check', () => {
+    // --level team no longer exists (sub-teams are gone) — omitting --level defaults internally to
+    // the same gate lookup a branch landing directly on the team branch always used.
+    const premerge = run('premerge.mjs', ['family/t-001'], dir);
     const byName = Object.fromEntries(premerge.json.checks.map((c) => [c.name, c]));
+    // The checklist's own "keys" item is gone — merging no longer checks any key or approval.
     assert.deepEqual(Object.keys(byName), [
-      'base freshness', 'keys', 'scope', 'revert test', 'gate', 'graph', 'mapping', 'journal', 'graph text',
+      'base freshness', 'scope', 'revert test', 'gate', 'graph', 'mapping', 'journal', 'graph text',
     ]);
     for (const [name, check] of Object.entries(byName)) {
       assert.equal(check.ok, true, `${name}: ${check.note}`);
@@ -540,7 +506,7 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
   });
 
   let trunkSha;
-  await t.test('9. the merge, and the wave close that turns both evidence rows green', () => {
+  await t.test('8. the merge, and the wave close that turns both evidence rows green', () => {
     git(['merge', '--no-ff', 'family/t-001', '-m', 'merge 001: an order can carry a discount'], stewardWorktree);
     trunkSha = git(['rev-parse', 'family/trunk'], dir);
     assert.equal(runGate(stewardWorktree), 0, 'the gate is green at the trunk tip');
@@ -552,30 +518,46 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     assert.equal(git(['branch', '--list', 'family/t-001'], dir), '');
     assert.equal(run('tk.mjs', ['status', '001', 'merged'], dir).json.status, 'merged');
 
+    // Formerly a catalogue row was stamped "reproduced" automatically, mission-wide, off a
+    // verifier's verdict block (horde.mjs done's own stampMissionEvidence read a ## Verdict
+    // heading that only the deleted verify tool ever wrote). the deleted verify tool is deleted, so nothing writes that
+    // heading any more and that automatic path is dead — wave.mjs's own `evidence <id> --by`
+    // command (unaffected by task 014) is the tool left to mark a row reproduced by hand.
+    assert.equal(run('wave.mjs', ['evidence', 'E1', '--by', workerName], dir).code, 0);
+    assert.equal(run('wave.mjs', ['evidence', 'E2', '--by', workerName], dir).code, 0);
+
     const close = run('wave.mjs', ['close', '--gate', 'green', '--sha', trunkSha.slice(0, 7)], dir);
     assert.equal(close.code, 0, close.stderr);
 
     const charter = readFileSync(join(dir, '.horde', 'hordes', 'family', 'charter.md'), 'utf8');
-    assert.match(charter, new RegExp(`\\| E1 \\|[^|]*\\|[^|]*\\| ${verifierName} \\|`));
-    assert.match(charter, new RegExp(`\\| E2 \\|[^|]*\\|[^|]*\\| ${verifierName} \\|`));
+    assert.match(charter, new RegExp(`\\| E1 \\|[^|]*\\|[^|]*\\| ${workerName} \\|`));
+    assert.match(charter, new RegExp(`\\| E2 \\|[^|]*\\|[^|]*\\| ${workerName} \\|`));
   });
 
-  await t.test('10. the mission gate refuses without an audit, and passes with one', () => {
+  // Formerly this refused for "no audit verdict recorded for wave 1" and was satisfied with
+  // wave.mjs audit — wave.mjs's `audit`/`audit-plan` commands are deleted outright, and
+  // horde.mjs's `done` no longer has an audit condition at all (renumbered to just: evidence
+  // reproduced, trunk gate green, cost recorded). Nothing writes cost.json any more either
+  // (the deleted roster tool was the only thing that ever billed a run, and that responsibility hasn't moved
+  // to another tool yet), so the refusal this test now hits first is the cost one.
+  await t.test('9. the mission gate refuses with no cost recorded, and passes once some is', () => {
     const refused = run('horde.mjs', ['done'], dir);
     assert.equal(refused.code, 1);
-    assert.match(refused.stderr, /no audit verdict recorded for wave 1/);
+    assert.match(refused.stderr, /no cost has ever been recorded for this mission/);
 
-    assert.equal(run('wave.mjs', ['audit', '001', 'clean', 'the evidence reproduces from the ticket alone'], dir).code, 0);
+    writeCostRuns(dir, 'family', [{
+      name: workerName, role: 'worker', class: 'sonnet', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString(),
+    }]);
 
     const done = run('horde.mjs', ['done'], dir);
     assert.equal(done.code, 0, done.stderr);
     assert.equal(done.json.evidence.green, 2);
     assert.equal(done.json.evidence.total, 2);
-    assert.equal(done.json.audit.verdict, 'clean');
+    assert.equal(done.json.cost.runs, 1);
     assert.match(readFileSync(join(dir, '.horde', 'hordes', 'family', 'plan.md'), 'utf8'), /# Mission complete/);
   });
 
-  await t.test('11. blame on a merged line prints the whole chain back to the graph', () => {
+  await t.test('10. blame on a merged line prints the whole chain back to the graph', () => {
     const line = readFileSync(join(stewardWorktree, 'src/orders/discount.mjs'), 'utf8')
       .split('\n').findIndex((l) => l.includes('const total =')) + 1;
     assert.ok(line > 0);
@@ -583,9 +565,16 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     const blame = run('blame.mjs', [`src/orders/discount.mjs:${line}`], stewardWorktree);
     assert.equal(blame.code, 0, blame.stderr);
     assert.equal(blame.json.ticket.id, '001');
-    assert.equal(blame.json.ticket.author, workerName);
-    assert.equal(blame.json.ticket.verifier.name, verifierName);
-    assert.equal(blame.json.ticket.ownerApprovals['src/orders'].startsWith(ownerName), true);
+    // blame.mjs keeps its own local key-parsing logic for backward compatibility with tickets
+    // written before task 014 that still carry a "**Keys:**" line — this ticket, filed after, has
+    // none, so author/verifier honestly read as "—", and its one named node shows up with no
+    // approval recorded ("—") rather than an approval. That chain-of-custody coverage (who
+    // authored it, who independently verified it, who approved it per node) is genuinely gone
+    // along with tk.mjs's key/review commands and the deleted verify tool; this only checks what blame.mjs
+    // still does report.
+    assert.equal(blame.json.ticket.author, '—');
+    assert.equal(blame.json.ticket.verifier.name, '—');
+    assert.deepEqual(blame.json.ticket.ownerApprovals, { 'src/orders': '—' });
     assert.deepEqual(blame.json.ticket.catalogueEvidence.map((e) => e.id), ['E1', 'E2']);
     assert.equal(blame.json.rules.available, true);
     assert.equal(blame.json.rules.node, 'src/orders');

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   makeRepo, rmRepo, run, initHorde, addNode, addAspect, yg, requireYg, MARKER_CHECK,
@@ -106,7 +106,7 @@ test('premerge.mjs: all six checks pass', async (t) => {
   assert.equal(r.json.ok, true);
   for (const c of r.json.checks) assert.equal(c.ok, true, `${c.name}: ${c.note}`);
   const names = r.json.checks.map((c) => c.name);
-  assert.deepEqual(names, ['base freshness', 'keys', 'scope', 'revert test', 'gate', 'graph', 'mapping', 'journal', 'graph text']);
+  assert.deepEqual(names, ['base freshness', 'scope', 'revert test', 'gate', 'graph', 'mapping', 'journal', 'graph text']);
 
   // A real revert test ran (this whole run happens inside our own `node --test`, so a false pass
   // via NODE_TEST_CONTEXT leaking into the nested run would show up as "no new test files").
@@ -140,7 +140,7 @@ test('premerge.mjs: item 1 fails — branch not rooted at the current team tip',
   assert.match(item1.note, /STALE/);
 });
 
-test('premerge.mjs: item 2 fails — keys missing (no verifier, no node approval)', async (t) => {
+test('premerge.mjs: --level team is refused — the value no longer exists', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -148,84 +148,56 @@ test('premerge.mjs: item 2 fails — keys missing (no verifier, no node approval
   commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '003');
-  const dst = writeIssue(dir, 'trunk', '003', { keysLine: '**Keys:** author worker1 · verifier —' });
-  writeVerdictLog(dst, { result: 'not-reproduced' });
+  const dst = writeIssue(dir, 'trunk', '003');
+  writeVerdictLog(dst);
   seedQueueItem(dir, 'trunk', '003', branch);
 
-  const r = run('premerge.mjs', [branch, '--no-gate'], dir);
+  const r = run('premerge.mjs', [branch, '--level', 'team', '--no-gate'], dir);
   assert.equal(r.code, 1);
-  const item2 = r.json.checks.find((c) => c.name === 'keys');
-  assert.equal(item2.ok, false);
-  assert.match(item2.note, /verifier=unset/);
+  assert.match(r.stderr, /--level team no longer exists/);
 });
 
-test('premerge.mjs: item 2 fails — a node approval\'s sha (tk.mjs review\'s "name@sha" encoding) predates the branch\'s current tip', async (t) => {
+test('premerge.mjs: --level trunk still selects the trunk gate, for a branch landing directly on trunk', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'gates.trunk', 'true'], dir);
   addNode(dir, 'feature', { mapping: ['feature-009.mjs', 'feature-009.test.mjs'] });
   commitGraph(dir);
 
   const branch = makeTicketBranch(dir, '009');
-  const dst = writeIssue(dir, 'trunk', '009', {
-    keysLine: '**Keys:** author worker1 · verifier verifier1 · feature owner1@deadbee',
-  });
+  const dst = writeIssue(dir, 'trunk', '009');
   writeVerdictLog(dst);
   seedQueueItem(dir, 'trunk', '009', branch);
+  git(['worktree', 'add', join(dir, '.horde', 'worktrees', 'mission1', 't-009'), branch], dir);
 
-  const r = run('premerge.mjs', [branch, '--no-gate'], dir);
-  assert.equal(r.code, 1);
-  const keys = r.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keys.ok, false);
-  assert.match(keys.note, /approval\/verdict predates .+ — re-review/);
+  const r = run('premerge.mjs', [branch, '--level', 'trunk'], dir);
+  if (r.code !== 0) console.error(r.stdout, r.stderr);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.level, 'trunk');
+  const gate = r.json.checks.find((c) => c.name === 'gate');
+  assert.match(gate.note, /green \(true\)/);
 });
 
-test('premerge.mjs: item 2 — a real tk.mjs review approval records the tip and the diff it was given, and a further commit that changes the diff sends it back', async (t) => {
+test('premerge.mjs: omitting --level still passes — it defaults internally to the team-level gate', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
   addNode(dir, 'feature', { mapping: ['feature-010.mjs', 'feature-010.test.mjs'] });
   commitGraph(dir);
 
-  const ticket = run('tk.mjs', ['new', 'sha-bound', '--title', 'Sha bound', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir);
-  const id = ticket.json.id;
-  run('queue.mjs', ['add', id], dir);
-  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir);
-  const branch = running.json.branch;
-  const worktree = running.json.worktree;
-  writeFileSync(join(worktree, 'feature-010.mjs'), 'export function add(a, b) { return a + b; }\n');
-  git(['add', '-A'], worktree);
-  git(['commit', '-qm', 'ticket 010'], worktree);
+  const branch = makeTicketBranch(dir, '010');
+  const dst = writeIssue(dir, 'trunk', '010');
+  writeVerdictLog(dst);
+  seedQueueItem(dir, 'trunk', '010', branch);
 
-  run('tk.mjs', ['key', id, 'author', '--by', 'worker1'], dir);
-  const review = run('tk.mjs', ['review', id, 'approve', '--by', 'owner1'], dir);
-  assert.equal(review.code, 0, review.stderr);
-  const show = run('tk.mjs', ['show', id], dir);
-  const tip = git(['rev-parse', '--short', branch], dir);
-  assert.match(show.json.text, new RegExp(`feature owner1@${tip}\\+[0-9a-f]{40}`));
-
-  const verdict = run('verify.mjs', ['record', id, '--verdict', 'reproduced', '--revert', 'failed', '--by', 'verifier1', '--gate', 'green', '--sha', tip, '--item', '1|npm test|green'], dir);
-  assert.equal(verdict.code, 0, verdict.stderr);
-
-  const r1 = run('premerge.mjs', [branch, '--no-gate'], dir);
-  const keys1 = r1.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keys1.ok, true, keys1.note);
-
-  assert.match(keys1.note, /keys bound to diff [0-9a-f]{7}/);
-
-  // A further commit adds a file to the ticket's own change — this is not a catch-up, it is a
-  // different diff, and neither the approval nor the verdict covers it.
-  writeFileSync(join(worktree, 'feature-010-extra.mjs'), 'export const extra = true;\n');
-  git(['add', '-A'], worktree);
-  git(['commit', '-qm', 'a further commit'], worktree);
-
-  const r2 = run('premerge.mjs', [branch, '--no-gate'], dir);
-  const keys2 = r2.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keys2.ok, false);
-  assert.match(keys2.note, /diff changed since review at [0-9a-f]{7} — scoped re-review: \S+/);
+  const r = run('premerge.mjs', [branch, '--no-gate'], dir);
+  if (r.code !== 0) console.error(r.stdout, r.stderr);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.level, 'team');
 });
 
-test('premerge.mjs: item 3 fails — diff touches a file outside the node boundary', async (t) => {
+test('premerge.mjs: item 2 fails — diff touches a file outside the node boundary', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -276,7 +248,7 @@ function makeContractRevertFixture(dir, id) {
   return `mission1/t-${id}`;
 }
 
-test('premerge.mjs: item 4 uses the ticket\'s "**Revert base:**" header instead of the parent tip', async (t) => {
+test('premerge.mjs: item 3 uses the ticket\'s "**Revert base:**" header instead of the parent tip', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   const branch = makeContractRevertFixture(dir, '020');
@@ -305,7 +277,7 @@ test('premerge.mjs: item 4 uses the ticket\'s "**Revert base:**" header instead 
   assert.match(revert.note, /1 fail/);
 });
 
-test('premerge.mjs: item 4 falls back to a "red on <ref>" phrase in the acceptance lines', async (t) => {
+test('premerge.mjs: item 3 falls back to a "red on <ref>" phrase in the acceptance lines', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   const branch = makeContractRevertFixture(dir, '021');
@@ -325,7 +297,7 @@ test('premerge.mjs: item 4 falls back to a "red on <ref>" phrase in the acceptan
   assert.match(revert.note, /base develop/);
 });
 
-test('premerge.mjs: item 6 fails — no log entry newer than the last commit', async (t) => {
+test('premerge.mjs: item 7 fails — no log entry newer than the last commit', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -345,7 +317,7 @@ test('premerge.mjs: item 6 fails — no log entry newer than the last commit', a
   assert.match(item6.note, /predates/);
 });
 
-test('premerge.mjs: --no-gate skips item 5; a stubbed gates.team runs and caches when --no-gate is omitted', async (t) => {
+test('premerge.mjs: --no-gate skips item 4; a stubbed gates.team runs and caches when --no-gate is omitted', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -371,7 +343,7 @@ test('premerge.mjs: --no-gate skips item 5; a stubbed gates.team runs and caches
   assert.equal(cache.team.result, 'green');
 });
 
-test('premerge.mjs: item 5 accepts a verifier\'s green gate only when its sha matches the branch tip', async (t) => {
+test('premerge.mjs: item 4 accepts a pre-migration ticket\'s recorded green gate only when its sha matches the branch tip', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -391,10 +363,10 @@ test('premerge.mjs: item 5 accepts a verifier\'s green gate only when its sha ma
   if (r.code !== 0) console.error(r.stdout, r.stderr);
   assert.equal(r.code, 0);
   const gate = r.json.checks.find((c) => c.name === 'gate');
-  assert.match(gate.note, /accepted the verifier's recorded green gate/);
+  assert.match(gate.note, /accepted the pre-migration verdict's recorded green gate/);
 });
 
-test('premerge.mjs: item 5 re-runs the gate when the verifier\'s recorded sha does not match the branch tip', async (t) => {
+test('premerge.mjs: item 4 re-runs the gate when the pre-migration verdict\'s recorded sha does not match the branch tip', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -411,21 +383,17 @@ test('premerge.mjs: item 5 re-runs the gate when the verifier\'s recorded sha do
   git(['worktree', 'add', wt, branch], dir);
 
   const r = run('premerge.mjs', [branch], dir);
+  if (r.code !== 0) console.error(r.stdout, r.stderr);
   const gate = r.json.checks.find((c) => c.name === 'gate');
-  assert.doesNotMatch(gate.note, /accepted the verifier's recorded/);
+  assert.doesNotMatch(gate.note, /accepted the pre-migration verdict's recorded/);
   assert.match(gate.note, /green \(true\)/);
   assert.equal(gate.ok, true);
-  // A verdict's own recorded gate sha not matching the branch tip is exactly the same staleness
-  // item 2 (keys) now refuses — a reproduced verdict for a commit that's no longer this branch's
-  // tip is not a reproduction of what's on it now, whether or not the gate happens to re-run
-  // green.
-  assert.equal(r.code, 1);
-  const keys = r.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keys.ok, false);
-  assert.match(keys.note, /approval\/verdict predates .+ — re-review/);
+  // A verdict's own recorded gate sha not matching the branch tip no longer costs anything else on
+  // the checklist — nothing depends on that sha except the gate item itself.
+  assert.equal(r.code, 0);
 });
 
-test('premerge.mjs: item 3 scope — a component\'s own graph files are inside its boundary, but the rest of the graph is not', async (t) => {
+test('premerge.mjs: item 2 scope — a component\'s own graph files are inside its boundary, but the rest of the graph is not', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -472,7 +440,7 @@ test('premerge.mjs: item 3 scope — a component\'s own graph files are inside i
   assert.match(badScope.note, /yg-architecture\.yaml/);
 });
 
-test('premerge.mjs: item 3 scope — yg\'s committed lock files are derived, not out of scope', async (t) => {
+test('premerge.mjs: item 2 scope — yg\'s committed lock files are derived, not out of scope', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -498,109 +466,6 @@ test('premerge.mjs: item 3 scope — yg\'s committed lock files are derived, not
   assert.equal(scope.ok, true, scope.note);
   assert.match(scope.note, /derived lock files left to yg check: \.yggdrasil\/yg-lock\.logs\.json/);
 });
-
-// A sub-team ("goblins") merging up into trunk: represented in trunk's own queue.json as an item
-// named "team:goblins" whose branch is the child team's own mission1/goblins — the shape
-// queue.mjs and roster.mjs's steward spawn are contracted to produce.
-function writeIssueAt(teamDir, id, {
-  node = 'feature', keysLine = '**Keys:** author worker1 · verifier verifier1 · feature owner1',
-} = {}) {
-  const dst = join(teamDir, 'issues', `${id}-sample-ticket`);
-  mkdirSync(dst, { recursive: true });
-  writeFileSync(join(dst, 'issue.md'), [
-    `# ${id} · Sample ticket`, '',
-    '**Status:** merged',
-    `**Node:** ${node} · **Class:** sonnet · **Severity:** medium · **Team:** goblins`,
-    `**Depends on:** none · **Branch:** mission1/t-${id}`,
-    keysLine, '',
-    '## Acceptance — evidence', '', '- [ ] does the thing', '',
-  ].join('\n'));
-  writeVerdictLog(dst);
-  return dst;
-}
-
-function setupTeamMergeUp(dir, { ticketMerged = true, ticketState } = {}) {
-  const resolvedState = ticketState || (ticketMerged ? 'merged' : 'running');
-  initHorde(dir);
-  addNode(dir, 'feature', { mapping: ['feature-101.mjs'] });
-  commitGraph(dir);
-
-  const childTeamDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'teams', 'goblins');
-  mkdirSync(join(childTeamDir, 'issues'), { recursive: true });
-
-  git(['checkout', '-b', 'mission1/goblins', 'mission1/trunk'], dir);
-  git(['checkout', '-b', 'mission1/t-101', 'mission1/goblins'], dir);
-  writeFileSync(join(dir, 'feature-101.mjs'), 'export const flag = true;\n');
-  // Also touches the node's own graph file — proves the team-mode scope union (over the team's
-  // tickets' nodes) counts a node's graph files as in scope too, the same as ticket mode.
-  writeFileSync(join(dir, '.yggdrasil', 'model', 'feature', 'charter.md'), '# Node · feature\n\nrefreshed\n');
-  git(['add', 'feature-101.mjs', join('.yggdrasil', 'model', 'feature', 'charter.md')], dir);
-  git(['commit', '-qm', 'ticket 101'], dir);
-  git(['checkout', 'mission1/goblins'], dir);
-  git(['merge', '--no-ff', 'mission1/t-101', '-m', 'merge ticket 101'], dir);
-  git(['checkout', 'mission1/trunk'], dir);
-
-  writeIssueAt(childTeamDir, '101');
-  writeFileSync(join(childTeamDir, 'queue.json'), JSON.stringify({
-    items: [{
-      ticket: '101', state: resolvedState, class: 'sonnet', branch: 'mission1/t-101', dependsOn: [], agent: 'worker1', sha: null, notes: [], worktree: null,
-    }],
-  }, null, 2));
-  writeFileSync(join(childTeamDir, 'plan.md'), `# Wave 1 — close ${new Date().toISOString().slice(0, 10)}\n\n**Merged:** 1 tickets\n`);
-
-  const trunkQueuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
-  const trunkQueue = JSON.parse(readFileSync(trunkQueuePath, 'utf8'));
-  trunkQueue.items.push({
-    ticket: 'team:goblins', state: 'landed', class: null, branch: 'mission1/goblins', dependsOn: [], agent: null, sha: null, notes: [], worktree: null,
-  });
-  writeFileSync(trunkQueuePath, JSON.stringify(trunkQueue, null, 2));
-}
-
-test('premerge.mjs: team merge-up mode — every child ticket merged+keyed, revert test skipped', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  setupTeamMergeUp(dir);
-
-  const r = run('premerge.mjs', ['mission1/goblins', '--no-gate'], dir);
-  if (r.code !== 0) console.error(r.stdout, r.stderr);
-  assert.equal(r.code, 0);
-  assert.equal(r.json.ok, true);
-  const keys = r.json.checks.find((c) => c.name === 'keys');
-  assert.match(keys.note, /1 ticket\(s\) merged, each with two keys/);
-  const revert = r.json.checks.find((c) => c.name === 'revert test');
-  assert.match(revert.note, /skipped/);
-  const scope = r.json.checks.find((c) => c.name === 'scope');
-  assert.equal(scope.ok, true);
-});
-
-test('premerge.mjs: team merge-up mode fails item 2 when one of the child\'s tickets is not merged', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  setupTeamMergeUp(dir, { ticketMerged: false });
-
-  const r = run('premerge.mjs', ['mission1/goblins', '--no-gate'], dir);
-  assert.equal(r.code, 1);
-  const keys = r.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keys.ok, false);
-  assert.match(keys.note, /101: running/);
-});
-
-// A team lands only with an empty queue — every state but "merged" blocks, including a ticket
-// that was never even started ("queued") or one waiting on class availability ("waiting"), not
-// just one already running.
-for (const state of ['queued', 'waiting']) {
-  test(`premerge.mjs: team merge-up mode fails item 2 when one of the child's tickets is still "${state}"`, async (t) => {
-    const dir = makeRepo();
-    t.after(() => rmRepo(dir));
-    setupTeamMergeUp(dir, { ticketState: state });
-
-    const r = run('premerge.mjs', ['mission1/goblins', '--no-gate'], dir);
-    assert.equal(r.code, 1);
-    const keys = r.json.checks.find((c) => c.name === 'keys');
-    assert.equal(keys.ok, false);
-    assert.match(keys.note, new RegExp(`101: ${state}`));
-  });
-}
 
 // ---- the graph gate ----------------------------------------------------------------
 //
@@ -758,7 +623,7 @@ test('premerge.mjs: --no-gate says the graph was not judged, rather than ticking
   assert.match(graph.note, /skipped \(--no-gate\)/);
 });
 
-test('premerge.mjs: item 4 refuses when this repository\'s test convention is unknown', async (t) => {
+test('premerge.mjs: item 3 refuses when this repository\'s test convention is unknown', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   // No --test-globs, and a fixture repo with no build files: nothing tells the checklist what a
@@ -779,7 +644,7 @@ test('premerge.mjs: item 4 refuses when this repository\'s test convention is un
   assert.match(revert.note, /config set testGlobs/);
 });
 
-test('premerge.mjs: item 4 says what it looked for when a diff really carries no new tests', async (t) => {
+test('premerge.mjs: item 3 says what it looked for when a diff really carries no new tests', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir, 'mission1', ['--test-globs', '**/*Tests.java']);
@@ -799,7 +664,7 @@ test('premerge.mjs: item 4 says what it looked for when a diff really carries no
   assert.match(revert.note, /no new test files in diff \(looked for \*\*\/\*Tests\.java\)/);
 });
 
-test('premerge.mjs: item 3 scope — a diff outside the files the ticket declared is refused', async (t) => {
+test('premerge.mjs: item 2 scope — a diff outside the files the ticket declared is refused', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -820,7 +685,7 @@ test('premerge.mjs: item 3 scope — a diff outside the files the ticket declare
   assert.match(scope.note, /tk\.mjs edit --files/);
 });
 
-test('premerge.mjs: item 3 scope — declaring the file the diff touches makes it pass, and a ticket with no Files falls back to the node boundary', async (t) => {
+test('premerge.mjs: item 2 scope — declaring the file the diff touches makes it pass, and a ticket with no Files falls back to the node boundary', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -849,98 +714,10 @@ test('premerge.mjs: item 3 scope — declaring the file the diff touches makes i
   assert.match(undeclaredScope.note, /diff inside node boundary/);
 });
 
-test('premerge.mjs: item 2 keys — a ticket that raises a port\'s version owes an approval to every node that consumes it', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-  addNode(dir, 'feature', { mapping: ['feature-042.mjs', 'feature-042.test.mjs'] });
-  commitGraph(dir);
-  addNode(dir, 'downstream', {
-    mapping: ['src/downstream/**'],
-    relations: [{ target: 'feature', type: 'uses' }],
-  });
-
-  const branch = makeTicketBranch(dir, '042');
-  const dst = writeIssue(dir, 'trunk', '042', { produces: 'feature/api@2' });
-  writeVerdictLog(dst);
-  seedQueueItem(dir, 'trunk', '042', branch);
-
-  const missing = run('premerge.mjs', [branch, '--no-gate'], dir);
-  assert.equal(missing.code, 1);
-  const keys = missing.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keys.ok, false);
-  assert.match(keys.note, /downstream=missing/);
-
-  // Once the consuming node's owner has approved, the same checklist is satisfied.
-  writeIssue(dir, 'trunk', '042', {
-    produces: 'feature/api@2',
-    keysLine: '**Keys:** author worker1 · verifier verifier1 · feature owner1 · downstream owner2',
-  });
-  writeVerdictLog(dst);
-  const approved = run('premerge.mjs', [branch, '--no-gate'], dir);
-  const keys2 = approved.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keys2.ok, true, keys2.note);
-  assert.match(keys2.note, /downstream=owner2/);
-});
-
-// ---- keys bound to the ticket's own diff -------------------------------------------------
-//
-// The whole point of item 2 binding to the diff rather than to the branch tip: a team branch that
-// moves under a ticket costs it nothing, unless what moved reached into the ticket's own change.
-// These four go through the real tools (queue, tk, verify) on a real file, because what is being
-// tested is exactly the recorded shape of a key — a hand-written imitation would prove nothing.
-
 const LIB_LINES = Array.from({ length: 40 }, (_, i) => `export const v${i + 1} = ${i + 1};`);
 
-function libWith(line, value) {
-  const lines = [...LIB_LINES];
-  lines[line - 1] = `export const v${line} = ${value};`;
-  return `${lines.join('\n')}\n`;
-}
-
-// A ticket carried all the way to two live keys: a 40-line file on the team branch, one line of it
-// changed on the ticket's own branch, the author key, the owner's approval and a reproduced
-// verdict — each recorded by the tool that really records it.
-function reviewedTicket(dir, slug) {
-  initHorde(dir);
-  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
-  git(['checkout', 'mission1/trunk'], dir);
-  writeFileSync(join(dir, 'lib.mjs'), `${LIB_LINES.join('\n')}\n`);
-  writeFileSync(join(dir, 'other.mjs'), 'export const other = 0;\n');
-  git(['add', 'lib.mjs', 'other.mjs'], dir);
-  git(['commit', '-qm', 'the files the ticket will change'], dir);
-  addNode(dir, 'feature', { mapping: ['lib.mjs', 'other.mjs'] });
-  commitGraph(dir);
-
-  const created = run('tk.mjs', ['new', slug, '--title', 'One line in the middle', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir);
-  const id = created.json.id;
-  run('queue.mjs', ['add', id], dir);
-  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir);
-  const { branch, worktree } = running.json;
-
-  writeFileSync(join(worktree, 'lib.mjs'), libWith(20, 2000));
-  git(['add', 'lib.mjs'], worktree);
-  git(['commit', '-qm', `ticket ${id}`], worktree);
-
-  run('tk.mjs', ['key', id, 'author', '--by', 'worker1'], dir);
-  const approve = run('tk.mjs', ['review', id, 'approve', '--by', 'owner1'], dir);
-  assert.equal(approve.code, 0, approve.stderr);
-  const tip = git(['rev-parse', '--short', branch], dir);
-  const verdict = run('verify.mjs', ['record', id, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1', '--gate', 'green', '--sha', tip, '--item', '1|npm test|green'], dir);
-  assert.equal(verdict.code, 0, verdict.stderr);
-  return {
-    id, branch, worktree, tip, approve, verdict,
-  };
-}
-
-// A sibling ticket landing on the team branch — what makes every other branch in flight stale.
-function landOnTeamBranch(dir, files, message = 'a sibling ticket lands') {
-  git(['checkout', 'mission1/trunk'], dir);
-  for (const [path, content] of Object.entries(files)) writeFileSync(join(dir, path), content);
-  git(['add', ...Object.keys(files)], dir);
-  git(['commit', '-qm', message], dir);
-}
-
+// A landing on the team branch after a ticket branched off it — what makes every other branch in
+// flight stale until it catches up.
 function tryMerge(worktree, ref) {
   try {
     return { ok: true, output: git(['merge', ref, '-m', `catch up with ${ref}`], worktree) };
@@ -949,178 +726,12 @@ function tryMerge(worktree, ref) {
   }
 }
 
-test('premerge.mjs: item 2 — a landing in another file moves the tip, not the diff, and both keys travel with it', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  const ticket = reviewedTicket(dir, 'keys-travel');
-
-  const before = run('premerge.mjs', [ticket.branch], dir);
-  assert.equal(before.json.ok, true, JSON.stringify(before.json.checks));
-
-  landOnTeamBranch(dir, { 'other.mjs': 'export const other = 1;\n' });
-  const merge = tryMerge(ticket.worktree, 'mission1/trunk');
-  assert.equal(merge.ok, true, merge.output);
-  run('tk.mjs', ['log', ticket.id, 'caught the team branch up'], dir);
-
-  const r = run('premerge.mjs', [ticket.branch], dir);
-  assert.equal(r.code, 0, JSON.stringify(r.json && r.json.checks));
-  const base = r.json.checks.find((c) => c.name === 'base freshness');
-  assert.equal(base.ok, true, base.note);
-  const keys = r.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keys.ok, true, keys.note);
-  assert.match(keys.note, /keys bound to diff [0-9a-f]{7}/);
-  assert.doesNotMatch(keys.note, /re-review/);
-  // The gate is tied to the tree, not to the diff: it runs again, for free, on the new tip.
-  const gate = r.json.checks.find((c) => c.name === 'gate');
-  assert.equal(gate.ok, true);
-  assert.match(gate.note, /green \(true\)/);
-  assert.doesNotMatch(gate.note, /accepted the verifier's recorded/);
-});
-
-test('premerge.mjs: item 2 — a transfer of keys is written into the wave journal, once', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  const ticket = reviewedTicket(dir, 'transfer-noted');
-  const journal = join(dir, '.horde', 'hordes', 'mission1', 'plan.md');
-
-  // Before any catch-up the keys were given at the tip they are still on: nothing travelled.
-  run('premerge.mjs', [ticket.branch], dir);
-  assert.doesNotMatch(readFileSync(journal, 'utf8'), /keys transferred/);
-
-  landOnTeamBranch(dir, { 'other.mjs': 'export const other = 1;\n' });
-  assert.equal(tryMerge(ticket.worktree, 'mission1/trunk').ok, true);
-  run('tk.mjs', ['log', ticket.id, 'caught the team branch up'], dir);
-
-  const r = run('premerge.mjs', [ticket.branch], dir);
-  assert.equal(r.code, 0, JSON.stringify(r.json && r.json.checks));
-  // Both keys — the owner's approval and the verifier's verdict — survived the catch-up.
-  const bullet = new RegExp(`^- \\S+ keys transferred: ${ticket.id} 2 at diff [0-9a-f]{7}$`, 'm');
-  assert.match(readFileSync(journal, 'utf8'), bullet);
-
-  run('premerge.mjs', [ticket.branch], dir);
-  const lines = readFileSync(journal, 'utf8').split('\n').filter((l) => l.includes('keys transferred'));
-  assert.equal(lines.length, 1, 'a transfer is one event and costs one journal line');
-});
-
-test('premerge.mjs: item 2 — a landing inside the reviewed hunk\'s context changes the diff and asks for a scoped re-review', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  const ticket = reviewedTicket(dir, 'diff-changed');
-
-  // Two lines below the ticket's own change: inside its context, so the merge is clean but what
-  // the owner and the verifier read is no longer what is on the branch.
-  landOnTeamBranch(dir, { 'lib.mjs': libWith(22, 999) });
-  const merge = tryMerge(ticket.worktree, 'mission1/trunk');
-  assert.equal(merge.ok, true, merge.output);
-  run('tk.mjs', ['log', ticket.id, 'caught the team branch up'], dir);
-
-  const r = run('premerge.mjs', [ticket.branch], dir);
-  assert.equal(r.code, 1);
-  const keys = r.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keys.ok, false);
-  assert.match(keys.note, /diff changed since review at [0-9a-f]{7} — scoped re-review: \S+/);
-  assert.doesNotMatch(keys.note, /keys bound to diff/);
-
-  const path = /scoped re-review: (\S+)/.exec(keys.note)[1];
-  assert.match(path, /rereview-[0-9a-f]{7}\.\.[0-9a-f]{7}\.diff$/);
-  // The file is the commit-by-commit comparison of what was approved against what is there now:
-  // here the ticket's own commit is carried over unchanged, and what moved is the base under it.
-  const delta = readFileSync(join(dir, path), 'utf8');
-  assert.match(delta, new RegExp(`ticket ${ticket.id}`));
-});
-
-test('premerge.mjs: item 2 — an approval recorded with a sha alone stays bound to that commit, catch-up or not', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-  addNode(dir, 'feature', { mapping: ['feature-040.mjs', 'feature-040.test.mjs', 'other-040.mjs'] });
-  commitGraph(dir);
-
-  const branch = makeTicketBranch(dir, '040');
-  const tip = git(['rev-parse', '--short', branch], dir);
-  const dst = writeIssue(dir, 'trunk', '040', {
-    keysLine: `**Keys:** author worker1 · verifier verifier1 · feature owner1@${tip}`,
-  });
-  writeVerdictLog(dst, { gateLine: `**Gate:** \`true\` — green at sha ${tip}` });
-  seedQueueItem(dir, 'trunk', '040', branch);
-
-  const before = run('premerge.mjs', [branch, '--no-gate'], dir);
-  const keysBefore = before.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keysBefore.ok, true, keysBefore.note);
-  assert.doesNotMatch(keysBefore.note, /keys bound to diff/);
-
-  // A landing elsewhere, then the same catch-up merge that costs a diff-bound key nothing.
-  landOnTeamBranch(dir, { 'other-040.mjs': 'export const other = 1;\n' });
-  git(['checkout', branch], dir);
-  git(['merge', 'mission1/trunk', '-m', 'catch up'], dir);
-  git(['checkout', 'mission1/trunk'], dir);
-
-  const after = run('premerge.mjs', [branch, '--no-gate'], dir);
-  const keys = after.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keys.ok, false);
-  assert.match(keys.note, /approval\/verdict predates [0-9a-f]{7} — re-review/);
-  assert.doesNotMatch(keys.note, /scoped re-review/);
-});
-
-test('premerge.mjs: item 2 — a landing on the adjacent line conflicts, and the ticket goes back to its author untouched', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  const ticket = reviewedTicket(dir, 'adjacent');
-  const tipBefore = git(['rev-parse', ticket.branch], dir);
-
-  landOnTeamBranch(dir, { 'lib.mjs': libWith(21, 999) });
-  const merge = tryMerge(ticket.worktree, 'mission1/trunk');
-  assert.equal(merge.ok, false);
-  assert.match(merge.output, /CONFLICT/);
-  git(['merge', '--abort'], ticket.worktree);
-  assert.equal(git(['rev-parse', ticket.branch], dir), tipBefore);
-
-  // Nothing was asked of the reviewers: the branch is exactly where the author left it, the keys
-  // still hold, and the only red item is the base the author must catch up with.
-  const r = run('premerge.mjs', [ticket.branch], dir);
-  assert.equal(r.code, 1);
-  const base = r.json.checks.find((c) => c.name === 'base freshness');
-  assert.equal(base.ok, false);
-  assert.match(base.note, /STALE/);
-  const keys = r.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keys.ok, true, keys.note);
-  assert.match(keys.note, /keys bound to diff [0-9a-f]{7}/);
-});
-
-test('premerge.mjs: item 2 — an approval given from the verifier seat is read like any other, and travels with the diff', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  const ticket = reviewedTicket(dir, 'seat-travels');
-
-  // The same recorded approval, given from the verifier's seat: the marker sits in the name, so
-  // what item 2 holds it to is still the diff after it.
-  const issueDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues');
-  const dirName = readdirSync(issueDir).find((n) => n.startsWith(ticket.id));
-  const issuePath = join(issueDir, dirName, 'issue.md');
-  const seated = readFileSync(issuePath, 'utf8').replace(/(feature )([^\s@]+)@/, '$1$2(verifier-seat)@');
-  writeFileSync(issuePath, seated);
-  assert.match(seated, /feature \S+\(verifier-seat\)@[0-9a-f]+\+[0-9a-f]{40}/);
-
-  landOnTeamBranch(dir, { 'other.mjs': 'export const other = 1;\n' });
-  const merge = tryMerge(ticket.worktree, 'mission1/trunk');
-  assert.equal(merge.ok, true, merge.output);
-  run('tk.mjs', ['log', ticket.id, 'caught the team branch up'], dir);
-
-  const r = run('premerge.mjs', [ticket.branch, '--no-gate'], dir);
-  const keys = r.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keys.ok, true, keys.note);
-  assert.match(keys.note, /keys bound to diff [0-9a-f]{7}/);
-  assert.match(keys.note, /\(verifier-seat\)/);
-});
-
 // ---- a ticket started from an unmerged dependency's tip (a stack) --------------------------
 //
-// The second ticket of a chain, written and reviewed while the first is still in flight. Every
-// question with the word "parent" in it — where the base is, what the diff contains, what the
-// keys are bound to, what a moved diff is compared against — has to be answered with the first
-// ticket's branch until it merges, and with the team branch from the moment it does. If it is
-// not, the keys die on the catch-up that follows the parent's merge, and the stack has bought
-// nothing: the second ticket pays for a second review exactly as if it had waited a wave.
+// The second ticket of a chain, written while the first is still in flight. Every question with
+// the word "parent" in it — where the base is, what the diff contains, what a moved diff is
+// compared against — has to be answered with the first ticket's branch until it merges, and with
+// the team branch from the moment it does.
 
 function libWithLines(changes) {
   const lines = [...LIB_LINES];
@@ -1158,23 +769,15 @@ function chainOfTwo(dir, { parentLine = 5, childLine = 30 } = {}) {
   writeFileSync(join(child.worktree, 'lib.mjs'), libWithLines({ [parentLine]: 500, [childLine]: 3000 }));
   git(['add', 'lib.mjs'], child.worktree);
   git(['commit', '-qm', `ticket ${childId}`], child.worktree);
-
-  run('tk.mjs', ['key', childId, 'author', '--by', 'worker2'], dir);
-  const approve = run('tk.mjs', ['review', childId, 'approve', '--by', 'owner1'], dir);
-  assert.equal(approve.code, 0, approve.stderr);
-  const childTip = git(['rev-parse', '--short', child.branch], dir);
-  const verdict = run('verify.mjs', ['record', childId, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1', '--gate', 'green', '--sha', childTip, '--item', '1|npm test|green'], dir);
-  assert.equal(verdict.code, 0, verdict.stderr);
+  // A log entry after the code commit — nothing else keeps the journal item fresh now that no
+  // review/verdict command runs as part of reaching this state.
+  run('tk.mjs', ['log', childId, 'ready for review'], dir);
 
   return { parentId, parent, childId, child };
 }
 
-// The parent keyed, merged into the team branch and recorded as merged — the moment the stack ends.
+// The parent merged into the team branch and recorded as merged — the moment the stack ends.
 function landTheParent(dir, parentId, parentBranch) {
-  run('tk.mjs', ['key', parentId, 'author', '--by', 'worker1'], dir);
-  run('tk.mjs', ['review', parentId, 'approve', '--by', 'owner1'], dir);
-  const tip = git(['rev-parse', '--short', parentBranch], dir);
-  run('verify.mjs', ['record', parentId, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', 'verifier1', '--gate', 'green', '--sha', tip, '--item', '1|npm test|green'], dir);
   git(['checkout', 'mission1/trunk'], dir);
   git(['merge', '--no-ff', parentBranch, '-m', `merge ${parentId}`], dir);
   const sha = git(['rev-parse', '--short', 'mission1/trunk'], dir);
@@ -1183,7 +786,7 @@ function landTheParent(dir, parentId, parentBranch) {
   return merged;
 }
 
-test('premerge.mjs: a stacked ticket is measured against its parent, and its keys survive the parent landing', async (t) => {
+test('premerge.mjs: a stacked ticket is measured against its parent, and against the team once it lands', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   const {
@@ -1198,9 +801,6 @@ test('premerge.mjs: a stacked ticket is measured against its parent, and its key
     const base = r.json.checks.find((c) => c.name === 'base freshness');
     assert.equal(base.ok, true, base.note);
     assert.match(base.note, new RegExp(`rooted at ${parent.branch} tip`));
-    const keys = r.json.checks.find((c) => c.name === 'keys');
-    assert.equal(keys.ok, true, keys.note);
-    assert.match(keys.note, /keys bound to diff [0-9a-f]{7}/);
   });
 
   await t.test('the parent lands: the stack is cleared and the child catches up with the team', () => {
@@ -1213,7 +813,7 @@ test('premerge.mjs: a stacked ticket is measured against its parent, and its key
     run('tk.mjs', ['log', childId, 'caught the team branch up'], dir);
   });
 
-  await t.test('and the keys hold: the parent is the team branch now, the diff is the same one', () => {
+  await t.test('and the branch reads clean: the parent is the team branch now, the diff is the same one', () => {
     const r = run('premerge.mjs', [child.branch], dir);
     assert.equal(r.code, 0, JSON.stringify(r.json && r.json.checks));
     assert.equal(r.json.parent, 'mission1/trunk');
@@ -1222,12 +822,7 @@ test('premerge.mjs: a stacked ticket is measured against its parent, and its key
     const base = r.json.checks.find((c) => c.name === 'base freshness');
     assert.equal(base.ok, true, base.note);
     assert.match(base.note, /rooted at mission1\/trunk tip/);
-    const keys = r.json.checks.find((c) => c.name === 'keys');
-    assert.equal(keys.ok, true, keys.note);
-    assert.match(keys.note, /keys bound to diff [0-9a-f]{7}/);
-    assert.doesNotMatch(keys.note, /re-review/);
-    // The gate is tied to the tree, so it runs again on the merged one — nothing is carried over
-    // but the human judgement.
+    // The gate is tied to the tree, so it runs again on the merged one.
     const gate = r.json.checks.find((c) => c.name === 'gate');
     assert.equal(gate.ok, true, gate.note);
     assert.match(gate.note, /green \(true\)/);
@@ -1240,32 +835,4 @@ test('premerge.mjs: a stacked ticket is measured against its parent, and its key
     const merged = run('queue.mjs', ['set', childId, 'merged', '--sha', sha], dir);
     assert.equal(merged.code, 0, merged.stderr);
   });
-});
-
-test('premerge.mjs: a parent amended inside the stacked ticket\'s own context sends its keys to a scoped re-review', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  const { parent, childId, child } = chainOfTwo(dir);
-
-  // The parent changes a line two below the child's own, before landing: the merge is clean, but
-  // what the owner and the verifier read on the child's branch is not what is on it any more.
-  writeFileSync(join(parent.worktree, 'lib.mjs'), libWithLines({ 5: 500, 32: 999 }));
-  git(['add', 'lib.mjs'], parent.worktree);
-  git(['commit', '-qm', 'the parent takes another line'], parent.worktree);
-
-  const merge = tryMerge(child.worktree, parent.branch);
-  assert.equal(merge.ok, true, merge.output);
-  run('tk.mjs', ['log', childId, 'caught the parent up'], dir);
-
-  const r = run('premerge.mjs', [child.branch], dir);
-  assert.equal(r.code, 1);
-  assert.equal(r.json.parent, parent.branch);
-  const keys = r.json.checks.find((c) => c.name === 'keys');
-  assert.equal(keys.ok, false);
-  assert.match(keys.note, /diff changed since review at [0-9a-f]{7} — scoped re-review: \S+/);
-
-  const path = /scoped re-review: (\S+)/.exec(keys.note)[1];
-  assert.match(path, /rereview-[0-9a-f]{7}\.\.[0-9a-f]{7}\.diff$/);
-  const delta = readFileSync(join(dir, path), 'utf8');
-  assert.match(delta, new RegExp(`ticket ${childId}`));
 });

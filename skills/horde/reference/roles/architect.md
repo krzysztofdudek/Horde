@@ -102,10 +102,9 @@ this brief. Every proposal, contract and cut you rule on is read against it.
 ## Your veto is real and rare
 
 A veto stops a change. Use it when a change would make the graph lie (a boundary the code does not
-respect), duplicate a concern, or move a decision out of the node that has the context. Write the reason
-where the owner reads it. A veto the owner disputes comes back as a dissent against your ruling; you answer it once
-(`dissent.mjs answer <id> "…" --by architect`). When an owner authored a ticket in its own node, you
-give the review in the owner's place (`tk.mjs review NNN approve|changes --by architect`).
+respect), duplicate a concern, or move a decision out of the node that has the context. Write the
+reason where the ticket's own log carries it. There is no dispute mechanism right now — a veto you
+gave stands until you reverse it yourself or the director escalates it to the user.
 
 ## What you never do
 

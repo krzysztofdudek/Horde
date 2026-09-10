@@ -4,14 +4,11 @@
 // The mechanical pre-merge checklist. Never interprets a red item — that's the steward's
 // escalation to make — it only reports ✓/✗ per item and exits non-zero on any ✗.
 //
-// A branch is found by locating the queue item that names it (searched across every team, since
-// the caller only supplies the branch name): an ordinary ticket branch `<horde>/t-NNN` lives in
-// its own team's queue; a sub-team's merge-up lives in its *parent* team's queue as a `team:<name>`
-// item, `branch` pointing at the child team's own branch. The branch it must be rooted on, and
-// will merge into, is normally `<horde>/<team>` — the team whose queue.json named it — and, for a
-// ticket the steward started from an unmerged dependency's tip, that dependency's branch until it
-// merges. `parentBranchOf` answers that once, and every item below is measured against its
-// answer: the base, the diff, what the keys are bound to, the tree a new test is reverted onto.
+// A branch is found by locating the queue item that names it, in trunk's own queue.json: an
+// ordinary ticket branch `<horde>/t-NNN`. The branch it must be rooted on, and will merge into, is
+// normally `<horde>/trunk` — and, for a ticket started from an unmerged dependency's tip, that
+// dependency's branch until it merges. `parentBranchOf` answers that once, and every item below is
+// measured against its answer: the base, the diff, the tree a new test is reverted onto.
 
 import {
   existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync,
@@ -21,38 +18,35 @@ import { dirname, join, relative } from 'node:path';
 import { execFileSync, execSync } from 'node:child_process';
 import {
   repoRoot, hordePath, readJSON, writeJSON, readText, writeText, readConfig, git, fail, parseArgs,
-  asArray, emit, isMain, resolveHorde, patchIdOf, parentBranchOf,
+  asArray, emit, isMain, resolveHorde, parentBranchOf,
 } from './_lib.mjs';
 import {
-  ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, globToRegExp, pathInBoundary, ticketBoundary, consumersOf, ygFileContext, ygAvailable,
+  ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, globToRegExp, pathInBoundary, ticketBoundary, ygFileContext, ygAvailable,
 } from './node.mjs';
-import { ticketFiles, ticketPorts } from './tk.mjs';
-import { noteKeysTransferred } from './wave.mjs';
+import { ticketFiles } from './tk.mjs';
 
-const USAGE = `usage: premerge.mjs <branch> [--level team|trunk] [--no-gate] [--horde h]
+const USAGE = `usage: premerge.mjs <branch> [--level trunk] [--no-gate] [--horde h]
 
 The checks, in order — ✓/✗ per line, non-zero exit on any ✗:
   1. base freshness — branch rooted at its parent branch's tip
-  2. keys           — author + verifier keys set, verdict reproduced, every node approved (the
-                      ticket's own, plus every node consuming a port it produces), and every
-                      approval and the verdict still bound to the diff they were given for (a key
-                      with no diff recorded is bound to the branch tip, as before)
-  3. scope          — diff stays inside the files the ticket declared, or its node boundaries when
+  2. scope          — diff stays inside the files the ticket declared, or its node boundaries when
                       it declared none; no protected path touched
-  4. revert test    — new test files (named by config.testGlobs), extracted onto the parent's
+  3. revert test    — new test files (named by config.testGlobs), extracted onto the parent's
                       tree, fail there; ✗ when this repository's test patterns are unknown
-  5. gate           — green at this SHA (a verifier's recorded green gate, or a fresh run)
-  6. graph          — the free deterministic verdicts recorded, every prose rule still waiting
+  4. gate           — green at this SHA (a pre-migration ticket's recorded green gate, or a fresh
+                      run)
+  5. graph          — the free deterministic verdicts recorded, every prose rule still waiting
                       on a judgement named, and a full "yg check" green on this branch's tree
                       (it runs whatever config.gates holds)
-  7. mapping        — every file the branch added is owned by a node on the branch's own tree
+  6. mapping        — every file the branch added is owned by a node on the branch's own tree
                       (a mapping and its first file land in the same commit); skipped with --no-gate
-  8. journal        — a log entry newer than the last commit
-  9. graph text     — charters, logs and "graph:" commits touched by the branch carry no mission
+  7. journal        — a log entry newer than the last commit
+  8. graph text     — charters, logs and "graph:" commits touched by the branch carry no mission
                       language (wave, ticket NNN, mission, horde, E<n>, .temp/): the graph is plan-agnostic
 
 --level selects the gate command (config.gates.team or .trunk; default team — "trunk" is only for
-a branch landing directly on <horde>/trunk). --no-gate skips items 5 and 6 (informational: pass).
+a branch landing directly on <horde>/trunk; "team" is no longer a value you pass, only the
+default). --no-gate skips items 4 and 5 (informational: pass).
 
 options: --json  --help`;
 
@@ -60,26 +54,12 @@ function short(sha) { return sha ? sha.slice(0, 7) : '(none)'; }
 
 // ---- locating the branch's context ------------------------------------------------
 
-function walkTeams(horde, visit, teamDir = hordePath(horde, 'teams'), teamName = null) {
-  if (!existsSync(teamDir)) return;
-  for (const d of readdirSync(teamDir, { withFileTypes: true })) {
-    if (!d.isDirectory()) continue;
-    const full = join(teamDir, d.name);
-    visit(d.name, full);
-    walkTeams(horde, visit, join(full, 'teams'), d.name);
-  }
-}
-
-// The team whose queue.json names this branch, and the item itself.
+// The team whose queue.json names this branch, and the item itself. Only "trunk" exists.
 function findQueueItemByBranch(horde, branch) {
-  let found = null;
-  walkTeams(horde, (teamName, teamDir) => {
-    if (found) return;
-    const queue = readJSON(join(teamDir, 'queue.json'), { items: [] });
-    const item = asArray(queue.items).find((it) => it.branch === branch);
-    if (item) found = { team: teamName, teamDir, item };
-  });
-  return found;
+  const teamDir = hordePath(horde, 'teams', 'trunk');
+  const queue = readJSON(join(teamDir, 'queue.json'), { items: [] });
+  const item = asArray(queue.items).find((it) => it.branch === branch);
+  return item ? { team: 'trunk', teamDir, item } : null;
 }
 
 function findIssueDir(teamDir, ticketId) {
@@ -89,61 +69,12 @@ function findIssueDir(teamDir, ticketId) {
     .find((e) => e.isDirectory() && e.name.startsWith(`${ticketId}-`))?.name || null;
 }
 
-// Every node named by any ticket ever filed directly under one team (not its sub-teams) — the
-// scope a sub-team's own merge-up is held to, since its individual tickets already each named
-// their own node(s).
-function teamOwnNodes(teamDir) {
-  const issuesDir = join(teamDir, 'issues');
-  if (!existsSync(issuesDir)) return [];
-  const nodes = new Set();
-  for (const d of readdirSync(issuesDir, { withFileTypes: true })) {
-    if (!d.isDirectory()) continue;
-    const text = readText(join(issuesDir, d.name, 'issue.md'));
-    for (const n of ticketNodes(text)) nodes.add(n);
-  }
-  return [...nodes];
-}
-
 // ---- tolerant field readers --------------------------------------------------------
-//
-// The **Keys:** line is tk.mjs's (its own comment names this the one place the two-signature
-// rule and per-node approvals live): "**Keys:** author <v> · verifier <v> · <node1> <v1> · …",
-// segments in the same order the **Node:** field lists them, each value either a name or the
-// literal "—" placeholder for "unset". Read the same way tk.mjs itself writes it, rather than
-// importing its parser, since this tool only ever reads issue.md — reading the file directly
-// keeps premerge from depending on tk.mjs's module surface for one line.
-function parseKeys(issueText, nodes) {
-  const line = /^\*\*Keys:\*\*\s*(.*)$/m.exec(issueText || '');
-  const parts = (line ? line[1] : '').split('·').map((s) => s.trim()).filter(Boolean);
-  const takeVal = (seg) => {
-    const sp = seg.indexOf(' ');
-    const v = sp === -1 ? '' : seg.slice(sp + 1).trim();
-    return v && v !== '—' ? v : null;
-  };
-  // Each approval segment names its own node ("<node> <value>"), so a slot is found by name
-  // first — the order still matches the **Node:** field for the nodes the ticket names, but a
-  // consumer's slot is appended after them and only the name places it.
-  const byName = new Map();
-  for (const seg of parts.slice(2)) {
-    const sp = seg.indexOf(' ');
-    if (sp !== -1) byName.set(seg.slice(0, sp).trim(), takeVal(seg));
-  }
-  const named = nodes.some((n) => byName.has(n));
-  const approvals = {};
-  nodes.forEach((n, i) => {
-    if (named) approvals[n] = byName.has(n) ? byName.get(n) : null;
-    else approvals[n] = parts[2 + i] ? takeVal(parts[2 + i]) : null;
-  });
-  return {
-    author: parts[0] ? takeVal(parts[0]) : null,
-    verifier: parts[1] ? takeVal(parts[1]) : null,
-    approvals,
-  };
-}
 
-// The last "## Verdict · …" block in a ticket's log — verify.mjs's own rendering of templates/
-// verdict.md. Read loosely: only the **Result:** line and the **Gate:** line ("green at sha …" /
-// "red at sha …") are used.
+// The last "## Verdict · …" block in a ticket's log — a pre-migration verdict's own rendering.
+// Nothing writes one any more; this stays only so a ticket logged before this migration still
+// yields its recorded green gate below instead of paying for a fresh run. Read loosely: only the
+// **Result:** line and the **Gate:** line ("green at sha …" / "red at sha …") are used.
 function lastVerdictBlock(logText, ticketId) {
   if (!logText) return null;
   const re = new RegExp(`## Verdict · ${ticketId} ·[\\s\\S]*?(?=\\n## Verdict|$)`, 'g');
@@ -177,187 +108,10 @@ function checkBaseFreshness(branch, parentBranch) {
   };
 }
 
-// tk.mjs's "approve" records "<name>@<sha>+<patch-id>" — the branch tip the review was given at,
-// and the identity of the diff that was read. Older records carry "<name>@<sha>" (sha-bound only,
-// and treated exactly as they always were), and older ones still just "<name>"; "changes:<name>"
-// carries neither. Splits all four back apart; anything unrecognised after the "@" yields
-// sha: null, which checkKeysForTicket treats as nothing to compare, not as stale. A malformed
-// patch-id half degrades to the stricter sha-only reading rather than being trusted.
-function splitNameSha(v) {
-  if (!v) return { name: null, sha: null, patchId: null };
-  const at = v.lastIndexOf('@');
-  if (at === -1) return { name: v, sha: null, patchId: null };
-  const tail = v.slice(at + 1);
-  const plus = tail.indexOf('+');
-  const sha = plus === -1 ? tail : tail.slice(0, plus);
-  const patchId = plus === -1 ? null : tail.slice(plus + 1);
-  if (!/^[0-9a-f]{4,40}$/i.test(sha)) return { name: v, sha: null, patchId: null };
-  const name = v.slice(0, at);
-  if (patchId !== null && !/^[0-9a-f]{4,40}$/i.test(patchId)) return { name, sha, patchId: null };
-  return { name, sha, patchId };
-}
-
-// Same tolerant comparison checkGate already uses for a verifier's recorded gate sha: a short
-// sha, a full sha, or the two shortened both ways all count as the same commit.
-function shaMatches(recorded, branchSha) {
-  if (!recorded || !branchSha) return true;
-  return recorded === branchSha || recorded === short(branchSha) || short(recorded) === short(branchSha);
-}
-
-// A key that records a patch-id (a diff's own identity) is valid for as long as the branch still
-// carries that diff, however often its tip has moved: catching a branch up with its team is not a
-// change to what the reviewers read, so the keys travel with it and only the gate (item 5, tied to
-// the tree) re-runs. Tolerant about length, like shaMatches, so a shortened record still compares.
-function diffMatches(recorded, current) {
-  if (!recorded || !current) return false;
-  const a = recorded.toLowerCase();
-  const b = current.toLowerCase();
-  return a === b || b.startsWith(a) || a.startsWith(b);
-}
-
-// branchSha and branchPatchId, when given, are the ticket branch's current tip and the current
-// identity of its diff against the parent branch. A key recorded with a patch-id is judged
-// against the diff; one without (an older record, or one taken with no branch context at all) is
-// judged against the tip sha exactly as before — the branch moved after the review, so what's on
-// it now was never actually reviewed. Both left undefined for a team merge-up's own per-ticket
-// check (checkKeysForTeamMergeUp below), since a merged ticket's branch no longer exists to
-// compare against — that binding was already enforced once, at the moment it was merged.
-//
-// Returns `diffChangedAt`: the shas the now-void keys were given at, for run() to write the
-// scoped re-review against — one file per distinct sha, its path then named in the note.
-function checkKeysForTicket(issueText, logText, ticketId, nodes, branchSha, branchPatchId) {
-  const { author, verifier, approvals } = parseKeys(issueText, nodes);
-  const verdictBlock = lastVerdictBlock(logText, ticketId);
-  const verdictResult = verdictBlock ? /\*\*Result:\*\*\s*(\S+)/.exec(verdictBlock)?.[1] : null;
-  const gateLine = verdictBlock ? /\*\*Gate:\*\*[^\n]*$/m.exec(verdictBlock)?.[0] || '' : '';
-  const verdictSha = /at sha (\S+)/.exec(gateLine)?.[1] || null;
-  const verdictPatchId = verdictBlock ? /\*\*Diff:\*\*\s*([0-9a-f]{4,40})\b/i.exec(verdictBlock)?.[1] || null : null;
-
-  // tk.mjs records a rejected review in the same slot as "changes:<name>" — a value, but not
-  // an approval.
-  const isApproved = (v) => !!v && !v.startsWith('changes:');
-  const missingApprovals = nodes.filter((n) => !isApproved(approvals[n]));
-
-  // One verdict per key: "current" (nothing to compare, or it still matches), "diff" (bound to a
-  // diff this branch no longer carries) or "sha" (bound only to a tip this branch has moved past).
-  const judge = (sha, patchId) => {
-    if (!branchSha) return 'current';
-    if (patchId && branchPatchId) return diffMatches(patchId, branchPatchId) ? 'current' : 'diff';
-    if (sha === null) return 'current';
-    return shaMatches(sha, branchSha) ? 'current' : 'sha';
-  };
-
-  const staleByDiff = [];
-  const staleBySha = [];
-  let boundToDiff = 0;
-  // A key that TRAVELLED: it was given at a tip the branch has since moved past, and the diff it
-  // was given for is still the diff the branch carries. That is review the horde did not have to
-  // buy twice, and it is counted here — the only place that can tell the difference between a key
-  // that never moved and one that survived a catch-up — for the journal note run() then appends.
-  let transferred = 0;
-  const tally = (sha, patchId) => {
-    const verdict = judge(sha, patchId);
-    if (verdict === 'diff') staleByDiff.push(sha);
-    else if (verdict === 'sha') staleBySha.push(sha);
-    else if (patchId && branchPatchId) {
-      boundToDiff += 1;
-      if (sha && branchSha && !shaMatches(sha, branchSha)) transferred += 1;
-    }
-  };
-
-  for (const n of nodes) {
-    if (!isApproved(approvals[n])) continue;
-    const { sha, patchId } = splitNameSha(approvals[n]);
-    tally(sha, patchId);
-  }
-  if (verdictResult === 'reproduced') tally(verdictSha, verdictPatchId);
-
-  const ok = !!author && !!verifier && verdictResult === 'reproduced'
-    && missingApprovals.length === 0 && staleByDiff.length === 0 && staleBySha.length === 0;
-
-  const parts = [
-    `author=${author || 'unset'}`,
-    `verifier=${verifier || 'unset'}`,
-    `verdict=${verdictResult || 'none'}`,
-  ];
-  if (nodes.length) {
-    parts.push(`approvals: ${nodes.map((n) => {
-      const v = approvals[n];
-      if (!isApproved(v)) return `${n}=${v || 'missing'}`;
-      return `${n}=${splitNameSha(v).name}`;
-    }).join(', ')}`);
-  }
-  if (boundToDiff > 0 && staleByDiff.length === 0 && staleBySha.length === 0) {
-    parts.push(`keys bound to diff ${short(branchPatchId)}`);
-  }
-  if (staleBySha.length) {
-    parts.push(`approval/verdict predates ${short(branchSha)} — re-review`);
-  }
-  return {
-    ok, note: parts.join(', '), diffChangedAt: [...new Set(staleByDiff.filter(Boolean))], transferred,
-  };
-}
-
-// The scoped re-review: what changed between the state a key was given for and the state now,
-// written beside the ticket as `git range-diff <oldBase>..<oldTip> <parent>..<tip>` — commit by
-// commit, so a reviewer sees which of the commits already approved are unchanged and exactly what
-// is new. Returns the path to name in the note, or the reason there is none (the old tip gone
-// from the repository, no common ancestor left), in which case the re-review is simply a full one.
-function writeScopedReReview(root, issueDirPath, branch, parentBranch, oldTip) {
-  const oldTipFull = git(['rev-parse', '--verify', `${oldTip}^{commit}`], root);
-  if (!oldTipFull) return { path: null, why: `commit ${short(oldTip)} is no longer in this repository` };
-  const oldBase = git(['merge-base', oldTipFull, parentBranch], root);
-  if (!oldBase) return { path: null, why: `no common ancestor of ${short(oldTip)} and ${parentBranch}` };
-  const newTip = git(['rev-parse', '--verify', branch], root);
-  const out = git(['range-diff', `${oldBase}..${oldTipFull}`, `${parentBranch}..${branch}`], root);
-  if (out === null) return { path: null, why: 'git could not produce the range-diff' };
-  const file = join(issueDirPath, `rereview-${short(oldTipFull)}..${short(newTip)}.diff`);
-  writeText(file, `${out}\n`);
-  return { path: relative(root, file), why: null };
-}
-
-// Item 2's node list: the nodes the ticket names, and — when the ticket produces a port — the
-// node of everyone who consumes it. A version bump is a change to somebody else's contract, and
-// the somebody else is who has to say the new version is usable; the ticket's own owner cannot
-// answer that. The list is derived here from the same `consumersOf` the plan derives it from, so
-// the approval the checklist demands is exactly the one the plan told the steward to collect.
-function approvalNodesFor(root, cfg, issueText, nodes) {
-  const extra = new Set();
-  for (const p of ticketPorts(issueText, 'Produces')) {
-    for (const c of consumersOf(root, cfg, p.node, p.port)) extra.add(c);
-  }
-  for (const n of nodes) extra.delete(n);
-  return [...nodes, ...[...extra].sort()];
-}
-
-// Team merge-up substitute for "keys": no single author/verifier on a branch that isn't a
-// ticket, so readiness is every ticket the child team ever queued being merged, each still
-// carrying the same two keys and node approvals a ticket-level merge required of it.
-function checkKeysForTeamMergeUp(childTeamDir) {
-  const queue = readJSON(join(childTeamDir, 'queue.json'), { items: [] });
-  const items = asArray(queue.items).filter((it) => !(typeof it.ticket === 'string' && it.ticket.startsWith('team:')));
-  if (items.length === 0) return { ok: true, note: 'child team has no tickets of its own' };
-  const problems = [];
-  for (const it of items) {
-    if (it.state !== 'merged') { problems.push(`${it.ticket}: ${it.state}`); continue; }
-    const issueDirName = findIssueDir(childTeamDir, String(it.ticket));
-    const issueText = issueDirName ? readText(join(childTeamDir, 'issues', issueDirName, 'issue.md')) : null;
-    if (!issueText) { problems.push(`${it.ticket}: issue.md missing`); continue; }
-    const itLogText = issueDirName ? readText(join(childTeamDir, 'issues', issueDirName, 'log.md')) : null;
-    const nodes = ticketNodes(issueText);
-    const check = checkKeysForTicket(issueText, itLogText, String(it.ticket), nodes);
-    if (!check.ok) problems.push(`${it.ticket}: ${check.note}`);
-  }
-  return {
-    ok: problems.length === 0,
-    note: problems.length === 0 ? `${items.length} ticket(s) merged, each with two keys` : problems.join(' · '),
-  };
-}
-
 // A ticket's scope is what it declared it would touch — the `**Files:**` field — and, when it
 // declared nothing, its named node(s)' own code boundary plus each node's own graph files
-// (yg-node.yaml, charter.md, log.md), since the owner charters its node
-// and logs decisions as part of the same change that touches the code. Nothing else under
+// (yg-node.yaml, log.md), since a ticket logs decisions as part of the same change that touches
+// the code. Nothing else under
 // .yggdrasil/ (yg-architecture.yaml, aspects, config) is any node's own files, so no ticket's
 // scope reaches those by way of this. Yggdrasil's committed lock files are neither in nor out of
 // scope: yg writes them itself as a consequence of in-scope edits (a log entry, a merge-resolved
@@ -519,18 +273,13 @@ function saveGateCache(horde, cache) {
 }
 
 function checkGate(horde, root, cfg, level, branch, branchSha, logText, ticketId, noGate) {
-  if (!ticketId) {
-    // Team merge-up: no ticket, so no verifier verdict can name this branch's sha (verify.mjs
-    // records against a ticket, and a team merge-up isn't one) — always a fresh run below.
-  } else {
-    const verdictBlock = lastVerdictBlock(logText, ticketId);
-    if (verdictBlock) {
-      const resultLine = /\*\*Result:\*\*\s*(\S+)/.exec(verdictBlock)?.[1];
-      const gateLine = /\*\*Gate:\*\*[^\n]*$/m.exec(verdictBlock)?.[0] || '';
-      const shaMatch = /green at sha (\S+)/.exec(gateLine);
-      if (resultLine === 'reproduced' && shaMatch && (shaMatch[1] === branchSha || shaMatch[1] === short(branchSha))) {
-        return { ok: true, note: `accepted the verifier's recorded green gate at ${short(branchSha)}`, cache: { sha: branchSha, result: 'green', count: null } };
-      }
+  const verdictBlock = lastVerdictBlock(logText, ticketId);
+  if (verdictBlock) {
+    const resultLine = /\*\*Result:\*\*\s*(\S+)/.exec(verdictBlock)?.[1];
+    const gateLine = /\*\*Gate:\*\*[^\n]*$/m.exec(verdictBlock)?.[0] || '';
+    const shaMatch = /green at sha (\S+)/.exec(gateLine);
+    if (resultLine === 'reproduced' && shaMatch && (shaMatch[1] === branchSha || shaMatch[1] === short(branchSha))) {
+      return { ok: true, note: `accepted the pre-migration verdict's recorded green gate at ${short(branchSha)}`, cache: { sha: branchSha, result: 'green', count: null } };
     }
   }
   if (noGate) return { ok: true, note: 'skipped (--no-gate)', cache: null };
@@ -711,70 +460,22 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
   const parent = parentBranchOf(horde, team, item, { cwd: root });
   const parentBranch = parent.branch;
 
-  const isTeamMergeUp = typeof item.ticket === 'string' && item.ticket.startsWith('team:');
   const changedFiles = (git(['diff', '--name-only', `${parentBranch}...${branch}`]) || '').split('\n').filter(Boolean);
   const addedFiles = (git(['diff', '--name-only', '--diff-filter=A', `${parentBranch}...${branch}`]) || '').split('\n').filter(Boolean);
 
   const checks = [{ name: 'base freshness', ...checkBaseFreshness(branch, parentBranch) }];
 
-  let ticketId = null;
-  let issueText = null;
-  let logText = null;
-  let nodes = [];
-  let declaredFiles = [];
-
-  let skipRevertTest = false;
-  if (isTeamMergeUp) {
-    skipRevertTest = true;
-    const childTeam = item.ticket.slice('team:'.length);
-    const resolvedChildDir = existsSync(join(teamDir, 'teams', childTeam)) ? join(teamDir, 'teams', childTeam) : teamDir;
-    nodes = teamOwnNodes(resolvedChildDir);
-    checks.push({ name: 'keys', ...checkKeysForTeamMergeUp(resolvedChildDir) });
-    logText = readText(join(resolvedChildDir, 'plan.md'));
-  } else {
-    ticketId = String(item.ticket);
-    const issueDirName = findIssueDir(teamDir, ticketId);
-    if (!issueDirName) fail(`no ticket found for ${ticketId} in team ${team}`);
-    const issueDirPath = join(teamDir, 'issues', issueDirName);
-    issueText = readText(join(issueDirPath, 'issue.md'));
-    logText = readText(join(issueDirPath, 'log.md'));
-    nodes = ticketNodes(issueText);
-    declaredFiles = ticketFiles(issueText);
-    const branchPatchId = patchIdOf(branch, parentBranch, { context: cfg.keyContext, cwd: root });
-    // The node list is the ticket's own nodes plus every node that consumes a port it produces;
-    // how each of those keys is then bound to what it judged is the binding below.
-    const keys = checkKeysForTicket(
-      issueText, logText, ticketId, approvalNodesFor(root, cfg, issueText, nodes), branchSha, branchPatchId,
-    );
-    // A key whose diff no longer holds is not an escalation and not a full re-review: write the
-    // difference between what was approved and what is here now, and name that file, so the owner
-    // and the verifier judge the delta instead of the whole change a second time.
-    const scoped = keys.diffChangedAt.map((oldTip) => {
-      const { path, why } = writeScopedReReview(root, issueDirPath, branch, parentBranch, oldTip);
-      return `diff changed since review at ${short(oldTip)} — ${path
-        ? `scoped re-review: ${path}`
-        : `full re-review (${why})`}`;
-    });
-    // Keys that survived a catch-up are the horde's saved review, and the wave close reports the
-    // total — so the moment premerge establishes it is the moment it goes into the journal. The
-    // note is idempotent on the ticket and the diff, so re-running premerge records it once.
-    if (keys.transferred > 0 && branchPatchId) {
-      noteKeysTransferred(horde, team, ticketId, keys.transferred, short(branchPatchId));
-    }
-    checks.push({
-      name: 'keys',
-      ok: keys.ok,
-      note: [keys.note, ...scoped].join(' · '),
-    });
-  }
+  const ticketId = String(item.ticket);
+  const issueDirName = findIssueDir(teamDir, ticketId);
+  if (!issueDirName) fail(`no ticket found for ${ticketId} in team ${team}`);
+  const issueDirPath = join(teamDir, 'issues', issueDirName);
+  const issueText = readText(join(issueDirPath, 'issue.md'));
+  const logText = readText(join(issueDirPath, 'log.md'));
+  const nodes = ticketNodes(issueText);
+  const declaredFiles = ticketFiles(issueText);
 
   checks.push({ name: 'scope', ...checkScope(root, cfg, nodes, changedFiles, declaredFiles) });
-  checks.push({
-    name: 'revert test',
-    ...(skipRevertTest
-      ? { ok: true, note: 'skipped — a team merge-up carries no new tests of its own, each ticket already proved its own' }
-      : checkRevertTest(root, cfg, branch, parentBranch, changedFiles, issueText)),
-  });
+  checks.push({ name: 'revert test', ...checkRevertTest(root, cfg, branch, parentBranch, changedFiles, issueText) });
 
   const gate = checkGate(horde, root, cfg, level, branch, branchSha, logText, ticketId, noGate);
   checks.push({ name: 'gate', ok: gate.ok, note: gate.note });
@@ -814,8 +515,9 @@ function main() {
   if (flags.help) { console.log(USAGE); process.exit(0); }
   const branch = positional[0];
   if (!branch) fail('premerge requires <branch>');
+  if (flags.level === 'team') fail('--level team no longer exists — omit --level, or pass --level trunk for a branch landing directly on <horde>/trunk');
+  if (flags.level !== undefined && flags.level !== 'trunk') fail('--level must be "trunk"');
   const level = flags.level || 'team';
-  if (level !== 'team' && level !== 'trunk') fail('--level must be "team" or "trunk"');
 
   const horde = resolveHorde(flags);
   const root = repoRoot();

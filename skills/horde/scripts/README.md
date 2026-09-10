@@ -159,49 +159,20 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
 - `list [--state s] [--node n] [--team t] [--review-pending] [--open]`, `show NNN [--log]`,
   `status NNN <state> ["note"]` (states: proposed queued running landed changes verified merged
   escalated dropped) — `changes` is the fix-loop breaker: it counts the round in the ticket's log
-  and prints it (`config.fixRounds`, defaults `resume` 3, `fresh` 2). Rounds 1..`resume`: the
-  steward resumes the same worker with the findings, by the `agentId` `roster.mjs` already
-  recorded. Rounds `resume`+1..`resume`+`fresh`: the result says "fresh worker, class up" — a new
-  one, one class heavier (`config.classes`; `roster.mjs spawn` already refuses a lower one),
-  briefed with `brief.mjs worker NNN --takeover`. Beyond that cap the command refuses outright and
-  names the next step: `escalate.mjs add "<why>" --kind adjudicate --ticket NNN`, then
-  `queue.mjs set NNN escalated` — a ruling, not another round. `log NNN "text"`, `grep <re>`.
-- `review-request NNN [--delta <path>]` (steward; appends to the log with a timestamp, starts the
-  owner's liveness window; `--delta` names the file `premerge.mjs` wrote for a scoped re-review, so
-  the log records which kind of review was asked for and the owner reads the delta instead of the
-  whole change again), `review NNN approve|changes ["why"] --by <name>` (records the approval per
-  node in the `**Keys:**` field; a ticket naming two nodes needs both owners; the architect's review
-  counts for a node whose owner is the author; refuses `--by` equal to the author key). An `approve`
-  also reads the ticket's own queue item's `branch` and records what was read: the branch's current
-  tip sha and the identity of its diff against the team branch (`<name>@<sha>+<patch-id>`) —
-  `premerge.mjs` item 2 holds the approval to the diff, and to the sha alone for an older
-  `<name>@<sha>` record. No queue item or no branch yet (a ticket approved before ever being queued)
-  records the name alone, same as before. The ticket's own verifier may approve in an owner's place
-  — marked `<name>(verifier-seat)` in the Keys line — only when the ticket's author is that node's
-  own owner (roster) and the roster carries no live architect; otherwise a verifier approving is
-  refused.
-- `key NNN author --by <name>` — sets the author key in the `**Keys:**` field (the steward, when the
-  branch lands). `key NNN author --from-queue` sets it instead from the ticket's own queue item's
-  recorded `agent` — for a successor steward recovering a ticket `queue.mjs reconcile` marked
-  `landed` after the original steward died before it could set the key by hand. The verifier key is
-  set only by `verify.mjs`.
-- The `**Keys:**` field holds one segment per role and per node, in the order of the `**Node:**`
-  field, each segment naming its own node: `**Keys:** author X · verifier Y · <nodeA> Z · <nodeB> W`.
-  `review … --node <n>` targets one
-  node of a two-node ticket; `review --by architect` without `--node` approves every node at once (the
-  architect stands in where the owner is the author).
-- A ticket that `**Produces:**` a port gets one extra approval slot per node that consumes it —
-  appended after the nodes it names, found by name, created the moment that owner records the
-  approval (`review NNN approve --by <owner> --node <consumer>`). A version bump changes somebody
-  else's contract and only they can say the new version is usable; `queue.mjs plan` prints who is
-  owed one and `premerge` item 2 requires it. Who consumes a port is derived in one function
-  (`node.mjs`'s `consumersOf`), from `yg impact --node <n> --json`.
+  and prints it (`config.fixRounds`, defaults `resume` 3, `fresh` 2). Rounds 1..`resume`: resume
+  the same worker with the findings. Rounds `resume`+1..`resume`+`fresh`: the result says "fresh
+  worker, class up" — a new one, one class heavier (`config.classes`), briefed with `brief.mjs
+  worker NNN --takeover`. Beyond that cap the command refuses outright — there is no next command
+  to propose yet. `log NNN "text"`, `grep <re>`.
+- `review-request NNN [--delta <path>]` — appends to the log with a timestamp; `--delta` names the
+  file `premerge.mjs` wrote for a scoped re-review, so the log records which kind of review was
+  asked for.
 - `--node` on `new` is repeatable; two nodes mark a contract ticket.
-- `move NNN --team t` — relocates the issue folder (used when a sub-team takes it over).
+- `move NNN --team t` — relocates the issue folder.
 - `edit NNN --by <name>` — rewrites the body (everything from `## What` on) from stdin, leaving the
   header block (id/title, `**Status:**`, `**Node:**`/`**Class:**`/`**Severity:**`/`**Team:**`,
-  `**Depends on:**`/`**Branch:**`, `**Files:**`, `**Consumes:**`/`**Produces:**`, `**Evidence:**`,
-  `**Keys:**`) untouched; appends "body edited by `<name>`" to the
+  `**Depends on:**`/`**Branch:**`, `**Files:**`, `**Consumes:**`/`**Produces:**`, `**Evidence:**`)
+  untouched; appends "body edited by `<name>`" to the
   log. What owners use to write ticket bodies, instead of editing `issue.md` by hand.
 - `edit NNN --by <name> [--files a,b] [--consumes …] [--produces …] [--evidence E1,…]` — changes
   those fields instead of the body (no stdin needed), each with its own log line naming who changed
@@ -283,14 +254,12 @@ States: `queued waiting running landed merged escalated dropped`.
   again — with the work now in it, the stacked ticket's own diff is unchanged, so its keys hold and
   only the gate re-runs.
 - Refuses `set NNN merged` while any dependency of the ticket is unmerged (merge order is the
-  dependency order, stack or no stack), and when the ticket's `**Keys:**` field lacks the author
-  key, the verifier key (a `verify` record with verdict `reproduced`), or an approval for every node
-  it names.
+  dependency order, stack or no stack).
 - `quality [--from <path>] [--class c] [--dry-run]` — **the quality pass** (ruling
   quality-always-authorised). Reads a `grain-advice/1` document — `config.grainCommand`'s own
   `advise --json` (its progress goes to stderr; the document is what it prints on stdout), or
   `--from` a file — and files one `--kind quality`, `--severity low` ticket per improvement it names,
-  on the node the item names, in that node's owner's name (`roster.mjs`'s own lookup), with the
+  on the node the item names, with the
   advisory's text as the ticket's **Why** and "the architecture answered this, or [the node's log /
   the rule's own log] says why it stands" as its acceptance — a `rule`-kind advisory (the code already
   follows a pattern nothing enforces) points at the rule's own log once one is filed, since that is
@@ -304,101 +273,24 @@ States: `queued waiting running landed merged escalated dropped`.
   CLI is configured; a document that is not `grain-advice/1` is a refusal naming what was seen, never
   a guess. `--dry-run` reads and reports without filing.
 
-## roster.mjs — who is alive
-
-`hordes/<horde>/roster.json`: entries `{name, role, kind, spawnedBy, class, team|node, parent,
-agentId, spawnedAt, lastTrace, lease}`. `team` is always the short leaf name, unique per horde —
-`spawn` refuses a leaf already claimed under a *different* parent (the same leaf under the *same*
-parent is an ordinary respawn after a reclaim). `kind` is `teammate` or `subagent` and `spawnedBy`
-names the agent above it: only the top-level session creates teammates, so every steward and the
-architect are the director's (`spawnedBy: main`), while owners, workers and verifiers are subagents
-of the steward that spawned them, and the auditor and counsel subagents of the director. That is the
-lineage every other rule here follows — an agent is addressable and reclaimable by its parent alone.
-- `spawn <role> [--team t | --node n] [--parent team] --class c [--ticket NNN] [--agent-id id]
-  [--kind teammate|subagent] [--spawned-by name]` —
-  reserves the next unique name `<horde>-<role>-<team|node|mission>-<N>`, books the run in `cost.json`
-  (the only writer; shape `{runs: [{name, role, class, ticket|null, team|null, wave, at}]}`), and
-  prints the name; the caller passes it to the Agent tool. A worker or verifier spawned with
-  `--ticket` is refused below that ticket's class (`config.classes` weights order the classes). `--agent-id` records the Agent tool's own
-  id when already known at spawn time — agents are addressable by name only from the spawning session,
-  by this id from anywhere. `--kind` defaults from the role and refuses the other way round in both
-  directions: a steward or an architect is never a subagent (a teammate cannot create a teammate, so
-  that spawn belongs to the director), and no other role is ever a teammate. `--spawned-by` names the
-  parent; without it a teammate and the director's own one-shots record `main`, and a subagent records
-  the steward of its team. For `steward --team t --parent p` it also creates the branch `<horde>/<t>`
-  off the parent's tip, the team directory, and the item `team:<t>` in the parent's queue — or, if the
-  branch and directory already exist (a respawn after a reclaim), re-registers onto them instead of
-  failing; refuses only when the branch exists but the directory doesn't. `steward --team trunk` needs
-  no `--parent` and creates no branch or directory — the trunk branch and directory already exist from
-  `horde.mjs init`. Either way, for any `steward --team t`, a worktree for it at
-  `<hordeRoot>/worktrees/<horde>/<t>` on the team branch is created when missing and its path printed
-  in the result; `reclaim` leaves it in place for the successor.
-- `reconcile [--only-team t]` — marks every active entry dead (used at cold boot: the session that
-  spawned them is gone); `--only-team` limits this to one team's subtree (that team's own steward and
-  everything nested under it), for reclaiming one branch of the mission without a full cold boot.
-- `trace <name> [--agent-id id]` — updates `lastTrace` (called by tools acting on that agent's
-  behalf, including on someone else's `--by`, and after a ruling on a proposal, contract or
-  escalation/dissent), and revives a `dead` lease back to `active` — a trace is itself proof of life.
-  A `reclaimed` or `retired` lease, being a deliberate decision, is left alone; `--agent-id` records
-  the Agent tool's id once it's known, even if it wasn't yet at spawn time.
-- `revive <name>` — the explicit form: restores any lease (`dead`, `reclaimed` or `retired`) because a
-  human asked for this entry by name, on purpose.
-- `list [--dead]` — liveness verdict per entry against `config.liveness`. A steward is dead once its
-  team's queue is non-empty and the newest of its team branch's tip commit time, its `queue.json`'s
-  own mtime, and `lastTrace` is older than `stewardMinutes`; an empty queue is always alive, and a
-  `team:<t>` item never counts toward "non-empty" — a steward whose only running items are those is
-  alive as long as any of those sub-teams' stewards is alive, and only falls back to its own signals
-  once none of them are. An owner is dead when the most recent `review-request` on a ticket naming its
-  node has gone unanswered (no `review` by that owner since) for longer than `ownerMinutes`, unless
-  `lastTrace` is newer than that. An architect (mission-scoped) is judged the same way, against its
-  open graph-change and port proposals (`hordes/<horde>/graph.json`) instead of a review window;
-  with nothing open, it's always alive. Auditor and counsel (one-shot roles) are never dead.
-  `stewardMinutes`/`ownerMinutes` also accept a `stewardSeconds`/`ownerSeconds` sibling key, which wins
-  when set — for tests and fast-loop tuning, where a whole minute isn't practical to wait out.
-- `reclaim <name> ["why"] [--lesson] [--by director]` — marks the lease reclaimed; the next `spawn` for
-  the same team or node gets N+1. Appends to the horde's `decisions.md` as a lesson when `--lesson` is
-  given. A parent reclaims its own subagents; a teammate (any steward, the architect) requires
-  `--by director`, because the director is what spawns the successor and the successor rebuilds its
-  subtree from the files — as does any mission-scoped entry (anything spawned with neither `--team`
-  nor `--node`).
-- `stand-down <name>` — marks the entry retired.
-
 ## brief.mjs — rendered briefs
 
 `brief.mjs <role> [args]` prints the brief for a role, filled from `reference/roles/<role>.md`:
-`steward <team>`, `owner <node>`, `architect`, `worker NNN [--takeover]`, `verifier NNN [--delta
-<path>]`, `auditor NNN --wave n`, `counsel --question "…" [--attach file]…`. `worker --takeover`
-renders a takeover section — a prior worker attempted this ticket N times, the ticket is yours, here
-is its log — for the fresh, one-class-up worker `tk.mjs status NNN changes` hands a ticket to once
-its resume rounds (`config.fixRounds`) are spent; N and the log come from the ticket's own log, the
-same "round N/cap" line `tk.mjs` itself wrote. `verifier --delta <path>` renders the brief for a
-scoped re-review: the subject is the delta file `premerge.mjs` wrote, plus every finding the last
-review left open (read from the ticket's own log — the last verdict's "what failed" and each owner's
-changes-request), and the rule that what was already reproduced is not proved twice. A path naming no
-readable file is refused rather than rendered around. Without `--delta` the brief is the full
-verification, as before.
+`architect`, `worker NNN [--takeover]`. `worker --takeover` renders a takeover section — a prior
+worker attempted this ticket N times, the ticket is yours, here is its log — for the fresh,
+one-class-up worker `tk.mjs status NNN changes` hands a ticket to once its resume rounds
+(`config.fixRounds`) are spent; N and the log come from the ticket's own log, the same "round
+N/cap" line `tk.mjs` itself wrote.
 
-The verifier's brief also carries **the prose rules waiting on a judgement in that ticket's own
-worktree**, each with the exact `yg verdict package` and `yg verdict record` commands that answer it
-and the verifier's own name already filled in (verifier-is-yggdrasil-reviewer). The list is read
-live, because a pair is pending against a tree and not against a ticket; a tree with nothing pending
-says so instead of printing an empty block, and a CLI that cannot be started says that.
-
-Fills `{{…}}` from the charter, the config (`fastCheck` = `gates.commit`,
-`gateCommand` = the level's gate, `protectedPaths`, `parallelism`,
-`fixRoundsResume|Fresh` for the steward brief), the
+Fills `{{…}}` from the charter, the config (`fastCheck` = `gates.commit`, `protectedPaths`), the
 cache (`fastCheckCount` from `cache/last-gate.json`, or "unknown — report the count you get"), the
-component (`node.mjs`: its charter, and the ports on its border with version, test and consumers —
-what the worker must not break and the verifier is holding it to), the ticket (`worktree` and `branch` from the queue item), and the roster
-(`reportsTo`, `parentTeam`) — `reportsTo` is always the agent's own parent, the `spawnedBy` its roster
-entry carries, since that is the one agent it can reach; it renders as `"<name> (agent id <id>)"` once
-`roster.mjs` has recorded that agent's id, so a report can reach it from outside the spawning session.
-Refuses to render with an unfilled placeholder. After the role's own text it appends a `## Law` section: the
-disciplines that role is held to, inlined from `reference/discipline/` — worker (tdd, debugging),
-verifier (verification, review), owner (review), architect (framing's checklist). The texts live
-there once, so an edit to a discipline reaches every brief that carries it. Records nothing —
-the spawn is booked by `roster.mjs spawn`. The caller copies the output into the Agent tool's prompt
-verbatim.
+component (`node.mjs`: the ports on its border with version, test and consumers — what the worker
+must not break), the ticket (`worktree` and `branch` from the queue item), and `reportsTo` — always
+"main", the director's own session name. Refuses to render with an unfilled placeholder. After the
+role's own text it appends a `## Law` section: the disciplines that role is held to, inlined from
+`reference/discipline/` — worker (tdd, debugging), architect (framing's checklist). The texts live
+there once, so an edit to a discipline reaches every brief that carries it. Records nothing. The
+caller copies the output into the Agent tool's prompt verbatim.
 
 ## node.mjs — nodes and the graph
 
@@ -512,44 +404,15 @@ merge checklist then requires — one derivation, three users.
   running a command twice in one afternoon — and it marks each raise as shown to the chairman, so no
   raise is listed twice and none falls between one wave's close and the next one's start.
 
-## verify.mjs — the second key
-
-`record NNN --verdict reproduced|not-reproduced|stale|out-of-scope --by <name>
---item "<n>|<command>|<saw>"… [--ran "…" --saw "…"] [--gate green|red --sha <sha>]
-[--branch <branch>] --revert failed|passed|not-run|no-new-tests` appends a verdict
-block (template `verdict.md`) to the ticket's log and sets the verifier key in the `**Keys:**` field
-when the verdict is `reproduced`. `<n>` is the 1-based line number of the ticket's own `## Acceptance —
-evidence` checklist (`- [ ]`/`- [x]` lines) — one `--item` is required per acceptance line, no more, no
-fewer; refuses otherwise, listing the missing or out-of-range indices. Each `--item` renders one table
-row, in acceptance order, with the checklist line's own text in the first column. `--ran`/`--saw` are
-optional and add one extra row labelled "other", for something checked beyond the acceptance list.
-Refuses when `--by` equals the ticket's author. `--verdict reproduced` requires `--gate` (the gate
-result is part of reproduction) and refuses `--gate red` — a red gate cannot be reproduced; record
-`not-reproduced` instead. The block also carries a `**Diff:**` line: the identity of the ticket's
-diff against its team branch at record time (the branch from the ticket's queue item, or `--branch`),
-which is what `premerge.mjs` item 2 holds the verdict to; with no branch to read, the line says the
-verdict is bound to its sha alone. `--runs <n> --results <r1,r2,…> --test "<what>"` is a check run more than
-once — `--results` must list exactly `--runs` results; two that disagree force the verdict to
-`flaky` regardless of `--verdict` (none of `--item`/`--gate`/`--revert` is then needed), name the
-test in the verdict block, send the ticket to `changes` ("flaky: <what>") counting one round of
-`config.fixRounds` like any other, and file the flake as an incident in the one incident ledger
-there is — through this repository's Yggdrasil CLI (`config.ygCommand`); when that call fails the
-flake is written to `hordes/<horde>/incidents.md` instead so it is not lost, and the result says the
-ledger did not take it. `show NNN`.
-
 ## escalate.mjs — the channel up
 
-`add "<why>" --kind charter|contract|claim|conflict|boundary|cost|unverifiable|rules|structure|adjudicate|quality
-[--ticket NNN] [--by steward|architect|owner] [--team <new sub-team> --parent <its parent team>]`
-(`--team`, on a `structure` escalation, says which sub-team is proposed and records on the item the
-commands that raise it — the spawn, the brief, the Agent tool, `queue.mjs move` — because only the
-director can raise a steward, which is a teammate; it is refused on any other kind. `adjudicate` is the kind `tk.mjs status NNN
-changes` itself names as the next step once a ticket has spent every round `config.fixRounds`
-allows — a ruling to make, not another round; `quality` is the one kind nobody files by hand —
-`wave.mjs close` opens it when the wave's quality index came out lower than the wave before it),
-`list [--open]`, `show <id>`, `rule <id> "<ruling>"
-[--by <name>] [--to-user]` (`--by` leaves a roster trace for the ruler) (records the ruling as a decision, slug `esc-<id>`; `--to-user` marks it as forwarded to
-the chairman and leaves it open until `rule` is called again with the answer).
+`add "<why>" --kind charter|contract|claim|conflict|boundary|cost|unverifiable|rules|quality
+[--ticket NNN] [--by architect]`
+(`quality` is the one kind nobody files by hand — `wave.mjs close` opens it when the wave's
+quality index came out lower than the wave before it), `list [--open]`, `show <id>`, `rule <id>
+"<ruling>" [--by <name>] [--to-user]` (records the ruling as a decision, slug `esc-<id>`;
+`--to-user` marks it as forwarded to the chairman and leaves it open until `rule` is called again
+with the answer).
 
 `recurring [--min <n>]` — the ruled escalations grouped by kind and by the node their ticket
 names (an escalation carries no node of its own; one with no ticket, or a ticket naming no node,
@@ -558,15 +421,9 @@ horde keeps giving by hand, and the third time is not another decision — it is
 group prints as a proposal: its rulings as evidence, one line of rule text quoting the latest of
 them, and the steps that file it — where the group has a node, filing the rule itself (an
 architect's own edit — this tool makes no graph object), then `<config.ygCommand> aspects log add
---aspect <id> --reason "…"`, since a rule's own reasoning belongs in its own log (152/153) once it
+--aspect <id> --reason "…"`, since a rule's own reasoning belongs in its own log once it
 exists, not the node's; `decide.mjs add` where the group has no node to hang a rule on at all. It
 prints those steps and never runs them: filing a rule is the architect's move.
-
-## dissent.mjs — the channel of disagreement
-
-`add "<why>" --ticket NNN --by <owner> [--against <decision-slug>]`, `list [--open]`, `answer <id>
-"<answer>" --by <name>` (one answer, by whoever made the disputed ruling; the entry then closes; the
-answer is also appended to `decisions.md`).
 
 ## decide.mjs — rulings and lessons
 
@@ -645,56 +502,41 @@ Beyond the counts it always carried, `close` states five figures the chairman re
 
 ## premerge.mjs — the mechanical checklist
 
-`premerge.mjs <branch> [--level team|trunk] [--no-gate]`, for a ticket branch (`<horde>/t-NNN`).
-Its **parent branch** is the team's own (`<horde>/<team>`), or — while the ticket is stacked on a
+`premerge.mjs <branch> [--level trunk] [--no-gate]`, for a ticket branch (`<horde>/t-NNN`).
+Its **parent branch** is trunk's own (`<horde>/trunk`), or — while the ticket is stacked on a
 dependency that has not merged yet — that dependency's branch; one answer, reported as `parent` in
 the JSON, and every item below is measured against it:
 
 1. base freshness — the branch is rooted at its parent branch's tip;
-2. keys — the author key and the verifier key are set, the verify verdict is `reproduced`, every
-   node the ticket names carries an approval — plus every node that consumes a port the ticket
-   produces, since a version bump is a change to their contract — and every approval and the verdict
-   itself still hold:
-   one that recorded a diff is valid while the branch still carries that diff (✓ "keys bound to diff
-   `<id>`"), whatever the tip has done since — and a key that was given at a tip the branch has
-   since moved past is a key that **travelled**, which premerge writes into the team's wave journal
-   as `keys transferred: <ticket> <n> at diff <id>` (once per ticket and diff) for the wave close
-   to count; when the diff moved, ✗ "diff changed since review at
-   `<sha>` — scoped re-review: `<path>`" and the file at that path is written for the re-review; a
-   key that recorded a sha alone stays bound to that one commit and goes ✗ "approval/verdict
-   predates `<sha>` — re-review" on any new tip, as before;
-3. scope — the diff stays inside the files the ticket declared in `**Files:**`; a ticket that
-   declared none falls back to the union of its node boundaries (from `node.mjs`), each node's own
-   graph files included, exactly as before. Either way it touches no protected path, and Yggdrasil's
-   committed lock files (`.yggdrasil/yg-lock.*.json`) are reported as derived and left to `yg check`
-   in the gate. A diff past a declared list is ✗ "declared `<n>` files, touched `<path>` outside
-   them" — the fix is `tk.mjs edit NNN --files …`, which records the widening in the log and sends
-   the ticket back through review, never a quiet pass;
-4. revert test — new test files in the diff, extracted onto the parent's tree, show at least one failure;
-5. gate — green at the branch's SHA: taken from the verifier's verdict when it names this SHA with a
-   green gate, otherwise the level's gate command from `config.gates` run in the branch's worktree;
-6. graph — the graph's own verdict on the branch's worktree, on every run whatever `config.gates`
+2. scope — the diff stays inside the files the ticket declared in `**Files:**`; a ticket that
+   declared none falls back to the union of its node boundaries (from `node.mjs`), exactly as
+   before. Either way it touches no protected path, and Yggdrasil's committed lock files
+   (`.yggdrasil/yg-lock.*.json`) are reported as derived and left to `yg check` in the gate. A diff
+   past a declared list is ✗ "declared `<n>` files, touched `<path>` outside them" — the fix is
+   `tk.mjs edit NNN --files …`, which records the widening in the log, never a quiet pass;
+3. revert test — new test files in the diff, extracted onto the parent's tree, show at least one failure;
+4. gate — green at the branch's SHA: taken from a pre-migration ticket's own recorded verdict when
+   it names this SHA with a green gate, otherwise the level's gate command from `config.gates` run
+   in the branch's worktree;
+5. graph — the graph's own verdict on the branch's worktree, on every run whatever `config.gates`
    holds: the graph is the node map, so it is what says the code is right there, and a repository
    whose own gate command never calls `yg` would otherwise show a green gate over a tree `yg check`
    exits 1 on. Two halves. The free one runs here: `yg check --approve --only-deterministic` records
-   every rule a script can decide, at no cost and with no key. What that leaves is the prose rules,
-   which a reader has to judge — the item names each pending pair rather than approving it, and the
-   ticket's verifier judges them under its own name (`yg verdict package` / `yg verdict record`; the
-   verifier's brief carries the exact commands, and `node.mjs verdicts --at <worktree>` lists them
-   again). The item is ✓ only when a full `yg check` is green: every script verdict recorded AND
-   every prose verdict judged and bound to this code. A red graph is a red gate. When the CLI cannot
-   be started at all the item is ✗ (never a quiet ✓) and names `config.ygCommand`; when the free run
-   itself did not take — a judgement rule with no judge configured refuses it outright — the item
-   hands over the CLI's own words rather than naming pairs it cannot classify;
-7. journal — `tk log` has an entry newer than the last commit.
+   every rule a script can decide, at no cost. What that leaves is the prose rules, which a reader
+   has to judge — the item names each pending pair rather than approving it (`node.mjs verdicts
+   --at <worktree>` lists them again). The item is ✓ only when a full `yg check` is green: every
+   script verdict recorded AND every prose verdict judged and bound to this code. A red graph is a
+   red gate. When the CLI cannot be started at all the item is ✗ (never a quiet ✓) and names
+   `config.ygCommand`; when the free run itself did not take — a judgement rule with no judge
+   configured refuses it outright — the item hands over the CLI's own words rather than naming
+   pairs it cannot classify;
+6. mapping — every file the branch added is owned by a node on the branch's own tree; skipped with
+   `--no-gate`;
+7. journal — `tk log` has an entry newer than the last commit;
+8. graph text — charters, logs and `graph:` commits touched by the branch carry no mission
+   language.
 
-For a team branch (`<horde>/<team>`, the item `team:<name>` in the parent's queue) the same items
-read differently: 1 rooted at the parent's tip; 2 every ticket of that team is `merged` with its
-keys; 3 the diff stays inside the union of the team's tickets' nodes; 4 skipped; 5 the level's gate
-at the branch SHA; 6 the graph, exactly as for a ticket; 7 the team's `plan.md` has a wave close
-newer than the last commit.
-
-`--no-gate` skips items 5 and 6. Prints ✓/✗ per item; exits non-zero on any ✗. Never modifies the parent's tracked files; writes the gate
+`--no-gate` skips items 4 and 5. Prints ✓/✗ per item; exits non-zero on any ✗. Never modifies the parent's tracked files; writes the gate
 result under its level's key in `hordes/<horde>/cache/last-gate.json` (`{commit, team, trunk}`, each
 with sha, result, count, at).
 
@@ -704,14 +546,15 @@ Read-only: `blame.mjs <file>:<line> [--horde h] [--json]`. `git blame` finds the
 introduced the line, then every horde on the repository — live and archived (`horde.mjs archive`
 moves a horde's directory but never touches its branches or tickets, so a closed mission's tickets
 are searched exactly like an open one's) — is searched for the ticket whose recorded branch tip
-contains that commit as an ancestor. Three places record a branch tip: a `**Keys:**` node
-approval (`<name>@<sha>+<patch-id>`), a `verify.mjs` verdict block's `**Gate:** … at sha <sha>`
-line, and the team journal's own `merged: NNN <sha>` bullet. Several tickets' recorded shas can
+contains that commit as an ancestor. Three places record a branch tip, from before this migration
+and after: a pre-migration `**Keys:**` node approval (`<name>@<sha>+<patch-id>`), a pre-migration
+verdict block's `**Gate:** … at sha <sha>` line, and the team journal's own `merged: NNN <sha>`
+bullet. Several tickets' recorded shas can
 all technically be ancestors of the same commit (trunk only ever moves forward, so every later
 merge carries every earlier one in its history too) — the one actually reported is whichever
 recorded sha sits closest to the commit (`git rev-list --count` between them, smallest wins).
-Prints the commit, the ticket's id and title, its node(s), the author key, the verifier key with
-its class, the owner approvals, the evidence rows the ticket named and what its own verdict
+Prints the commit, the ticket's id and title, its node(s), its class, the evidence rows the ticket
+named and what its own verdict
 recorded for each, and the rule
 verdicts standing against the component the graph says owns the file. Which component that is, and
 which rules reach it, comes from `yg context --file <path> --json` — the graph's own resolution,
@@ -770,10 +613,10 @@ the work was done.
 
 ## cost.mjs — runs × class
 
-`report [--wave n] [--ticket NNN] [--mission]` (runs and weighted sums from `cost.json`, which only
-`roster.mjs spawn` writes, shape `{runs: [{name, role, class, ticket|null, team|null, wave, at}]}`;
-against the charter's limit when set), `limit-reached` (exit 0 when reached, used by the steward before
-dispatching).
+`report [--wave n] [--ticket NNN] [--mission]` (runs and weighted sums from `cost.json`, a ledger
+some other tool writes, shape `{runs: [{name, role, class, ticket|null, wave, at}]}`;
+against the charter's limit when set), `limit-reached` (exit 0 when reached, meant to be checked
+before dispatching).
 
 ## Tests
 
@@ -836,38 +679,8 @@ can run directly is extracted and run that way; anything else falls back to runn
 `config.gates.commit` command in the scratch worktree, treating any red as "this file's a failure" —
 isolating just one file's test lane out of an arbitrary configured command isn't possible in general.
 
-Also worth knowing: `reproduced` requires `--revert failed` — or `--revert no-new-tests` for a
-change that adds none (a refactor, a rename, a configuration change), which would otherwise be
-impossible to verify at all; premerge's item 4 reads the diff itself, so a ticket that did add a
-test is still held to it there. The tool never infers the revert line from the verdict, and `verify.mjs record --gate green|red` requires `--sha <sha>` and writes it on the
-Gate line for either result ("green at sha …" / "red at sha …"). Premerge's gate check (item 5)
-accepts a verifier's recorded green gate only when that sha equals the branch's current tip —
-otherwise it runs the level's gate fresh. A team merge-up (no single ticket, so no verifier verdict
-can name its branch) always runs the gate fresh.
-
-## keys are bound to the diff, not to the branch tip
-
-An owner's approval and a verifier's verdict are recorded against the identity of the ticket's own
-diff — `git patch-id --stable` over `<parent branch>...<ticket branch>`, at `config.keyContext` lines
-of context (default 3). So when a ticket catches its branch up with the team branch after somebody
-else's ticket lands, item 2 asks one question: does the branch still carry the diff those keys were
-given? If it does, the keys travel with it and nothing is re-reviewed. If the landing reached inside
-the change's own context, the diff is a different one, the keys are void, and the checklist writes
-`rereview-<old7>..<new7>.diff` beside the ticket (`git range-diff <oldBase>..<oldTip>
-<parent>..<tip>`: commit by commit, what was approved against what is there now) and names the path.
-That path goes to the two readers — `tk.mjs review-request NNN --delta <path>` and `brief.mjs
-verifier NNN --delta <path>` — for a re-review of the delta rather than of the whole ticket again; a
-full re-review is what happens when the path is omitted. If the landing overlapped the change, the
-catch-up merge conflicts and the ticket goes back to its author, as it always did; the checklist is
-not consulted at all.
-
-**Transferring a key across a catch-up is exactly as safe as this repository's tests.** The gate is
-tied to the tree, not to the diff, so it runs again on the merged tree every time; the graph check
-runs again with it. What the keys carry over is the human judgement — the owner's reading of the
-diff and the verifier's reproduction of the evidence — and git has proved that diff is unchanged,
-byte for byte, at three lines of context. Nothing is taken on trust that was not taken on trust
-before. `keyContext` is the dial: raise it to send more tickets back for a scoped re-review, lower
-it to send fewer. Zero is not offered — it would call a change on the very next line the same diff.
+Premerge's gate check (item 4) accepts a pre-migration ticket's recorded green gate only when that
+sha equals the branch's current tip — otherwise it runs the level's gate fresh.
 
 ## a ticket started from an unmerged dependency (a stack)
 
@@ -877,19 +690,14 @@ running --on MMM` cuts it from `MMM`'s tip instead, so the second is written, re
 while the first is still in flight. Only the merge order still waits: `set NNN merged` refuses while
 a dependency of the ticket is unmerged, exactly as `dependsOn` always said.
 
-This works because of the section above and nothing else. The keys on the stacked ticket are bound
-to the identity of its own diff against the branch it was cut from — its parent's, not the team's —
-so they name what that ticket changed and nothing underneath it. When the parent merges, its work
-arrives on the team branch, the stacked ticket catches up with `git merge <team branch>`, and its
-diff against the team branch is the same diff its reviewers read. Item 1 goes green against the new
-parent, item 2 reports "keys bound to diff …", and only the gate re-runs — on the merged tree, as
-always. If the parent is amended inside the stacked ticket's own hunk context before it lands, the
-diff is a different one and item 2 asks for a scoped re-review with a range-diff file, the same as
-any other landing that reaches into a change; if the amendment overlaps the change outright, the
-catch-up conflicts and the ticket goes back to its author, untouched.
+`parentBranchOf` is what makes this safe: the stacked ticket's declared parent is the branch it was
+actually cut from, not the team's, so scope and the revert test are measured against its parent's
+tree, not against work underneath it that hasn't landed yet. When the parent merges, its work
+arrives on the team branch, the stacked ticket catches up with `git merge <team branch>`, and item 1
+goes green against the new parent — only the gate and the graph check re-run, on the merged tree, as
+always. If the amendment overlaps the stacked ticket's own change outright, the catch-up conflicts
+and the ticket goes back to its author, untouched.
 
 One function answers "what is this branch's parent" for the whole tool set — the merge checklist,
-the briefs the worker and the verifier are given, the keys `tk.mjs review` and `verify.mjs record`
-write, and `queue.mjs reconcile`'s count of what a branch actually carries of its own. Two answers
-would be a ticket whose keys are recorded against one branch and checked against another, which is
-the same as having no keys at all.
+the brief the worker is given, and `queue.mjs reconcile`'s count of what a branch actually carries
+of its own. Two answers would be a ticket measured against one branch and checked against another.
