@@ -30,6 +30,12 @@ import {
 import {
   ticketBoundary, pathInBoundary, portExists,
 } from './node.mjs';
+// `queue.mjs` imports this file in turn. The cycle is the one this tool set already runs on (see
+// wave.mjs's own note): every binding on both sides is a hoisted function declaration and neither
+// module calls the other while it is still being evaluated. The alternative — a second writer of
+// dependencies here — is exactly the thing worth avoiding, because a cycle is only caught once the
+// whole DAG is built, and that lives there.
+import { addDependency } from './queue.mjs';
 
 const STATUSES = ['proposed', 'queued', 'running', 'landed', 'changes', 'verified', 'merged', 'escalated', 'dropped'];
 const SEVERITIES = ['high', 'medium', 'low'];
@@ -86,13 +92,16 @@ commands:
       what was approved before and what is on the branch now (the merge checklist writes it and
       prints its path), so a re-review reads that instead of the whole change again.
   edit <ticket> --by <name> [--files a,b] [--consumes …] [--produces …] [--evidence E1,…]
-      [--horde h]
+      [--depends NNN,MMM] [--horde h]
       rewrites the body (everything from "## What" on) from stdin, leaving the header block —
       the id/title heading, Status, Node/Class/Severity/Team, Depends on/Branch, Files,
       Consumes/Produces, Evidence — untouched. Appends "body edited by <name>" to the log.
       What owners use to write ticket bodies. With any of --files/--consumes/--produces/
       --evidence it changes those fields instead, each with its own log line saying who changed
       it — how a ticket is widened when the work turns out to touch a file it never declared.
+      --depends adds dependencies to the ticket's queue item, one per number, through the same
+      path "queue.mjs dep" uses — so a dependency is written the same way whoever writes it, and
+      the cycle check lives in one place. The ticket has to be in the queue for that.
 
 options: --json  --help`;
 
@@ -736,10 +745,19 @@ export function setTicketBody(horde, id, body, by) {
 function cmdEdit(horde, positional, flags) {
   const ticket = requireTicket(horde, positional[0]);
   if (!flags.by) fail('edit requires --by <name>');
-  const wantsFields = ['files', 'consumes', 'produces', 'evidence'].some((k) => flags[k] !== undefined);
+  const wantsFields = ['files', 'consumes', 'produces', 'evidence', 'depends'].some((k) => flags[k] !== undefined);
 
   let text = ticket.text;
   const changed = [];
+  if (flags.depends !== undefined) {
+    const deps = String(flags.depends).split(',').map((d) => d.trim()).filter(Boolean);
+    if (deps.length === 0) fail('edit --depends takes at least one ticket number, e.g. --depends 004,007');
+    const team = String(ticket.team).split('/').pop();
+    for (const dep of deps) {
+      const { on } = addDependency(horde, team, ticket.id, dep);
+      changed.push(`depends on: ${on}`);
+    }
+  }
   if (wantsFields) {
     const nodes = nodesOf(text);
     if (flags.files !== undefined) {
@@ -769,7 +787,7 @@ function cmdEdit(horde, positional, flags) {
   }
 
   const stdin = wantsFields ? '' : readStdin();
-  if (!wantsFields && !stdin.trim()) fail('edit requires the new body on stdin (everything from "## What" on), or one of --files/--consumes/--produces/--evidence');
+  if (!wantsFields && !stdin.trim()) fail('edit requires the new body on stdin (everything from "## What" on), or one of --files/--consumes/--produces/--evidence/--depends');
 
   let bytes = 0;
   if (stdin.trim()) {

@@ -650,3 +650,55 @@ test('queue.mjs set running: provisionTree copies config.worktree.copy into the 
     assert.equal(readFileSync(copiedPath, 'utf8'), 'v1\n');
   });
 });
+
+test('queue.mjs: "proposed" — in the queue, counted, and never a candidate', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const proposal = readyTicket(dir, 'a-proposal');
+  const work = readyTicket(dir, 'ordinary-work');
+
+  await t.test('the state list carries it, first, and says so when something else is asked for', () => {
+    const r = run('queue.mjs', ['set', proposal, 'nonsense'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /allowed: proposed, queued, waiting, running, landed, merged, escalated, dropped/);
+  });
+
+  await t.test('"add --proposed" files it as a proposal; "add" on its own still files work', () => {
+    const asProposal = run('queue.mjs', ['add', proposal, '--proposed'], dir);
+    assert.equal(asProposal.code, 0, asProposal.stderr);
+    assert.equal(asProposal.json.state, 'proposed');
+    const asWork = run('queue.mjs', ['add', work], dir);
+    assert.equal(asWork.code, 0, asWork.stderr);
+    assert.equal(asWork.json.state, 'queued');
+  });
+
+  await t.test('it is listed and counted like anything else', () => {
+    const all = run('queue.mjs', ['list'], dir).json;
+    assert.deepEqual(all.map((i) => [i.ticket, i.state]).sort(), [[proposal, 'proposed'], [work, 'queued']].sort());
+    assert.deepEqual(run('queue.mjs', ['list', '--state', 'proposed'], dir).json.map((i) => i.ticket), [proposal]);
+    const rendered = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.md'), 'utf8');
+    assert.match(rendered, /## proposed \(1\)/);
+  });
+
+  await t.test('"next" never offers it — not ranked below the work, absent', () => {
+    assert.equal(run('queue.mjs', ['next'], dir).json.ticket, work);
+    const why = run('queue.mjs', ['next', '--why'], dir).json;
+    assert.deepEqual(why.entries.map((r) => r.ticket), [work], 'a proposal is not even a row in --why');
+  });
+
+  await t.test('and not even with nothing else left waiting', () => {
+    assert.equal(run('queue.mjs', ['rm', work], dir).code, 0);
+    const r = run('queue.mjs', ['next'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json, null);
+  });
+
+  await t.test('set moves it out of the proposal state when somebody rules on it', () => {
+    const r = run('queue.mjs', ['set', proposal, 'queued'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.state, 'queued');
+    assert.equal(run('queue.mjs', ['next'], dir).json.ticket, proposal);
+  });
+});

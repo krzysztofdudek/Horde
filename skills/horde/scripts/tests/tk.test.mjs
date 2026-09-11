@@ -492,3 +492,67 @@ test('tk.mjs show: a pre-migration **Keys:** line in issue.md is inert — show 
   const list = run('tk.mjs', ['list'], dir);
   assert.equal(list.code, 0, list.stderr);
 });
+
+test('tk.mjs edit --depends: the same path queue.mjs dep writes, so the circle is caught once', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const first = newTicket(dir).json.id;
+  const second = run('tk.mjs', ['new', 'second', '--title', 'Second', '--node', 'core', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  const third = run('tk.mjs', ['new', 'third', '--title', 'Third', '--node', 'core', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  for (const id of [first, second, third]) assert.equal(run('queue.mjs', ['add', id], dir).code, 0);
+
+  await t.test('it adds the edge to the queue item and logs who changed it', () => {
+    const r = run('tk.mjs', ['edit', second, '--depends', first, '--by', 'consultant-a'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.json.changed, [`depends on: ${first}`]);
+    const item = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === second);
+    assert.deepEqual(item.dependsOn, [first]);
+    assert.match(run('tk.mjs', ['show', second, '--log'], dir).json.log, new RegExp(`depends on: ${first} — changed by consultant-a`));
+  });
+
+  await t.test('a comma-separated list adds every one of them', () => {
+    const r = run('tk.mjs', ['edit', third, '--depends', `${first},${second}`, '--by', 'consultant-a'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const item = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === third);
+    assert.deepEqual(item.dependsOn.sort(), [first, second].sort());
+  });
+
+  await t.test('the plan is computed from it, exactly as it is from queue.mjs dep', () => {
+    const plan = run('queue.mjs', ['plan'], dir).json;
+    assert.deepEqual(plan.tickets.find((x) => x.id === third).dependsOn.sort(), [first, second].sort());
+  });
+
+  await t.test('a circle is refused here, by the one check that owns it', () => {
+    const r = run('tk.mjs', ['edit', first, '--depends', third, '--by', 'consultant-a'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /would create a cycle/);
+    assert.deepEqual(run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === first).dependsOn, []);
+  });
+
+  await t.test('a dependency that is not a ticket is refused by name', () => {
+    const r = run('tk.mjs', ['edit', second, '--depends', '999', '--by', 'consultant-a'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no such dependency: "999"/);
+  });
+
+  await t.test('a ticket that is not in the queue is told to join it first', () => {
+    const loose = run('tk.mjs', ['new', 'loose', '--title', 'Loose', '--node', 'core', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+    const r = run('tk.mjs', ['edit', loose, '--depends', first, '--by', 'consultant-a'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /add it to the queue first/);
+  });
+
+  await t.test('with --depends alone, no body is read from stdin and none is required', () => {
+    const r = run('tk.mjs', ['edit', second, '--depends', first, '--by', 'consultant-a'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.bytes, 0);
+  });
+
+  await t.test('and the refusal for none of them at all names it among the ways in', () => {
+    const r = tkEdit(dir, second, '', ['--by', 'consultant-a']);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--depends/);
+  });
+});

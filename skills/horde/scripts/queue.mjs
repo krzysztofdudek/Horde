@@ -28,15 +28,22 @@ import {
   recordAdvisory,
 } from './node.mjs';
 
-const STATES = ['queued', 'waiting', 'running', 'landed', 'merged', 'escalated', 'dropped'];
+// "proposed" is the state a ticket nobody has ruled on sits in: in the queue, listed and counted,
+// and never a candidate for `next`. A consultant files its own tickets and adds them here itself;
+// the architect's plan review (refine.mjs --step review) is the only way one becomes "queued".
+const STATES = ['proposed', 'queued', 'waiting', 'running', 'landed', 'merged', 'escalated', 'dropped'];
 const SEVERITY_RANK = { high: 0, medium: 1, low: 2 };
 
 const USAGE = `usage: queue.mjs <command> [options]
 
 commands:
   list [--state s] [--team t] [--horde h]
-  add <ticket> [--depends dep,…] [--team t] [--horde h]
+  add <ticket> [--depends dep,…] [--proposed] [--team t] [--horde h]
       each dep is NNN, a ticket number in this same team.
+      --proposed files it as a proposal rather than as work: listed and counted in the queue,
+      never offered by "next", until the architect's plan review passes it. That is how a
+      consultant's own tickets enter — nothing it writes is dispatchable before somebody has
+      looked at the whole plan.
   set <ticket> <${STATES.join('|')}> [--sha x] [--agent name] [--note "…"]
       [--on MMM] [--team t] [--horde h]
       "running --on MMM" starts the ticket from MMM's tip instead of the team's (a stack): MMM
@@ -184,18 +191,18 @@ function cmdAdd(horde, positional, flags) {
       dependsOn.push(ref.canonical);
     }
   }
-  const item = newQueueItem(ticket, dependsOn);
+  const item = newQueueItem(ticket, dependsOn, flags.proposed ? 'proposed' : 'queued');
   doc.items.push(item);
   save(horde, team, doc);
-  emit(item, flags, () => `queued: ${item.ticket}`);
+  emit(item, flags, () => `${item.state}: ${item.ticket}`);
 }
 
 // The shape of a queued item, in one place, so a ticket the quality pass files enters the queue as
 // the same object an owner's ticket does.
-function newQueueItem(ticket, dependsOn = []) {
+function newQueueItem(ticket, dependsOn = [], state = 'queued') {
   return {
     ticket: ticket.id,
-    state: 'queued',
+    state,
     class: parseField(ticket.text, 'Class') || 'sonnet',
     branch: null,
     worktree: null,
@@ -597,17 +604,18 @@ function dependsTransitively(doc, from, target, seen = new Set()) {
   return (item.dependsOn || []).some((d) => dependsTransitively(doc, d, target, seen));
 }
 
-function cmdDep(horde, positional, flags) {
-  const idRaw = positional[0];
-  if (!idRaw) fail('dep requires <ticket>');
-  if (!flags.on) fail('dep requires --on <dep>');
-  const team = flags.team || 'trunk';
-  const key = normalizeKey(idRaw);
+// addDependency(horde, team, ticket, on) — the one path that adds an edge to an existing item, and
+// the one place the cycle is caught. `tk.mjs edit --depends` is an alias onto this rather than a
+// second implementation: a cycle only becomes visible once the whole DAG is built, so a second
+// writer that skipped this check would file a plan nothing can start and nobody would know until
+// `plan` refused. Returns the item it changed.
+export function addDependency(horde, team, ticket, on) {
+  const key = normalizeKey(ticket);
   const { doc, item } = findItem(horde, team, key);
-  if (!item) fail(`no queue item: ${key}`);
+  if (!item) fail(`no queue item: ${key} (in team ${team}) — a dependency hangs off a queued ticket; add it to the queue first`);
 
-  const ref = resolveDepRef(horde, flags.on, team);
-  if (!ref.item) fail(`no such dependency: "${flags.on}" (team ${ref.team})`);
+  const ref = resolveDepRef(horde, on, team);
+  if (!ref.item) fail(`no such dependency: "${on}" (team ${ref.team})`);
   if (ref.canonical === key) fail(`cannot depend on itself: ${key}`);
   if (dependsTransitively(doc, ref.canonical, key)) fail(`adding this dependency would create a cycle: ${ref.canonical} already depends on ${key}`);
 
@@ -617,7 +625,16 @@ function cmdDep(horde, positional, flags) {
     item.notes.push({ at: nowIso(), text: `dep: gained dependency on ${ref.canonical} — back to queued until it merges` });
   }
   save(horde, team, doc);
-  emit(item, flags, () => `${item.ticket} now depends on ${ref.canonical}`);
+  return { item, on: ref.canonical };
+}
+
+function cmdDep(horde, positional, flags) {
+  const idRaw = positional[0];
+  if (!idRaw) fail('dep requires <ticket>');
+  if (!flags.on) fail('dep requires --on <dep>');
+  const team = flags.team || 'trunk';
+  const { item, on } = addDependency(horde, team, idRaw, flags.on);
+  emit(item, flags, () => `${item.ticket} now depends on ${on}`);
 }
 
 function severityOf(horde, item) {
@@ -823,7 +840,7 @@ function filesOverlap(a, b) {
     || (fb.includes('*') && globToRegExp(fb).test(fa))));
 }
 
-function titleOf(text) {
+export function titleOf(text) {
   return (/^#\s*\S+\s*·\s*(.*)$/.exec((text.split('\n')[0] || '').trim()) || [])[1] || '';
 }
 
@@ -1117,7 +1134,7 @@ function reachability(tickets, byId) {
   return memo;
 }
 
-function renderPlan(plan) {
+export function renderPlan(plan) {
   const lines = [`plan · horde ${plan.horde} · team ${plan.team} · ${plan.tickets.length} open ticket(s)`, ''];
   if (plan.tickets.length === 0) return `${lines[0]}\n(nothing to plan)`;
   plan.layers.forEach((layer, i) => lines.push(`L${i}  ${layer.join(' ')}`));
@@ -1247,7 +1264,7 @@ function cmdReconcile(horde, positional, flags) {
 }
 
 function main() {
-  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['apply-order', 'why', 'stack', 'dry-run'] });
+  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['apply-order', 'why', 'stack', 'dry-run', 'proposed'] });
   const [cmd, ...positional] = allPositional;
 
   if (flags.help) { console.log(USAGE); process.exit(0); }

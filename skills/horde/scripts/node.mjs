@@ -1429,7 +1429,9 @@ function graphJsonPath(horde) {
   return hordePath(horde, 'graph.json');
 }
 
-function loadGraph(horde) {
+// Exported so refine.mjs's frame can read the law this mission's consultants proposed without a
+// second reading of graph.json's shape — the frame reports what is on file, it never writes.
+export function loadGraph(horde) {
   const doc = readJSON(graphJsonPath(horde), null);
   return {
     proposals: doc && Array.isArray(doc.proposals) ? doc.proposals : [],

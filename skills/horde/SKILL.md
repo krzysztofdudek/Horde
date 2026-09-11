@@ -78,13 +78,43 @@ with the user by one rule — *a node is right-sized when its charter, its ports
 Sonnet context with room to work*. Cutting the graph the first time is a decision you make **with**
 the user, not alone.
 
+## Refining — cut, consult, review, frame
+
+`refine.mjs` is the one phase after framing that needs judgment, and the only one where anything is
+negotiated. It spawns nothing itself: it prints the spawn lists and takes their answers back off
+disk, so every decision is made by an agent and recorded in a file the tools can check.
+
+```
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/refine.mjs --step cut --horde <h>      # hand the brief to one architect; run again to check what it wrote
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/refine.mjs --step consult --horde <h>  # one spawn per territory, ALL in one message
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/refine.mjs --step review --horde <h>   # the plan, whole, to one architect; run again to apply the ruling
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/refine.mjs --step frame --horde <h> --json  # what the client sees, and the one place they say go
+```
+
+The **cut** divides the request into territories — sets of whole components, any level. The tool
+checks the three rules that can be checked (whole components, one component to one territory, and a
+size nobody could hold) and leases each territory across every live horde on the repository.
+
+The **consultation** sends one agent per territory, all at once, each seeing its own territory and
+nothing else. They write the tickets and propose the law themselves; nothing comes back as prose.
+Every ticket they file lands as a **proposal** — in the queue, counted, and never dispatched.
+
+The **review** puts the whole plan to one architect. That ruling is the only way a ticket stops being
+a proposal: one passed becomes work, one rejected keeps its reason on its own log, and one nobody
+ruled on never runs. Silence is not a pass.
+
+The **frame** is the client's. Three sections, no tool names: what changes and where, what it will
+prove, what the rules gain. Their "go" is the only approval in the whole run, and it is asked for
+once, at the start — a request of one territory and one ticket says exactly that, and needs no more
+ceremony than a request of ten.
+
 ## Staffing and planning — for now, two roles
 
-Interim shape: **worker** and **architect** are the only two seats. Steward, owner, verifier,
-auditor and counsel do not exist right now — they are being rebuilt one at a time (`consult`,
-`legislate`, `retro` land in later releases) rather than kept alive behind a flag. Until then, you
-(the director, this top-level session) do the staffing and planning work directly, through
-`tk.mjs`/`queue.mjs`, rather than through an owner's proposal.
+Interim shape: **worker** and **architect** are the only two seats, plus the one-shot **consultant**
+`refine.mjs` briefs per territory. Steward, owner, verifier, auditor and counsel do not exist right
+now — they are being rebuilt one at a time (`legislate` and `retro` land in later releases) rather
+than kept alive behind a flag. Until then, you (the director, this top-level session) do the staffing
+and planning work directly, through `tk.mjs`/`queue.mjs`, rather than through an owner's proposal.
 
 - Spawn the **architect** as your teammate (Opus, cross-cutting, no node of its own;
   `brief.mjs architect`). The architect approves or vetoes every change to the graph — new nodes,

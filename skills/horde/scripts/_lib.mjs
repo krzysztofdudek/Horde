@@ -439,21 +439,38 @@ export function teamPath(horde, team, ...parts) {
   return hordePath(horde, ...resolved.flatMap((s) => ['teams', s]), ...parts);
 }
 
-// ---- cross-horde node leases (node-lease-across-hordes) --------------------------------------
-// Node ownership is exclusive across every live horde on one repository: `.horde/leases.json`
-// maps a node id to the horde currently bound to it and since when. This file is NOT per-horde —
-// every horde on the repository reads and writes the one shared document, which is exactly why
-// it lives beside config.json rather than under hordes/<horde>/. `node.mjs bind <node>` is the
-// only writer of `leases`; `horde.mjs archive` is the only remover (a horde's leases are released
-// the moment it is no longer live). `history` is an append-only record of every bind/take/release
-// so a contested node's story survives past the current state.
+// ---- cross-horde leases (node-lease-across-hordes) -------------------------------------------
+// Exclusive ownership across every live horde on one repository: `.horde/leases.json` maps a
+// SUBJECT to the horde currently bound to it and since when. A subject is a node id (`node.mjs
+// bind <node>`) or a territory name (`refine.mjs --step cut`, which leases the cut it just
+// validated) — the file, the history and the refusal are one mechanism either way, because the
+// question both ask is the same one: is another live horde already working this. This file is NOT
+// per-horde — every horde on the repository reads and writes the one shared document, which is
+// exactly why it lives beside config.json rather than under hordes/<horde>/. `horde.mjs archive`
+// is the only remover (a horde's leases are released the moment it is no longer live). `history`
+// is an append-only record of every bind/take/release so a contested subject's story survives past
+// the current state; its `node` field keeps that name for the shape's sake and carries whichever
+// subject the entry is about.
 
 export function leasesPath() {
   return join(hordeRoot(), 'leases.json');
 }
 
+// A lease file that will not parse is NOT an empty one. An interrupted run leaves a truncated
+// JSON behind, and reading that as "nothing is leased" would hand out a subject another live horde
+// still holds — the one failure this whole file exists to prevent. So it refuses, by name.
 export function readLeases() {
-  const doc = readJSON(leasesPath(), null);
+  let doc;
+  try {
+    doc = readJSON(leasesPath(), null);
+  } catch (e) {
+    fail(
+      `${leasesPath()} will not parse as JSON, so what is leased on this repository cannot be read: ${e.message}\n`
+      + 'A lease file half-written by an interrupted run is not an empty one — treating it as empty would hand '
+      + 'out a subject another live horde still holds.\n'
+      + 'Repair the file, or delete it if no horde on this repository holds anything.',
+    );
+  }
   const leases = doc && doc.leases && typeof doc.leases === 'object' ? doc.leases : {};
   const history = doc && Array.isArray(doc.history) ? doc.history : [];
   return { leases, history };
@@ -461,7 +478,7 @@ export function readLeases() {
 
 function renderLeases(doc) {
   const entries = Object.entries(doc.leases).sort(([a], [b]) => a.localeCompare(b));
-  const lines = ['# Leases', '', '| node | horde | since |', '|---|---|---|'];
+  const lines = ['# Leases', '', '| leased | horde | since |', '|---|---|---|'];
   if (entries.length === 0) lines.push('| | | |');
   for (const [node, lease] of entries) lines.push(`| ${node} | ${lease.horde} | ${lease.since} |`);
   if (doc.history.length > 0) {
@@ -481,8 +498,9 @@ export function writeLeases(doc) {
 }
 
 // releaseLeasesForHorde(horde) — drops every lease this horde holds and records a "release" entry
-// per node in the history. Called by horde.mjs archive so an archived horde's nodes are free the
-// moment it stops being live; returns the released node ids (empty when it held none).
+// per subject in the history. Called by horde.mjs archive so an archived horde's nodes and
+// territories are free the moment it stops being live; returns the released subjects (empty when
+// it held none).
 export function releaseLeasesForHorde(horde) {
   const doc = readLeases();
   const released = Object.entries(doc.leases).filter(([, l]) => l.horde === horde).map(([node]) => node);
@@ -498,43 +516,60 @@ export function releaseLeasesForHorde(horde) {
   return released;
 }
 
-// leaseConflict(horde, node) — the live holder blocking `horde` from this node, or null when
+// leaseConflict(horde, subject) — the live holder blocking `horde` from this subject, or null when
 // there is none (never leased, held by `horde` itself, or held by a horde no longer live). A pure
 // read, safe to call before mutating anything — which is exactly why horde.mjs init uses it to
 // refuse a --nodes overlap BEFORE creating the horde's branch, rather than discovering the
 // conflict after state already exists.
-export function leaseConflict(horde, node) {
+export function leaseConflict(horde, subject) {
   const liveHordes = listHordes();
   const { leases } = readLeases();
-  const existing = leases[node];
+  const existing = leases[subject];
   return existing && existing.horde !== horde && liveHordes.includes(existing.horde) ? existing : null;
 }
 
-function leaseRefusalMessage(taker, node, holder) {
+// The refusal, in the subject's own words. Both halves matter: WHO holds it and how recently they
+// moved (so a horde nobody has touched in a week reads as the stale thing it is), and what the
+// taker can actually do about it. That second half differs by kind, because the ways out differ. A
+// node can be taken over on a ruled escalation. A territory cannot: who works an area when two
+// hordes want it is the client's call, answered once at the frame, and there is no command here
+// that overrides it — so this says archive, and otherwise says to go and ask, rather than naming a
+// mechanism that would not run.
+function leaseRefusalMessage(taker, subject, holder, kind) {
   const activity = latestActivity(hordePath(holder.horde)) || 'no recorded activity';
-  return `node "${node}" is leased by horde "${holder.horde}" (since ${holder.since}; last activity `
-    + `${activity}) and that horde is not archived — archive it (\`horde.mjs archive ${holder.horde}\`) `
-    + `or take the lease over a ruled escalation: \`node.mjs bind ${node} --take --escalation <id> --horde ${taker}\``;
+  const head = `${kind} "${subject}" is leased by horde "${holder.horde}" (since ${holder.since}; last activity `
+    + `${activity}) and that horde is not archived — archive it (\`horde.mjs archive ${holder.horde}\`) `;
+  return kind === 'territory'
+    ? `${head}or put it to the client, whose answer decides which mission gets this area; nothing here takes a territory over`
+    : `${head}or take the lease over a ruled escalation: \`node.mjs bind ${subject} --take --escalation <id> --horde ${taker}\``;
 }
 
-// assertLeaseAvailable(horde, node) — throws leaseConflict's refusal, otherwise returns quietly.
-// horde.mjs init calls this for every requested node before creating anything of its own, so the
-// whole command refuses cleanly (no orphaned branch, no half-created horde) on the very message
-// node.mjs bind would give later for the same node.
-export function assertLeaseAvailable(horde, node) {
-  const conflict = leaseConflict(horde, node);
-  if (conflict) throw new Error(leaseRefusalMessage(horde, node, conflict));
+// assertLeaseAvailable(horde, subject, {kind}) — throws leaseConflict's refusal, otherwise returns
+// quietly. horde.mjs init calls this for every requested node before creating anything of its own,
+// so the whole command refuses cleanly (no orphaned branch, no half-created horde) on the very
+// message node.mjs bind would give later for the same node; refine.mjs calls it for every
+// territory of a cut before claiming any of them.
+export function assertLeaseAvailable(horde, subject, { kind = 'node' } = {}) {
+  const conflict = leaseConflict(horde, subject);
+  if (conflict) throw new Error(leaseRefusalMessage(horde, subject, conflict, kind));
 }
 
-// claimLease(horde, node, {take, escalation}) — the one path that acquires a node's lease. Node
-// ownership is exclusive across every live horde on a repository: returns {status: 'held' |
-// 'claimed' | 'taken', ...} on success; throws Error with a what/why/next-shaped message the
-// caller passes straight to fail() on any refusal. Shared by horde.mjs init (--nodes, at
-// creation, after assertLeaseAvailable has already cleared it) and node.mjs bind (<node>, any
-// time) so both tools refuse the same overlap the same way and write the same history line — one
-// derivation, two callers, per the scripts' own convention (see node.mjs's consumersOf).
-export function claimLease(horde, node, { take = false, escalation = null } = {}) {
+// claimLease(horde, subject, {take, escalation, kind}) — the one path that acquires a lease, for a
+// node and for a territory alike. Ownership is exclusive across every live horde on a repository:
+// returns {status: 'held' | 'claimed' | 'taken', ...} on success; throws Error with a
+// what/why/next-shaped message the caller passes straight to fail() on any refusal. Shared by
+// horde.mjs init (--nodes, at creation, after assertLeaseAvailable has already cleared it),
+// node.mjs bind (<node>, any time) and refine.mjs (one territory of a validated cut), so every
+// tool refuses the same overlap the same way and writes the same history line — one derivation,
+// three callers, per the scripts' own convention (see node.mjs's consumersOf).
+//
+// The write is the commit point, and it is the LAST thing that happens: everything before it is a
+// read or an in-memory edit, so a run killed partway leaves the file exactly as it found it and
+// the subject free for the next attempt. Callers claiming several subjects at once hold to the
+// same shape by validating all of them before claiming any.
+export function claimLease(horde, subject, { take = false, escalation = null, kind = 'node' } = {}) {
   const doc = readLeases();
+  const node = subject;
   const existing = doc.leases[node];
 
   if (existing && existing.horde === horde) {
@@ -543,7 +578,7 @@ export function claimLease(horde, node, { take = false, escalation = null } = {}
 
   const conflict = leaseConflict(horde, node);
   if (conflict) {
-    if (!take) throw new Error(leaseRefusalMessage(horde, node, conflict));
+    if (!take) throw new Error(leaseRefusalMessage(horde, node, conflict, kind));
     if (!escalation) {
       throw new Error('--take requires --escalation <id> — a ruled escalation on this horde justifying the take-over');
     }

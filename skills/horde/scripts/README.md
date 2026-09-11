@@ -178,12 +178,20 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
   it, and validated exactly as `new` validates them. This is how a ticket is widened when the work
   turns out to touch a file it never declared — `land`'s scope item refuses that diff and names
   this command; a silent widening is what it exists to prevent.
+- `edit NNN --by <name> --depends NNN,MMM` — adds dependencies, one per number, by calling
+  `queue.mjs dep` rather than writing them itself. One writer owns the circle check, because a
+  circle is only visible once the whole DAG is built (`buildPlan`), so a second path here would file
+  a plan nothing can start and nobody would know until `plan` refused. The ticket has to be in the
+  queue; the refusal says so.
 
 ## queue.mjs — the DAG
 
 `teams/<team>/queue.json`: items `{ticket, state, class, branch, worktree, dependsOn[], stackedOn, agent, sha, notes[]}`.
-States: `queued waiting running landed merged escalated dropped`.
-- `list [--state s]`, `add NNN [--depends dep,…]`, `set NNN <state> [--sha x] [--agent name] [--note "…"]`,
+States: `proposed queued waiting running landed merged escalated dropped`. `proposed` is a ticket
+nobody has ruled on: listed and counted like any other, and never a candidate for `next`. A
+consultant files its own tickets and adds them with `add --proposed`; `refine.mjs --step review` is
+the only thing that moves one to `queued`.
+- `list [--state s]`, `add NNN [--depends dep,…] [--proposed]`, `set NNN <state> [--sha x] [--agent name] [--note "…"]`,
   `next [--class c] [--why] [--stack]` — ready = queued, every dependency merged, and clear of every
   `running` ticket's own lock: a ticket declaring `**Files:**` collides only on an overlapping
   path or glob; a ticket with none (or a `running` item whose ticket can no longer be read) locks
@@ -271,6 +279,63 @@ States: `queued waiting running landed merged escalated dropped`.
   It reports and files nothing, at exit 0, when the charter's policy is `only-the-work` or no Grain
   CLI is configured; a document that is not `grain-advice/1` is a refusal naming what was seen, never
   a guess. `--dry-run` reads and reports without filing.
+
+## refine.mjs — the cut, the consultation, the review, the frame
+
+`refine.mjs [--step cut|consult|review|frame] [--horde h] [--team t]`. The only phase that needs
+judgment, and the only one where anything is negotiated. Like `tick`, it spawns nothing: it prints
+the spawn lists and takes their results back off disk. Every step runs twice — once to print the
+brief, once to read back the file that brief asked for — and a step with nothing to read yet never
+guesses at an answer.
+
+- `--step cut` — first run prints a one-shot architect's brief (the mission card, the `yg
+  tree`/`structure`/`node`/`impact` reads, Grain's map where there is one, and what a territory is).
+  The architect answers by writing `hordes/<horde>/territories.json`:
+  `{"<territory>": {"nodes": ["<node>", …], "class": "<class>", "why": "<one sentence>"}}`. Second
+  run checks it and leases every territory in it. Three rules are checked by the script, not asked
+  for in prose: a territory is a set of WHOLE nodes (a name that resolves inside a node is refused,
+  naming the node it would split — the node is Yggdrasil's own unit); any level counts, a whole
+  subtree root included; and one node sits in at most one territory. The class is validated against
+  `config.classes`, never against a literal here. Everything is checked before anything is claimed,
+  so a refused cut leaves no lease behind.
+- **The size.** `config.territory.maxBytes` (default 400000), one number for the whole horde: the
+  bytes of the code a territory's nodes map, plus the text of every rule that reaches those files
+  (counted once per rule), plus those nodes' own logs. Over it, refused with the count broken into
+  code, rules and logs — which part is large says what to do about it. The boundary is closed:
+  exactly the limit fits. One threshold and not a table of them per class, because the class decides
+  what a territory COSTS, never what fits in one.
+- **Leases.** `.horde/leases.json`, the same file and the same mechanism `node.mjs bind` uses, keyed
+  by the territory instead of the node (the on-disk shape is unchanged; history's `node` field
+  carries whichever subject the entry is about). A conflict with another live horde is refused,
+  naming that horde and its last activity. A territory is never taken over: the refusal points at
+  archiving the holder, or at the client, whose answer decides which mission gets the area.
+  `horde.mjs archive` releases territories exactly as it releases nodes.
+- `--step consult` — prints `[{territory, class, brief}]`, exactly one spawn per territory, all
+  parallel, issued by the caller in one message. A brief carries only its own territory: `yg context
+  --node --json` for each of its nodes (owner, rules with status and reviewer kind, paths), the node
+  descriptions and logs, `grain where`/`how`/`obligation`, and the mission card cut to this
+  territory's own evidence rows. Then the five questions, in order: what must change in me; is this
+  a new module or a change inside one; does this break single responsibility; what pattern do I want
+  and is it already law; what contract do I need from a neighbour. The consultant writes its own
+  tickets (`tk.mjs new`, then `queue.mjs add --proposed`, with `tk.mjs edit --depends` for the
+  edges) and its own law proposals (`node.mjs propose rule`). Nothing comes back as prose. It decides
+  the inside of its territory; it does not decide the boundary. Grain is optional, so a brief without
+  it still renders and says what is missing rather than falling over.
+- `--step review` — first run writes the plan whole to `hordes/<horde>/plan-<team>.md` and prints a
+  one-shot architect's brief carrying that file's own text (never a summary — a plan relayed as one
+  has already lost the thing being looked at) and the five questions a plan is ruled by, quoted from
+  `reference/roles/architect.md` rather than copied. A circle refuses the step outright and carries
+  the circle in the refusal. The architect answers by writing `hordes/<horde>/review.json`:
+  `{"<ticket>": {"verdict": "pass"|"reject", "why": "<one sentence>"}}`. Second run applies it: a
+  pass moves the ticket and its queue item to `queued`; a rejection leaves both `proposed` and puts
+  the reason on the ticket's own log; a ticket nobody ruled on stays `proposed` and is never
+  dispatched, because silence is not a pass. This is the only way out of `proposed`.
+- `--step frame [--json]` — the data a session renders to the client through Ratatoskr. Three
+  sections and not one tool name: what will change and where (territory → nodes → tickets), what it
+  will prove (the charter's evidence rows through `parseEvidenceRows`, with who is taking them and
+  which nobody has), and what the law gains (the consultants' rule proposals, one sentence each). A
+  cut of one territory with one ticket says so plainly rather than dressing it up. The client's "go"
+  is the only approval in the whole mission run, and nothing is exposed before it.
 
 ## brief.mjs — rendered briefs
 

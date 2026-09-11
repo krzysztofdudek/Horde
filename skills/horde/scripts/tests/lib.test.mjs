@@ -244,3 +244,60 @@ test('_lib.mjs resolveTree: narrowest scope wins, cwd and trunk defaults, scratc
     process.chdir(origCwd);
   }
 });
+
+// The lease file is keyed by a SUBJECT, not by a node: a node when `node.mjs bind` claims one, a
+// territory when a refinement's cut does. Only the claiming paths are exercised in-process here —
+// every refusal goes through fail() -> process.exit(), which would take this whole run with it, so
+// those are CLI-level tests in refine.test.mjs (same reason as teamPath's above).
+test('_lib.mjs leases: one mechanism, keyed by whatever is being held — a node or a territory', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const origCwd = process.cwd();
+  process.chdir(realpathSync(dir));
+  try {
+    const {
+      hordeRoot: hordeRootFn, claimLease, readLeases, releaseLeasesForHorde, leaseConflict,
+    } = await import('../_lib.mjs');
+    hordeRootFn({ create: true });
+    mkdirSync(join(hordeRootFn(), 'hordes', 'h1'), { recursive: true });
+
+    await t.test('a territory is claimed and then held, by the same call that claims a node', () => {
+      const first = claimLease('h1', 'the front door', { kind: 'territory' });
+      assert.equal(first.status, 'claimed');
+      assert.equal(first.node, 'the front door');
+      const again = claimLease('h1', 'the front door', { kind: 'territory' });
+      assert.equal(again.status, 'held');
+      assert.equal(again.since, readLeases().leases['the front door'].since, 'holding it again does not re-date it');
+    });
+
+    await t.test('two territories of one horde sit side by side, and so does a node', () => {
+      claimLease('h1', 'numbers', { kind: 'territory' });
+      claimLease('h1', 'auth');
+      assert.deepEqual(Object.keys(readLeases().leases).sort(), ['auth', 'numbers', 'the front door']);
+    });
+
+    await t.test('the on-disk shape is unchanged — history keeps its "node" field, carrying the subject', () => {
+      const { history } = readLeases();
+      const entry = history.find((h) => h.node === 'the front door');
+      assert.deepEqual(Object.keys(entry).sort(), ['at', 'escalation', 'event', 'from', 'horde', 'node'].sort());
+      assert.equal(entry.event, 'bind');
+      assert.equal(entry.horde, 'h1');
+    });
+
+    await t.test('the holder is only a conflict while it is live — an unknown horde blocks nobody', () => {
+      // "h1" has a directory under hordes/, so it is live; "ghost" never did.
+      assert.equal(leaseConflict('h2', 'the front door').horde, 'h1');
+      claimLease('ghost-holder-check', 'orphan');
+      assert.equal(leaseConflict('h2', 'orphan'), null);
+    });
+
+    await t.test('archiving releases every subject at once, nodes and territories alike', () => {
+      const released = releaseLeasesForHorde('h1');
+      assert.deepEqual(released.sort(), ['auth', 'numbers', 'the front door']);
+      assert.deepEqual(Object.keys(readLeases().leases), ['orphan']);
+      assert.equal(readLeases().history.filter((h) => h.event === 'release').length, 3);
+    });
+  } finally {
+    process.chdir(origCwd);
+  }
+});

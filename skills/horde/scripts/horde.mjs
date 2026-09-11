@@ -236,6 +236,12 @@ function defaultConfig(root) {
     // git already tracks is refused rather than copied: copying over it would desync the tree
     // from its own branch.
     worktree: { copy: [] },
+    // The one size a territory is cut to (refine.mjs --step cut): the bytes of the code its nodes
+    // map, plus the text of every rule that reaches those files, plus those nodes' own logs. One
+    // number for the whole horde, never one per class — "too big for anyone to hold" is a fact
+    // about the area, not about who was sent to it, and the class a territory carries decides only
+    // what it costs. Over this, the cut is refused and the architect cuts finer.
+    territory: { maxBytes: 400000 },
   };
 }
 
