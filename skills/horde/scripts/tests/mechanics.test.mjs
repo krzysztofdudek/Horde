@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, writeCostRuns, MARKER_CHECK,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, writeCostRuns, requireYg, MARKER_CHECK,
 } from './helpers.mjs';
 
 function git(args, cwd) {
@@ -471,17 +471,21 @@ test('two hordes, one with a waiting item and one without: status --json reports
 // This pins the half of the contract a file cannot state — that a background landing has a bounded
 // life, and is gone by the time the thing it was asked for is on disk.
 //
-// The child is found by the branch name in its own argv, not by a before/after scan of every
-// `land.mjs` on the machine: this suite runs its files in parallel, and land.test.mjs is landing
-// its own tickets at the same moment. `t-777` belongs to this test and to nothing else.
-function pidsLanding(branch) {
+function pidsMatching(pattern) {
   try {
-    return execFileSync('pgrep', ['-f', `land\\.mjs ${branch}`], { encoding: 'utf8' })
+    return execFileSync('pgrep', ['-f', pattern], { encoding: 'utf8' })
       .trim().split('\n').filter(Boolean).map(Number);
   } catch {
     // pgrep exits 1 with no output when nothing matches — that is an answer, not a failure.
     return [];
   }
+}
+
+// The child is found by the branch name in its own argv, not by a before/after scan of every
+// `land.mjs` on the machine: this suite runs its files in parallel, and land.test.mjs is landing
+// its own tickets at the same moment. `t-777` and `t-778` belong to these tests and to nothing else.
+function pidsLanding(branch) {
+  return pidsMatching(`land\\.mjs ${branch}`);
 }
 
 function stillAlive(pids) {
@@ -490,11 +494,10 @@ function stillAlive(pids) {
   });
 }
 
-test('land.mjs --background: the run is let go of, but not forgotten — the result file arrives and the process that wrote it is gone', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-
-  const id = '777';
+// The fixture both background-landing tests run on: one real graph, one real ticket on its own
+// branch, queued as "landed" and ready for the gate. Shared rather than copied so the hang case
+// below differs from the healthy one in exactly one thing — which `yg` the landing talks to.
+function seedLandableTicket(dir, id) {
   const branch = `mission1/t-${id}`;
   initHorde(dir);
   addAspect(dir, 'no-marker', { description: 'Source files must not carry an unfinished-work marker.', check: MARKER_CHECK });
@@ -537,6 +540,16 @@ test('land.mjs --background: the run is let go of, but not forgotten — the res
   });
   writeFileSync(queuePath, JSON.stringify(queueDoc, null, 2));
 
+  return branch;
+}
+
+test('land.mjs --background: the run is let go of, but not forgotten — the result file arrives and the process that wrote it is gone', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  const id = '777';
+  const branch = seedLandableTicket(dir, id);
+
   const started = run('land.mjs', [branch, '--background'], dir);
   assert.equal(started.code, 0, started.stderr);
   assert.equal(started.json.ticket, id);
@@ -563,5 +576,116 @@ test('land.mjs --background: the run is let go of, but not forgotten — the res
   assert.deepEqual(
     stillAlive(children), [],
     'a background landing outlived the result file it was started to write — nothing waits on it, so it stays until the machine is rebooted',
+  );
+});
+
+// The same contract, with the thing that actually wedged in the wild: a `yg check` that never comes
+// back. A stand-in CLI hands every call to the real Yggdrasil build except the landing gate's own
+// two — `check` and `check --approve --only-deterministic` — which it never answers at all. That is
+// the shape of the live incident: not a CLI that is broken, but one particular run of it hanging on
+// one tree, because the worktree was deleted under it, or the disk is a network mount, or the graph
+// is large enough to thrash. The document reads (`check --json`) are deliberately left working, so
+// the landing gets all the way to the item whose answer this test is about.
+//
+// Without a ceiling on the CLI call this test cannot pass: the detached landing blocks inside
+// `execFileSync` forever, the result file is never written, and the poll below runs out. (The same
+// ceiling ends a run wedged on a document read too — that one stops with a refusal on stderr and no
+// result file, which is what `land.mjs` has always done with a graph read it cannot make. Either
+// way the process ends, which is the whole point; this test pins the path that also leaves a
+// readable answer behind.)
+//
+// It is the hang itself that is pinned here, not a message — the assertions are that the file
+// arrives, that the process is gone, that the stopped CLI is gone with it, and that the run's own
+// words name the limit it was stopped at, so a pass cannot come from the run having quietly
+// succeeded some other way.
+function writeHangingYgStub(realYg) {
+  const stubDir = mkdtempSync(join(tmpdir(), 'horde-yg-stub-'));
+  const stub = join(stubDir, 'yg-hangs-on-check.mjs');
+  writeFileSync(stub, [
+    "import { spawnSync } from 'node:child_process';",
+    'const argv = process.argv.slice(2);',
+    `const real = ${JSON.stringify(realYg.split(/\s+/).filter(Boolean))};`,
+    "if (argv[0] === 'check' && !argv.includes('--json')) {",
+    '  // Never answers, never exits. Whatever stops this process, it is not this process.',
+    '  setInterval(() => {}, 1000);',
+    '} else {',
+    "  const r = spawnSync(real[0], [...real.slice(1), ...argv], { stdio: 'inherit' });",
+    '  process.exit(r.status === null || r.status === undefined ? 1 : r.status);',
+    '}',
+    '',
+  ].join('\n'));
+  return { stubDir, stub, command: `node ${stub}` };
+}
+
+test('land.mjs --background: a Yggdrasil CLI that hangs is stopped at config.ygTimeoutMs — the detached run ends instead of outliving the machine', async (t) => {
+  const dir = makeRepo();
+  const { stubDir, stub, command } = writeHangingYgStub(requireYg());
+  t.after(() => { rmRepo(dir); rmRepo(stubDir); });
+
+  const id = '778';
+  const branch = seedLandableTicket(dir, id);
+
+  // Nothing else in the fixture changes: the graph was made, committed and read by the real CLI
+  // above. Only the landing that is about to start talks to the stand-in.
+  assert.equal(run('horde.mjs', ['config', 'set', 'ygCommand', command], dir).code, 0);
+  // Five seconds, not ten minutes. The ceiling under test is the mechanism, not the number — a
+  // suite that waited out the shipped default would be measuring patience.
+  assert.equal(run('horde.mjs', ['config', 'set', 'ygTimeoutMs', '5000'], dir).code, 0);
+
+  const startedAt = Date.now();
+  const started = run('land.mjs', [branch, '--background'], dir);
+  assert.equal(started.code, 0, started.stderr);
+  assert.equal(started.json.ticket, id);
+
+  const children = pidsLanding(branch);
+  assert.equal(children.length > 0, true, 'the detached landing is a real process this test can watch');
+  // Whatever this test proves or fails to prove, it leaves nothing of its own behind — landing and
+  // stand-in both, since killing the landing orphans the CLI it was blocked inside. The leak this
+  // test is about is exactly what an unfixed run would leave here.
+  const stubPattern = stub.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  t.after(() => {
+    for (const pid of [...stillAlive(children), ...stillAlive(pidsMatching(stubPattern))]) {
+      try { process.kill(pid, 'SIGKILL'); } catch { /* already gone, which is the point */ }
+    }
+  });
+
+  // Sixty seconds is the whole landing — the revert test's own `node --test` run, the gate, the git
+  // work — plus the ceilings the wedged CLI is stopped at. An unbounded run never reaches it, and
+  // never would: the old behaviour is not "slow", it is "never".
+  let doc = null;
+  const fileDeadline = Date.now() + 60000;
+  while (Date.now() < fileDeadline) {
+    try { doc = JSON.parse(readFileSync(started.json.resultFile, 'utf8')); break; } catch { /* not yet, or half-written */ }
+    execFileSync('sleep', ['0.25']);
+  }
+  // Two very different things look alike from here, so the message tells them apart: a run still
+  // alive with no result is the hang this test exists to catch; a run already gone with no result
+  // is the landing having refused for some other reason entirely (a Yggdrasil build rebuilt out
+  // from under the stand-in, say) and is a broken fixture, not a regression.
+  assert.ok(doc, stillAlive(children).length
+    ? `the landing wedged on \`yg check\` never wrote a result — it is still waiting, ${Math.round((Date.now() - startedAt) / 1000)}s in`
+    : `the landing ended without writing a result at all, ${Math.round((Date.now() - startedAt) / 1000)}s in — it refused before reaching the graph item, so this run measured nothing about the ceiling`);
+  assert.equal(doc.ticket, id);
+
+  // Stopped, and refused for being stopped: a hung graph read is never a green gate, and the note
+  // says what was stopped, how long it was given, and which setting raises it.
+  assert.equal(doc.ok, false, 'a landing whose graph check never answered must not report itself ready');
+  const graph = (doc.checks || []).find((c) => c.name === 'graph');
+  assert.ok(graph, `no graph item in the run's own checklist: ${(doc.checks || []).map((c) => c.name).join(', ')}`);
+  assert.equal(graph.ok, false);
+  assert.match(graph.note, /did not finish within 5s and was stopped/);
+  assert.match(graph.note, /ygTimeoutMs/);
+
+  const exitDeadline = Date.now() + 10000;
+  while (Date.now() < exitDeadline && stillAlive(children).length) execFileSync('sleep', ['0.25']);
+  assert.deepEqual(
+    stillAlive(children), [],
+    'the landing published its refusal and stayed alive anyway — the process the ceiling exists to end is still here',
+  );
+  // And the stand-in it was blocked inside is gone with it: a ceiling that ends the parent while
+  // leaving the wedged child running has moved the orphan, not removed it.
+  assert.deepEqual(
+    stillAlive(pidsMatching(stubPattern)), [],
+    'the stopped `yg check` is still running — the landing was stopped, the process it was waiting on was not',
   );
 });

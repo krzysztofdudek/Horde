@@ -1107,6 +1107,24 @@ It runs `config.gates.<level>` fresh on the branch's tree, every time. (`horde.m
 accepts a matching cached green for the trunk gate; that is its own call, about a mission already
 merged, and it stays there.)
 
+## nothing a landing runs waits forever
+
+Every blocking step of a landing carries a ceiling, and none of them is optional. The gate command,
+the revert test's `node --test` run and its `config.gates.commit` fallback, and a ticket's own
+`**Mutate:**` command all stop at `config.gateTimeoutMs` (default 15 minutes). Every call to the
+Yggdrasil CLI — `check`, the free half, the document reads, `drill`, the log writes — stops at
+`config.ygTimeoutMs` (default 10 minutes), under the gate's own limit so a landing wedged on the
+graph still gives up in time to write its refusal. A step that reaches its ceiling is stopped, and
+the item reports the stop and the setting to raise, never a quiet ✓.
+
+This matters most for `land.mjs <ticket> --background`, which `tick.mjs` starts for every branch
+ready to land: that run is detached and unreffed, so nothing waits on it and nothing reaps it. Under
+the old unbounded reads, a `yg check` that wedged — a worktree removed under it, a slow disk — left a
+process with no parent, no limit and nobody watching, and it stayed until the machine was rebooted.
+The fix is the ceiling on the step, not a watchdog over the process: a reaper would have to identify
+its own orphans from outside, by argv or by a pid file, and both can end up killing something that
+was never this repository's to kill.
+
 ## a ticket started from an unmerged dependency (a stack)
 
 A chain of three tickets used to cost three waves of wall-clock: each waited for the one before it

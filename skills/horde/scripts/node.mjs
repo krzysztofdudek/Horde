@@ -119,6 +119,38 @@ export function ygCommand(cfg) {
   return { cmd: parts[0] || 'yg', prefix: parts.slice(1), display: parts.join(' ') || 'yg' };
 }
 
+// How long any one call to that CLI is allowed to take before it is stopped. A CLI that hangs is
+// not an answer about the graph — and, unlike a CLI that refuses, it is an answer that never
+// arrives at all. That matters here more than anywhere else in this tool set because of who runs
+// these calls: `land.mjs --background` detaches itself, unrefs the child and returns, so nothing
+// is left waiting on the process that reads the graph. A `yg check` that wedges inside one of
+// those — a worktree deleted out from under it, a network disk, a graph large enough to thrash —
+// leaves a process with no parent, no limit and nobody to notice, and it stays there until the
+// machine is rebooted. Every call below therefore runs under a ceiling, and a call that reaches it
+// is reported as a stopped non-answer rather than waited on.
+//
+// Ten minutes, and configurable as `config.ygTimeoutMs`. It is a ceiling, not a wait: no healthy
+// call comes near it, and its only job is to be far above the slowest honest `yg check --details`
+// on a large graph while still being finite. It sits deliberately under the 15-minute
+// `config.gateTimeoutMs` the landing gate gives the repository's own test command, so that when a
+// landing does wedge on the graph it gives up in time to still write its own refusal.
+const YG_TIMEOUT_MS = 10 * 60 * 1000;
+export function ygTimeout(cfg) {
+  const asked = Number(cfg && cfg.ygTimeoutMs);
+  return Number.isFinite(asked) && asked > 0 ? asked : YG_TIMEOUT_MS;
+}
+
+// The options every call site hands `startCli`, with the ceiling filled in from config. Written
+// once so a new call site cannot quietly be the one without a limit.
+//
+// SIGTERM, not SIGKILL, and said here rather than left to `execFileSync`'s default: `yg` holds the
+// graph's lock file open while it records verdicts, and a process killed outright mid-write leaves
+// a lock a person then has to repair by hand. Letting a stopped run unwind costs a moment and is
+// worth it.
+function ygOpts(cfg, opts = {}) {
+  return { timeout: ygTimeout(cfg), killSignal: 'SIGTERM', ...opts };
+}
+
 // The release line these machine documents arrived in. Checked by schema name, never by comparing
 // version numbers (`ygJson`'s own `parsed.schema === schema` test, below) — this constant names
 // nothing more than what the refusal tells a person to install. Horde tracks the family's own
@@ -132,7 +164,7 @@ const YG_DOCUMENTS = 'yg-node/1, yg-context/1 and yg-impact/1';
 function ygVersion(cfg) {
   const { cmd, prefix } = ygCommand(cfg);
   try {
-    return execFileSync(cmd, [...prefix, '--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    return execFileSync(cmd, [...prefix, '--version'], ygOpts(cfg, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })).trim();
   } catch {
     return null;
   }
@@ -170,17 +202,39 @@ function failStaleCli(cfg, command, saw, docs = YG_DOCUMENTS) {
   );
 }
 
-// Starting the CLI, once. Three outcomes are told apart because they mean different things:
-// the program ran and said something (whatever its exit code), the program does not exist, and
-// the machine could not start a process at all. The last is not an answer about anything — it
-// happens under load, and reading it as "the graph refuses" would turn a busy laptop into an
-// architecture verdict — so it is retried once and then named for what it is.
+// Starting the CLI, once. Four outcomes are told apart because they mean different things:
+// the program ran and said something (whatever its exit code), the program does not exist, the
+// machine could not start a process at all, and the program started but never finished. The third
+// is not an answer about anything — it happens under load, and reading it as "the graph refuses"
+// would turn a busy laptop into an architecture verdict — so it is retried once and then named for
+// what it is.
+//
+// The fourth is the one that used to have no name at all, because there was no limit for it to
+// reach: without a timeout the call simply never returned, and in a detached background landing
+// that is a process left running forever. It is never retried — a second run of a command that
+// hangs is a second wait of the same length for the same non-answer — and it is never folded into
+// `spawnFailed` either, because "this machine is busy, try again" is the wrong advice for a run
+// that started fine and then stopped coming back.
+//
+// Every caller passes a ceiling through `ygOpts`; one is filled in here as well, so a call site
+// that forgets still cannot be the one that hangs.
 function startCli(cmd, args, opts) {
+  const asked = Number(opts && opts.timeout);
+  const limit = Number.isFinite(asked) && asked > 0 ? asked : YG_TIMEOUT_MS;
+  const bounded = { ...opts, timeout: limit, killSignal: (opts && opts.killSignal) || 'SIGTERM' };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      return { out: execFileSync(cmd, args, opts), code: 0, err: '' };
+      return { out: execFileSync(cmd, args, bounded), code: 0, err: '' };
     } catch (e) {
       if (e.code === 'ENOENT') return { missing: true };
+      if (e.code === 'ETIMEDOUT' || (e.signal === bounded.killSignal && (e.status === undefined || e.status === null))) {
+        return {
+          timedOut: true,
+          ms: limit,
+          out: (e.stdout && e.stdout.toString()) || '',
+          err: (e.stderr && e.stderr.toString()) || '',
+        };
+      }
       const exited = e.status !== undefined && e.status !== null;
       if (exited) {
         return {
@@ -193,6 +247,14 @@ function startCli(cmd, args, opts) {
     }
   }
   return { spawnFailed: 'unknown' };
+}
+
+// The one sentence every "it was stopped" message is built from, so the limit, the way to raise it
+// and the reason are worded identically wherever a caller surfaces one.
+function timedOutDetail(ms) {
+  return `it did not finish within ${Math.round(ms / 1000)}s and was stopped — a command that never `
+    + 'returns is not an answer about the graph, and a landing that waits on one never ends. Raise '
+    + 'the limit with: horde.mjs config set ygTimeoutMs <milliseconds>';
 }
 
 // One call to the CLI asking for one machine document. Returns a state rather than throwing, so
@@ -211,10 +273,13 @@ function startCli(cmd, args, opts) {
 export function ygJson(root, cfg, args, schema) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], {
+  const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, {
     cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
-  });
+  }));
   if (run.missing) return { state: 'no-cli', command };
+  if (run.timedOut) {
+    return { state: 'error', command, code: null, detail: timedOutDetail(run.ms) };
+  }
   if (run.spawnFailed) {
     return {
       state: 'error',
@@ -317,14 +382,30 @@ export function ygImpact(root, cfg, node) {
 // reason, never a checklist that stops halfway.
 export function ygAvailable(cfg, cwd) {
   const { cmd, prefix } = ygCommand(cfg);
-  const run = startCli(cmd, [...prefix, '--version'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  return !(run.missing || run.spawnFailed) && run.code === 0;
+  const run = startCli(cmd, [...prefix, '--version'], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+  return !(run.missing || run.spawnFailed || run.timedOut) && run.code === 0;
 }
+
+// A `check` that was stopped at the ceiling is reported as available (the CLI is there, it started,
+// it simply never came back) and not ok, with the stop as its summary. Never as unavailable: the
+// caller's words for that are "install the CLI", which would send somebody to fix the one thing
+// that is not wrong.
 export function runYgCheck(cfg, cwd, extra = []) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const args = ['check', ...extra];
   const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
+  if (run.timedOut) {
+    return {
+      available: true,
+      ok: false,
+      timedOut: true,
+      exit: null,
+      command,
+      out: run.out + run.err,
+      summary: timedOutDetail(run.ms),
+    };
+  }
   if (run.missing || run.spawnFailed) {
     return { available: false, ok: false, command, summary: null, out: '' };
   }
@@ -357,7 +438,12 @@ export function fillDeterministic(cfg, cwd) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const args = ['check', '--approve', '--only-deterministic'];
   const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
+  if (run.timedOut) {
+    return {
+      available: true, ok: false, timedOut: true, exit: null, command, out: timedOutDetail(run.ms),
+    };
+  }
   if (run.missing || run.spawnFailed) return { available: false, ok: false, command, out: '' };
   return {
     available: true, ok: run.code === 0, exit: run.code, command, out: run.out + run.err,
@@ -376,9 +462,12 @@ const PENDING_RE = /No valid verdict for aspect '([^']+)' on (file|node):(.+?)\.
 // verifier off to judge what a command answers for nothing.
 export function pendingProsePairs(cfg, cwd) {
   const res = runYgCheck(cfg, cwd, ['--details']);
-  if (!res.available) {
+  // A run that was stopped listed nothing, which is not the same as "nothing is pending" — reading
+  // its truncated output as an empty list would hand a caller a confident "no prose rule waits" off
+  // a command that never got to the end of the graph.
+  if (!res.available || res.timedOut) {
     return {
-      available: false, command: res.command, pairs: [], scriptPending: [],
+      available: false, timedOut: !!res.timedOut, command: res.command, pairs: [], scriptPending: [],
     };
   }
   const candidates = [];
@@ -604,7 +693,12 @@ export function runDrill(root, cfg, aspect) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const args = ['drill', '--aspect', aspect];
   const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
+  if (run.timedOut) {
+    return {
+      available: true, command, read: false, timedOut: true, out: timedOutDetail(run.ms), cases: 0, green: false,
+    };
+  }
   if (run.missing || run.spawnFailed) return { available: false, command };
   const out = `${run.out || ''}${run.err || ''}`;
   const m = DRILL_SUMMARY_RE.exec(out);
@@ -722,7 +816,7 @@ function logToNodes(root, cfg, nodes, reason) {
   const missed = [];
   for (const node of nodes) {
     try {
-      execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+      execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], ygOpts(cfg, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }));
       logged.push(node);
     } catch {
       missed.push(node);
@@ -764,8 +858,9 @@ function logToAspect(root, cfg, aspectId, reason, { status, evidence, by } = {})
   if (status) args.push('--status', status, '--evidence', evidence);
   if (by) args.push('--by', by);
   const command = `${yg.display} ${args.join(' ')}`;
-  const run = startCli(yg.cmd, [...yg.prefix, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  const run = startCli(yg.cmd, [...yg.prefix, ...args], ygOpts(cfg, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
   if (run.missing) { failNoCli(cfg, command); return null; }
+  if (run.timedOut) { fail(`\`${command}\` — ${timedOutDetail(run.ms)}`); return null; }
   if (run.spawnFailed) {
     fail(`\`${command}\` — this machine could not start the process (${run.spawnFailed}), twice — try again with less running at once.`);
     return null;
@@ -786,7 +881,7 @@ function tryLogAspect(root, cfg, aspectId, reason, { by } = {}) {
     const yg = ygCommand(cfg);
     const args = ['aspects', 'log', 'add', '--aspect', aspectId, '--reason', reason];
     if (by) args.push('--by', by);
-    execFileSync(yg.cmd, [...yg.prefix, ...args], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    execFileSync(yg.cmd, [...yg.prefix, ...args], ygOpts(cfg, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }));
     return true;
   } catch {
     return false;
@@ -860,6 +955,7 @@ function places(n) {
 }
 
 function drillSentence(drill) {
+  if (drill.timedOut) return 'its cases were still running when the run was stopped at the time limit';
   if (!drill.read) return 'its cases could not be read';
   if (drill.cases === 0) return 'it has no cases to run';
   return `${drill.pass} of ${drill.cases} cases answered as written (${drill.miss} miss, ${drill.falseAlarm} false alarm)`;
@@ -1548,7 +1644,7 @@ function findGraphItem(items, ref) {
 function logNodeTakeover(root, cfg, node, reason) {
   try {
     const yg = ygCommand(cfg);
-    execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], ygOpts(cfg, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }));
     return true;
   } catch {
     return false;
@@ -1672,7 +1768,7 @@ function cmdShow(horde, root, cfg, positional, flags, info) {
   let log = '(no log yet)';
   try {
     const { cmd, prefix } = ygCommand(cfg);
-    log = execFileSync(cmd, [...prefix, 'log', 'read', '--node', node], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim() || log;
+    log = execFileSync(cmd, [...prefix, 'log', 'read', '--node', node], ygOpts(cfg, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] })).toString().trim() || log;
   } catch { /* no entries yet — keep the placeholder */ }
   const rules = nodeRules(root, cfg, node);
   const result = withProvenance({
@@ -1703,7 +1799,7 @@ function cmdLog(horde, root, cfg, positional, flags, info) {
   const cmd = `${yg.display} log add --node ${node} --reason "${reason.replace(/"/g, '\\"')}"`;
   if (flags.run) {
     try {
-      execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+      execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], ygOpts(cfg, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }));
     } catch (e) {
       fail(`${yg.display} log add failed: ${e.message}`);
     }

@@ -307,10 +307,14 @@ function parseNodeTestSummary(output) {
   return { tests: extract('tests'), pass: extract('pass'), fail: extract('fail') };
 }
 
+// Whatever the command said, on any exit — except a run stopped at `opts.timeout`, which said
+// nothing worth reading and comes back as null so the caller can report the stop rather than parse
+// a half-finished transcript as a result.
 function runCapture(cmd, args, opts) {
   try {
     return execFileSync(cmd, args, { encoding: 'utf8', ...opts }).toString();
   } catch (e) {
+    if (e.code === 'ETIMEDOUT') return null;
     return (e.stdout ? e.stdout.toString() : '') + (e.stderr ? e.stderr.toString() : '');
   }
 }
@@ -372,14 +376,29 @@ function mutateCommand(issueText) {
 // possible in general). Shared by both revert-test variants below — the only difference between
 // them is how `tmp` came to hold the file and what state its implementation is in when this runs.
 function runTestFileFor(tmp, relPath, cfg) {
+  // Both runners here execute whatever the branch or the repository configured, on a landing that
+  // may be running detached with nothing waiting on it, so both run under the same ceiling the
+  // gate command does. A run that reaches it is not a pass — it is a run that told us nothing.
+  const timeout = gateTimeout(cfg);
+  const stopped = `did not finish within ${Math.round(timeout / 1000)}s and was stopped — a test run that hangs proves nothing; raise the limit with: horde.mjs config set gateTimeoutMs <milliseconds>`;
   if (/\.(m?js|c?js)$/.test(relPath)) {
-    const out = runCapture('node', ['--test', relPath], { cwd: tmp, env: childTestEnv() });
+    const out = runCapture('node', ['--test', relPath], {
+      cwd: tmp, env: childTestEnv(), timeout, killSignal: 'SIGTERM',
+    });
+    if (out === null) return { path: relPath, ok: false, note: stopped };
     const summary = parseNodeTestSummary(out);
     return { path: relPath, ok: (summary.fail ?? 0) > 0, note: `${summary.fail ?? '?'} fail / ${summary.tests ?? '?'} tests` };
   }
   if (cfg.gates && cfg.gates.commit) {
     let failed = false;
-    try { execSync(cfg.gates.commit, { cwd: tmp, stdio: 'pipe' }); } catch { failed = true; }
+    let timedOut = false;
+    try {
+      execSync(cfg.gates.commit, { cwd: tmp, stdio: 'pipe', timeout });
+    } catch (e) {
+      failed = true;
+      timedOut = e.killed === true || e.signal === 'SIGTERM';
+    }
+    if (timedOut) return { path: relPath, ok: false, note: `gates.commit ${stopped}` };
     return { path: relPath, ok: failed, note: failed ? 'gates.commit red (whole command — no test-only isolation available)' : 'gates.commit green — not load-bearing' };
   }
   return { path: relPath, ok: false, note: 'no runner available (not a node test file, and no gates.commit configured)' };
@@ -432,8 +451,11 @@ function runMutateVariant(root, cfg, branch, mutate, newTestFiles) {
   const tmp = info.path;
   try {
     try {
-      execSync(mutate, { cwd: tmp, stdio: 'pipe' });
+      execSync(mutate, { cwd: tmp, stdio: 'pipe', timeout: gateTimeout(cfg) });
     } catch (e) {
+      if (e.killed === true || e.signal === 'SIGTERM') {
+        return { ok: false, note: `mutate command did not finish within ${Math.round(gateTimeout(cfg) / 1000)}s and was stopped: ${mutate} — raise the limit with: horde.mjs config set gateTimeoutMs <milliseconds>` };
+      }
       const detail = ((e.stderr ? e.stderr.toString() : '') || e.message || '').split('\n')[0];
       return { ok: false, note: `mutate command failed to run: ${mutate}${detail ? ` — ${detail}` : ''}` };
     }
@@ -563,9 +585,14 @@ function checkGraph(cfg, worktree, noGate) {
       note: `cannot run \`${filled.command}\` — the graph's own verdict is part of the gate; install the Yggdrasil CLI, or point config.ygCommand at it (horde.mjs config set ygCommand "node path/to/bin.js")`,
     };
   }
+  // A half that was stopped at its ceiling ends the item here, rather than falling through to ask
+  // the same wedged command the same question twice more (the full check, then `--details`) and
+  // spending a ceiling on each. One stop is the answer; a red graph is a red gate.
+  if (filled.timedOut) return { ok: false, note: `\`${filled.command}\` — ${filled.out}` };
 
   const res = runYgCheck(cfg, worktree);
   if (res.ok) return { ok: true, note: `${res.command} green${res.summary ? ` — ${res.summary}` : ''}` };
+  if (res.timedOut) return { ok: false, note: `\`${res.command}\` — ${res.summary}` };
 
   const pending = pendingProsePairs(cfg, worktree);
   if (pending.scriptPending.length) {
@@ -1451,6 +1478,23 @@ function finish(horde, ticketId, result, head, flags, parent, level) {
 // `--background` is the same run, started and let go of: the caller gets the path of the file the
 // run will write and stops waiting. Nothing reads that file here — a landing never trusts a
 // recorded result, its own or anyone's — it is written for whatever asks later what happened.
+//
+// This is the one command in the tool set that deliberately outlives its caller: detached,
+// unreffed, answering only through that file. Nothing waits on it and nothing reaps it, which is
+// exactly what makes an unbounded wait inside it dangerous — a step that never returns is a
+// process with no parent that stays until the machine is rebooted.
+//
+// There is no reaper for it, and that is a decision rather than an omission. Every blocking step a
+// landing takes now carries its own ceiling — the gate command and both revert-test runners at
+// `config.gateTimeoutMs`, every call to the Yggdrasil CLI at `config.ygTimeoutMs` — so the run has
+// a bounded life by construction, and a watchdog would be a second mechanism guarding against
+// nothing left unbounded. Building one would mean identifying "our" processes from outside: by
+// argv through `pgrep` (not portable, and it reads other hordes' and other repositories' landings
+// as ours), or by a pid file (which outlives the process and points at a reused pid). Both trade a
+// bounded wait for the chance of killing something that was never ours, which is a worse failure
+// than the one being fixed. Reconcile settles *state* — queue rows and abandoned gate locks, which
+// are this repository's own files and mean exactly one thing; killing operating-system processes on
+// a guess is not the same authority, and it is not taken here.
 function startInBackground(horde, ticketId, argv) {
   const self = fileURLToPath(import.meta.url);
   const args = argv.filter((a) => a !== '--background');
