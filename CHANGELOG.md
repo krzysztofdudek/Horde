@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A command now works on the tree you named — a worker's own worktree, a specific worktree by path, or the mission's shared trunk — and refuses rather than guess when none was named and the working copy it would otherwise touch is not the right one. `worktree.copy` is a new setting: files copied into every new worktree the moment it is made, for whatever a worker's tools need that git itself does not check out.
 - A plan can be written to a file. `queue plan --out <file>` puts the whole plan where the architect reads it, instead of a summary passed on in a message. A real mission lost its critical path in that summary.
 - The cost report counts reviewer calls. A worker who runs the architecture reviewer while landing a change bills a model per rule it judges, and the roster never saw that. The report now reads those calls from the repository's own record and prints them beside the agent runs, for the whole mission.
 - A merge is refused when a file the branch added belongs to no node. The mapping and the first file land in the same commit, or the branch waits.

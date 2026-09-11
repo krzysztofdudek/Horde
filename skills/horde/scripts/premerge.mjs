@@ -17,8 +17,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { execFileSync, execSync } from 'node:child_process';
 import {
-  repoRoot, hordePath, readJSON, writeJSON, readText, writeText, readConfig, git, fail, parseArgs,
-  asArray, emit, isMain, resolveHorde, parentBranchOf,
+  hordePath, readJSON, writeJSON, readText, writeText, readConfig, git, fail, parseArgs,
+  asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine, withProvenance,
 } from './_lib.mjs';
 import {
   ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, globToRegExp, pathInBoundary, ticketBoundary, ygFileContext, ygAvailable,
@@ -47,6 +47,9 @@ The checks, in order — ✓/✗ per line, non-zero exit on any ✗:
 --level selects the gate command (config.gates.team or .trunk; default team — "trunk" is only for
 a branch landing directly on <horde>/trunk; "team" is no longer a value you pass, only the
 default). --no-gate skips items 4 and 5 (informational: pass).
+
+--tree <path> reads the graph checks from that worktree instead of the tip of trunk (--horde
+alone means trunk); the result and --json end with "tree: <path> · branch: <branch> · <sha>".
 
 options: --json  --help`;
 
@@ -450,7 +453,7 @@ function checkJournal(text, branch) {
 
 // ---- main -------------------------------------------------------------------------
 
-function run(horde, root, cfg, branch, level, noGate, flags) {
+function run(horde, root, cfg, branch, level, noGate, flags, info) {
   const branchSha = git(['rev-parse', '--verify', branch]);
   if (!branchSha) fail(`no such branch: ${branch}`);
 
@@ -492,7 +495,7 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
   checks.push({ name: 'graph text', ...checkGraphText(root, branch, parentBranch, changedFiles) });
 
   const allOk = checks.every((c) => c.ok);
-  const result = {
+  const result = withProvenance({
     branch,
     level,
     ticket: ticketId,
@@ -501,11 +504,12 @@ function run(horde, root, cfg, branch, level, noGate, flags) {
     stackedOn: parent.stacked ? parent.stackedOn : null,
     checks,
     ok: allOk,
-  };
+  }, info);
   emit(result, flags, () => [
     `premerge ${branch} (level: ${level})${parent.stacked ? ` · stacked on ${parent.stackedOn}` : ''}`,
     ...checks.map((c) => `${c.ok ? '✓' : '✗'} ${c.name} — ${c.note}`),
     allOk ? 'READY' : 'NOT READY',
+    provenanceLine(info),
   ].join('\n'));
   if (!allOk) process.exit(1);
 }
@@ -520,10 +524,11 @@ function main() {
   const level = flags.level || 'team';
 
   const horde = resolveHorde(flags);
-  const root = repoRoot();
+  const info = resolveTree({ tree: flags.tree, horde: flags.horde });
+  const root = info.path;
   const cfg = readConfig() || {};
 
-  run(horde, root, cfg, branch, level, !!flags['no-gate'], flags);
+  run(horde, root, cfg, branch, level, !!flags['no-gate'], flags, info);
 }
 
 if (isMain(import.meta.url)) main();

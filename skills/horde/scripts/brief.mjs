@@ -20,8 +20,8 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  repoRoot, hordePath, teamPath, readJSON, readText, readConfig, fail, parseArgs, asArray, emit,
-  isMain, resolveHorde, parentBranchOf,
+  hordePath, teamPath, readJSON, readText, readConfig, fail, parseArgs, asArray, emit,
+  isMain, resolveHorde, parentBranchOf, resolveTree,
 } from './_lib.mjs';
 import { nodeExists, readNodePortsText, ticketNodes } from './node.mjs';
 
@@ -302,16 +302,19 @@ function takeoverBlockFor(horde, t) {
   ].join('\n');
 }
 
-function cmdArchitect(horde, root, cfg, flags) {
+function cmdArchitect(horde, cfg, flags) {
   const name = requireName(flags);
+  const info = resolveTree({ tree: flags.tree, horde });
   const vars = {
-    repoRoot: root,
+    repoRoot: info.path,
     name, horde,
-    charterPath: charterPath(root, horde),
+    charterPath: charterPath(info.path, horde),
     reportsTo: reportsToFor('architect', horde, { name }),
   };
   const brief = renderRole('architect', vars);
-  emit({ role: 'architect', name, brief }, flags, () => brief);
+  emit({
+    role: 'architect', name, brief, tree: info.path, branch: info.branch, sha: info.sha,
+  }, flags, () => brief);
 }
 
 // The branch this ticket is cut from, and the paragraph that says so when it is not the one
@@ -331,24 +334,32 @@ function stackNoteFor(parent) {
   ].join('\n');
 }
 
-function cmdWorker(horde, root, cfg, positional, flags) {
+function cmdWorker(horde, cfg, positional, flags) {
   const rawId = positional[0];
   if (!rawId) fail('worker requires <ticket>');
   const name = requireName(flags);
   const t = findTicket(horde, rawId);
   if (!t) fail(`no such ticket: ${rawId}`);
   if (!t.queueItem) fail(`ticket ${rawId} has no queue item yet (queue.mjs set <id> running creates it)`);
+  // The worker's own worktree, already an absolute path from cmdSet's provisionTree — resolveTree
+  // is not asked to re-verify it here: it would insist the tree actually exist as a registered
+  // worktree of this repository, which a queue item seeded by hand (a fixture, a pre-migration
+  // mission read as history) never was and never needs to be just to render a brief. Reading the
+  // node's own ports, though, is a graph read like any other command's — `--tree`/`--horde` if
+  // given, cwd otherwise, never assumed to be the ticket's own tree (nothing has run there yet).
+  const worktree = t.queueItem.worktree;
+  const root = resolveTree({ tree: flags.tree, horde: flags.horde }).path;
   const nodes = ticketNodes(t.issueText);
   const title = ticketTitle(t.issueText);
   const parent = parentBranchOf(horde, t.team, t.queueItem, { cwd: root });
   const vars = {
-    repoRoot: root,
+    repoRoot: worktree,
     name, horde, team: t.team,
     ticketId: t.id, ticketTitle: title,
     node: nodes.join(', ') || null,
     parentBranch: parent.branch,
     stackNote: stackNoteFor(parent),
-    worktree: t.queueItem.worktree,
+    worktree,
     branch: t.queueItem.branch,
     fastCheck: cfg.gates && cfg.gates.commit,
     fastCheckCount: fastCheckCount(horde),
@@ -361,7 +372,7 @@ function cmdWorker(horde, root, cfg, positional, flags) {
   };
   const brief = renderRole('worker', vars);
   emit({
-    role: 'worker', ticket: rawId, name, takeover: !!flags.takeover, brief,
+    role: 'worker', ticket: rawId, name, takeover: !!flags.takeover, brief, tree: worktree, branch: t.queueItem.branch,
   }, flags, () => brief);
 }
 
@@ -377,12 +388,11 @@ function main() {
   if (!ROLES.includes(role)) fail(`unknown role: ${role} (roles: ${ROLES.join(', ')})`);
 
   const horde = resolveHorde(flags);
-  const root = repoRoot();
   const cfg = readConfig() || {};
 
   switch (role) {
-    case 'architect': return cmdArchitect(horde, root, cfg, flags);
-    case 'worker': return cmdWorker(horde, root, cfg, positional, flags);
+    case 'architect': return cmdArchitect(horde, cfg, flags);
+    case 'worker': return cmdWorker(horde, cfg, positional, flags);
     default: fail(`unknown role: ${role}`);
   }
 }

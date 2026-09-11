@@ -16,7 +16,8 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  hordePath, teamPath, hordeRoot, repoRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, readLeases,
+  hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, readLeases,
+  resolveTree, provisionTree, provenanceLine, withProvenance,
 } from './_lib.mjs';
 import {
   findTicket, parseField, padId, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, createTicket, setTicketBody, acceptanceLines,
@@ -102,6 +103,11 @@ commands:
       ticket branch and goes to "queued" (worktree kept, noted);
       a clean worktree with no commit -> "queued", worktree removed. A "waiting" item is left
       untouched — it has nothing running to reconcile.
+
+plan and quality also take --tree <path>: read the graph there instead of the tip of trunk —
+--horde alone (no --tree) means trunk for both, which is why "plan --horde h" reads what trunk
+holds, never whatever the main checkout happens to have checked out. plan's own output ends with
+"tree: <path> · branch: <branch> · <sha>"; --json carries the same three fields.
 
 options: --json  --help`;
 
@@ -350,7 +356,8 @@ function cmdQuality(horde, positional, flags) {
     return;
   }
   const cfg = readConfig() || {};
-  const root = repoRoot();
+  const info = resolveTree({ tree: flags.tree, horde: flags.horde });
+  const root = info.path;
   const { source, text } = readAdvice(root, cfg, flags.from);
   if (!source) {
     emit({
@@ -419,7 +426,7 @@ function cmdQuality(horde, positional, flags) {
     });
   }
 
-  emit({
+  emit(withProvenance({
     policy,
     ran: true,
     source,
@@ -427,9 +434,9 @@ function cmdQuality(horde, positional, flags) {
     items: asArray(doc.items).length,
     filed,
     skipped,
-  }, flags, () => {
+  }, info), flags, () => {
     const head = `${source}: ${asArray(doc.items).length} item(s) — ${filed.length} ${flags['dry-run'] ? 'would be filed' : 'filed and queued'}, ${skipped.length} skipped`;
-    return [head, ...filed.map((f) => `  ${f.ticket || '(dry run)'}  ${f.node}  ${f.owner}  ${f.title}`)].join('\n');
+    return [head, ...filed.map((f) => `  ${f.ticket || '(dry run)'}  ${f.node}  ${f.owner}  ${f.title}`), provenanceLine(info)].join('\n');
   });
 }
 
@@ -461,7 +468,7 @@ function resolveStackParent(horde, team, key, item, raw) {
     fail(`--on ${raw}: ${ref.canonical} is ${ref.item.state} — only a running or landed ticket has a tip to start from; start ${ref.canonical} first, or run this one without --on`);
   }
   if (!ref.item.branch) fail(`--on ${raw}: ${ref.canonical} has no branch yet — nothing to start from`);
-  if (git(['rev-parse', '--verify', ref.item.branch], repoRoot()) === null) {
+  if (git(['rev-parse', '--verify', ref.item.branch], resolveTree({}).path) === null) {
     fail(`--on ${raw}: branch ${ref.item.branch} does not exist in this repository — ${ref.canonical} says it is ${ref.item.state}, so reconcile the queue (queue.mjs reconcile) before stacking on it`);
   }
   return { ticket: ref.canonical, branch: ref.item.branch };
@@ -481,7 +488,8 @@ function cmdSet(horde, positional, flags) {
 
   if (state === 'running') {
     const teamBranch = `${horde}/${team}`;
-    const root = repoRoot();
+    const cfg = readConfig() || {};
+    const root = resolveTree({ tree: flags.tree }).path;
     const stack = flags.on !== undefined ? resolveStackParent(horde, team, key, item, flags.on) : null;
     let branchName = item.branch;
     if (!branchName) {
@@ -498,9 +506,10 @@ function cmdSet(horde, positional, flags) {
       fail(`--on ${flags.on}: ${key} is already on branch ${branchName}, cut from somewhere else — a stack is chosen when the branch is cut, and moving one under work already done is a rebase this tool does not do; land or drop what is there first`);
     }
     const worktreePath = join(hordeRoot(), 'worktrees', horde, `t-${key}`);
-    if (!existsSync(worktreePath)) {
-      const added = git(['worktree', 'add', worktreePath, branchName], root);
-      if (added === null) fail(`could not create worktree at ${worktreePath} for ${branchName}`);
+    try {
+      provisionTree(worktreePath, branchName, cfg);
+    } catch (e) {
+      fail(e.message);
     }
     item.branch = branchName;
     item.worktree = worktreePath;
@@ -516,8 +525,9 @@ function cmdSet(horde, positional, flags) {
     const ticket = findTicket(horde, key);
     if (!ticket) fail(`ticket ${key} not found`);
     if (!flags.sha) fail('set merged requires --sha');
-    if (item.worktree) git(['worktree', 'remove', '--force', item.worktree], repoRoot());
-    if (item.branch) git(['branch', '-D', item.branch], repoRoot());
+    const mergeRoot = resolveTree({ tree: flags.tree }).path;
+    if (item.worktree) git(['worktree', 'remove', '--force', item.worktree], mergeRoot);
+    if (item.branch) git(['branch', '-D', item.branch], mergeRoot);
     item.worktree = null;
     if (flags.sha) item.sha = flags.sha;
     // Whatever was stacked on this ticket is stacked on nothing now: the work is on the team
@@ -672,7 +682,7 @@ function cmdNext(horde, positional, flags) {
   // Reused in-process, never shelled out: the same DAG `queue.mjs plan` derives, read straight off
   // this call's own buildPlan() so "longer remaining critical path" ranks against the plan's own
   // figures rather than a second, possibly stale, reading of the tickets.
-  const plan = buildPlan(horde, team, cfg);
+  const plan = buildPlan(horde, team, cfg, { tree: flags.tree });
   const remainingPath = new Map(plan.tickets.map((t) => [t.id, t.remainingPath]));
   const locks = runningLocks(horde, doc);
   const busyNodes = new Set(locks.flatMap((l) => l.nodes));
@@ -815,8 +825,8 @@ function manualDeps(ticketText, item) {
 // Exported so `wave.mjs start` can record the plan's own layers in the journal at the moment a
 // wave opens — the planned parallelism a wave close is later measured against has to be the
 // number this DAG actually produced, not a second derivation of it.
-export function buildPlan(horde, team, cfg) {
-  const root = repoRoot();
+export function buildPlan(horde, team, cfg, { tree } = {}) {
+  const root = resolveTree({ tree, horde }).path;
   const queue = load(horde, team);
   const items = new Map(queue.items.map((i) => [i.ticket, i]));
   // A ticket records its team as the path it sits at on disk ("trunk/alfa"); every address a
@@ -1113,7 +1123,8 @@ function renderPlan(plan) {
 function cmdPlan(horde, positional, flags) {
   const team = flags.team || 'trunk';
   const cfg = readConfig() || {};
-  const plan = buildPlan(horde, team, cfg);
+  const info = resolveTree({ tree: flags.tree, horde: flags.horde });
+  const plan = withProvenance(buildPlan(horde, team, cfg, { tree: info.path }), info);
   if (plan.cycles.length && plan.cycles[0].length) {
     fail(`the tickets depend on each other in a circle: ${plan.cycles[0].join(' → ')} — a plan cannot start any of them. Drop one of those dependencies (queue.mjs is not the place: the ticket that should not wait is edited with tk.mjs edit --consumes, or the manual --depends is removed) and run plan again`);
   }
@@ -1123,16 +1134,16 @@ function cmdPlan(horde, positional, flags) {
   // rendering; stdout then carries only where it went.
   if (flags.out) {
     const path = String(flags.out);
-    writeText(path, flags.json ? `${JSON.stringify(plan, null, 2)}\n` : `${renderPlan(plan)}\n`);
+    writeText(path, flags.json ? `${JSON.stringify(plan, null, 2)}\n` : `${renderPlan(plan)}\n${provenanceLine(info)}\n`);
     console.log(`plan written to ${path} — ${plan.tickets.length} ticket(s)`);
     return;
   }
   if (flags['apply-order']) {
     const applied = applyOrder(horde, team, plan);
-    emit({ ...plan, applied }, flags, () => `${renderPlan(plan)}\n\napplied: ${applied.length ? applied.map((a) => `${a.ticket} now depends on ${a.on}`).join(' · ') : 'nothing to apply'}`);
+    emit({ ...plan, applied }, flags, () => `${renderPlan(plan)}\n\napplied: ${applied.length ? applied.map((a) => `${a.ticket} now depends on ${a.on}`).join(' · ') : 'nothing to apply'}\n${provenanceLine(info)}`);
     return;
   }
-  emit(plan, flags, () => renderPlan(plan));
+  emit(plan, flags, () => `${renderPlan(plan)}\n${provenanceLine(info)}`);
 }
 
 // The one thing plan writes, and only when asked: the order it just proposed for a file lock,
@@ -1179,13 +1190,14 @@ function cmdRender(horde, positional, flags) {
 function cmdReconcile(horde, positional, flags) {
   const team = flags.team || 'trunk';
   const doc = load(horde, team);
+  const root = resolveTree({ tree: flags.tree }).path;
   const results = [];
   for (const item of doc.items) {
     if (item.state !== 'running' || !item.branch) continue;
     // Against the item's own parent: a stacked ticket carries its parent's commits too, and
     // counting those as its own work would call an untouched branch "landed" on the first pass.
     const parent = parentBranchOf(horde, team, item).branch;
-    const countOut = git(['rev-list', '--count', `${parent}..${item.branch}`], repoRoot());
+    const countOut = git(['rev-list', '--count', `${parent}..${item.branch}`], root);
     const count = countOut === null ? 0 : Number(countOut);
     if (count > 0) {
       item.state = 'landed';
@@ -1203,7 +1215,7 @@ function cmdReconcile(horde, positional, flags) {
     } else {
       item.state = 'queued';
       if (item.worktree) {
-        git(['worktree', 'remove', '--force', item.worktree], repoRoot());
+        git(['worktree', 'remove', '--force', item.worktree], root);
         item.worktree = null;
       }
     }

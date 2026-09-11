@@ -24,8 +24,8 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import {
-  hordePath, teamPath, repoRoot, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
-  parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig,
+  hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
+  parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
 } from './_lib.mjs';
 import {
   ticketBoundary, pathInBoundary, portExists,
@@ -372,7 +372,7 @@ function listFlag(value) {
 function checkFilesInBoundary(nodes, files) {
   if (files.length === 0) return;
   const cfg = readConfig() || {};
-  const root = repoRoot();
+  const root = resolveTree({}).path;
   const boundary = ticketBoundary(root, cfg, nodes);
   if (boundary.length === 0) return;
   const outside = files.filter((f) => !pathInBoundary(f, boundary));
@@ -416,7 +416,7 @@ export function allTickets(horde) {
 function checkConsumesHaveProducers(horde, consumes, selfId) {
   if (consumes.length === 0) return;
   const cfg = readConfig() || {};
-  const root = repoRoot();
+  const root = resolveTree({}).path;
   const tickets = allTickets(horde).filter((t) => t.id !== selfId);
   const missing = consumes.filter((c) => {
     if (portExists(root, cfg, c.node, c.port)) return false;

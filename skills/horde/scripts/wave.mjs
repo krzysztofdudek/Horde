@@ -15,7 +15,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   hordePath, teamPath, readText, writeText, appendText, readJSON, writeJSON, readConfig, today,
-  nowIso, repoRoot, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy,
+  nowIso, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy, resolveTree,
 } from './_lib.mjs';
 import { readCostLimit, sumEntries } from './cost.mjs';
 // queue.mjs imports this file too (noteMerged, parseEvidenceRows). The cycle is deliberate and
@@ -562,8 +562,7 @@ function coverageRatio(q) {
 }
 
 function measureQuality(cfg) {
-  let cwd;
-  try { cwd = repoRoot(); } catch { return { measured: false, why: 'no repository to measure' }; }
+  const cwd = resolveTree({}).path;
   const idx = ygQualityIndex(cfg, cwd);
   if (!idx.available) {
     return { measured: false, why: `${idx.why} — install it, or point config.ygCommand at it` };
@@ -757,7 +756,7 @@ function cmdClose(horde, positional, flags) {
   const policy = qualityPolicy(horde);
   let observed = [];
   try {
-    observed = observeAspects(horde, repoRoot(), cfg, n).observed;
+    observed = observeAspects(horde, resolveTree({}).path, cfg, n).observed;
   } catch {
     // A graph that cannot be read right now still gets its close; the rules simply gain no
     // observation from a wave nobody could measure.

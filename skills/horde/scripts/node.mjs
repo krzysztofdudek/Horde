@@ -21,8 +21,9 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  repoRoot, hordePath, readJSON, writeJSON, readText, writeText, readConfig, nowIso,
+  hordePath, readJSON, writeJSON, readText, writeText, readConfig, nowIso,
   fail, parseArgs, asArray, emit, isMain, resolveHorde, claimLease, qualityPolicy,
+  resolveTree, assertGraphWritable, provenanceLine, withProvenance,
 } from './_lib.mjs';
 
 const USAGE = `usage: node.mjs <command> [options]
@@ -88,6 +89,14 @@ commands:
       rule's own log, best-effort, saying who reached for it. There is no command here for a
       waiver or a review date — those weaken a rule too, and Yggdrasil already asks the user
       for them.
+
+Every command reads the graph from the tree named — --tree <path> (must be a worktree of this
+repository), --ticket NNN (that ticket's own worktree, --horde names whose), --scratch <sha>
+(a throwaway detached worktree at that sha), or cwd when none is given. --horde alone is only
+the multi-horde disambiguator, never a fourth scope — except for a graph write (log --run,
+promote, demote), where naming it means trunk, refused there: trunk is the landing script's
+alone. bind, show, log --run, promote and demote end with "tree: <path> · branch: <branch> ·
+<sha>"; --json carries the same three fields.
 
 options: --json  --help`;
 
@@ -828,7 +837,7 @@ function drillSentence(drill) {
   return `${drill.pass} of ${drill.cases} cases answered as written (${drill.miss} miss, ${drill.falseAlarm} false alarm)`;
 }
 
-function cmdPromote(horde, root, cfg, positional, flags) {
+function cmdPromote(horde, root, cfg, positional, flags, info) {
   const aspect = positional[0];
   if (!aspect) fail('promote requires <aspect>');
   if (qualityPolicy(horde) === 'only-the-work') {
@@ -961,7 +970,7 @@ function cmdPromote(horde, root, cfg, positional, flags) {
   });
   saveGraph(horde, graph);
 
-  emit({
+  emit(withProvenance({
     aspect,
     from: status,
     to,
@@ -976,7 +985,7 @@ function cmdPromote(horde, root, cfg, positional, flags) {
     pointerMissed,
     reset,
     evidence,
-  }, flags, () => [
+  }, info), flags, () => [
     `"${aspect}" raised ${status} → ${to} — ${drillSentence(drill)}`
     + (to === 'enforced' ? `, ${clean.length} clean waves, nothing outstanding` : `, baseline ${after.refused}`),
     `recorded in the rule's own log (${ygCommand(cfg).display} aspects log read --aspect ${aspect})`,
@@ -988,10 +997,11 @@ function cmdPromote(horde, root, cfg, positional, flags) {
       ...(pointerMissed.length ? [`could not point to it on: ${pointerMissed.join(', ')}`] : []),
     ] : []),
     'the chairman sees it at wave close and can undo it there',
+    provenanceLine(info),
   ].join('\n'));
 }
 
-function cmdDemote(horde, root, cfg, positional, flags) {
+function cmdDemote(horde, root, cfg, positional, flags, info) {
   const aspect = positional[0];
   if (!aspect) fail('demote requires <aspect>');
   const to = flags.to;
@@ -1054,11 +1064,12 @@ function cmdDemote(horde, root, cfg, positional, flags) {
   });
   saveGraph(horde, graph);
 
-  emit({
+  emit(withProvenance({
     aspect, from: status, to, by: 'user', why, at, logged, missed,
-  }, flags, () => [
+  }, info), flags, () => [
     `"${aspect}" lowered ${status} → ${to} on the chairman's word`,
     logged.length ? `recorded in the log of: ${logged.join(', ')}` : 'no node log to record it in',
+    provenanceLine(info),
   ].join('\n'));
 }
 
@@ -1454,14 +1465,14 @@ function logNodeTakeover(root, cfg, node, reason) {
   }
 }
 
-function cmdBind(horde, root, cfg, positional, flags) {
+function cmdBind(horde, root, cfg, positional, flags, info) {
   const node = positional[0];
   if (!node) {
     const nodes = listAllNodes(root);
     // Ask the graph about one real node, so "readable" means the documents answered rather than
     // that a directory exists: an unreadable graph or a CLI that predates them stops here.
     if (nodes.length) ygNode(root, cfg, nodes[0]);
-    emit({ nodes }, flags, () => `graph readable through ${ygCommand(cfg).display} — ${nodes.length} node(s): ${nodes.join(', ') || '(none)'}`);
+    emit(withProvenance({ nodes }, info), flags, () => `graph readable through ${ygCommand(cfg).display} — ${nodes.length} node(s): ${nodes.join(', ') || '(none)'}\n${provenanceLine(info)}`);
     return;
   }
 
@@ -1562,7 +1573,7 @@ function cmdMap(horde, root, cfg, flags) {
   });
 }
 
-function cmdShow(horde, root, cfg, positional, flags) {
+function cmdShow(horde, root, cfg, positional, flags, info) {
   const node = positional[0];
   if (!node) fail('show requires <node>');
   if (!nodeExists(root, cfg, node)) fail(`no such node in the graph: ${node}`);
@@ -1575,7 +1586,7 @@ function cmdShow(horde, root, cfg, positional, flags) {
     log = execFileSync(cmd, [...prefix, 'log', 'read', '--node', node], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim() || log;
   } catch { /* no entries yet — keep the placeholder */ }
   const rules = nodeRules(root, cfg, node);
-  const result = {
+  const result = withProvenance({
     node,
     type: doc.type || null,
     description: doc.description || null,
@@ -1583,7 +1594,7 @@ function cmdShow(horde, root, cfg, positional, flags) {
     ports: doc.ports || {},
     rules,
     log,
-  };
+  }, info);
   emit(result, flags, () => [
     `# ${node}${doc.type ? ` [${doc.type}]` : ''}`, '',
     `**Boundary:** ${boundary.join(', ') || '(none)'}`, '',
@@ -1592,10 +1603,11 @@ function cmdShow(horde, root, cfg, positional, flags) {
     '## Ports — what it promises its neighbours', '',
     ports, '',
     '## Log', log,
+    provenanceLine(info),
   ].join('\n'));
 }
 
-function cmdLog(horde, root, cfg, positional, flags) {
+function cmdLog(horde, root, cfg, positional, flags, info) {
   const [node, reason] = positional;
   if (!node || !reason) fail('log requires <node> "<reason>"');
   const yg = ygCommand(cfg);
@@ -1606,7 +1618,7 @@ function cmdLog(horde, root, cfg, positional, flags) {
     } catch (e) {
       fail(`${yg.display} log add failed: ${e.message}`);
     }
-    emit({ node, reason, ran: true }, flags, () => `ran: ${cmd}`);
+    emit(withProvenance({ node, reason, ran: true }, info), flags, () => `ran: ${cmd}\n${provenanceLine(info)}`);
     return;
   }
   emit({ node, reason, command: cmd }, flags, () => cmd);
@@ -1848,13 +1860,32 @@ function main() {
   if (!cmd) fail('missing command (see --help)');
 
   const horde = resolveHorde(flags);
-  const root = repoRoot();
   const cfg = readConfig() || {};
 
-  if (cmd === 'bind') return cmdBind(horde, root, cfg, rest, flags);
+  // Every read here takes the same three scope flags resolveTree offers a command with no horde
+  // scope of its own — `--tree`, `--ticket`, `--scratch` — but `--horde` alone is never a fourth:
+  // it is only ever the disambiguator `resolveHorde` already spent above, never a second signal
+  // for "read trunk instead" (a repository running more than one horde still passes `--horde` on
+  // an ordinary read, and cwd — not trunk — is still where its uncommitted graph edits are).
+  // `--ticket` still needs a horde name to build its path from, though, so it borrows the one
+  // already resolved rather than insisting the caller type `--horde` a second time just for that.
+  // A graph write (log --run, promote, demote) is the one place `--horde` alone DOES mean trunk,
+  // held to the rule that trunk is the landing script's alone, and cwd sitting on the mission's
+  // own base branch is almost always the wrong tree found by accident — `--tree` named explicitly
+  // is what actually authorises either.
+  const isGraphWrite = cmd === 'promote' || cmd === 'demote' || (cmd === 'log' && flags.run);
+  const info = isGraphWrite
+    ? resolveTree({ tree: flags.tree, horde: flags.horde })
+    : resolveTree({
+      tree: flags.tree, ticket: flags.ticket, scratch: flags.scratch, horde: flags.ticket ? horde : undefined,
+    });
+  const root = info.path;
+  if (isGraphWrite) assertGraphWritable(info, { horde, cfg });
+
+  if (cmd === 'bind') return cmdBind(horde, root, cfg, rest, flags, info);
   if (cmd === 'map') return cmdMap(horde, root, cfg, flags);
-  if (cmd === 'show') return cmdShow(horde, root, cfg, rest, flags);
-  if (cmd === 'log') return cmdLog(horde, root, cfg, rest, flags);
+  if (cmd === 'show') return cmdShow(horde, root, cfg, rest, flags, info);
+  if (cmd === 'log') return cmdLog(horde, root, cfg, rest, flags, info);
   if (cmd === 'contract') {
     const [sub, ...subRest] = rest;
     if (sub === 'propose') return cmdContractPropose(horde, root, cfg, subRest, flags);
@@ -1870,8 +1901,8 @@ function main() {
   if (cmd === 'veto') return cmdProposalRule(horde, rest, flags, 'vetoed');
   if (cmd === 'apply') return cmdApply(horde, root, cfg, rest, flags);
   if (cmd === 'ladder') return cmdLadder(horde, root, cfg, flags);
-  if (cmd === 'promote') return cmdPromote(horde, root, cfg, rest, flags);
-  if (cmd === 'demote') return cmdDemote(horde, root, cfg, rest, flags);
+  if (cmd === 'promote') return cmdPromote(horde, root, cfg, rest, flags, info);
+  if (cmd === 'demote') return cmdDemote(horde, root, cfg, rest, flags, info);
   fail(`unknown command: ${cmd} (see --help)`);
 }
 

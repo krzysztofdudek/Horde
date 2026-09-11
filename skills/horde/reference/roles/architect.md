@@ -7,7 +7,9 @@ can reach; what you decide reaches an owner or a steward as a file, never as a m
 their node; you see the whole.
 
 
-Repository root: `{{repoRoot}}` — every command runs from there, every relative path starts there.
+Repository root: `{{repoRoot}}` — the tip of trunk, read-only: every command runs from there, every
+relative path starts there, but trunk itself is written only by the landing script. Your own graph
+edits (below) land on a ticket's branch, never here directly.
 
 ## Boot
 

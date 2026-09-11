@@ -17,7 +17,7 @@ import {
   repoRoot, hordeRoot, hordePath, readConfig, writeConfig, listHordes, readJSON,
   writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
   readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
-  qualityPolicyIn, QUALITY_POLICIES,
+  qualityPolicyIn, QUALITY_POLICIES, resolveTree,
 } from './_lib.mjs';
 import {
   currentWaveNumber, parseEvidenceRows, mentionsEvidenceId, wave1Started,
@@ -61,7 +61,10 @@ commands:
       long as nothing landed within this many lines of the ticket's own change. Raise it to send
       more tickets back for a re-review, lower it to send fewer; 1 is the lowest offered.
       "ygCommand" is how this repository invokes the Yggdrasil CLI (default "yg"); "grainCommand"
-      how it invokes Grain, when it has one (default: none).
+      how it invokes Grain, when it has one (default: none). "worktree.copy" (default: none) is a
+      list of repository-root-relative paths copied into every ticket, trunk or scratch tree the
+      moment it is made — for whatever a worker's tools need that git itself does not check out
+      (an untracked env file, a dependency cache); a path git already tracks is refused.
   charter show [--horde h]
   charter edit [--escalation id] [--horde h]
       the mission charter: "show" prints it, "edit" replaces it with what arrives on stdin and
@@ -180,6 +183,12 @@ function defaultConfig(root) {
     // resume the same worker; the next "fresh" rounds ask for a new one, one class heavier;
     // beyond resume+fresh the command refuses and names the ruling to make instead.
     fixRounds: { resume: 3, fresh: 2 },
+    // Repository-root-relative paths copied into every worktree provisionTree makes (a ticket's,
+    // trunk's, or a landing script's scratch tree) — for whatever a worker's tools need that git
+    // itself does not put on a fresh checkout (an untracked env file, a dependency cache). A path
+    // git already tracks is refused rather than copied: copying over it would desync the tree
+    // from its own branch.
+    worktree: { copy: [] },
   };
 }
 
@@ -490,7 +499,7 @@ function parseListValue(raw) {
 // Keys whose value is a list whatever the config currently holds — a list-valued key that has
 // never been set (or was set to a string once) must still take a list, or `config set` writes the
 // string "[\"**/*Tests.java\"]" and every reader of that key breaks on it.
-const LIST_KEYS = new Set(['protectedPaths', 'testGlobs']);
+const LIST_KEYS = new Set(['protectedPaths', 'testGlobs', 'copy']);
 
 function setPath(obj, path, rawValue) {
   const keys = path.split('.');
@@ -691,7 +700,7 @@ function runGateAt(root, cmd, branch) {
 function cmdDone(positional, flags) {
   const horde = resolveHorde(flags);
   const cfg = readConfig() || {};
-  const root = repoRoot();
+  const root = resolveTree({ tree: flags.tree, horde }).path;
   const reasons = [];
 
   // 1. Every promised proof, reproduced. stampMissionEvidence promotes whatever a merged ticket

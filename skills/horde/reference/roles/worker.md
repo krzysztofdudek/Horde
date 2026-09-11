@@ -8,7 +8,8 @@ director. What has to reach them is a line in the ticket's log and a doorbell to
 carries it.
 
 
-Repository root: `{{repoRoot}}` — every command runs from there, every relative path starts there.
+Your worktree is `{{worktree}}` on branch `{{branch}}`; work only there — every command runs from there,
+every relative path starts there.
 
 {{takeoverBlock | }}
 
@@ -20,9 +21,8 @@ git merge-base --is-ancestor {{parentBranch}} HEAD && git status --porcelain
 ```
 
 `git status` must print nothing. A dirty tree after the merge is a stale base or somebody else's diff:
-**stop and report**. Your worktree is `{{worktree}}` on branch `{{branch}}`; work only there. Then run
-the fast check `{{fastCheck}}`; the team branch last reported {{fastCheckCount}} — a lower count means a
-wrong base: stop and report.
+**stop and report**. Then run the fast check `{{fastCheck}}`; the team branch last reported
+{{fastCheckCount}} — a lower count means a wrong base: stop and report.
 
 {{stackNote | }}
 

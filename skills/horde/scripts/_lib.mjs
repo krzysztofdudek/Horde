@@ -5,7 +5,7 @@
 // repository sees the same state (a worktree's common dir points at the main checkout's .git).
 
 import {
-  existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync,
+  existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, realpathSync, rmSync, cpSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,6 +65,263 @@ export function repoRoot() {
   const top = git(['rev-parse', '--show-toplevel']);
   if (top) return top;
   throw new Error(`not a git repository (or any parent up to the mount point): ${process.cwd()}`);
+}
+
+// ---- resolveTree: a command works on the tree it was told, never on cwd by accident -----------
+//
+// D2 (narrowed by D6, once 014 removed sub-teams and every seat but worker/architect): the tree a
+// command reads or writes is always named outright — `--tree` (any worktree of this repository),
+// `--ticket` (a worker's own tree), `--scratch` (a throwaway detached tree at a sha — only the
+// future landing script uses this), `--horde` (the tip of that horde's trunk, read-only — the
+// only writer of trunk is the landing script), or, for a command with no horde scope at all,
+// bare cwd. The narrowest scope given wins; a command that took `--horde` never quietly falls
+// back to cwd just because that flag was left off by a caller that meant to pass it.
+//
+// `cleanup()` is always safe to call in a `finally`: for `scratch` it removes the worktree it
+// made, for everything else it does nothing — `tree`/`ticket` are worktrees the caller does not
+// own, `trunk` is a worktree kept around and resynced on every read (see resolveHordeTrunk), and
+// `cwd` was never created by this call at all.
+
+const NOOP = () => {};
+
+// A `git worktree list --porcelain` block, parsed. Fields exactly as git prints them: `path` is
+// the worktree's directory, `branch` is the short name (no `refs/heads/`) or null when detached,
+// `sha` is HEAD, `prunable` is set (to git's own reason string) when the worktree's directory is
+// gone from disk but git has not been told to forget it (`git worktree prune`).
+function parseWorktreeList(text) {
+  return text.split(/\n\n+/).filter((b) => b.trim().length).map((block) => {
+    const entry = {
+      path: null, sha: null, branch: null, detached: false, prunable: null,
+    };
+    for (const line of block.split('\n')) {
+      if (line.startsWith('worktree ')) entry.path = line.slice('worktree '.length);
+      else if (line.startsWith('HEAD ')) entry.sha = line.slice('HEAD '.length);
+      else if (line.startsWith('branch refs/heads/')) entry.branch = line.slice('branch refs/heads/'.length);
+      else if (line === 'detached') entry.detached = true;
+      else if (line.startsWith('prunable')) entry.prunable = line.slice('prunable'.length).trim() || 'gitdir points to non-existent location';
+    }
+    return entry;
+  });
+}
+
+// The worktrees git itself knows about for the repository at `cwd` — every worktree of it, main
+// checkout included, whichever one of them `cwd` happens to sit inside. fail()s when `cwd` is not
+// inside a git repository at all, since nothing below can answer "is this a tree of THIS repo"
+// without first knowing what "this repo" is.
+function thisRepoWorktrees(cwd) {
+  const out = git(['worktree', 'list', '--porcelain'], cwd);
+  if (out === null) fail(`not a git repository (or any parent up to the mount point): ${cwd}`);
+  return parseWorktreeList(out);
+}
+
+function realpathMaybe(path) {
+  try { return realpathSync(path); } catch { return null; }
+}
+
+// The one place a path given on the command line (`--tree`, or one built from `--ticket`) is
+// checked against what git actually knows, telling apart the three ways it can be wrong: never
+// registered as a worktree of this repository at all (a plain directory, another repository's
+// worktree, or a path that plain does not exist — `notFound` decides the wording), and registered
+// but gone from disk (`git worktree prune` is the fix, never a stack trace). `path` is returned
+// byte-for-byte as given — never git's own (possibly symlink-resolved) rendering of it — so
+// `--json` provenance reproduces exactly what was typed, proof against a caller that builds the
+// path by string-concatenation rather than passing it through untouched.
+function resolveKnownTreePath(path, cwd, kind, notFound) {
+  const entries = thisRepoWorktrees(cwd);
+  const real = realpathMaybe(path);
+  const match = entries.find((e) => e.path === path || (real && e.path === real));
+  if (!match) { notFound(); return null; }
+  if (match.prunable) {
+    fail(`${path} is a worktree git still knows about, but its directory is gone from disk (${match.prunable}) — run \`git worktree prune\` and recreate it`);
+  }
+  return {
+    path, branch: match.branch, sha: match.sha, kind, cleanup: NOOP,
+  };
+}
+
+function resolveExplicitTree(rawTree, cwd) {
+  const path = resolve(cwd, String(rawTree));
+  return resolveKnownTreePath(path, cwd, 'tree', () => {
+    if (existsSync(path)) {
+      fail(`${rawTree} is not a worktree of this repository (\`git worktree list --porcelain\` does not know it)`);
+    }
+    fail(`no such tree: ${rawTree} does not exist — create one with \`git worktree add ${path} <branch>\` first`);
+  });
+}
+
+function padTicketId(id) {
+  const n = parseInt(String(id).replace(/\D/g, ''), 10);
+  if (Number.isNaN(n)) fail(`invalid ticket id: ${id}`);
+  return String(n).padStart(3, '0');
+}
+
+function resolveTicketTree(ticket, horde, cwd) {
+  if (!horde) fail('--ticket requires --horde (or a single horde already on this repository)');
+  const id = padTicketId(ticket);
+  const path = join(hordeRoot(), 'worktrees', horde, `t-${id}`);
+  return resolveKnownTreePath(path, cwd, 'ticket', () => {
+    if (existsSync(path)) {
+      fail(`${path} exists but is not a worktree of this repository (\`git worktree list --porcelain\` does not know it)`);
+    }
+    fail(`no worktree for ticket ${id} — create it with \`queue.mjs set ${id} running --horde ${horde}\` (expected at ${path})`);
+  });
+}
+
+// resolveHordeTrunk(horde, cwd) — the tip of `<horde>/trunk`, read-only for everything but the
+// future landing script. Trunk is a branch that `horde.mjs init` deliberately leaves unchecked
+// out, so there is nothing on disk to hand back until something asks: the first ask provisions a
+// worktree for it, once, at a fixed path under `.horde/`; every ask after that resyncs that same
+// worktree to the branch's current tip (`git reset --hard`, safe because nothing but this resync
+// ever writes there) rather than making — and leaking — a fresh one. That is also why its
+// `cleanup()` is a no-op: the tree is meant to be kept, not thrown away after one read.
+function resolveHordeTrunk(horde, cwd) {
+  const branch = `${horde}/trunk`;
+  const tip = git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], cwd);
+  if (tip === null) fail(`no such horde branch: ${branch} — has horde.mjs init run for "${horde}"?`);
+  const path = join(hordeRoot(), 'worktrees', horde, 'trunk');
+  const cfg = readConfig() || {};
+  if (!existsSync(path)) {
+    // Detached at trunk's current tip, never attached to the branch itself: an attached worktree
+    // would hold the branch name exclusively, and nothing else on the repository — not the main
+    // checkout, not a test, not a future landing script — could then check `<horde>/trunk` out
+    // anywhere else. Detached, this tree is free to exist alongside any of that.
+    try {
+      provisionTree(path, tip, cfg);
+    } catch (e) {
+      fail(e.message);
+    }
+  } else if (git(['reset', '--hard', branch], path) === null) {
+    fail(`could not sync the trunk tree at ${path} to ${branch}`);
+  }
+  return {
+    path, branch, sha: git(['rev-parse', branch], cwd), kind: 'trunk', cleanup: NOOP,
+  };
+}
+
+// resolveScratchTree(sha, cwd) — a throwaway detached worktree at a sha already in this
+// repository, for the future landing script (015) alone. Unlike every other kind, its `cleanup()`
+// really does remove what it made — and it is called here too, the moment provisioning itself
+// fails partway (`git worktree add` succeeded, the `worktree.copy` copy did not): a scratch tree
+// that failed to finish provisioning is not left behind for `git worktree list` to still know
+// about.
+function resolveScratchTree(shaArg, cwd) {
+  const sha = git(['rev-parse', '--verify', '--quiet', `${shaArg}^{commit}`], cwd);
+  if (sha === null) fail(`no such commit: ${shaArg} — --scratch takes a sha already in this repository`);
+  const dir = join(hordeRoot(), 'scratch', `${sha.slice(0, 12)}-${process.pid}-${Date.now()}`);
+  const cleanup = () => {
+    git(['worktree', 'remove', '--force', dir], cwd);
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* already gone */ }
+  };
+  try {
+    provisionTree(dir, sha, readConfig() || {});
+  } catch (e) {
+    cleanup();
+    fail(e.message);
+  }
+  return {
+    path: dir, branch: null, sha, kind: 'scratch', cleanup,
+  };
+}
+
+function resolveCwd(cwd) {
+  const path = git(['rev-parse', '--show-toplevel'], cwd);
+  if (path === null) fail(`not a git repository (or any parent up to the mount point): ${cwd}`);
+  const branchOut = git(['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
+  return {
+    path: resolve(cwd, path),
+    branch: branchOut && branchOut !== 'HEAD' ? branchOut : null,
+    sha: git(['rev-parse', 'HEAD'], cwd),
+    kind: 'cwd',
+    cleanup: NOOP,
+  };
+}
+
+// resolveTree({tree, ticket, scratch, horde}, {cwd}) — see the block comment above. Precedence is
+// the order the flags are checked in below: `--tree` beats `--ticket` beats `--scratch` beats
+// `--horde` beats bare cwd, matching the order the skill's own reference documents them in.
+export function resolveTree({
+  tree, ticket, horde, scratch,
+} = {}, { cwd = process.cwd() } = {}) {
+  if (tree !== undefined && tree !== null && tree !== false) return resolveExplicitTree(tree, cwd);
+  if (ticket !== undefined && ticket !== null && ticket !== false) return resolveTicketTree(ticket, horde, cwd);
+  if (scratch !== undefined && scratch !== null && scratch !== false) return resolveScratchTree(scratch, cwd);
+  if (horde !== undefined && horde !== null && horde !== false) return resolveHordeTrunk(horde, cwd);
+  return resolveCwd(cwd);
+}
+
+// assertGraphWritable(info, {horde, cfg}) — the two refusals a graph write (node.mjs log --run,
+// promote, demote, bind's take-over log) is held to: trunk is the landing script's alone (kind
+// "trunk" is always read-only — the moment a caller means to write it, it says so with an
+// explicit `--tree` naming trunk's own path, which resolves as kind "tree" instead and is not
+// caught here), and a write from cwd sitting on the mission's own base branch is almost always
+// the wrong tree found by accident rather than named on purpose — `--tree` said explicitly is
+// exactly how that accident is ruled out.
+export function assertGraphWritable(info, { horde, cfg } = {}) {
+  if (info.kind === 'trunk') {
+    fail(`trunk (${info.path}, branch ${info.branch}) is written only by the landing script — pass --tree ${info.path} if this really is that`);
+  }
+  const base = cfg && cfg.base;
+  if (info.kind === 'cwd' && base && info.branch === base) {
+    const trunkPath = horde ? resolveTree({ horde }, { cwd: info.path }).path : null;
+    fail(`${info.path} is on "${base}" — a graph write from here is almost certainly the wrong tree found by accident, not named on purpose${trunkPath ? `; the mission's tree is at ${trunkPath}` : ''}. Pass --tree explicitly if this checkout really is what you mean`);
+  }
+}
+
+// provisionTree(path, ref, cfg) — `git worktree add` at `path` for `ref` (a branch name checks
+// out attached to it, anything else — a sha, most often — detached), then copies every
+// `config.worktree.copy` entry from the repository root into the new tree. Idempotent: a second
+// call at a path that already exists does nothing at all, not even re-validate `worktree.copy` —
+// `queue.mjs set <ticket> running` calls this every time a ticket's state is re-read, and the
+// worker's own edits to their tree are not something a repeated call should ever touch. Throws
+// (never fail()s) on every refusal, the same idiom `claimLease` uses: the two callers that need to
+// clean up a half-made tree on failure (resolveScratchTree) or need their own wording (the ticket
+// worktree cut in queue.mjs cmdSet) both need the message before anything is printed, not a
+// process already gone.
+//
+// A `worktree.copy` entry git already tracks is refused before the tree is even created — git put
+// that file on every branch already, and copying over it would desync the tree from its own
+// branch. A `worktree.copy` entry that does not exist is refused instead at copy time, after the
+// tree exists: the alternative (checking before `git worktree add`) would mean this function could
+// refuse without ever having touched git worktree state at all, which is exactly the case
+// resolveScratchTree's own cleanup path exists to handle, and untested here would leave it dead
+// code.
+export function provisionTree(path, ref, cfg) {
+  if (existsSync(path)) return { created: false, copied: [] };
+  const root = repoRoot();
+  const copyList = cfg && cfg.worktree && Array.isArray(cfg.worktree.copy) ? cfg.worktree.copy : [];
+  for (const rel of copyList) {
+    if (git(['ls-files', '--error-unmatch', '--', rel], root) !== null) {
+      throw new Error(`config.worktree.copy names "${rel}", which git already tracks on this branch — copying over a tracked path would desync the worktree from its own branch`);
+    }
+  }
+  const isBranch = git(['show-ref', '--verify', '--quiet', `refs/heads/${ref}`], root) !== null;
+  const args = isBranch ? ['worktree', 'add', path, ref] : ['worktree', 'add', '--detach', path, ref];
+  if (git(args, root) === null) throw new Error(`could not create worktree at ${path} for ${ref}`);
+  const copied = [];
+  for (const rel of copyList) {
+    const src = join(root, rel);
+    if (!existsSync(src)) throw new Error(`config.worktree.copy names "${rel}", which does not exist at ${src}`);
+    const dest = join(path, rel);
+    mkdirSync(dirname(dest), { recursive: true });
+    cpSync(src, dest, { recursive: true });
+    copied.push(rel);
+  }
+  return { created: true, copied };
+}
+
+// provenanceLine(info) / withProvenance(obj, info) — the one line every command that resolved a
+// tree ends with ("tree: <path> · branch: <branch> · <sha>"), and the three fields (`tree`,
+// `branch`, `sha`) its `--json` carries alongside whatever else it reports. `branch` prints
+// literally as `null` for a detached (scratch) tree — the point is telling apart "no branch, on
+// purpose" from a field that was simply forgotten.
+export function provenanceLine(info) {
+  return `tree: ${info.path} · branch: ${info.branch === null ? 'null' : info.branch} · ${info.sha}`;
+}
+
+export function withProvenance(obj, info) {
+  return {
+    ...obj, tree: info.path, branch: info.branch, sha: info.sha,
+  };
 }
 
 // gitCommonDir() — the shared `.git` directory: for a worktree this resolves to the main

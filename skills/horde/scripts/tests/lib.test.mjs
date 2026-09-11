@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  existsSync, readFileSync, writeFileSync, mkdirSync,
+  existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { makeRepo, rmRepo } from './helpers.mjs';
@@ -176,4 +176,71 @@ test('_lib.mjs patchIdOf: a landing outside the change\'s own context leaves its
     assert.equal(patchIdOf('no-such-branch', 'base', { cwd: dir }), null);
     assert.equal(patchIdOf('base', 'base', { cwd: dir }), null);
   });
+});
+
+// resolveTree's resolving paths only — every refusal is a CLI-level test in tree.test.mjs, for the
+// same reason teamPath's refusals are above: fail() calls process.exit() and would kill this whole
+// in-process run.
+test('_lib.mjs resolveTree: narrowest scope wins, cwd and trunk defaults, scratch cleanup', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const realDir = realpathSync(dir);
+  const g = (args, cwd = dir) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+
+  const origCwd = process.cwd();
+  process.chdir(dir);
+  try {
+    const { resolveTree, hordeRoot: hordeRootFn } = await import('../_lib.mjs');
+    hordeRootFn({ create: true });
+    g(['branch', 'h1/trunk']);
+    const ticketBranch = 'h1/t-001';
+    g(['branch', ticketBranch]);
+    const ticketPath = join(hordeRootFn(), 'worktrees', 'h1', 't-001');
+    g(['worktree', 'add', ticketPath, ticketBranch]);
+
+    await t.test('--tree beats --ticket beats --horde', () => {
+      const viaTree = resolveTree({ tree: ticketPath, ticket: '001', horde: 'h1' });
+      assert.equal(viaTree.kind, 'tree');
+      assert.equal(viaTree.path, ticketPath);
+      assert.equal(viaTree.branch, ticketBranch);
+
+      const viaTicket = resolveTree({ ticket: '001', horde: 'h1' });
+      assert.equal(viaTicket.kind, 'ticket');
+      assert.equal(viaTicket.path, ticketPath);
+      assert.equal(viaTicket.branch, ticketBranch);
+    });
+
+    await t.test('--horde alone gives the trunk tip, kind "trunk", cleanup is a no-op', () => {
+      const viaHorde = resolveTree({ horde: 'h1' });
+      assert.equal(viaHorde.kind, 'trunk');
+      assert.equal(viaHorde.branch, 'h1/trunk');
+      assert.equal(viaHorde.path, join(hordeRootFn(), 'worktrees', 'h1', 'trunk'));
+      assert.equal(viaHorde.sha, g(['rev-parse', 'h1/trunk']));
+      assert.equal(typeof viaHorde.cleanup, 'function');
+      viaHorde.cleanup();
+      assert.equal(existsSync(viaHorde.path), true); // still there — cleanup does nothing for trunk
+    });
+
+    await t.test('no flags at all: cwd, kind "cwd"', () => {
+      const viaCwd = resolveTree({});
+      assert.equal(viaCwd.kind, 'cwd');
+      assert.equal(viaCwd.path, realDir);
+      assert.equal(viaCwd.sha, g(['rev-parse', 'HEAD']));
+    });
+
+    await t.test('--scratch creates a detached worktree at the given sha, and cleanup() removes it', () => {
+      const sha = g(['rev-parse', 'HEAD']);
+      const viaScratch = resolveTree({ scratch: sha });
+      assert.equal(viaScratch.kind, 'scratch');
+      assert.equal(viaScratch.branch, null);
+      assert.equal(viaScratch.sha, sha);
+      assert.equal(existsSync(viaScratch.path), true);
+      viaScratch.cleanup();
+      assert.equal(existsSync(viaScratch.path), false);
+      const known = g(['worktree', 'list', '--porcelain']);
+      assert.equal(known.includes(viaScratch.path), false);
+    });
+  } finally {
+    process.chdir(origCwd);
+  }
 });

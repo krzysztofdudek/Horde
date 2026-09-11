@@ -26,7 +26,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import {
   hordeRoot, hordePath, teamPath, listHordes, readConfig, readJSON, readText, git, fail,
-  parseArgs, emit, isMain, repoRoot,
+  parseArgs, emit, isMain, resolveTree,
 } from './_lib.mjs';
 import {
   allTickets, nodesOf, parseField,
@@ -427,7 +427,7 @@ function main() {
   if (flags.help) { console.log(USAGE); process.exit(0); }
   const { file, line } = parseTarget(positional[0]);
 
-  const root = repoRoot();
+  const root = resolveTree({ tree: flags.tree }).path;
   const relFile = relative(root, resolve(process.cwd(), file)).split('\\').join('/');
   if (relFile.startsWith('..')) fail(`${file} is outside the repository`);
 

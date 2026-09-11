@@ -255,3 +255,21 @@ test('brief.mjs: reportsTo — the architect always reports to the director "mai
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.json.brief, /the director \*\*main\*\*/);
 });
+
+// resolveTree (010): the worker's brief carries the absolute path of their own worktree, and no
+// longer any sentence telling them to enter the repository root first.
+test('brief.mjs worker: carries the worktree\'s absolute path, never a sentence to enter the repository root', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
+  const absoluteWorktree = join(dir, '.horde', 'worktrees', 'mission1', 't-002');
+  seedTicket(dir, 'mission1', 'trunk', '002', {
+    branch: 'mission1/t-002', worktree: absoluteWorktree, sha: 'abc1234def',
+  });
+
+  const r = run('brief.mjs', ['worker', '002', '--name', 'mission1-worker-trunk-1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.brief.includes(absoluteWorktree), true);
+  assert.doesNotMatch(r.json.brief, /enter the repository/i);
+});

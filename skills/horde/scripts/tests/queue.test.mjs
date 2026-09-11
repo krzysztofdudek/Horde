@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync, readFileSync, writeFileSync, existsSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import {
   makeRepo, rmRepo, run, initHorde,
@@ -589,5 +591,62 @@ test('queue.mjs next --stack: stack-ready tickets rank below every ready one, an
     const row = why.json.entries.find((e) => e.ticket === clearHigh);
     assert.equal(row.eligible, false);
     assert.match(row.reason, new RegExp(`waiting on dependency ${running} — could be started on top of ${running} \\(--stack\\)`));
+  });
+});
+
+// provisionTree (_lib.mjs), through the one CLI path that calls it today: "set <ticket> running"
+// cutting a ticket's own worktree. config.worktree.copy names repository-root-relative paths
+// copied into that worktree the moment it is made.
+test('queue.mjs set running: provisionTree copies config.worktree.copy into the new worktree', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  await t.test('an untracked file named in worktree.copy is copied into the new worktree', () => {
+    writeFileSync(join(dir, 'env.local'), 'secret=1\n');
+    run('horde.mjs', ['config', 'set', 'worktree.copy', 'env.local'], dir);
+    const id = readyTicket(dir, 'copies-env');
+    run('queue.mjs', ['add', id], dir);
+    const set = run('queue.mjs', ['set', id, 'running'], dir);
+    assert.equal(set.code, 0, set.stderr);
+    assert.equal(readFileSync(join(set.json.worktree, 'env.local'), 'utf8'), 'secret=1\n');
+  });
+
+  await t.test('a worktree.copy entry git already tracks is refused before the tree is created', () => {
+    run('horde.mjs', ['config', 'set', 'worktree.copy', 'README.md'], dir);
+    const id = readyTicket(dir, 'tracked-copy');
+    run('queue.mjs', ['add', id], dir);
+    const set = run('queue.mjs', ['set', id, 'running'], dir);
+    assert.equal(set.code, 1);
+    assert.match(set.stderr, /README\.md/);
+    assert.match(set.stderr, /already tracks/);
+    assert.equal(existsSync(join(dir, '.horde', 'worktrees', 'mission1', `t-${id}`)), false);
+  });
+
+  await t.test('a worktree.copy entry that does not exist is refused, naming the path — not a silent skip', () => {
+    run('horde.mjs', ['config', 'set', 'worktree.copy', 'never-written.txt'], dir);
+    const id = readyTicket(dir, 'missing-copy');
+    run('queue.mjs', ['add', id], dir);
+    const set = run('queue.mjs', ['set', id, 'running'], dir);
+    assert.equal(set.code, 1);
+    assert.match(set.stderr, /never-written\.txt/);
+  });
+
+  await t.test('two "set running" calls at the same ticket: the second is a no-op, never a crash, never a second copy', () => {
+    writeFileSync(join(dir, 'once.txt'), 'v1\n');
+    run('horde.mjs', ['config', 'set', 'worktree.copy', 'once.txt'], dir);
+    const id = readyTicket(dir, 'idempotent-copy');
+    run('queue.mjs', ['add', id], dir);
+    const first = run('queue.mjs', ['set', id, 'running'], dir);
+    assert.equal(first.code, 0, first.stderr);
+    const copiedPath = join(first.json.worktree, 'once.txt');
+    assert.equal(readFileSync(copiedPath, 'utf8'), 'v1\n');
+
+    // Changing the source after the tree exists must not leak into it on a second call — the
+    // worktree, once made, is the worker's own; a repeated "set running" does not reach back in.
+    writeFileSync(join(dir, 'once.txt'), 'v2\n');
+    const second = run('queue.mjs', ['set', id, 'running'], dir);
+    assert.equal(second.code, 0, second.stderr);
+    assert.equal(readFileSync(copiedPath, 'utf8'), 'v1\n');
   });
 });
