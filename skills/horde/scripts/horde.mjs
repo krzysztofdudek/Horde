@@ -163,6 +163,47 @@ function detectTestGlobs(root) {
   return [...new Set(detectEcosystems(root).flatMap((e) => e.testGlobs))];
 }
 
+// ---- who judges this repository's prose rules ------------------------------------------
+//
+// Yggdrasil's rules come in two kinds. A script rule answers for itself, free, in any worktree.
+// A prose rule needs a reader, and there are only two ways a repository gets one: it has a
+// reviewer configured inside Yggdrasil (a "tier"), or it has none and somebody answers out of band
+// one pair at a time. Which of the two it is decides what a worker is told to do before committing
+// and what the landing gate does with a rule still waiting on a judgement, so it is worked out
+// here, once, rather than guessed at every landing.
+//
+// The evidence is Yggdrasil's own config: a `reviewer:` block with a provider under it. Read as
+// text because Horde has no YAML parser and does not want one — this decides a default that `init`
+// prints and `horde.mjs config set judge` overrides, never something that silently gates a merge.
+const YG_CONFIG_FILES = ['yg-config.yaml', 'yg-secrets.yaml'];
+function detectJudge(root) {
+  for (const name of YG_CONFIG_FILES) {
+    let text = '';
+    try { text = readFileSync(join(root, '.yggdrasil', name), 'utf8'); } catch { continue; }
+    const block = /^reviewer:\s*$([\s\S]*?)(?=^\S|\Z)/m.exec(text);
+    if (block && /^\s+provider:\s*\S/m.test(block[1])) return 'tier';
+  }
+  return 'one-shot';
+}
+
+// The adopter's own commit hook, and what it runs. A repository with no reviewer cannot pass a
+// hook that demands a full `yg check`: the prose rules have nobody to judge them, so every commit
+// refuses, and the only thing a worker learns is to reach for `--no-verify`. That is worth
+// refusing an init over — teaching the escape hatch is worse than never starting.
+const HOOK_FILES = [
+  '.git/hooks/pre-commit', '.husky/pre-commit', 'lefthook.yml', '.lefthook.yml', '.pre-commit-config.yaml',
+];
+function detectCommitHook(root) {
+  for (const rel of HOOK_FILES) {
+    let text = '';
+    try { text = readFileSync(join(root, rel), 'utf8'); } catch { continue; }
+    const lines = text.split('\n').filter((l) => /\byg\b[^\n]*\bcheck\b/.test(l) && !/^\s*#/.test(l));
+    if (!lines.length) continue;
+    return { file: rel, deterministicOnly: lines.every((l) => /--only-deterministic/.test(l)) };
+  }
+  return null;
+}
+
 function defaultConfig(root) {
   return {
     base: null,
@@ -173,6 +214,12 @@ function defaultConfig(root) {
     ygCommand: 'yg',
     grainCommand: null,
     testGlobs: detectTestGlobs(root),
+    // Who judges this repository's prose rules — "tier" (Yggdrasil's own reviewer) or "one-shot"
+    // (no reviewer here; a judge answers a pair at a time and the landing gate hands them over).
+    // Worked out from the graph's own reviewer configuration, never defaulted blindly: the landing
+    // gate refuses rather than guess, because guessing wrong either invents a reviewer that does
+    // not exist or pays for one twice.
+    judge: detectJudge(root),
     // How many lines of surrounding code a review's key is bound to (see _lib.mjs patchIdOf).
     keyContext: 3,
     protectedPaths: [],
@@ -315,6 +362,23 @@ function cmdInit(positional, flags) {
   // to make one is refused here, leaving nothing of this horde behind to clean up.
   const graph = ensureGraph(root, readConfig(), flags);
 
+  // Who will judge the prose rules, and whether this repository's own commit hook can be satisfied
+  // at all. A hook that demands a full `yg check` in a repository with no reviewer refuses every
+  // commit a worker makes, and the only thing anyone learns from that is `--no-verify`. Refused
+  // here, before a single file of this horde exists, with the two ways out named.
+  const judge = detectJudge(root);
+  const hook = detectCommitHook(root);
+  if (judge === 'one-shot' && hook && !hook.deterministicOnly) {
+    fail(
+      `${hook.file} runs a full \`yg check\` on every commit, and this repository has no Yggdrasil reviewer configured.\n`
+      + 'Every prose rule would then be waiting on a judge nobody can call, so every commit a worker makes would refuse — '
+      + 'and the only thing that teaches is --no-verify, which switches off the gate this whole tool exists to keep.\n'
+      + 'Two ways out, either is fine:\n'
+      + `  - narrow the hook to the free half: \`yg check --approve --only-deterministic\` in ${hook.file}. The prose rules are then judged at landing, once, instead of at every commit.\n`
+      + '  - give the repository a reviewer: yg init --provider <claude-code|codex|…> --model <model>',
+    );
+  }
+
   const hr = hordeRoot({ create: true });
   const dest = hordePath(name);
   if (existsSync(dest)) fail(`a horde named "${name}" already exists`);
@@ -332,6 +396,10 @@ function cmdInit(positional, flags) {
     if (flags.yg) cfg.ygCommand = flags.yg;
     if (flags.grain) cfg.grainCommand = flags.grain;
   }
+  // A config written before the judge policy existed carries no answer to it, and the landing gate
+  // refuses rather than guess — so a second horde on such a repository fills it in here from the
+  // same evidence a first one would have used.
+  if (!cfg.judge) cfg.judge = judge;
   writeConfig(cfg);
 
   // --nodes binds the charter's touched nodes the moment this horde exists (node-lease-across-
@@ -395,6 +463,15 @@ function cmdInit(positional, flags) {
     ? `tests recognised by: ${cfg.testGlobs.join(', ')} — change them with: horde.mjs config set testGlobs "<glob>,<glob>"`
     : 'no test convention could be worked out from this repository\'s files, so the merge checklist cannot tell a change that adds no tests from one whose tests it failed to recognise — it will refuse rather than guess. What are this repository\'s tests called? Set it: horde.mjs config set testGlobs "<glob>,<glob>".';
 
+  // Said out loud at the one moment somebody is reading, because it changes what a worker is told
+  // to run before committing and what the landing gate does with an unjudged rule.
+  const judgeNote = cfg.judge === 'tier'
+    ? 'prose rules are judged by the reviewer configured in this repository\'s graph (judge: tier) — a worker runs `yg check --approve` before committing, and landing only checks that it came back green.'
+    : 'this repository has no Yggdrasil reviewer (judge: one-shot) — the commit hook runs the free half only, and landing hands back each prose rule with the two commands that judge it. Change it with: horde.mjs config set judge tier|one-shot';
+  const hookNote = hook
+    ? `commit hook: ${hook.file} runs \`yg check\`${hook.deterministicOnly ? ' --only-deterministic (the free half — right for this repository)' : ' in full'}`
+    : 'no commit hook runs `yg check` here — nothing checks the graph until landing does';
+
   const leaseNote = leased.length
     ? `leased ${leased.length} node(s): ${leased.map((l) => l.node).join(', ')}`
     : null;
@@ -409,6 +486,8 @@ function cmdInit(positional, flags) {
       ecosystems,
       gates: cfg.gates,
       testGlobs: cfg.testGlobs,
+      judge: cfg.judge,
+      commitHook: hook,
       leased,
     },
     flags,
@@ -419,6 +498,8 @@ function cmdInit(positional, flags) {
       graphGate,
       gateNote,
       globsNote,
+      judgeNote,
+      hookNote,
     ].join('\n'),
   );
 }
@@ -670,7 +751,7 @@ function cmdArchive(positional, flags) {
 
 function short(sha) { return sha ? sha.slice(0, 7) : '(none)'; }
 
-// Tolerant the same way premerge.mjs's own gate/key comparisons are: a short sha, a full sha, or
+// Tolerant the same way land.mjs's own gate comparisons are: a short sha, a full sha, or
 // either shortened to the other's length all count as the same commit.
 function shaMatchesTolerant(a, b) {
   if (!a || !b) return false;
@@ -678,7 +759,7 @@ function shaMatchesTolerant(a, b) {
 }
 
 // Runs `cmd` against the trunk branch's own tree, in a scratch worktree that never touches the
-// caller's — the same shape premerge.mjs's own revert test and gate checks use, since "done" has
+// caller's — the same shape land.mjs's own revert test and gate checks use, since "done" has
 // no ticket branch worktree of its own to run in.
 function runGateAt(root, cmd, branch) {
   const tmp = mkdtempSync(join(tmpdir(), 'horde-done-gate-'));

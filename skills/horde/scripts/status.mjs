@@ -79,7 +79,7 @@ function hordeDigest(horde, cfg, teamFilter) {
   const escalations = readJSON(hordePath(horde, 'escalations.json'), { items: [] });
   const escItems = Array.isArray(escalations.items) ? escalations.items : [];
 
-  // Keyed by level: {commit, team, trunk}, each {sha, result, count, at} when premerge.mjs has
+  // Keyed by level: {commit, team, trunk}, each {sha, result, count, at} when land.mjs has
   // run at that level; absent levels simply aren't shown.
   const lastGate = readJSON(hordePath(horde, 'cache', 'last-gate.json'), {});
 

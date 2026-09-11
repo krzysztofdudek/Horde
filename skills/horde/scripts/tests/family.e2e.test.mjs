@@ -488,34 +488,43 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
   // more. It is not replaced with anything; the walk goes straight from landing to the merge
   // checklist.
 
-  await t.test('7. the merge checklist is green through the real yg check', () => {
+  let trunkSha;
+  await t.test('7. the gate lands the ticket itself — nine items green, then a merge commit', () => {
     // --level team no longer exists (sub-teams are gone) — omitting --level defaults internally to
     // the same gate lookup a branch landing directly on the team branch always used.
-    const premerge = run('premerge.mjs', ['family/t-001'], dir);
-    const byName = Object.fromEntries(premerge.json.checks.map((c) => [c.name, c]));
-    // The checklist's own "keys" item is gone — merging no longer checks any key or approval.
+    //
+    // Nothing merges this by hand any more. `land` is the last command of the ticket: when all
+    // nine items are green it makes the merge commit, removes the worktree and the branch, and
+    // records the landed sha — which is the whole of what a signature used to be.
+    const landed = run('land.mjs', ['family/t-001'], dir);
+    const byName = Object.fromEntries(landed.json.checks.map((c) => [c.name, c]));
     assert.deepEqual(Object.keys(byName), [
-      'base freshness', 'scope', 'revert test', 'gate', 'graph', 'mapping', 'journal', 'graph text',
+      'base freshness', 'judge', 'scope', 'revert test', 'gate', 'graph', 'mapping', 'journal', 'graph text', 'merge',
     ]);
     for (const [name, check] of Object.entries(byName)) {
       assert.equal(check.ok, true, `${name}: ${check.note}`);
     }
-    assert.equal(byName.graph.pending, undefined, 'no rule is left waiting on a judgement');
-    assert.equal(premerge.code, 0, premerge.stderr);
-    assert.equal(premerge.json.ok, true);
+    assert.equal(landed.code, 0, landed.stderr);
+    assert.equal(landed.json.ok, true);
+    assert.deepEqual(landed.json.pairs, [], 'no rule is left waiting on a judgement');
+
+    trunkSha = git(['rev-parse', 'family/trunk'], dir);
+    assert.equal(landed.json.landed.sha, trunkSha);
+    assert.match(git(['log', '-1', '--format=%s', 'family/trunk'], dir), /^merge 001/);
+    assert.equal(git(['rev-list', '--count', '--merges', `${tipSha}..family/trunk`], dir), '1');
   });
 
-  let trunkSha;
-  await t.test('8. the merge, and the wave close that turns both evidence rows green', () => {
-    git(['merge', '--no-ff', 'family/t-001', '-m', 'merge 001: an order can carry a discount'], stewardWorktree);
-    trunkSha = git(['rev-parse', 'family/trunk'], dir);
+  await t.test('8. the landing left its own record, and the wave close turns both evidence rows green', () => {
     assert.equal(runGate(stewardWorktree), 0, 'the gate is green at the trunk tip');
     assert.equal(runCommandLine(YG.cmd, ['check'], { cwd: stewardWorktree }).code, 0, 'and so is the graph');
 
-    const merged = run('queue.mjs', ['set', '001', 'merged', '--sha', trunkSha.slice(0, 7)], dir);
-    assert.equal(merged.code, 0, merged.stderr);
     assert.equal(existsSync(worktree), false);
     assert.equal(git(['branch', '--list', 'family/t-001'], dir), '');
+    assert.equal(run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === '001').state, 'merged');
+    assert.match(
+      readFileSync(join(dir, '.horde', 'hordes', 'family', 'teams', 'trunk', 'issues', '001-order-discount', 'log.md'), 'utf8'),
+      /landed 001 on family\/trunk as [0-9a-f]{7}/,
+    );
     assert.equal(run('tk.mjs', ['status', '001', 'merged'], dir).json.status, 'merged');
 
     // Formerly a catalogue row was stamped "reproduced" automatically, mission-wide, off a

@@ -169,7 +169,7 @@ export function noteMerged(horde, team, ticket, sha) {
 }
 
 // The keys this wave carried over without a second reading — summed from the bullets a
-// pre-migration premerge.mjs left in the journal. Nothing writes a new one any more; kept for a
+// pre-migration checklist left in the journal. Nothing writes a new one any more; kept for a
 // wave whose journal still carries them from before this migration.
 function waveKeysTransferred(spanText) {
   let total = 0;

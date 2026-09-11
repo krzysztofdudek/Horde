@@ -170,15 +170,23 @@ export function addNode(dir, path, spec = {}) {
 // addAspect(dir, id, spec) — a real rule in the real graph. `check` makes it a script rule (run
 // locally, free); `content` makes it a prose rule, which a reader has to judge — the work the
 // verifier's own channel exists for.
+// `reviewBy`, `when` and `scope` are the three fields a change to a rule can weaken it through, so
+// a fixture that exercises the law guard has to be able to write them. `when` and `scope` are
+// given as raw YAML blocks (already indented under their key) — the grammar is Yggdrasil's, and
+// spelling it out in the fixture is the point: the guard is measured against the real predicate,
+// never a stand-in for one.
 export function addAspect(dir, id, spec = {}) {
   const {
     name = id, description = `Fixture rule ${id}.`, status = 'enforced', check = null, content = null,
+    reviewBy = '2099-01-01', when = null, scope = null,
   } = spec;
   const dest = join(dir, '.yggdrasil', 'aspects', id);
   mkdirSync(dest, { recursive: true });
   const head = [`name: ${name}`, `description: ${description}`];
   if (check) head.push('errs: under');
-  head.push(`status: ${status}`, 'review_by: 2099-01-01');
+  head.push(`status: ${status}`, `review_by: ${reviewBy}`);
+  if (when) head.push('when:', when);
+  if (scope) head.push('scope:', scope);
   writeFileSync(join(dest, 'yg-aspect.yaml'), `${head.join('\n')}\n`);
   if (check) writeFileSync(join(dest, 'check.mjs'), check);
   if (content) writeFileSync(join(dest, 'content.md'), content);

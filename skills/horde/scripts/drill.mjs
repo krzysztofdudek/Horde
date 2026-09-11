@@ -14,10 +14,10 @@
 // bundle of the relevant branch refs plus a snapshot of `.horde/`, written by `record` from a real
 // horde — so a mission's hard moment becomes a fixture instead of being described in a comment.
 //
-// The revert machinery here is deliberately its own: premerge.mjs asks whether a branch's new tests
+// The revert machinery here is deliberately its own: land.mjs asks whether a branch's new tests
 // fail on the branch it merges into, which is a question about the merge; this asks whether the
 // commit that introduced them could have failed at the moment it was written, which is a question
-// about how the work was done. Same technique, different subject, and premerge is not modified.
+// about how the work was done. Same technique, different subject, and the landing gate is not modified.
 
 import {
   existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync, cpSync,

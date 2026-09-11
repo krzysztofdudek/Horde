@@ -191,10 +191,10 @@ test('wave.mjs close: human decisions per merged ticket, and the trend across wa
 //
 // One wave, run end to end on a real repository with a real Yggdrasil graph: three tickets with a
 // dependency between two of them, two of them merged, one of them catching up with the other's
-// landing, one ruling made. tk.mjs key/review, the deleted verify tool and premerge.mjs's own "keys" checklist
+// landing, one ruling made. tk.mjs key/review, the deleted verify tool and the checklist's own "keys" item
 // item are all gone (shared context point 4) — nothing computes a keys-transferred figure from a
-// real premerge run any more, so that one bullet is written by hand below, the way a pre-migration
-// premerge.mjs used to, purely to keep exercising the close's own reporting of it. Everything else
+// real gate run any more, so that one bullet is written by hand below, the way a pre-migration
+// the checklist used to, purely to keep exercising the close's own reporting of it. Everything else
 // here is real state, not seeded by hand.
 
 const LIB_LINES = Array.from({ length: 40 }, (_, i) => `export const v${i + 1} = ${i + 1};`);
@@ -300,8 +300,8 @@ test('E14 — a wave close states parallelism, keys transferred, decisions per m
   git(['merge', '--no-ff', gammaRun.branch, '-m', `merge ${gamma}`], dir);
   run('queue.mjs', ['set', gamma, 'merged', '--sha', git(['rev-parse', '--short', 'HEAD'], dir)], dir);
 
-  // Alpha catches up. premerge.mjs no longer has a "keys" checklist item and nothing computes a
-  // keys-transferred count from a real premerge run any more; wave.mjs's own reading of a "keys
+  // Alpha catches up. land.mjs has no "keys" checklist item and nothing computes a
+  // keys-transferred count from a real gate run any more; wave.mjs's own reading of a "keys
   // transferred" bullet stays only for a journal written before this migration, so the bullet is
   // written by hand here to keep exercising the close's own reporting of the figure.
   git(['merge', 'mission1/trunk', '-m', 'catch up with the team branch'], alphaRun.worktree);

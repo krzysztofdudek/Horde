@@ -68,11 +68,19 @@ at the end of this brief; read them before your first commit.
 - The repository's own instructions (its CLAUDE.md and AGENTS.md) apply to you in full. Run
   `yg check --approve --only-deterministic` in your worktree first — the deterministic cache is not
   committed and starts empty here, and rebuilding it is free and needs no key. Follow the `yg prime`
-  protocol for anything else. What is left after that free run is the prose rules, which the
-  verifier judges: never approve a nondeterministic pair yourself, never write a suppression.
-- Commit on your branch `{{branch}}` with the repository's commit hooks passing. **Your last action** is
+  protocol for anything else. What is left after that free run is the prose rules, which a judge
+  decides: never approve a nondeterministic pair yourself, never write a suppression.
+- **Never weaken a rule to get past it.** Deleting a rule, lowering its status, moving its review
+  date, narrowing what it reaches, unhooking it from a component, or writing a `yg-suppress` marker
+  all refuse at landing, by name. So does sharpening a rule in the same change as the code that rule
+  refuses. If a rule is genuinely wrong, say so in your log and stop — that is the client's call to
+  make, not yours to route around.
+- Commit on your branch `{{branch}}` with the repository's commit hooks passing. Anything that has to
+  count — your code, and any verdict recorded on the graph — has to be **committed**: the gate reads
+  a fresh tree at your branch's tip, not your worktree.
+- **Your last action** is
   `node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tk.mjs log {{ticketId}} "landed <sha> — <one line>"` after the
-  commit; the merge checklist requires a log entry newer than the last commit. Your final report
+  commit; the landing gate requires a log entry newer than the last commit. Your final report
   **contains `git log -1 --oneline`** of the landed commit; "done" with an uncommitted diff is not done.
 - If the branch already carries a commit whose message starts with `wip:` it is a previous worker's
   unfinished work, reclaimed at a cold boot: read it first, keep what is right, reset what is not, and

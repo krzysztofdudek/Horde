@@ -124,7 +124,7 @@ test('two hordes on one repository: independent state, shared refusal without --
 // entirely: the deleted roster tool (the only thing that ever spawned a steward for a non-trunk team, or
 // recorded its parent so _lib.mjs's teamPath() could resolve one) is deleted outright, so
 // `--team` now only ever resolves to "trunk"; anything else fails with "no such team" since
-// nothing can ever create one. premerge.mjs's own `--level team` is refused for the same reason,
+// nothing can ever create one. land.mjs's own `--level team` is refused for the same reason,
 // and queue.mjs's `move` and `<team>:NNN` addressing are gone. There is no way left to construct
 // this scenario without inventing a sub-team mechanism the product no longer has, so the whole
 // test is removed rather than reworked.)
@@ -390,7 +390,7 @@ test('the graph: node.mjs reads it through the CLI and writes nothing into it', 
 // 6. Protected path
 // ---------------------------------------------------------------------------------------------
 
-test('protected path: premerge scope check (item 2) fails a branch that touches config.protectedPaths', async (t) => {
+test('protected path: land.mjs scope check fails a branch that touches config.protectedPaths', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -412,7 +412,7 @@ test('protected path: premerge scope check (item 2) fails a branch that touches 
 
   // --level team no longer exists (sub-teams are gone) — omitting --level defaults internally to
   // the same gate lookup a bare branch landing on the team branch always used.
-  const pm = run('premerge.mjs', [running.json.branch, '--no-gate'], dir);
+  const pm = run('land.mjs', [running.json.branch, '--no-gate'], dir);
   assert.equal(pm.code, 1);
   const scope = pm.json.checks.find((c) => c.name === 'scope');
   assert.equal(scope.ok, false);

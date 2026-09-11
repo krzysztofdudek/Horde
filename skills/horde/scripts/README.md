@@ -133,7 +133,7 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
   `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries
   a contract between them; three or more is refused — no owner holds the whole of such a diff.
   `--revert-base` names the ref where the ticket's new tests must fail (a contract test
-  is green on the team tip by design; its red base is e.g. `develop`); `premerge` item 4 reads it, or
+  is green on the team tip by design; its red base is e.g. `develop`); `land`'s revert-test item reads it, or
   a "red on <ref>" phrase in the acceptance lines. An
   `--evidence` value that is nothing but catalogue ids (`E2,E5`) fills the ticket's `**Evidence:**`
   field; any other value becomes its own `- [ ] …` line in the `## Acceptance — evidence`
@@ -151,7 +151,7 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
 - The four structural fields — `**Files:**`, `**Consumes:**`/`**Produces:**`, `**Evidence:**` — are
   what `queue.mjs plan` computes the mission's order from, and they are validated where they are
   written: every path in `--files` must lie inside the boundary of a node the ticket names (the same
-  boundary reading `premerge`'s scope item uses — one function, in `node.mjs`, imported by both);
+  boundary reading `land`'s scope item uses — one function, in `node.mjs`, imported by both);
   `--consumes`/`--produces` must read `<node>/<port>@<version>`; and a consumed port must be
   produced by some ticket of this horde (its own team or another's) or already exist on that node in
   the graph — refused by name otherwise. Port existence is read through `node.mjs`'s graph reading,
@@ -165,8 +165,7 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
   worker NNN --takeover`. Beyond that cap the command refuses outright — there is no next command
   to propose yet. `log NNN "text"`, `grep <re>`.
 - `review-request NNN [--delta <path>]` — appends to the log with a timestamp; `--delta` names the
-  file `premerge.mjs` wrote for a scoped re-review, so the log records which kind of review was
-  asked for.
+  file a scoped re-review was written to, so the log records which kind of review was asked for.
 - `--node` on `new` is repeatable; two nodes mark a contract ticket.
 - `move NNN --team t` — relocates the issue folder.
 - `edit NNN --by <name>` — rewrites the body (everything from `## What` on) from stdin, leaving the
@@ -177,7 +176,7 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
 - `edit NNN --by <name> [--files a,b] [--consumes …] [--produces …] [--evidence E1,…]` — changes
   those fields instead of the body (no stdin needed), each with its own log line naming who changed
   it, and validated exactly as `new` validates them. This is how a ticket is widened when the work
-  turns out to touch a file it never declared — `premerge`'s scope item refuses that diff and names
+  turns out to touch a file it never declared — `land`'s scope item refuses that diff and names
   this command; a silent widening is what it exists to prevent.
 
 ## queue.mjs — the DAG
@@ -310,7 +309,7 @@ documents.
 
 It is also where the other tools read the graph from, so there is one reading of it and not four:
 the boundary of a ticket's nodes and the glob matching over it (`tk.mjs`'s file validation and
-`premerge`'s scope item), the ports a node publishes (`tk.mjs`'s refusal of a consumed port nothing
+`land`'s scope item), the ports a node publishes (`tk.mjs`'s refusal of a consumed port nothing
 produces), and `consumersOf(node, port)` — every node that consumes one node's port, from
 `yg impact`. `consumersOf` is what decides a version bump's order in the plan and whose approval the
 merge checklist then requires — one derivation, three users.
@@ -456,7 +455,7 @@ Beyond the counts it always carried, `close` states five figures the chairman re
 - **parallelism** — planned (the bullet above) against achieved (the most tickets this wave landed
   on any one day; a journal bullet is dated, not stamped, so the day is the grain the record has);
 - **keys transferred** — the reviews this wave did not have to buy twice, summed from the bullets
-  `premerge.mjs` writes when a ticket's keys survive a catch-up;
+  a pre-migration checklist wrote when a ticket's keys survived a catch-up;
 - **the audit** as a sample, not a ritual: `hordes/<horde>/audit.json` holds every audited ticket
   with its verdict plus the current rate. The close turns this wave's `audit` bullets into samples
   (once per wave and ticket, so re-closing never double-counts), then lets the samples set the
@@ -500,45 +499,131 @@ Beyond the counts it always carried, `close` states five figures the chairman re
   lowering a rule, waiving one or moving a review date is theirs alone. Under a charter set to
   `only-the-work` the block says none of it ran, and no reading is recorded at all.
 
-## premerge.mjs — the mechanical checklist
+## land.mjs — the gate a change lands through
 
-`premerge.mjs <branch> [--level trunk] [--no-gate]`, for a ticket branch (`<horde>/t-NNN`).
+`land.mjs <ticket|branch> [--level trunk] [--no-gate] [--background]`, for a ticket branch
+(`<horde>/t-NNN`). This is the last command a worker runs. Nine items, ✓/✗ each; **every one green
+means the branch is merged into its parent here and now**, and a single ✗ means it is not. Nobody
+signs anything either way — a green run is the signature, and the landed sha is the only trace.
+
+It runs in a **fresh detached worktree at the branch's own tip**, made for the run and removed on
+every way out. It does not read whichever worktree happens to hold the branch: a gate that measures
+a tree somebody is still typing into is measuring the wrong thing, and briefing a reader into
+someone else's tree is how three separate mission failures started.
+
 Its **parent branch** is trunk's own (`<horde>/trunk`), or — while the ticket is stacked on a
 dependency that has not merged yet — that dependency's branch; one answer, reported as `parent` in
 the JSON, and every item below is measured against it:
 
 1. base freshness — the branch is rooted at its parent branch's tip;
-2. scope — the diff stays inside the files the ticket declared in `**Files:**`; a ticket that
-   declared none falls back to the union of its node boundaries (from `node.mjs`), exactly as
-   before. Either way it touches no protected path, and Yggdrasil's committed lock files
-   (`.yggdrasil/yg-lock.*.json`) are reported as derived and left to `yg check` in the gate. A diff
-   past a declared list is ✗ "declared `<n>` files, touched `<path>` outside them" — the fix is
-   `tk.mjs edit NNN --files …`, which records the widening in the log, never a quiet pass;
-3. revert test — new test files in the diff, extracted onto the parent's tree, show at least one failure;
-4. gate — green at the branch's SHA: taken from a pre-migration ticket's own recorded verdict when
-   it names this SHA with a green gate, otherwise the level's gate command from `config.gates` run
-   in the branch's worktree;
-5. graph — the graph's own verdict on the branch's worktree, on every run whatever `config.gates`
-   holds: the graph is the node map, so it is what says the code is right there, and a repository
-   whose own gate command never calls `yg` would otherwise show a green gate over a tree `yg check`
-   exits 1 on. Two halves. The free one runs here: `yg check --approve --only-deterministic` records
-   every rule a script can decide, at no cost. What that leaves is the prose rules, which a reader
-   has to judge — the item names each pending pair rather than approving it (`node.mjs verdicts
-   --at <worktree>` lists them again). The item is ✓ only when a full `yg check` is green: every
-   script verdict recorded AND every prose verdict judged and bound to this code. A red graph is a
-   red gate. When the CLI cannot be started at all the item is ✗ (never a quiet ✓) and names
-   `config.ygCommand`; when the free run itself did not take — a judgement rule with no judge
-   configured refuses it outright — the item hands over the CLI's own words rather than naming
-   pairs it cannot classify;
-6. mapping — every file the branch added is owned by a node on the branch's own tree; skipped with
+2. judge — every prose rule on this tree carries a judgement. `config.judge` says who makes it:
+   `tier` means this repository has a Yggdrasil reviewer, which fills the pairs during the graph
+   item's own run, so the only thing left to check is that none came back unjudged; `one-shot` means
+   it has none, and the pending pairs are handed back on the result (`pairs`, each with the exact
+   `verdict package` / `verdict record` commands, plus a `brief`) with the landing reported not
+   ready. There is no default — `horde init` works it out from the graph's own reviewer
+   configuration, and a gate that guessed would either invent a reviewer or pay for one twice;
+3. scope — the diff stays inside the files the ticket declared in `**Files:**`; a ticket that
+   declared none falls back to the union of its node boundaries (from `node.mjs`). Either way it
+   touches no protected path, and Yggdrasil's committed lock files (`.yggdrasil/yg-lock.*.json`) are
+   reported as derived and left to `yg check` in the gate. A diff past a declared list is ✗
+   "declared `<n>` files, touched `<path>` outside them" — the fix is `tk.mjs edit NNN --files …`,
+   which records the widening in the log, never a quiet pass;
+4. revert test — new test files in the diff, extracted onto the parent's tree, show at least one
+   failure. The result is derived by running them; nothing declares it to this gate, and no flag
+   offers to say so, because a declaration about a test is not evidence about a test;
+5. gate — `config.gates.<level>` run fresh on the branch's own tree. No recorded green run is
+   accepted from anywhere: a "green at sha …" line in a ticket's log is a claim about a run this
+   gate did not see. A command that hangs is stopped at `config.gateTimeoutMs` (default 15 minutes)
+   and the limit is named, rather than a stuck process left behind a checklist that never finishes;
+6. graph — the graph's own verdict on the branch's tree, on every run whatever `config.gates` holds:
+   the graph is the node map, so it is what says the code is right there, and a repository whose own
+   gate command never calls `yg` would otherwise show a green gate over a tree `yg check` exits 1
+   on. Two halves. The free one runs here: `yg check --approve --only-deterministic` records every
+   rule a script can decide, at no cost. What that leaves is the prose rules, which a reader has to
+   judge — the item names each pending pair rather than approving it, and hands them to item 2. The
+   item is ✓ only when a full `yg check` is green. A red graph is a red gate. When the CLI cannot be
+   started the item is ✗ (never a quiet ✓) and names `config.ygCommand`; when the free run itself
+   did not take — a judgement rule with no judge configured refuses it outright — the item hands
+   over the CLI's own words rather than naming pairs it cannot classify;
+7. mapping — every file the branch added is owned by a node on the branch's own tree; skipped with
    `--no-gate`;
-7. journal — `tk log` has an entry newer than the last commit;
-8. graph text — charters, logs and `graph:` commits touched by the branch carry no mission
+8. journal — `tk log` has an entry newer than the last commit;
+9. graph text — charters, logs and `graph:` commits touched by the branch carry no mission
    language.
 
-`--no-gate` skips items 4 and 5. Prints ✓/✗ per item; exits non-zero on any ✗. Never modifies the parent's tracked files; writes the gate
-result under its level's key in `hordes/<horde>/cache/last-gate.json` (`{commit, team, trunk}`, each
-with sha, result, count, at).
+A judgement has to be **committed on the branch** to count. The gate reads a fresh tree at the tip,
+so a verdict sitting uncommitted in somebody's checkout is one this branch does not carry.
+
+`--no-gate` skips items 2, 5, 6 and 7, and never merges. `--background` starts the run, prints the
+path of the result file it will write (`.horde/hordes/<h>/land/<ticket>.json`, shape
+`{ticket, branch, sha, ok, checks: [{name, ok, note}], at}` plus the tree it ran in) and returns at
+once. A half-written result file reads as no file at all — the gate never trusts a recorded result,
+its own or anyone's, and simply runs again.
+
+### the two guards
+
+Before any item is judged, two things are checked that no worker can fix by trying again. Both are
+deterministic — no model is asked whether a change is a weakening; Yggdrasil's own machine documents
+say so — and both refuse outright rather than reporting an item.
+
+**The law guard.** A branch may not weaken the rules it is judged by. Six cases, each named
+separately in the refusal because the fix differs for each: a rule present on the base and gone from
+the branch; a `status:` demoted; a `review_by` moved; a **narrowed reach**; an added `yg-suppress`
+marker; a rule detached from a node that carried it. Read from `yg aspects --json` (status,
+`review_by`), `yg check --json --full` (whose `pairs` are exactly the set of units each rule
+reaches) and `yg suppressions --json`, on the base tree and the branch tree. A CLI that cannot
+answer the suppression inventory as a document **stops the run** rather than parsing a waiver
+listing meant for a person: a suppression the guard failed to see is a rule silently switched off.
+
+"Narrowed" is measured by reach, never by comparing predicate text — that would be guessing.
+For a rule whose `when`/`scope` changed, the guard compares the set of units it reaches in each
+tree, **restricted to units both trees have** (otherwise a file the branch adds reads as a widening
+and one it deletes as a narrowing). A head set that is a strict subset of the base set is a
+narrowing. A superset, or two sets neither of which contains the other, is not a lowering at all —
+it is a change to what the rule says, and goes to the conflict guard instead. Identical reach with
+changed text is editorial and stops nothing. The same lost pairs with the rule's text **unchanged**
+are a rule unhooked from a node, reported as "detached". A rule that reaches nothing in either tree
+is deletable with no signature: a rule that judges nothing weakens nothing when it goes.
+
+The one thing that lets any of this through is the client's own word, in the mission's
+`decisions.md`: an answered "ask" of kind `lower` naming that exact rule. `scope: once` is spent by
+the landing that uses it — which writes a `**Consumed:**` line into the answer itself — and
+`scope: mission` stands until the mission closes. An unanswered ask passes nothing.
+
+**The conflict-of-interest guard.** A branch may not sharpen a rule and change the code that rule
+refuses in the same landing: whichever way the rule now reads, it reads that way because the code
+needed it to. Adding a new rule is not this — it judged nothing before. Raising an existing rule's
+status is not this either — the text judging this code is the one that already judged it. Changing
+what a rule *says* (`content.md`, `check.mjs`, `companion.mjs`, `when`, `scope`) while changing a
+file it reaches is. The refusal names the rule, the file, and the way out: one ticket for the code,
+one for the rule, landing separately so each is judged by a law it did not write. An answered ask of
+kind `conflict` naming the rule lets it through.
+
+### the lock
+
+`.horde/gate.lock`, one per repository — `.horde/` is resolved through the git common directory, so
+every worktree of one repository finds the same file, which is the point. It is held around the
+expensive half only: the repository's own gate command and both `yg check` runs. Two landings on one
+repository serialize instead of running each other's commands over each other's lock; the second
+waits `config.gateLockWaitMs` (default two minutes) and then refuses, naming the pid holding it. The
+file carries that pid, so a lock left behind by a process that died is **taken over with a note**
+rather than waited on forever, and an unreadable (half-written) lock file is treated the same way.
+
+### landing
+
+Green means the branch is merged. `git merge --no-ff` into the parent, the worktree and the branch
+removed, the wave journal written, and `{ticket, sha, at}` recorded in both the queue item and the
+ticket's own log. The merge happens in the parent's own checkout when it has one and that checkout
+has no uncommitted tracked changes; otherwise in a throwaway detached tree, with the parent's ref
+moved by `git update-ref` naming the sha it started from — so a parent that moved under the run
+refuses instead of overwriting what landed on it meanwhile. A branch tip that moved during the run
+refuses too, naming both shas: the sha the items were measured against has to be the sha that lands.
+
+A merge conflict is `git merge --abort`, the parent untouched, and a red item naming the conflicting
+files. Red outside a conflict puts the ticket on `changes` with the gate's own words and ticks
+`changesRoundInfo`'s round counter. Nothing is ever written to Yggdrasil's incident register: a red
+gate is a rule doing its job, and an adopter's incident ledger is for rules that failed to.
 
 ## blame.mjs — chain of custody
 
@@ -587,7 +672,7 @@ agent's prose.
     Minor findings alone.
   - `scope` — the diff between the team branch and the ticket branch stays inside the files the
     ticket declared in `**Files:**`, or inside the boundaries of the nodes it names when it declared
-    none, and touches no protected path. The same two-step bound `premerge`'s own scope item uses:
+    none, and touches no protected path. The same two-step bound `land`'s own scope item uses:
     a drill that judged scope by another rule would pass work the checklist refuses.
 - `run <drill> [--corpus <dir>] [--yg <command>]` — restores every corpus case into a temporary
   repository and checks it: a `violates-` case must come out red, a `satisfies-` case green.
@@ -606,7 +691,7 @@ The corpus is `tests/drills/<drill>/{violates-*,satisfies-*}/`, the same convent
 A case is a `case.json`, a `horde/` snapshot and a `repo.bundle`; nothing in it is written by hand.
 
 `drill.mjs` reads history and never writes to the repository it checks. Its revert machinery is its
-own rather than `premerge.mjs`'s: premerge asks whether a branch's new tests fail on the branch it
+own rather than `land.mjs`'s: the gate asks whether a branch's new tests fail on the branch it
 is about to merge into, which is a question about the merge; the `tdd` drill asks whether the commit
 that introduced them could have failed at the moment it was written, which is a question about how
 the work was done.
@@ -651,13 +736,10 @@ one walk, on the two real builds: **Grain** mines a graph out of a repository's 
    written through `charter edit` with two evidence rows; an owner files a ticket carrying `Files`,
    `Produces` and both evidence ids; `queue plan` derives one layer and no uncovered row; `queue set
    running` cuts the branch and the worktree; the worker lands a change with a test that really is
-   red on the branch it merges into and green on its own; the author key, then a verifier's verdict
-   with `--ran`/`--saw`, the gate at the branch's own tip, and the patch-id of the ticket's diff —
-   which the test computes with git itself and compares; the owner of the node approves, and so does
-   the owner of the node the graph says consumes the port the ticket raises; `premerge` passes all
-   seven items, the graph one through a real `yg check` in the branch's own worktree; the merge, the
-   wave close that turns both evidence rows green, `horde done` refusing until the wave is audited
-   and passing after, and `blame` on one merged line printing the ticket, both keys, both approvals,
+   red on the branch it merges into and green on its own; `land` passes all nine items — the graph
+   one through a real `yg check` in a fresh tree at the branch tip — and **makes the merge commit
+   itself**, removing the worktree and the branch and recording the landed sha; the wave close that
+   turns both evidence rows green; `horde done`; and `blame` on one merged line printing the ticket,
    the evidence and the rules standing over the component the graph says owns the file.
 
 It asserts on files, exit codes and recorded fields only — never on anything's prose. It is skipped,
@@ -667,9 +749,9 @@ found by asking a candidate for its own usage text and requiring a `propose` com
 engine module and its dispatcher sit next to each other under the same name, and only one of them
 runs.
 
-## premerge.mjs's revert test — how a new test file is found and run
+## land.mjs's revert test — how a new test file is found and run
 
-Item 4 detects a new test file generically by name, against `config.testGlobs` rather than by
+The item detects a new test file generically by name, against `config.testGlobs` rather than by
 inspecting file content — a repository's own test patterns aren't otherwise knowable from this tool
 set. `horde init` fills that key from the repository's build files; when it is empty the item is ✗,
 because a ✓ reading "no new test files in diff" over a repository whose tests this tool cannot
@@ -679,8 +761,10 @@ can run directly is extracted and run that way; anything else falls back to runn
 `config.gates.commit` command in the scratch worktree, treating any red as "this file's a failure" —
 isolating just one file's test lane out of an arbitrary configured command isn't possible in general.
 
-Premerge's gate check (item 4) accepts a pre-migration ticket's recorded green gate only when that
-sha equals the branch's current tip — otherwise it runs the level's gate fresh.
+The gate item accepts no recorded green run from anywhere — not a cache, not a ticket's own log.
+It runs `config.gates.<level>` fresh on the branch's tree, every time. (`horde.mjs done` still
+accepts a matching cached green for the trunk gate; that is its own call, about a mission already
+merged, and it stays there.)
 
 ## a ticket started from an unmerged dependency (a stack)
 

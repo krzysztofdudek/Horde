@@ -171,20 +171,25 @@ Configured in `config.json` under `gates`; the defaults for this repository:
 | level | before | what must be green |
 |---|---|---|
 | ticket commit | every commit on a ticket branch | the repository's commit hook lanes (`yg check`, lint, build, typecheck, unit) |
-| ticket → team | the team steward merges | full gate (`pnpm run gate`) in the worker's worktree; the ticket's evidence reproduced by a verifier; diff within the ticket's node(s); no protected path touched; branch rooted at its parent's tip (the team's branch, or the unmerged ticket it was started from) |
-| team → trunk | the trunk steward merges | full gate on the merged trunk; every contract test of the touched nodes green; the evidence catalogue delta in the right direction |
-| trunk → base | the user | full gate; audit clean; evidence catalogue fully green; cost report written |
+| ticket → trunk | `land` merges it | all nine items of the landing gate |
+| trunk → base | the user | full gate; evidence catalogue fully green; cost report written |
 
-`premerge.mjs <branch>` automates the mechanical part for the two middle rows; the steward escalates
-anything it cannot tick, and never interprets a red item. `premerge` also judges the graph on the
-branch's own tree as its own checklist item, whatever the gate commands say — the graph is what says
-the code is right there, and a repository whose gate command never calls `yg` would otherwise merge a
-tree the graph refuses. That item runs the free half itself
-(`yg check --approve --only-deterministic`), names every prose rule still waiting on a judgement,
-and is ✓ only when a full `yg check` is green. The full gate is expensive (this repository's
-includes the browser suite), so it runs once per SHA: a verifier's `reproduced` verdict names the SHA
-and the gate result it saw, `premerge` accepts that instead of rerunning, and the auditor's rerun is
-the deliberate third opinion. Gate results are cached per level in `cache/last-gate.json`.
+`land.mjs <ticket>` is the middle row, and it is not a checklist somebody reads and then acts on —
+it merges the branch itself when every item is green, and refuses when one is not. There is no
+steward to interpret a red item and nobody's signature to collect: a green run is the signature, and
+the landed sha the only trace it leaves. It runs in a fresh detached tree at the branch's own tip,
+never in the worker's, so what it measures cannot move under it.
+
+The graph is one of its items, whatever the gate commands say — the graph is what says the code is
+right there, and a repository whose gate command never calls `yg` would otherwise merge a tree the
+graph refuses. That item runs the free half itself (`yg check --approve --only-deterministic`),
+names every prose rule still waiting on a judgement, and is ✓ only when a full `yg check` is green.
+Who judges those rules is `config.judge`: this repository's own Yggdrasil reviewer, or a judge the
+gate hands the pairs to and waits for.
+
+The full gate is expensive, and no recorded green run is accepted in its place — a claim about a
+run this gate did not see is not a run. Instead, one landing happens at a time per repository
+(`.horde/gate.lock`), so the cost is paid once rather than several times over each other.
 
 ## Liveness — by files, never by silence
 

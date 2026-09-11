@@ -62,7 +62,7 @@ commands:
       --no-quality walls this one ticket off from the mission's quality policy: the work it names
       and nothing beside it, whatever the charter says. It never permits the opposite — nothing
       here can make a rule weaker at any setting.
-      --revert-base names the ref premerge.mjs's revert test should use instead of the parent
+      --revert-base names the ref land.mjs's revert test should use instead of the parent
       branch's tip (for a test meant to already be green there, e.g. a contract test).
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
       the merge checklist refuses a diff that reaches past them). --consumes/--produces name the
@@ -435,11 +435,11 @@ function checkConsumesHaveProducers(horde, consumes, selfId) {
 // line; nothing else writes an issue folder. Refusals still go through fail(), which is the tools'
 // shared error contract — a caller wanting a softer answer checks first.
 //
-// `revertBase` (`--revert-base <ref>` on `new`) is the ref premerge.mjs's revert test extracts a
+// `revertBase` (`--revert-base <ref>` on `new`) is the ref land.mjs's revert test extracts a
 // ticket's new tests onto instead of the parent branch's tip, for a test meant to already be green
 // there (a contract test pinning a surface that already holds) and red somewhere else named on the
 // ticket's own acceptance line instead (e.g. "red on develop"). Empty by default: the template's own
-// "**Revert base:**" line then renders with nothing after it, which premerge.mjs reads as "use the
+// "**Revert base:**" line then renders with nothing after it, which land.mjs reads as "use the
 // parent tip".
 export function createTicket(horde, spec) {
   const {
@@ -650,7 +650,7 @@ function cmdGrep(horde, positional, flags) {
 }
 
 // --delta <path> — the file holding the difference between what the owner already approved and
-// what is on the branch now, written by premerge.mjs when a ticket's diff moved after the review.
+// what is on the branch now, written by land.mjs when a ticket's diff moved after the review.
 // Logged by path rather than by content: the owner reads the file, and the log keeps the record of
 // which re-review this request was, so a later reader can tell a scoped one from a full one.
 function cmdReviewRequest(horde, positional, flags) {

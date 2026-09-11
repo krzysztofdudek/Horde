@@ -474,6 +474,48 @@ function resolveStackParent(horde, team, key, item, raw) {
   return { ticket: ref.canonical, branch: ref.item.branch };
 }
 
+// Everything recording a merge does to the queue, in one place: the dependency order is checked,
+// the worktree and the branch go, the sha is kept, and whatever was stacked on this ticket is
+// stacked on nothing any more. `cmdSet` calls it for `set <t> merged --sha`, and the landing gate
+// calls recordMerged below the moment it has made the merge commit itself — the two must not drift,
+// since a landing that recorded a merge differently from a hand-recorded one would leave two
+// shapes of the same event in one queue.
+function applyMerged(horde, team, doc, item, key, sha, { tree } = {}) {
+  // Merge order is the dependency order, stack or no stack: a ticket written on top of an
+  // unmerged one still lands after it.
+  const unmerged = (item.dependsOn || []).filter((d) => !dependencySatisfied(horde, doc, team, d));
+  if (unmerged.length) {
+    fail(`${key} depends on ${unmerged.join(', ')}, still unmerged — merge order follows the dependencies, so ${unmerged.length === 1 ? 'that ticket merges' : 'those tickets merge'} first`);
+  }
+  const ticket = findTicket(horde, key);
+  if (!ticket) fail(`ticket ${key} not found`);
+  const mergeRoot = resolveTree({ tree }).path;
+  if (item.worktree) git(['worktree', 'remove', '--force', item.worktree], mergeRoot);
+  if (item.branch) git(['branch', '-D', item.branch], mergeRoot);
+  item.worktree = null;
+  item.sha = sha;
+  // Whatever was stacked on this ticket is stacked on nothing now: the work is on the team
+  // branch and the branch it was cut from is gone. The same write that records the merge moves
+  // their parent, so no later reading of the base depends on somebody remembering a second
+  // command — from here they catch up with the team branch like any other ticket.
+  for (const other of doc.items) {
+    if (other === item || other.stackedOn !== key) continue;
+    other.stackedOn = null;
+    other.notes.push({ at: nowIso(), text: `stack: ${key} merged — base is ${horde}/${team} from now on; catch up with it` });
+  }
+}
+
+// The landing gate's own way in: it has already made the merge commit, so all that is left is the
+// record. Returns the journal bullet the wave close reads, exactly as `set <t> merged` does.
+export function recordMerged(horde, team, key, sha, { tree } = {}) {
+  const { doc, item } = findItem(horde, team, key);
+  if (!item) fail(`no queue item: ${key}`);
+  applyMerged(horde, team, doc, item, key, String(sha), { tree });
+  item.state = 'merged';
+  save(horde, team, doc);
+  return { item, journal: noteMerged(horde, team, key, String(sha)) };
+}
+
 function cmdSet(horde, positional, flags) {
   const [rawKey, state] = positional;
   if (!rawKey || !state) fail('set requires <ticket> <state>');
@@ -516,29 +558,8 @@ function cmdSet(horde, positional, flags) {
   }
 
   if (state === 'merged') {
-    // Merge order is the dependency order, stack or no stack: a ticket written on top of an
-    // unmerged one still lands after it.
-    const unmerged = (item.dependsOn || []).filter((d) => !dependencySatisfied(horde, doc, team, d));
-    if (unmerged.length) {
-      fail(`${key} depends on ${unmerged.join(', ')}, still unmerged — merge order follows the dependencies, so ${unmerged.length === 1 ? 'that ticket merges' : 'those tickets merge'} first`);
-    }
-    const ticket = findTicket(horde, key);
-    if (!ticket) fail(`ticket ${key} not found`);
     if (!flags.sha) fail('set merged requires --sha');
-    const mergeRoot = resolveTree({ tree: flags.tree }).path;
-    if (item.worktree) git(['worktree', 'remove', '--force', item.worktree], mergeRoot);
-    if (item.branch) git(['branch', '-D', item.branch], mergeRoot);
-    item.worktree = null;
-    if (flags.sha) item.sha = flags.sha;
-    // Whatever was stacked on this ticket is stacked on nothing now: the work is on the team
-    // branch and the branch it was cut from is gone. The same write that records the merge moves
-    // their parent, so no later reading of the base depends on somebody remembering a second
-    // command — from here they catch up with the team branch like any other ticket.
-    for (const other of doc.items) {
-      if (other === item || other.stackedOn !== key) continue;
-      other.stackedOn = null;
-      other.notes.push({ at: nowIso(), text: `stack: ${key} merged — base is ${horde}/${team} from now on; catch up with it` });
-    }
+    applyMerged(horde, team, doc, item, key, String(flags.sha), { tree: flags.tree });
   }
 
   item.state = state;

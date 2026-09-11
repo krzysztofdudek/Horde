@@ -98,6 +98,13 @@ auditor and counsel do not exist right now — they are being rebuilt one at a t
 - Spawn a **worker** per ticket as your subagent (`brief.mjs worker NNN`), one ticket each. A
   worker that needs another round after `tk.mjs status NNN changes` is resumed the same way, or
   replaced one class up past `config.fixRounds`.
+- Nobody merges by hand. `land.mjs <ticket>` is the last command of a ticket: nine checks, and on
+  green it makes the merge commit itself, removes the branch and its worktree, and records the
+  landed sha. On red it refuses, puts the ticket back on `changes` with the gate's own words, and
+  ticks the round counter. Two things it refuses outright rather than reporting: a branch that
+  weakens a rule it is judged by, and a branch that sharpens a rule while changing the code that
+  rule refuses. The first goes through only on the **client's** recorded answer — put it to them,
+  never rule on it yourself.
 
 **Who holds the Agent tool.** You create the architect, your only teammate; every worker is your
 own subagent, one per ticket. A subagent is reachable and reclaimable by the agent that spawned it

@@ -194,7 +194,11 @@ function startCli(cmd, args, opts) {
 //   no-cli  — the CLI could not be started
 //   stale   — the CLI ran and answered something that is not the document
 //   error   — the CLI ran and refused for its own reason (a graph that does not load, say)
-function ygJson(root, cfg, args, schema) {
+//
+// Exported because the landing gate reads the same documents on two trees at once and must not go
+// through the readers below: every one of them caches by node or by file alone, which is right for
+// a command looking at one tree and exactly wrong for a comparison of two.
+export function ygJson(root, cfg, args, schema) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const command = `${display} ${args.join(' ')}`;
   const run = startCli(cmd, [...prefix, ...args], {
@@ -1228,7 +1232,7 @@ export function nodeBoundary(root, cfg, node) {
 }
 
 // The repo-root-relative directory a node's own graph files live in (yg-node.yaml, log.md),
-// trailing slash included — the prefix premerge.mjs's scope check treats as inside a ticket's
+// trailing slash included — the prefix land.mjs's scope check treats as inside a ticket's
 // node, alongside its code boundary. Nothing else under .yggdrasil/ (yg-architecture.yaml,
 // aspects, locks, config) is a node's own files, so this names only that one directory, never the
 // graph root.
@@ -1236,7 +1240,7 @@ export function nodeGraphPathPrefix(root, cfg, node) {
   return `${relative(root, nodeDir(root, node))}/`;
 }
 
-// ---- boundary matching (shared with premerge.mjs and tk.mjs) ---------------
+// ---- boundary matching (shared with land.mjs and tk.mjs) ---------------
 //
 // One reading of "inside the node", used by the merge checklist's scope item and by the ticket
 // tool when it accepts a declared file list: the same globs, matched the same way, so a path a

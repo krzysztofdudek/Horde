@@ -11,7 +11,7 @@
 // a step's whole point was one of the deleted seats or gates, it is gone rather than worked
 // around; see this task's report for what could not be preserved.
 //
-// One older gap stays fixed at the source rather than worked around here: premerge's nested
+// One older gap stays fixed at the source rather than worked around here: the landing gate's nested
 // `node --test <file>` used to inherit NODE_TEST_CONTEXT from this very test run, and so be
 // silently skipped by Node's own recursive-test-runner guard — checkRevertTest now spawns that
 // child with the inherited test-runner markers stripped from its environment.
@@ -47,9 +47,9 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
   });
 
   // "model"'s boundary has to cover its own test file too (tests/hook.test.mjs), not just the
-  // source path — premerge.mjs's scope check (item 3) treats a test file like any other diff
+  // source path — land.mjs's scope check treats a test file like any other diff
   // file, with no built-in exception for config.testGlobs; a node's tests live in its boundary
-  // the same way premerge.test.mjs's own fixtures always pair a source glob with its test glob.
+  // the same way land.test.mjs's own fixtures always pair a source glob with its test glob.
   await t.test('2. components, a port proposed and approved', () => {
     addNode(dir, 'model', { mapping: ['src/model/**', 'tests/hook.test.mjs'] });
     addNode(dir, 'ui', { mapping: ['src/ui/**'], relations: [{ target: 'model', type: 'uses' }] });
@@ -172,7 +172,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     assert.equal(reviewRequest.code, 0, reviewRequest.stderr);
   });
 
-  await t.test('8a/8b. premerge — every remaining item passes, including the revert test under this test suite', () => {
+  await t.test('8a/8b. the landing gate — every remaining item passes, including the revert test under this test suite', () => {
     // The revert test spawns its own nested `node --test <file>`; this whole suite already runs
     // under `node --test`, which is exactly the case that used to leak NODE_TEST_CONTEXT into
     // the child and get it silently skipped. Asserting a real "N fail / N tests" here (not
@@ -180,15 +180,15 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     //
     // "--level team" is refused now (task 014) — omitting --level still defaults to the team
     // gate, so it is simply dropped. "keys" is gone from the checklist entirely.
-    const premerge = run('premerge.mjs', ['pilot/t-001', '--no-gate'], dir);
-    const byName = Object.fromEntries(premerge.json.checks.map((c) => [c.name, c]));
+    const gate = run('land.mjs', ['pilot/t-001', '--no-gate'], dir);
+    const byName = Object.fromEntries(gate.json.checks.map((c) => [c.name, c]));
     for (const name of ['base freshness', 'scope', 'gate', 'journal', 'revert test']) {
       assert.equal(byName[name].ok, true, `${name}: ${byName[name].note}`);
     }
     assert.match(byName['revert test'].note, /1 fail \/ \d+ tests/);
   });
 
-  // The rest of the wave doesn't depend on premerge's own verdict — queue.mjs's "merged" (task
+  // The rest of the wave doesn't depend on the landing gate's own verdict — queue.mjs's "merged" (task
   // 014) no longer checks keys/approvals at all, only dependency order and --sha — so it can
   // still be driven and verified for real despite the gap above; the merge itself happens in the
   // trunk steward's own worktree (created straight from git in step 3a) — merging a ticket
