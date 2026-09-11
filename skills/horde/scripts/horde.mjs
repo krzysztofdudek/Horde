@@ -230,6 +230,18 @@ function defaultConfig(root) {
     // resume the same worker; the next "fresh" rounds ask for a new one, one class heavier;
     // beyond resume+fresh the command refuses and names the ruling to make instead.
     fixRounds: { resume: 3, fresh: 2 },
+    // How often an unattended loop runs `tick`, in seconds — read by `tick.mjs --watch` and by
+    // nothing else. Only a loop with nobody in front of it needs this: a session that runs tick,
+    // spawns what it says and runs it again sets its own pace.
+    tick: { interval: 300 },
+    // Who spins that loop, and — when nobody is in front of it — how a worker is started.
+    // "session" (the default) is the client's own session: it runs tick, issues the calls on the
+    // dispatch list in one turn, and runs tick again when they come back. "teammate" moves the
+    // same loop into one runner while the session talks to the client. "external" puts it outside
+    // any agent, so it survives a closed session: that one starts each worker itself through
+    // `spawn`, the host's own headless CLI, with "<class>" filled in from the ticket and "<brief>"
+    // with the path of the rendered brief. Nothing else in this tool set reads either key.
+    runner: { kind: 'session', spawn: null },
     // Repository-root-relative paths copied into every worktree provisionTree makes (a ticket's,
     // trunk's, or a landing script's scratch tree) — for whatever a worker's tools need that git
     // itself does not put on a fresh checkout (an untracked env file, a dependency cache). A path

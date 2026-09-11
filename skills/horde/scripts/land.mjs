@@ -178,10 +178,15 @@ const LOCK_POLL_MS = 250;
 
 function lockPath() { return join(hordeRoot(), 'gate.lock'); }
 
-function lockWait(cfg) {
+// Exported under its full name because tick takes this same lock: two ticks on one repository would
+// otherwise settle the same branch twice and hand the same ticket to two workers, and a lock of
+// their own would not stop them racing a landing at the same time.
+export function gateLockWaitMs(cfg) {
   const asked = Number(cfg && cfg.gateLockWaitMs);
   return Number.isFinite(asked) && asked > 0 ? asked : LOCK_WAIT_MS;
 }
+
+function lockWait(cfg) { return gateLockWaitMs(cfg); }
 
 function processAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -192,7 +197,7 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-function acquireGateLock(ticket, branch, { waitMs = LOCK_WAIT_MS } = {}) {
+export function acquireGateLock(ticket, branch, { waitMs = LOCK_WAIT_MS } = {}) {
   const path = lockPath();
   const deadline = Date.now() + waitMs;
   const notes = [];

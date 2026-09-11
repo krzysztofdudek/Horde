@@ -37,7 +37,12 @@ import {
 // whole DAG is built, and that lives there.
 import { addDependency } from './queue.mjs';
 
-const STATUSES = ['proposed', 'queued', 'running', 'landed', 'changes', 'verified', 'merged', 'escalated', 'dropped'];
+// "blocked" is where a ticket stops rather than pretends: its fix rounds are spent, so another
+// round would be a state dressed up as progress. Nothing in this tool set moves it out again —
+// only the client's own answer to the "stuck" ask filed against it does, and that answer is a
+// product decision, which is why there is no escalation kind for it and no command here that
+// rules on one.
+const STATUSES = ['proposed', 'queued', 'running', 'landed', 'changes', 'blocked', 'verified', 'merged', 'escalated', 'dropped'];
 const SEVERITIES = ['high', 'medium', 'low'];
 // A ticket is "work" (the mission's own scope) unless it names itself "quality" — a self-filed
 // improvement outside a wave's assigned scope (better graph, normalization, tidy-up) that
@@ -194,8 +199,9 @@ function priorChangesRounds(ticket) {
 // What this round of "changes" means: rounds 1..resume ask the steward to resume the same
 // worker with the findings; the next "fresh" rounds ask for a new one, one class heavier, briefed
 // with "brief.mjs worker NNN --takeover"; beyond resume+fresh this refuses outright — another
-// round would be a stall dressed up as progress, not a fix. There is no next command to propose
-// yet: the "blocked" status and the client write-up that names one arrive in later tasks.
+// round would be a stall dressed up as progress, not a fix. What happens then is tick's: the queue
+// item and the ticket both go to "blocked" and the client is asked, once, with the gate's own last
+// words and the path of the ticket's log.
 export function changesRoundInfo(horde, ticket) {
   const cfg = readConfig();
   const fixRounds = (cfg && cfg.fixRounds) || {};

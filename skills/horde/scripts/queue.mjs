@@ -31,7 +31,10 @@ import {
 // "proposed" is the state a ticket nobody has ruled on sits in: in the queue, listed and counted,
 // and never a candidate for `next`. A consultant files its own tickets and adds them here itself;
 // the architect's plan review (refine.mjs --step review) is the only way one becomes "queued".
-const STATES = ['proposed', 'queued', 'waiting', 'running', 'landed', 'merged', 'escalated', 'dropped'];
+// "blocked" is where a ticket stops: its fix rounds are spent, so another round would be a state
+// pretending to be progress. Nothing here moves it — `next` never offers it and `reconcile` never
+// touches it — until the client answers the "stuck" ask tick filed for it.
+const STATES = ['proposed', 'queued', 'waiting', 'running', 'landed', 'blocked', 'merged', 'escalated', 'dropped'];
 const SEVERITY_RANK = { high: 0, medium: 1, low: 2 };
 
 const USAGE = `usage: queue.mjs <command> [options]
@@ -144,6 +147,11 @@ function load(horde, team) {
 function save(horde, team, doc) {
   writeJSON(queuePath(horde, team), doc, { render: renderQueueDoc });
 }
+
+// The same two reads and writes, named for the one caller outside this file: tick.mjs works the
+// queue item by item and must do it against this document, not a second reading of its own.
+export function loadQueue(horde, team) { return load(horde, team); }
+export function saveQueue(horde, team, doc) { return save(horde, team, doc); }
 
 function normalizeKey(raw) {
   try { return padId(raw); } catch (e) { fail(e.message); return undefined; }
@@ -523,6 +531,52 @@ export function recordMerged(horde, team, key, sha, { tree } = {}) {
   return { item, journal: noteMerged(horde, team, key, String(sha)) };
 }
 
+// The branch a ticket is worked on and the worktree it is worked in, cut where `set <ticket>
+// running` cuts them. Its own function because it has two callers now: that command, and tick
+// building a dispatch list, which has to cut several in a row against one queue document.
+function provisionRunning(horde, team, key, item, { tree, on } = {}) {
+  const teamBranch = `${horde}/${team}`;
+  const cfg = readConfig() || {};
+  const root = resolveTree({ tree }).path;
+  const stack = on !== undefined ? resolveStackParent(horde, team, key, item, on) : null;
+  let branchName = item.branch;
+  if (!branchName) {
+    const from = stack ? stack.branch : teamBranch;
+    branchName = `${horde}/t-${key}`;
+    if (git(['rev-parse', '--verify', branchName], root) !== null) fail(`branch already exists: ${branchName}`);
+    const created = git(['branch', branchName, from], root);
+    if (created === null) fail(`could not create branch ${branchName} off ${from}`);
+    if (stack) {
+      item.stackedOn = stack.ticket;
+      item.notes.push({ at: nowIso(), text: `stacked on ${stack.ticket} — branch cut from ${stack.branch}` });
+    }
+  } else if (stack && item.stackedOn !== stack.ticket) {
+    fail(`--on ${on}: ${key} is already on branch ${branchName}, cut from somewhere else — a stack is chosen when the branch is cut, and moving one under work already done is a rebase this tool does not do; land or drop what is there first`);
+  }
+  const worktreePath = join(hordeRoot(), 'worktrees', horde, `t-${key}`);
+  try {
+    provisionTree(worktreePath, branchName, cfg);
+  } catch (e) {
+    fail(e.message);
+  }
+  item.branch = branchName;
+  item.worktree = worktreePath;
+}
+
+// Everything `set <ticket> running` does to one item, for the caller that has to do it to several
+// in a row: tick, building a dispatch list. A ticket on that list has had its branch cut and its
+// worktree made already — that is what lets the brief beside it render against a tree that exists,
+// and what stops the next run, or a second tick racing this one, from handing it out twice.
+export function startRunning(horde, team, key, { tree, on, agent } = {}) {
+  const { doc, item } = findItem(horde, team, key);
+  if (!item) fail(`no queue item: ${key}`);
+  provisionRunning(horde, team, key, item, { tree, on });
+  item.state = 'running';
+  if (agent) item.agent = agent;
+  save(horde, team, doc);
+  return item;
+}
+
 function cmdSet(horde, positional, flags) {
   const [rawKey, state] = positional;
   if (!rawKey || !state) fail('set requires <ticket> <state>');
@@ -535,34 +589,7 @@ function cmdSet(horde, positional, flags) {
     fail('--on only goes with "set <ticket> running" — it says which branch the ticket is cut from, and nothing else cuts one');
   }
 
-  if (state === 'running') {
-    const teamBranch = `${horde}/${team}`;
-    const cfg = readConfig() || {};
-    const root = resolveTree({ tree: flags.tree }).path;
-    const stack = flags.on !== undefined ? resolveStackParent(horde, team, key, item, flags.on) : null;
-    let branchName = item.branch;
-    if (!branchName) {
-      const from = stack ? stack.branch : teamBranch;
-      branchName = `${horde}/t-${key}`;
-      if (git(['rev-parse', '--verify', branchName], root) !== null) fail(`branch already exists: ${branchName}`);
-      const created = git(['branch', branchName, from], root);
-      if (created === null) fail(`could not create branch ${branchName} off ${from}`);
-      if (stack) {
-        item.stackedOn = stack.ticket;
-        item.notes.push({ at: nowIso(), text: `stacked on ${stack.ticket} — branch cut from ${stack.branch}` });
-      }
-    } else if (stack && item.stackedOn !== stack.ticket) {
-      fail(`--on ${flags.on}: ${key} is already on branch ${branchName}, cut from somewhere else — a stack is chosen when the branch is cut, and moving one under work already done is a rebase this tool does not do; land or drop what is there first`);
-    }
-    const worktreePath = join(hordeRoot(), 'worktrees', horde, `t-${key}`);
-    try {
-      provisionTree(worktreePath, branchName, cfg);
-    } catch (e) {
-      fail(e.message);
-    }
-    item.branch = branchName;
-    item.worktree = worktreePath;
-  }
+  if (state === 'running') provisionRunning(horde, team, key, item, { tree: flags.tree, on: flags.on });
 
   if (state === 'merged') {
     if (!flags.sha) fail('set merged requires --sha');
@@ -713,14 +740,33 @@ function lockConflict(ticketText, ticketId, locks) {
   return null;
 }
 
-function cmdNext(horde, positional, flags) {
-  const team = flags.team || 'trunk';
+// The `STACKED, parent <t-NNN> unmerged` line a candidate cut from an unmerged dependency carries
+// wherever it is listed — `next`'s own output and tick's dispatch list both. It is said on its own
+// line rather than folded into the candidate's: somebody scanning a list for what is ready has to
+// see at a glance that this one is not, and a suffix on a long line is exactly what gets missed.
+export function stackedLine(stackOn) {
+  const parents = asArray(stackOn);
+  if (!parents.length) return null;
+  return `STACKED, parent ${parents.map((p) => `t-${p}`).join(', ')} unmerged`;
+}
+
+// Every queued item, ranked the way `next` ranks it. Exported so tick.mjs dispatches from this
+// order rather than growing a second queue beside it: the comparator, the file locks and the
+// dependency rule are this file's, and there is one of each.
+//
+// `limit` additionally returns `picked` — the greedy prefix of `eligible` that fits the limit and
+// collides with nothing another pick on the same list already holds. `next` answers one at a time,
+// so the running locks are enough for it; a list of things to start at once is not, because
+// nothing on it is running yet and two of its entries could otherwise be handed the same file.
+export function rankedCandidates(horde, team, {
+  stack = false, cls = null, tree, limit,
+} = {}) {
   const doc = load(horde, team);
   const cfg = readConfig() || {};
   // Reused in-process, never shelled out: the same DAG `queue.mjs plan` derives, read straight off
   // this call's own buildPlan() so "longer remaining critical path" ranks against the plan's own
   // figures rather than a second, possibly stale, reading of the tickets.
-  const plan = buildPlan(horde, team, cfg, { tree: flags.tree });
+  const plan = buildPlan(horde, team, cfg, { tree });
   const remainingPath = new Map(plan.tickets.map((t) => [t.id, t.remainingPath]));
   const locks = runningLocks(horde, doc);
   const busyNodes = new Set(locks.flatMap((l) => l.nodes));
@@ -736,7 +782,7 @@ function cmdNext(horde, positional, flags) {
       // the same file locks, since the ticket it would start from is often the one holding the
       // file. Without --stack, an unmet dependency is what it always was.
       const stackOn = unmet.length ? stackParentsFor(horde, doc, team, item) : [];
-      if (unmet.length && !(flags.stack && stackOn.length)) {
+      if (unmet.length && !(stack && stackOn.length)) {
         return {
           item, idx, eligible: false,
           reason: `waiting on dependenc${unmet.length > 1 ? 'ies' : 'y'} ${unmet.join(', ')}`
@@ -756,10 +802,10 @@ function cmdNext(horde, positional, flags) {
           };
         }
       }
-      if (flags.class && item.class !== flags.class) {
+      if (cls && item.class !== cls) {
         return {
           item, idx, eligible: false,
-          reason: `excluded by --class ${flags.class} (this ticket is ${item.class})`,
+          reason: `excluded by --class ${cls} (this ticket is ${item.class})`,
         };
       }
       const nodes = ticket ? nodesOf(ticket.text) : [];
@@ -798,9 +844,36 @@ function cmdNext(horde, positional, flags) {
   });
   eligible.forEach((e, i) => { e.rank = i + 1; });
 
+  let picked = null;
+  if (limit !== undefined) {
+    picked = [];
+    const held = locks.slice();
+    for (const e of eligible) {
+      if (picked.length >= limit) break;
+      const ticket = findTicket(horde, e.item.ticket);
+      const text = ticket ? ticket.text : '';
+      if (lockConflict(text, e.item.ticket, held)) continue;
+      held.push({ ticket: e.item.ticket, files: ticketFiles(text), nodes: nodesOf(text) });
+      picked.push(e);
+    }
+  }
+
+  return {
+    doc, entries, eligible, picked,
+  };
+}
+
+function cmdNext(horde, positional, flags) {
+  const team = flags.team || 'trunk';
+  const { entries, eligible } = rankedCandidates(horde, team, {
+    stack: !!flags.stack, cls: flags.class || null, tree: flags.tree,
+  });
+
   const first = eligible.length ? eligible[0] : null;
   const chosen = first
-    ? { ...first.item, stackReady: first.stackOn.length > 0, stackOn: first.stackOn }
+    ? {
+      ...first.item, stackReady: first.stackOn.length > 0, stackOn: first.stackOn, stacked: stackedLine(first.stackOn),
+    }
     : null;
 
   if (flags.why) {
@@ -811,17 +884,18 @@ function cmdNext(horde, positional, flags) {
       reason: e.eligible ? null : e.reason,
       rank: e.eligible ? e.rank : null,
       stackOn: e.eligible ? e.stackOn : [],
+      stacked: e.eligible ? stackedLine(e.stackOn) : null,
     }));
     emit({ chosen: chosen ? chosen.ticket : null, entries: rows }, flags, () => (rows.length
-      ? rows.map((r) => (r.eligible
-        ? `${r.ticket} (${r.class}) — rank ${r.rank}${r.stackOn.length ? `, stack-ready on ${r.stackOn.join(', ')}` : ''}${chosen && r.ticket === chosen.ticket ? ' (chosen)' : ''}`
-        : `${r.ticket} (${r.class}) — skipped: ${r.reason}`)).join('\n')
+      ? rows.flatMap((r) => (r.eligible
+        ? [`${r.ticket} (${r.class}) — rank ${r.rank}${r.stackOn.length ? `, stack-ready on ${r.stackOn.join(', ')}` : ''}${chosen && r.ticket === chosen.ticket ? ' (chosen)' : ''}`, ...(r.stacked ? [r.stacked] : [])]
+        : [`${r.ticket} (${r.class}) — skipped: ${r.reason}`])).join('\n')
       : '(queue empty)'));
     return;
   }
 
   emit(chosen, flags, () => (chosen
-    ? `${chosen.ticket} (${chosen.class})${chosen.stackReady ? ` stack-ready on ${chosen.stackOn.join(', ')}` : ''}`
+    ? [`${chosen.ticket} (${chosen.class})${chosen.stackReady ? ` stack-ready on ${chosen.stackOn.join(', ')}` : ''}`, ...(chosen.stacked ? [chosen.stacked] : [])].join('\n')
     : '(none ready)'));
 }
 
@@ -1225,10 +1299,14 @@ function cmdRender(horde, positional, flags) {
   emit({ team }, flags, () => queuePath(horde, team).replace(/\.json$/, '.md'));
 }
 
-function cmdReconcile(horde, positional, flags) {
-  const team = flags.team || 'trunk';
+// What a spawn that never came back left behind, settled from the branch rather than from a clock.
+// Exported because tick.mjs opens every run with exactly this: an item is "running" because a call
+// was made, and once that call has returned without landing a sha, the branch is the only thing
+// that still knows what happened. Three answers, and each says out loud what was salvaged, because
+// the caller reading this is usually reading it after somebody else's crash.
+export function reconcileRunning(horde, team, { tree } = {}) {
   const doc = load(horde, team);
-  const root = resolveTree({ tree: flags.tree }).path;
+  const root = resolveTree({ tree }).path;
   const results = [];
   for (const item of doc.items) {
     if (item.state !== 'running' || !item.branch) continue;
@@ -1239,10 +1317,13 @@ function cmdReconcile(horde, positional, flags) {
     const count = countOut === null ? 0 : Number(countOut);
     if (count > 0) {
       item.state = 'landed';
-      results.push({ ticket: item.ticket, state: item.state });
+      results.push({ ticket: item.ticket, state: item.state, note: `${count} commit(s) beyond ${parent} on ${item.branch} — the work is safe and the branch is ready for the gate` });
       continue;
     }
-    const dirty = item.worktree && existsSync(item.worktree)
+    // A worktree git still has on record but that is gone from disk is not an error to throw on:
+    // it is the ordinary shape of a killed run, and the branch beside it is what matters.
+    const worktreeGone = !!item.worktree && !existsSync(item.worktree);
+    const dirty = item.worktree && !worktreeGone
       ? git(['status', '--porcelain'], item.worktree)
       : null;
     if (dirty) {
@@ -1250,17 +1331,32 @@ function cmdReconcile(horde, positional, flags) {
       git(['commit', '-m', 'wip: reclaimed'], item.worktree);
       item.state = 'queued';
       item.notes.push({ at: nowIso(), text: 'reconcile: worktree was dirty — committed as "wip: reclaimed"' });
-    } else {
-      item.state = 'queued';
-      if (item.worktree) {
-        git(['worktree', 'remove', '--force', item.worktree], root);
-        item.worktree = null;
-      }
+      results.push({ ticket: item.ticket, state: item.state, note: `worktree was dirty — committed as "wip: reclaimed" on ${item.branch}, and the worktree is kept` });
+      continue;
     }
-    results.push({ ticket: item.ticket, state: item.state });
+    item.state = 'queued';
+    const hadWorktree = item.worktree;
+    if (item.worktree) {
+      git(['worktree', 'remove', '--force', item.worktree], root);
+      git(['worktree', 'prune'], root);
+      item.worktree = null;
+    }
+    results.push({
+      ticket: item.ticket,
+      state: item.state,
+      note: worktreeGone
+        ? `the worktree at ${hadWorktree} is gone from disk and nothing was committed — there was nothing to salvage; ${item.branch} is left as it was and the item is queued again`
+        : `nothing was committed and the worktree was clean — worktree removed, ${item.branch} left as it was`,
+    });
   }
   save(horde, team, doc);
-  emit(results, flags, () => (results.length ? results.map((r) => `${r.ticket} -> ${r.state}`).join('\n') : '(nothing running)'));
+  return results;
+}
+
+function cmdReconcile(horde, positional, flags) {
+  const team = flags.team || 'trunk';
+  const results = reconcileRunning(horde, team, { tree: flags.tree });
+  emit(results, flags, () => (results.length ? results.map((r) => `${r.ticket} -> ${r.state} · ${r.note}`).join('\n') : '(nothing running)'));
 }
 
 function main() {

@@ -662,7 +662,7 @@ test('queue.mjs: "proposed" — in the queue, counted, and never a candidate', a
   await t.test('the state list carries it, first, and says so when something else is asked for', () => {
     const r = run('queue.mjs', ['set', proposal, 'nonsense'], dir);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /allowed: proposed, queued, waiting, running, landed, merged, escalated, dropped/);
+    assert.match(r.stderr, /allowed: proposed, queued, waiting, running, landed, blocked, merged, escalated, dropped/);
   });
 
   await t.test('"add --proposed" files it as a proposal; "add" on its own still files work', () => {

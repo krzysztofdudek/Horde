@@ -768,6 +768,50 @@ some other tool writes, shape `{runs: [{name, role, class, ticket|null, wave, at
 against the charter's limit when set), `limit-reached` (exit 0 when reached, meant to be checked
 before dispatching).
 
+## tick.mjs — the steward, as one run
+
+`tick [--runner session|teammate|external] [--watch] [--stack] [--tree p] [--horde h]`. Four things
+in order, then it exits — nothing lives between runs, so there is no roster, no liveness threshold
+and no minute count anywhere in it.
+
+1. **Reconcile.** Every `running` item whose call has come back without landing a sha, settled from
+   its branch: a commit beyond the parent goes to `landed`; a dirty worktree is committed as
+   `wip: reclaimed` and goes back to `queued`, worktree kept; a clean one with nothing on it goes
+   back to `queued` and gives up its worktree. A `running` item with no branch is skipped. Each
+   answer says what was salvaged, because whoever reads it is usually reading it after a crash.
+2. **Land what is ready.** Every `landed` item: the gate's own result file
+   (`hordes/<h>/land/<ticket>.json`) is read, and when it is missing, unreadable, or about a sha the
+   branch has moved past, `land --background` runs again — a record of a run is never a substitute
+   for one. Green merges the item and writes the wave-journal bullet. Red puts the ticket back with
+   the gate's own words and the round counted; when the rounds are spent the item and the ticket
+   both go to `blocked` and one `stuck` ask is filed for the client, carrying those last words and
+   the path of the ticket's log. A `landed` item whose branch has vanished is a refusal naming the
+   branch, with nothing touched.
+3. **The dispatch list.** `queue.mjs next`'s own order (stacked last, quality last, then severity,
+   then the longer remaining critical path, then a node nothing is running on, then FIFO), with its
+   file locks and its dependency rule, cut to `config.parallelism` minus what is already running.
+   Every entry has had its branch and worktree cut, so the `brief` command on it renders against a
+   tree that exists; `model` is the ticket's own class. A stacked entry carries the separate line
+   `STACKED, parent t-NNN unmerged`. `judge` carries the prose pairs the gate handed back, and only
+   under `config.judge: one-shot`. `askClient` is the open items of `asks.json` — an absent file is
+   an empty in-tray, never a refusal.
+4. **Close.** A queue holding nothing but `merged` items gives `close: true` and the command that
+   closes the wave. Tick prints that command and never runs it.
+
+**Tick never spawns.** The caller spawns. `--runner` only names who the caller is, and only
+`external` changes what this script does: with nobody in front of it, it starts each worker itself
+through `config.runner.spawn` (`<class>` and `<brief>` filled in). Under `session` (the default) and
+`teammate` it starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds
+until the queue empties or a signal arrives; a signal exits cleanly, holding no lock.
+
+It holds the landing gate's own lock — `.horde/gate.lock`, not a second one — so two ticks on one
+repository cannot bill one worker twice or cut one ticket's branch twice. Each list entry books one
+`cost.json` row (`{name, role, class, ticket, wave, at}`), keyed by ticket, wave, role and fix
+round, so two runs over a state nothing changed leave the ledger exactly as they found it. A
+`queue.json` caught half-written is refused by name and never written over — that file is the
+mission's own state, and an empty document written across a truncated one is the worst thing this
+tool could do.
+
 ## Tests
 
 `scripts/tests/*.test.mjs` with `node --test`: every tool's happy path and every refusal named above,
