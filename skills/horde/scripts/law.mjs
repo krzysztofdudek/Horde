@@ -18,12 +18,13 @@
 //   raised    a rule both trees have, standing higher here than there — the same law, biting
 //   attached  a rule both trees have at the same rung, reaching units here it did not reach there
 //
-// Reach comes from `yg check --json --full`, which already enumerates every (aspect, unit) pair it
-// verifies: one call per tree, no per-unit walk, and the same reading the landing gate's own law
-// guard takes. (`yg impact --aspect` has no --json in any released CLI, so there is nothing to
-// read it from; the pairs are the graph's own answer to the same question and are exact.) `--full`
-// because a repository with a configured reference branch would otherwise answer about a different
-// slice of itself in each tree, and a comparison of two different questions is not a comparison.
+// Reach comes from `yg aspects --json --reach`, which answers, for every rule the graph declares,
+// each unit it judges and the component that unit belongs to: one call per tree, no per-unit walk,
+// and the same reading the landing gate's own law guard takes. It replaced `yg check --json
+// --full`'s pairs, which answered a narrower question than this document asks — the gate has no
+// pairs at all for a rule at `draft`, so a draft rule came out of it reaching nothing, and every
+// section below then described a rule with real subjects as one with none. `--reach` carries the
+// draft rungs, which is what makes "reaches nothing" mean it.
 
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -57,7 +58,13 @@ options: --json  --help`;
 // other cannot be half-written into a diff: half a comparison is not a smaller answer, it is a
 // wrong one, so every failure here stops the whole document.
 
-const LAW_DOCUMENTS = 'yg-check/1, yg-aspects/1 and yg-aspect-log/1';
+const LAW_DOCUMENTS = 'yg-aspects/1 (including its `--reach`) and yg-aspect-log/1';
+
+// The release those answers arrived complete in. `--reach` is the newest of them, and a CLI that
+// does not know it cannot be fallen back to: the old road (`check --json --full`'s pairs) is a
+// different document answering a narrower question, and quietly taking it is how a draft rule's
+// real subjects went missing in the first place. So the refusal names a release to install.
+const LAW_CLI_AFTER = '6.0.0';
 
 function docOn(tree, cfg, args, schema, where) {
   const res = ygJson(tree, cfg, args, schema);
@@ -78,7 +85,7 @@ function docOn(tree, cfg, args, schema, where) {
       + `The Yggdrasil CLI at "${display}"${version ? ` reports version ${version} and` : ''} predates ${LAW_DOCUMENTS} — `
       + 'the versioned answers the law diff is read from. Reading it a second, fragile way is exactly what those '
       + 'documents exist to remove, so this stops rather than writing half a truth.\n'
-      + 'Upgrade to a release later than 5.9.0 (npm i -g @chrisdudek/yg), or point the horde at a newer build: '
+      + `Upgrade to ${LAW_CLI_AFTER} or later (npm i -g @chrisdudek/yg), or point the horde at a newer build: `
       + 'horde.mjs config set ygCommand "node path/to/bin.js"',
     );
   }
@@ -114,19 +121,30 @@ function aspectsOn(tree, cfg, where) {
   return out;
 }
 
-// What every rule on one tree reaches: the units it is verified over, and the components those
-// units belong to. A rule that reaches nothing has an entry with both sets empty — it is still a
-// rule the document has to be able to talk about.
+// What every rule on one tree reaches: the units it judges, and the components those units belong
+// to. A rule that reaches nothing has an entry with both sets empty — it is still a rule the
+// document has to be able to talk about, and now the emptiness is the graph's own answer rather
+// than an artefact of asking the gate about a rule the gate is not running.
 function reachOn(tree, cfg, where) {
   if (!hasGraph(tree)) return new Map();
-  const doc = docOn(tree, cfg, ['check', '--json', '--full'], 'yg-check/1', where);
+  const doc = docOn(tree, cfg, ['aspects', '--json', '--reach'], 'yg-aspects/1', where);
+  const declared = asArray(doc.aspects).filter((a) => a && a.id);
+  // A CLI that answered the document but ignored the flag would hand back every rule with no reach
+  // at all. Read as data that is every rule reaching nothing — the exact false reading this
+  // document moved off `check --full` to stop — so it is refused instead.
+  if (declared.length && !declared.some((a) => a.reach)) {
+    fail(`\`${ygCommand(cfg).display} aspects --json --reach\` answered a yg-aspects/1 document with no reach on any rule, on ${where} — the CLI took the flag and ignored it, and a missing reach is not an empty one.\n`
+      + `Upgrade to ${LAW_CLI_AFTER} or later (npm i -g @chrisdudek/yg), or point the horde at a newer build: horde.mjs config set ygCommand "node path/to/bin.js"`);
+  }
   const reach = new Map();
-  for (const pair of asArray(doc.pairs)) {
-    if (!pair || !pair.aspect) continue;
-    if (!reach.has(pair.aspect)) reach.set(pair.aspect, { units: new Set(), nodes: new Set() });
-    const entry = reach.get(pair.aspect);
-    if (pair.unit) entry.units.add(`${pair.unit.kind}:${pair.unit.path}`);
-    if (pair.node) entry.nodes.add(pair.node);
+  for (const a of declared) {
+    const entry = { units: new Set(), nodes: new Set() };
+    for (const r of asArray(a.reach && a.reach.units)) {
+      if (!r) continue;
+      if (r.unit && r.unit.kind && r.unit.path) entry.units.add(`${r.unit.kind}:${r.unit.path}`);
+      if (r.node) entry.nodes.add(r.node);
+    }
+    reach.set(a.id, entry);
   }
   return reach;
 }

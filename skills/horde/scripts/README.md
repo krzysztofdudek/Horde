@@ -526,10 +526,14 @@ gained since this mission started, asked again at every close. What one wave did
 `added` is a rule the base does not have at all; `raised` is a rule standing higher on the trunk than
 on the base; `attached` is a rule at the same rung reaching units here it did not reach there (compared
 only over units BOTH trees have, so a file the mission added is never mistaken for a rule that grew).
-`description` is the rule's own; `nodes` are the components the gate verifies it over, read from
-`yg check --json --full`'s pairs — one call per tree, the same reading the landing gate's law guard
-takes (`yg impact --aspect` has no `--json` in any released CLI); `why` is the last entry of the rule's
-own history (`yg aspects log read --json`), `null` for a rule nothing has been recorded about.
+`description` is the rule's own; `nodes` are the components the rule reaches, read from
+`yg aspects --json --reach` — one call per tree, the same reading the landing gate's law guard takes;
+`why` is the last entry of the rule's own history (`yg aspects log read --json`), `null` for a rule
+nothing has been recorded about. Reach is read there rather than off `yg check --json --full`'s pairs
+because the gate deliberately runs nothing for a rule at `draft`: read that way, every draft rule came
+back reaching nothing, and the document described a rule with real subjects as one with none. A CLI
+that does not know `--reach` is refused outright — the older document answers a narrower question, so
+falling back to it would only restore the wrong answer quietly.
 
 A rule that reaches nothing is in the document with `nodes: []`, not left out. A wave that did nothing
 to the law leaves a document with three empty lists, not a missing file. A document that could only be
@@ -805,10 +809,19 @@ say so — and both refuse outright rather than reporting an item.
 separately in the refusal because the fix differs for each: a rule present on the base and gone from
 the branch; a `status:` demoted; a `review_by` moved; a **narrowed reach**; an added `yg-suppress`
 marker; a rule detached from a node that carried it. Read from `yg aspects --json` (status,
-`review_by`), `yg check --json --full` (whose `pairs` are exactly the set of units each rule
-reaches) and `yg suppressions --json`, on the base tree and the branch tree. A CLI that cannot
-answer the suppression inventory as a document **stops the run** rather than parsing a waiver
-listing meant for a person: a suppression the guard failed to see is a rule silently switched off.
+`review_by`), `yg aspects --json --reach` (every unit each rule reaches, at every rung) and
+`yg suppressions --json`, on the base tree and the branch tree. A CLI that cannot answer the
+suppression inventory as a document **stops the run** rather than parsing a waiver listing meant for
+a person: a suppression the guard failed to see is a rule silently switched off. A CLI that does not
+know `--reach`, or takes it and ignores it, stops the run for the same reason: reach is what every
+case below is measured on, and an unread reach is not an empty one.
+
+Reach comes from `--reach` rather than `yg check --json --full`'s pairs because a rule at `draft`
+has no pairs at all — the rung exists to keep it inert. Read off the gate, every draft rule's reach
+was the empty set on both trees, and an empty set is never a strict subset of an empty set: narrowing
+a rule at the first rung walked straight through this guard, and deleting one read as tidying away a
+rule that judged nothing. A rung says whether a rule bites; what this guard compares is where it
+applies.
 
 "Narrowed" is measured by reach, never by comparing predicate text — that would be guessing.
 For a rule whose `when`/`scope` changed, the guard compares the set of units it reaches in each

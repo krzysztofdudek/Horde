@@ -152,6 +152,49 @@ test('horde-law/1: an attachment with no change of standing is its own section',
   assert.ok(r.json.attached[0].nodes.includes('edge'));
 });
 
+// The regression this document's reach reading exists to pin. A rule at `draft` is inert: the gate
+// runs nothing for it and reports no pairs about it. So for as long as reach was read off
+// `yg check --json --full`'s pairs, EVERY draft rule came back reaching nothing — not because it
+// covered nothing, but because the document asked could not see it. A rule with real subjects,
+// written into the mission's own law document as one with none, is exactly what tells the ladder
+// and the wave close's audit to retire a rule that is simply not in force yet.
+test('horde-law/1: a rule added at draft names the components it reaches', async (t) => {
+  const yg = requireYg();
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  baseFixture(dir, yg);
+  initHorde(dir);
+
+  git(['branch', '-f', 'mission1/trunk', 'HEAD'], dir);
+  // Written down, attached to a component that really exists, and not yet in force: the ordinary
+  // first rung of the ladder, and the rule this test is about.
+  addAspect(dir, 'held-back', { status: 'draft', check: MARKER_CHECK, description: 'A rule written down but not yet in force.' });
+  addNode(dir, 'feature', { mapping: ['lib.mjs'], aspects: ['no-marker', 'spread-rule', 'held-back'] });
+  // The control, at the same rung and attached to nothing: "reaches nothing" has to keep meaning
+  // it, or the fix is only a different wrong answer.
+  addAspect(dir, 'held-back-and-loose', { status: 'draft', check: MARKER_CHECK, description: 'A draft rule no component declares.' });
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'two rules at the first rung'], dir);
+  git(['branch', '-f', 'mission1/trunk', 'HEAD'], dir);
+
+  const r = run('law.mjs', ['diff', '--wave', '1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const byId = new Map(r.json.added.map((i) => [i.aspect, i]));
+
+  const reaching = byId.get('held-back');
+  assert.ok(reaching, `expected held-back among ${JSON.stringify([...byId.keys()])}`);
+  assert.deepEqual(reaching.status, { from: null, to: 'draft' });
+  assert.deepEqual(
+    reaching.nodes,
+    ['feature'],
+    'a draft rule reaches its subjects — the rung decides whether it bites there, never whether it applies',
+  );
+
+  const loose = byId.get('held-back-and-loose');
+  assert.ok(loose, 'a rule nothing declares is still new law and still in the document');
+  assert.deepEqual(loose.nodes, [], 'and it really does reach nothing');
+});
+
 test('horde-law/1: a rule nobody has written anything about gives why: null, not an exception', async (t) => {
   const yg = requireYg();
   const dir = makeRepo();
@@ -169,8 +212,9 @@ test('horde-law/1: a rule nobody has written anything about gives why: null, not
   const item = r.json.added.find((i) => i.aspect === 'silent-rule');
   assert.ok(item, 'the rule is in the document');
   assert.equal(item.why, null);
-  // …and it is a draft rule, which removes a rule's pairs entirely: it reaches nothing the gate
-  // verifies. It is still new law, and the document carries it rather than leaving it out.
+  // …and no component declares it, so it reaches nothing — the honest empty, not the one a draft
+  // rung used to manufacture (see the regression pin above). It is still new law, and the document
+  // carries it rather than leaving it out.
   assert.deepEqual(item.nodes, []);
 });
 
@@ -274,7 +318,7 @@ test('a Yggdrasil CLI Horde does not know: a refusal naming the version to insta
   assert.equal(r.code, 1);
   assert.match(r.stderr, /did not answer with the yg-aspects\/1 document Horde reads/);
   assert.match(r.stderr, /reports version/);
-  assert.match(r.stderr, /Upgrade to a release later than 5\.9\.0/);
+  assert.match(r.stderr, /Upgrade to 6\.0\.0 or later/);
   assert.match(r.stderr, /npm i -g @chrisdudek\/yg/);
   assert.equal(existsSync(lawPath(dir, '1')), false);
 });
@@ -287,15 +331,17 @@ test('a CLI that does not know a flag the law diff needs: a refusal naming the c
   initHorde(dir);
   workTheLaw(dir, yg);
 
-  // `check --json --full` is where the reach of every rule is read from. A CLI that does not know
-  // `--full` must not be read as "every rule reaches nothing".
-  const passthrough = join(dir, 'no-full-yg.mjs');
+  // `aspects --json --reach` is where the reach of every rule is read from. A CLI that does not
+  // know `--reach` must not be read as "every rule reaches nothing", and must not be quietly
+  // fallen back to the older `check --json --full`: that is a different document answering a
+  // narrower question, which is the whole reason this reading moved.
+  const passthrough = join(dir, 'no-reach-yg.mjs');
   writeFileSync(passthrough, [
     "import { execFileSync } from 'node:child_process';",
     `const REAL = ${JSON.stringify(yg)};`,
     'const argv = process.argv.slice(2);',
-    "if (argv[0] === 'check' && argv.includes('--full')) {",
-    '  process.stderr.write("error: unknown option \'--full\'\\n");',
+    "if (argv[0] === 'aspects' && argv.includes('--reach')) {",
+    '  process.stderr.write("error: unknown option \'--reach\'\\n");',
     '  process.exit(1);',
     '}',
     'const real = REAL.split(/\\s+/);',
@@ -308,8 +354,40 @@ test('a CLI that does not know a flag the law diff needs: a refusal naming the c
 
   const r = run('law.mjs', ['diff', '--wave', '1'], dir);
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /check --json --full/);
+  assert.match(r.stderr, /aspects --json --reach/);
   assert.match(r.stderr, /it does not know that option/);
+  assert.doesNotMatch(r.stderr, /check --json --full/, 'and never by silently asking the older document instead');
+  assert.equal(existsSync(lawPath(dir, '1')), false);
+});
+
+test('a CLI that takes the reach flag and ignores it: refused, not read as every rule reaching nothing', async (t) => {
+  const yg = requireYg();
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  baseFixture(dir, yg);
+  initHorde(dir);
+  workTheLaw(dir, yg);
+
+  // The failure mode a version check alone would miss: the flag is accepted, the document comes
+  // back with the right schema, and every rule in it carries no reach at all. Read as data that is
+  // "nothing reaches anything" — a whole law diff of rules described as covering nothing.
+  const passthrough = join(dir, 'drops-reach-yg.mjs');
+  writeFileSync(passthrough, [
+    "import { execFileSync } from 'node:child_process';",
+    `const REAL = ${JSON.stringify(yg)};`,
+    "const argv = process.argv.slice(2).filter((a) => a !== '--reach');",
+    'const real = REAL.split(/\\s+/);',
+    'try {',
+    '  execFileSync(real[0], [...real.slice(1), ...argv], { stdio: "inherit" });',
+    '} catch (e) { process.exit(e.status ?? 1); }',
+    '',
+  ].join('\n'));
+  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${passthrough}`], dir);
+
+  const r = run('law.mjs', ['diff', '--wave', '1'], dir);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /no reach on any rule/);
+  assert.match(r.stderr, /a missing reach is not an empty one/);
   assert.equal(existsSync(lawPath(dir, '1')), false);
 });
 

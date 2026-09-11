@@ -210,6 +210,56 @@ for (const [i, kase] of CASES.entries()) {
   });
 }
 
+// The regression pin for where this guard reads reach from. A rule at `draft` is inert, so the
+// gate reports no pairs about it — and while reach was read off `yg check --json --full`'s pairs,
+// a draft rule's reach was the empty set on BOTH trees. Empty is never a strict subset of empty,
+// so every narrowing of a rule at the first rung walked straight through the guard that exists to
+// catch narrowings. A rung says whether a rule bites, never whether it applies, and what this
+// guard compares is where it applies.
+test('law guard: a rule narrowed at draft is caught, exactly as one narrowed at enforced is', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = lawFixture(
+    dir,
+    '130',
+    (dir2) => baseGraph(dir2, { status: 'draft', scope: NARROW_SCOPE }),
+    { graph: { status: 'draft' } },
+  );
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, said(r));
+  const out = said(r);
+  assert.match(out, /may not land as it stands/);
+  assert.match(out, /no-marker \(narrowed\)/, 'the rule is named, and so is the case');
+  assert.match(out, /src\/b\.mjs/, 'and so is the unit it stopped reaching');
+});
+
+test('law guard: a rule that really does reach nothing is still free to be tidied away', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // Declared by nothing and matching nothing: the honest empty reach. Deleting it weakens nobody,
+  // and the guard has to keep letting it go — the draft fix must not turn every deletion into a
+  // refusal.
+  const { branch } = lawFixture(
+    dir,
+    '131',
+    (dir2) => rmSync(join(dir2, '.yggdrasil', 'aspects', 'loose-rule'), { recursive: true, force: true }),
+    {
+      declared: [...DECLARED, '.yggdrasil/aspects/loose-rule/yg-aspect.yaml', '.yggdrasil/aspects/loose-rule/check.mjs'],
+      extraBase: (dir2) => addAspect(dir2, 'loose-rule', {
+        description: 'A rule no component declares and no file matches.',
+        check: MARKER_CHECK,
+        status: 'draft',
+      }),
+    },
+  );
+
+  const r = run('land.mjs', [branch], dir);
+  assert.doesNotMatch(said(r), /loose-rule/, said(r));
+  assert.equal(r.code, 0, said(r));
+  assert.ok(r.json.landed, 'and it landed');
+});
+
 test('law guard: an answer about a different rule does not let this one through', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -464,6 +514,69 @@ test('conflict guard: changing a rule that reaches none of the changed files is 
 });
 
 // ---- the guard's own dependencies -------------------------------------------------------
+
+test('law guard: a CLI that cannot answer reach stops the run, and never falls back to the older document', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = lawFixture(dir, '152', (dir2) => write(dir2, 'src/a.mjs', 'export const a = 111;\n'));
+
+  const real = JSON.parse(readFileSync(join(dir, '.horde', 'config.json'), 'utf8')).ygCommand;
+  const stub = join(dir, 'yg-no-reach.mjs');
+  writeFileSync(stub, [
+    "import { spawnSync } from 'node:child_process';",
+    'const args = process.argv.slice(2);',
+    "if (args[0] === 'aspects' && args.includes('--reach')) {",
+    '  process.stderr.write("error: unknown option \'--reach\'\\n");',
+    '  process.exit(1);',
+    '}',
+    `const real = ${JSON.stringify(real)}.split(/\\s+/);`,
+    "const r = spawnSync(real[0], [...real.slice(1), ...args], { stdio: 'inherit' });",
+    'process.exit(r.status === null ? 1 : r.status);',
+    '',
+  ].join('\n'));
+  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${stub}`], dir);
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, said(r));
+  const out = said(r);
+  assert.match(out, /aspects --json --reach/, 'the command it could not run is named');
+  assert.match(out, /which units each rule reaches/);
+  assert.match(out, /npm i -g @chrisdudek\/yg|config\.ygCommand at a build/);
+  assert.doesNotMatch(out, /check --json --full/, 'the two documents answer different questions; there is no quiet fallback');
+  assert.equal(git(['rev-list', '--count', '--merges', 'mission1/trunk'], dir), '0', 'and nothing landed');
+});
+
+test('law guard: a CLI that takes the reach flag and ignores it is refused, not read as an empty law', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // The narrowing from the draft case above, in front of a CLI that drops the flag. A guard that
+  // read the flagless answer as data would see every rule reaching nothing on both trees and wave
+  // the narrowing through — the exact reading this whole reading moved to stop.
+  const { branch } = lawFixture(
+    dir,
+    '153',
+    (dir2) => baseGraph(dir2, { status: 'draft', scope: NARROW_SCOPE }),
+    { graph: { status: 'draft' } },
+  );
+
+  const real = JSON.parse(readFileSync(join(dir, '.horde', 'config.json'), 'utf8')).ygCommand;
+  const stub = join(dir, 'yg-drops-reach.mjs');
+  writeFileSync(stub, [
+    "import { spawnSync } from 'node:child_process';",
+    "const args = process.argv.slice(2).filter((a) => a !== '--reach');",
+    `const real = ${JSON.stringify(real)}.split(/\\s+/);`,
+    "const r = spawnSync(real[0], [...real.slice(1), ...args], { stdio: 'inherit' });",
+    'process.exit(r.status === null ? 1 : r.status);',
+    '',
+  ].join('\n'));
+  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${stub}`], dir);
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, said(r));
+  assert.match(said(r), /no reach on any rule/);
+  assert.match(said(r), /a missing reach is not an empty one/);
+  assert.equal(git(['rev-list', '--count', '--merges', 'mission1/trunk'], dir), '0', 'and nothing landed');
+});
 
 test('law guard: a CLI that cannot inventory suppressions stops the run rather than reading text', async (t) => {
   const dir = makeRepo();

@@ -865,19 +865,35 @@ function ygDocAt(tree, cfg, args, schema, what) {
   return null;
 }
 
-// The reach of every rule on one tree: `yg check --json` already enumerates every (aspect, unit)
-// pair it verifies, which IS the set of units each rule reaches — one call, no text parsed, and
-// no per-unit walk. `--full` because a repository with a configured reference branch would
-// otherwise answer about a different slice of itself in each of the two trees, and a comparison
-// of two different questions is not a comparison.
+// The reach of every rule on one tree: `yg aspects --json --reach` answers, for each rule the
+// graph declares, every unit it judges — one call, no text parsed, and no per-unit walk.
+//
+// This used to be read off `yg check --json --full`'s pairs, and that was wrong in one way that
+// matters here. The gate deliberately has no pairs for a rule at `draft` — the rung exists to keep
+// a rule inert — so a draft rule read that way comes back reaching NOTHING, which is
+// indistinguishable from a rule that genuinely covers nothing. This guard's whole job is to tell a
+// narrowed rule from an untouched one, and "reaches nothing on both sides" is how a draft rule
+// silently escaped it; a rule demoted INTO draft looked like it had lost every unit it had, for
+// the same reason. `--reach` is the graph's own answer to this exact question and carries the
+// draft rungs, so what the guard compares is where a rule applies rather than where it currently
+// bites. (It is also the cheap document: no verification runs behind it.)
 function reachByAspect(tree, cfg) {
-  const doc = ygDocAt(tree, cfg, ['check', '--json', '--full'], 'yg-check/1', 'which units each rule reaches');
+  const doc = ygDocAt(tree, cfg, ['aspects', '--json', '--reach'], 'yg-aspects/1', 'which units each rule reaches');
+  const declared = asArray(doc.aspects).filter((a) => a && a.id);
+  // A CLI that answered the document but ignored the flag would hand back every rule with no reach
+  // at all, which this guard would read as "nothing reaches anything" and wave every narrowing
+  // through. Refused rather than read: the whole point of the migration is that an absent reach is
+  // never evidence of an empty one.
+  if (declared.length && !declared.some((a) => a.reach)) {
+    fail('`yg aspects --json --reach` answered a yg-aspects/1 document with no reach on any rule — the CLI took the flag and ignored it, and a missing reach is not an empty one. Upgrade the Yggdrasil CLI (npm i -g @chrisdudek/yg), or point config.ygCommand at a build that answers it.');
+  }
   const reach = new Map();
-  for (const pair of asArray(doc.pairs)) {
-    if (!pair || !pair.aspect || !pair.unit) continue;
-    const key = `${pair.unit.kind}:${pair.unit.path}`;
-    if (!reach.has(pair.aspect)) reach.set(pair.aspect, new Set());
-    reach.get(pair.aspect).add(key);
+  for (const a of declared) {
+    const units = new Set();
+    for (const r of asArray(a.reach && a.reach.units)) {
+      if (r && r.unit && r.unit.kind && r.unit.path) units.add(`${r.unit.kind}:${r.unit.path}`);
+    }
+    reach.set(a.id, units);
   }
   return reach;
 }
