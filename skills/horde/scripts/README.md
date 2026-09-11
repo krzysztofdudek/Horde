@@ -58,10 +58,7 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   "keys are bound to the diff" below), `protectedPaths[]`, `fixRounds.resume|fresh` (the fix-loop
   breaker `tk.mjs status <ticket> changes` reads: rounds 1..`resume` resume the same worker, the
   next `fresh` rounds spawn a fresh one a class up, beyond that the command refuses — defaults 3
-  and 2), `liveness.stewardMinutes|ownerMinutes`
-  (also accepts `liveness.stewardSeconds|ownerSeconds` — a `*Seconds` key wins over its `*Minutes`
-  counterpart when both are set; useful for tests and fast-loop tuning where a whole minute isn't
-  practical), `classes` (weights: light 1, standard 3, heavy 10, max 30 — defaults, host-neutral;
+  and 2), `classes` (weights: light 1, standard 3, heavy 10, max 30 — defaults, host-neutral;
   an adopter maps each tier onto a real model, e.g. Claude Code: `light: haiku, standard: sonnet,
   heavy: opus`), `parallelism`.
   A list-valued key (`testGlobs`, `protectedPaths`) takes either a comma-separated list or a JSON
@@ -991,8 +988,7 @@ last thing landed.
 ## tick.mjs — the loop, as one run
 
 `tick [--runner session|external] [--watch] [--stack] [--tree p] [--horde h]`. Four things in order,
-then it exits — nothing lives between runs, so there is no roster, no liveness threshold and no
-minute count anywhere in it.
+then it exits — nothing lives between runs, so there is no roster and no minute count anywhere in it.
 
 1. **Reconcile.** Every `running` item whose call has come back without landing a sha, settled from
    its branch: a commit beyond the parent goes to `landed`; a dirty worktree is committed as
