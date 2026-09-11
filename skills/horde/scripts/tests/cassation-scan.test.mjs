@@ -4,8 +4,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Task 014's own definition of done: after the seat cassation, no file under skills/horde/
-// mentions roster.mjs, dissent.mjs or verify.mjs by name — the three tools deleted whole. Reads
+// The invariant this checks: no file under skills/horde/ mentions roster.mjs, dissent.mjs or
+// verify.mjs by name — the three tools were deleted whole, not just unwired. Reads
 // every file as raw bytes decoded permissively (never `file`'s or a plain grep's "looks binary,
 // skip it" heuristic), because escalate.mjs carries a literal NUL byte (its composite-key
 // separator) that would otherwise make this exact scan silently miss a live import. Counts the

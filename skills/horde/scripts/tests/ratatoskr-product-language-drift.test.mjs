@@ -1,4 +1,4 @@
-// Drift check (task 034): Ratatoskr's "What counts as code" section and this repository's own
+// Drift check: Ratatoskr's "What counts as code" section and this repository's own
 // `product-language` rule (packages/promises/product-language/check.mjs) name the same categories
 // — two dictionaries, in two repositories, kept in step by nothing but this test.
 //

@@ -436,7 +436,7 @@ test('E17 — a quality ticket is filed and queued from a grain-advice/1 documen
     assert.match(ticket.json.text, /\*\*Severity:\*\* low/);
   });
 
-  // task 049 — `queue.mjs quality` was called above with no --class: the ticket it filed should
+  // `queue.mjs quality` was called above with no --class: the ticket it filed should
   // carry the mission's own first configured class ("light", DEFAULT_CLASSES' first key on a
   // freshly-init'd mission), never the old hardcoded literal "sonnet".
   await t.test('with no --class, the filed ticket gets the mission\'s first configured class, never a literal "sonnet"', () => {

@@ -81,15 +81,15 @@ function commit(worktree, message, files) {
 
 function land(dir, worktree) {
   run('tk.mjs', ['log', '001', `landed ${git(['rev-parse', '--short', 'HEAD'], worktree)} — retry implemented`], dir);
-  // tk.mjs key (task 014) is gone; the author key it used to set here is not read by anything
+  // tk.mjs key no longer exists; the author key it used to set here is not read by anything
   // drill.mjs checks — it was incidental plumbing, so the step is simply dropped.
 }
 
-// the deleted verify tool (task 014) is gone, and with it the only thing that ever wrote a "## Verdict" block
+// The verify tool no longer exists, and with it the only thing that ever wrote a "## Verdict" block
 // to a ticket's log. drill.mjs's "verification" discipline still reads that block straight out of
-// the log text, untouched by task 014, so these fixtures write the block by hand, in exactly the
-// shape the deleted verify tool used to render (templates/verdict.md, now also deleted), instead of calling the
-// deleted tool.
+// the log text, so these fixtures write the block by hand, in exactly the
+// shape the verify tool used to render (templates/verdict.md, also deleted), instead of calling a
+// tool that no longer exists.
 function recordVerdict(dir, ticketId, {
   by, result = 'reproduced', rows, revert = 'failed', gateSha, node = 'core',
 } = {}) {
@@ -239,10 +239,11 @@ test('drill.mjs check verification: red when a commit landed after the gate was 
   assert.match(r.json.checks.find((c) => c.name === 'gate at the tip').note, /the branch moved after the run/);
 });
 
-// tk.mjs review (task 014) is gone — it used to append one "review: <node> approve|changes by
+// tk.mjs review no longer exists — it used to append one "review: <node> approve|changes by
 // <who>[…tail…][ — <why>]" log line per reviewed node. checkReview's own reviewLines() parses
-// exactly that shape straight out of the log text, untouched by task 014, so these fixtures write
-// the line by hand with tk.mjs log (still a live command) instead of calling the deleted one.
+// exactly that shape straight out of the log text, so these fixtures write
+// the line by hand with tk.mjs log (still a live command) instead of calling a tool that no
+// longer exists.
 test('drill.mjs check review: green when findings are ranked and Minor stayed in the log', async (t) => {
   const m = testFirstBranch(t);
   assert.equal(run('tk.mjs', ['review-request', '001'], m.dir).code, 0);

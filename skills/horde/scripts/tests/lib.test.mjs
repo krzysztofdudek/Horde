@@ -302,7 +302,7 @@ test('_lib.mjs leases: one mechanism, keyed by whatever is being held — a node
   }
 });
 
-// task 049 — cost-class names are host-neutral, never a Claude model name, and the generic
+// Cost-class names are host-neutral, never a Claude model name, and the generic
 // fallback (config.classes' own first key, DEFAULT_CLASSES' first key with no config yet) never
 // falls back to a literal "sonnet".
 test('_lib.mjs: DEFAULT_CLASSES and firstClass are host-neutral', async (t) => {

@@ -61,7 +61,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     addNode(dir, 'model', { mapping: ['src/model/**', 'tests/**'] });
     addNode(dir, 'ui', { mapping: ['src/ui/**'], relations: [{ target: 'model', type: 'uses' }] });
 
-    // node.mjs's "charter edit" (task 014) is gone — node charters no longer exist at all, and
+    // node.mjs's "charter edit" no longer exists — node charters no longer exist at all, and
     // node.mjs contract propose/approve never read one, so the step drops straight to the port.
     //
     // port-is-contract: the contract is a port on the component, proposed by name — there is no

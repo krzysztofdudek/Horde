@@ -52,7 +52,7 @@ test('horde.mjs: init, list, config, archive', async (t) => {
     assert.deepEqual(paths.json.value, ['a/b', 'c/d']);
   });
 
-  // task 049 — a fresh mission's default cost classes are host-neutral (Horde installs the same
+  // A fresh mission's default cost classes are host-neutral (Horde installs the same
   // way on Claude Code, Codex, Cursor…), never named after a Claude model.
   await t.test('a fresh mission\'s default classes carry no Claude model name', () => {
     const classes = run('horde.mjs', ['config', 'get', 'classes'], dir).json.value;
@@ -182,7 +182,7 @@ test('horde.mjs config set: a list-valued key takes a list, in either notation',
   assert.match(broken.stderr, /not a readable list/);
 });
 
-// task 049 — DEFAULT_CLASSES only changes what a FRESH mission's config.json starts with. A
+// DEFAULT_CLASSES only changes what a FRESH mission's config.json starts with. A
 // mission whose config.json was already on disk before this change, still keyed by the old
 // Claude model names, reads exactly what is written there (config.classes is a plain map, read
 // with no knowledge of any particular name) and keeps working unchanged.

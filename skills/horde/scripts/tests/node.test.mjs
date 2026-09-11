@@ -173,8 +173,8 @@ test('node.mjs log: the node\'s log is the graph\'s own', async (t) => {
   });
 });
 
-// node charters (charter.md per component, and node.mjs's own "charter edit" command) are gone
-// entirely — task 014 deleted templates/node-charter.md and the command with it. "charter edit"
+// node charters (charter.md per component, and node.mjs's own "charter edit" command) no longer
+// exist — templates/node-charter.md and the command were removed together. "charter edit"
 // now falls straight through to the dispatcher's generic unknown-command branch, the same as any
 // other made-up word, rather than a charter-specific refusal.
 test('node.mjs charter: "charter edit" is gone — refused as an unknown command, not a specific charter error', async (t) => {
@@ -406,7 +406,7 @@ test('node.mjs contracts: consumersOf narrows to the exact port a relation names
 
 // The mission charter's evidence catalogue, written from stdin through horde.mjs. This is the
 // mission-level charter horde.mjs still owns — unrelated to the per-node charter.md/`node.mjs
-// charter edit` that task 014 removed outright (see the "node.mjs charter" test above).
+// charter edit`, which no longer exists (see the "node.mjs charter" test above).
 function hordeCharter(dir, body) {
   return execFileSync('node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit', '--json'], {
     cwd: dir, input: body, encoding: 'utf8',
@@ -498,9 +498,9 @@ test('node.mjs propose/approve/apply: the horde records the decision, the archit
     assert.match(r.stderr, /requires --node/);
   });
 
-  // The roster is gone (task 014) and `--by` is no longer traced against one: it is the name of a
-  // territory, a ticket or whoever is answering, recorded verbatim and nothing more. The seat that
-  // used to be looked up here does not exist, so neither does the lookup.
+  // There is no roster, and `--by` is not traced against one: it is the name of a
+  // territory, a ticket or whoever is answering, recorded verbatim and nothing more. There is no
+  // seat to look up, so there is no lookup.
   await t.test('--by is recorded verbatim, and no roster file is read or written', () => {
     const rosterPath = join(dir, '.horde', 'hordes', 'mission1', 'roster.json');
     const p = run('node.mjs', ['propose', 'rule', 'an untraced proposal', '--by', 'the-checkout-territory'], dir);

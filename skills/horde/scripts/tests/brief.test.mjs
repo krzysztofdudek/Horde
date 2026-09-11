@@ -35,10 +35,8 @@ function seedTicket(dir, horde, team, id, {
 }
 
 // A component in the real graph. Node charters (charter.md, node.mjs's own "charter edit"
-// command) are gone entirely as of task 014 — this used to also seed one via `node.mjs charter
-// edit` so a worker's brief had something to embed; that placeholder is gone from the worker
-// template too, so seedNode is now just addNode under the name every call site below already
-// uses.
+// command) no longer exist, so seedNode is now just addNode under the name every call site
+// below already uses.
 function seedNode(dir, node, mapping, ports) {
   addNode(dir, node, ports ? { mapping, ports } : { mapping });
 }

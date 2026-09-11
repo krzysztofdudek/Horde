@@ -4,7 +4,7 @@
 // temporary git repository — no fixture is hand-typed into ticket/log files — and the merge
 // itself is a real `git merge --no-ff`, exactly as a steward would do it.
 //
-// tk.mjs's `key`/`review` and the deleted verify tool itself are gone (task 014 — seat cassation): a new-format
+// tk.mjs's `key`/`review` and the verify tool itself no longer exist (removed in the seat cassation): a new-format
 // ticket carries neither a **Keys:** line nor a ## Verdict block any more. blame.mjs keeps its own
 // read-only copy of the old key-parsing logic so it can still walk a PRE-migration ticket's custody
 // chain, so the fixtures below that need one write it directly to disk — the only way left to
