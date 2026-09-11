@@ -7,6 +7,7 @@
 **Consumes:** {{consumes | none}} · **Produces:** {{produces | none}}
 **Evidence:** {{evidence | none}}
 **Revert base:** {{revertBase | }}
+**Mutate:** {{mutate | }}
 
 ## What
 

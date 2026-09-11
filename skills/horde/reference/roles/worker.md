@@ -58,8 +58,10 @@ at the end of this brief; read them before your first commit.
 - **Log your progress every few commits** (`tk.mjs log {{ticketId}} "<where you are>"`). Your session
   can end at any moment; the log is what the next worker resumes from, and nothing that lives only in
   your head survives.
-- **Prove it red-green.** New tests fail on the base and pass after; the ticket's evidence exists as the
-  charter names it (a test, a scenario, a film, a screenshot) and is runnable by someone who is not you.
+- **Prove it red-green.** New tests fail on the base and pass after — or, if the ticket carries a
+  **Mutate:** command, fail once that command has broken your own implementation, and pass again once
+  you undo it; the ticket's evidence exists as the charter names it (a test, a scenario, a film, a
+  screenshot) and is runnable by someone who is not you.
 - The repository's rules hold: comments explain why and never narrate history; nothing references tickets
   or plans; protected paths are untouched (`{{protectedPaths}}`).
 - Never `git push`, `git stash`, checkout another branch, or restore a file from a whole-file backup.

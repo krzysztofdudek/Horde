@@ -67,7 +67,7 @@ const USAGE = `usage: tk.mjs <command> [options]
 commands:
   new <slug> --title "<t>" --node <n> [--node <n2> …] --class <c> [--severity high|medium|low]
       [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
-      [--produces <node>/<port>,…] [--evidence "<…>"]… [--revert-base <ref>]
+      [--produces <node>/<port>,…] [--evidence "<…>"]… [--revert-base <ref>] [--mutate "<command>"]
       [--team t] [--horde h]
       renders templates/ticket.md; status starts "proposed". --node is repeatable, up to two —
       three or more is refused, since nobody holds the whole of such a diff.
@@ -79,6 +79,10 @@ commands:
       here can make a rule weaker at any setting.
       --revert-base names the ref land.mjs's revert test should use instead of the parent
       branch's tip (for a test meant to already be green there, e.g. a contract test).
+      --mutate names a shell command land.mjs's revert test runs instead, against a scratch copy
+      of this branch's own tip: it must break the implementation the ticket's new tests exist to
+      catch, and every new test must go red once it has run. Chosen from the ticket, never a
+      land.mjs flag — refused together with --revert-base, since only one variant runs.
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
       the merge checklist refuses a diff that reaches past them). --consumes/--produces name the
       ports the ticket needs and delivers, as <node>/<port>; a consumed port with no producing
@@ -464,13 +468,25 @@ function checkConsumesHaveProducers(horde, consumes, selfId) {
 // ticket's own acceptance line instead (e.g. "red on develop"). Empty by default: the template's own
 // "**Revert base:**" line then renders with nothing after it, which land.mjs reads as "use the
 // parent tip".
+//
+// `mutate` (`--mutate "<command>"` on `new`) swaps that whole revert-to-base variant for a mutation
+// one: land.mjs runs this shell command against a scratch copy of the branch's own tip instead of
+// extracting the new tests onto a base tree, and requires them red there. It answers a different
+// question than revertBase does — not "where were these tests already known to fail" but "what
+// breaks the implementation they're meant to catch" — so a ticket declaring both is a contract
+// error, not a preference between them: land.mjs would use `mutate` and silently ignore
+// `revertBase`, hiding whichever one the author actually meant. Refused here instead, at the one
+// place a ticket comes into being, rather than left for land.mjs to discover at the far end.
 export function createTicket(horde, spec) {
   const {
     slug, title, nodes, cls, severity = 'medium', kind = 'work', quality = 'autonomous',
     team = 'trunk', evidence = [], files: fileList = [], consumes: consumesRaw,
-    produces: producesRaw, depends = [], revertBase = null,
+    produces: producesRaw, depends = [], revertBase = null, mutate = null,
   } = spec;
   if (!slug) fail('new requires <slug>');
+  if (mutate && revertBase) {
+    fail('a ticket names either --mutate or --revert-base, not both — --mutate replaces the revert-to-base check entirely, so a --revert-base alongside it would be silently unused by land.mjs\'s revert test. Pick the one variant this ticket actually needs');
+  }
   if (!title) fail('new requires --title "<t>"');
   if (!Array.isArray(nodes) || nodes.length === 0) fail('new requires --node <n> (repeatable)');
   // The model allows a ticket one node, or two when the ticket carries a contract between them —
@@ -520,6 +536,7 @@ export function createTicket(horde, spec) {
     ...(produces.length ? { produces: produces.map((p) => p.ref).join(', ') } : {}),
     ...(evidenceIds.length ? { evidence: evidenceIds.join(', ') } : {}),
     ...(revertBase ? { revertBase } : {}),
+    ...(mutate ? { mutate } : {}),
   });
   if (acceptance.length) {
     text = text.replace('- [ ] …', acceptance.map((e) => `- [ ] ${e}`).join('\n'));
@@ -564,6 +581,7 @@ function cmdNew(horde, positional, flags) {
     produces: flags.produces,
     depends: flags.depends ? String(flags.depends).split(',').map((s) => s.trim()).filter(Boolean) : [],
     revertBase: flags['revert-base'] || null,
+    mutate: flags.mutate || null,
   });
   emit({
     id: created.id,

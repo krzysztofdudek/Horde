@@ -456,6 +456,75 @@ test('land.mjs: the revert test uses the ticket\'s "**Revert base:**" header ins
   assert.match(item.note, /1 fail/);
 });
 
+// Rewrites an already-written issue.md to add a "**Mutate:**" header, the way `tk.mjs new
+// --mutate` would have rendered it — inserted ahead of the acceptance section, since neither
+// mutateCommand nor revertBaseRef in land.mjs care about a header's position in the file.
+function addMutateField(dst, command) {
+  const path = join(dst, 'issue.md');
+  const text = readFileSync(path, 'utf8');
+  assert.doesNotMatch(text, /\*\*Mutate:\*\*/, 'fixture already carries a Mutate header');
+  writeFileSync(path, text.replace('## Acceptance', `**Mutate:** ${command}\n\n## Acceptance`));
+}
+
+test('land.mjs: a ticket\'s "**Mutate:**" command runs against the branch\'s own tip and the new tests must go red on it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: dst } = setupLandable(dir, '070');
+  // feature-070.mjs exports add(a, b) { return a + b; } — corrupt it to a subtraction so the new
+  // test (`assert.equal(add(1, 2), 3)`) goes red once the command has run.
+  addMutateField(dst, "node -e \"const fs=require('fs');const p='feature-070.mjs';fs.writeFileSync(p, fs.readFileSync(p,'utf8').replace('a + b','a - b'))\"");
+
+  const r = run('land.mjs', [branch, '--no-gate'], dir);
+  if (r.code !== 0) console.error(r.stdout, r.stderr);
+  const item = byName(r)['revert test'];
+  assert.equal(item.ok, true, item.note);
+  assert.match(item.note, /^mutate `node -e/);
+  assert.match(item.note, /feature-070\.test\.mjs: 1 fail/);
+
+  // Nothing this run made is left behind, and the branch's own committed tree (measured by every
+  // later item) was never touched by the mutation — it ran only in a scratch copy.
+  assert.deepEqual(scratchDirs(dir), []);
+  assert.match(git(['show', `${branch}:feature-070.mjs`], dir), /a \+ b/);
+});
+
+test('land.mjs: a "**Mutate:**" command that fails to run is reported by name, not read as a pass', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: dst } = setupLandable(dir, '071');
+  addMutateField(dst, 'exit 7');
+
+  const r = run('land.mjs', [branch, '--no-gate'], dir);
+  const item = byName(r)['revert test'];
+  assert.equal(item.ok, false);
+  assert.match(item.note, /mutate command failed to run: exit 7/);
+});
+
+test('land.mjs: a ticket without "**Mutate:**" and without "**Revert base:**" keeps the default revert-to-base variant', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '072');
+
+  const r = run('land.mjs', [branch, '--no-gate'], dir);
+  const item = byName(r)['revert test'];
+  assert.equal(item.ok, true, item.note);
+  assert.doesNotMatch(item.note, /mutate/);
+  assert.match(item.note, /feature-072\.test\.mjs: 1 fail/);
+});
+
+test('land.mjs: a ticket naming both "**Mutate:**" and "**Revert base:**" is refused — only one variant ever runs', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: dst } = setupLandable(dir, '073');
+  const path = join(dst, 'issue.md');
+  writeFileSync(path, readFileSync(path, 'utf8').replace('## Acceptance', '**Revert base:** develop\n**Mutate:** true\n\n## Acceptance'));
+
+  const r = run('land.mjs', [branch, '--no-gate'], dir);
+  assert.equal(r.code, 1);
+  const item = byName(r)['revert test'];
+  assert.equal(item.ok, false);
+  assert.match(item.note, /names both --mutate and a revert base \(develop\)/);
+});
+
 test('land.mjs: the journal item fails when no log entry is newer than the last commit', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

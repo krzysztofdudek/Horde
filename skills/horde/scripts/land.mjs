@@ -49,7 +49,9 @@ for either way.
   3. scope          — diff stays inside the files the ticket declared, or its node boundaries when
                       it declared none; no protected path touched
   4. revert test    — new test files (named by config.testGlobs), extracted onto the parent's
-                      tree, fail there; ✗ when this repository's test patterns are unknown
+                      tree, fail there; or, when the ticket names a "**Mutate:**" command instead,
+                      run against a scratch copy of the branch's own tip with that command applied,
+                      fail there. ✗ when this repository's test patterns are unknown
   5. gate           — config.gates.<level> green on the branch's own tree, run fresh
   6. graph          — the free deterministic verdicts recorded, every prose rule still waiting
                       on a judgement named, and a full "yg check" green on this branch's tree
@@ -353,21 +355,119 @@ function revertBaseRef(issueText) {
   return m ? m[1].replace(/[.,;:]+$/, '') : null;
 }
 
-// New test files (git-added, matching config.testGlobs) extracted onto the revert base's tip
-// (the parent branch, unless the ticket names another ref — see revertBaseRef) in a scratch
-// worktree, and run there; each must show at least one failure, since a new test that already
-// passes on its base proves nothing.
+// The command that swaps the revert-to-base variant for a mutation one — the issue's own
+// "**Mutate:**" header (tk.mjs new --mutate). \S as the first character of the capture, not \s*,
+// for the same reason revertBaseRef above avoids it: the empty default ("**Mutate:** " with
+// nothing after it) must read as absent, not as a one-space command.
+function mutateCommand(issueText) {
+  if (!issueText) return null;
+  const m = /\*\*Mutate:\*\*[ \t]*(\S.*)$/m.exec(issueText);
+  return m ? m[1].trimEnd() : null;
+}
+
+// Runs one already-materialised test file in `tmp` and reports whether it's red. A file this
+// repo's own runner (`node --test`) can run directly is run directly; anything else falls back to
+// the whole `gates.commit` command (coarser: any red in that command counts as "a failure" for
+// this file, since isolating just its test lane out of an arbitrary configured command isn't
+// possible in general). Shared by both revert-test variants below — the only difference between
+// them is how `tmp` came to hold the file and what state its implementation is in when this runs.
+function runTestFileFor(tmp, relPath, cfg) {
+  if (/\.(m?js|c?js)$/.test(relPath)) {
+    const out = runCapture('node', ['--test', relPath], { cwd: tmp, env: childTestEnv() });
+    const summary = parseNodeTestSummary(out);
+    return { path: relPath, ok: (summary.fail ?? 0) > 0, note: `${summary.fail ?? '?'} fail / ${summary.tests ?? '?'} tests` };
+  }
+  if (cfg.gates && cfg.gates.commit) {
+    let failed = false;
+    try { execSync(cfg.gates.commit, { cwd: tmp, stdio: 'pipe' }); } catch { failed = true; }
+    return { path: relPath, ok: failed, note: failed ? 'gates.commit red (whole command — no test-only isolation available)' : 'gates.commit green — not load-bearing' };
+  }
+  return { path: relPath, ok: false, note: 'no runner available (not a node test file, and no gates.commit configured)' };
+}
+
+// The revert-to-base variant (today's default, unchanged): new test files extracted onto the
+// revert base's tip (the parent branch, unless the ticket names another ref — see revertBaseRef)
+// in a scratch worktree, and run there; each must show at least one failure, since a new test
+// that already passes on its base proves nothing.
+function runRevertToBaseVariant(root, cfg, branch, parentBranch, base, newTestFiles) {
+  const baseSha = git(['rev-parse', '--verify', `${base}^{commit}`]);
+  if (!baseSha) return { ok: false, note: `revert base not found: ${base}` };
+
+  const info = resolveTree({ scratch: baseSha }, { cwd: root });
+  const tmp = info.path;
+  const results = [];
+  try {
+    for (const relPath of newTestFiles) {
+      const content = git(['show', `${branch}:${relPath}`], root);
+      if (content === null) { results.push({ path: relPath, ok: false, note: 'could not extract from branch' }); continue; }
+      const abs = join(tmp, relPath);
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, content);
+      results.push(runTestFileFor(tmp, relPath, cfg));
+    }
+  } finally {
+    cleanupTree(info, root);
+  }
+  const ok = results.every((r) => r.ok);
+  const baseNote = base === parentBranch ? '' : `base ${base} — `;
+  return { ok, note: baseNote + results.map((r) => `${r.path}: ${r.note}`).join(' · ') };
+}
+
+// The mutation variant (the ticket's own "**Mutate:**" command): rather than proving the new
+// tests are red before the ticket, this proves they're red once the ticket's own implementation
+// is deliberately broken. The command runs in a scratch copy of the branch's own tip — never the
+// tree any other checklist item measures, so a broken implementation here can't leak into the
+// gate or the graph item that run afterwards — and every new test file (already present in that
+// tree, since it's the branch's own tip; nothing needs extracting) must go red once it has run.
+//
+// A command that itself fails to run is reported as its own failure rather than silently treated
+// as "no mutation happened, so of course the tests are still green" — a mutate command naming the
+// wrong path or a syntax the shell can't run is an authoring error worth surfacing by name, not a
+// red the tests happened to produce on their own.
+function runMutateVariant(root, cfg, branch, mutate, newTestFiles) {
+  const branchSha = git(['rev-parse', '--verify', `${branch}^{commit}`]);
+  if (!branchSha) return { ok: false, note: `branch not found: ${branch}` };
+
+  const info = resolveTree({ scratch: branchSha }, { cwd: root });
+  const tmp = info.path;
+  try {
+    try {
+      execSync(mutate, { cwd: tmp, stdio: 'pipe' });
+    } catch (e) {
+      const detail = ((e.stderr ? e.stderr.toString() : '') || e.message || '').split('\n')[0];
+      return { ok: false, note: `mutate command failed to run: ${mutate}${detail ? ` — ${detail}` : ''}` };
+    }
+    const results = newTestFiles.map((relPath) => runTestFileFor(tmp, relPath, cfg));
+    const ok = results.every((r) => r.ok);
+    return { ok, note: `mutate \`${mutate}\` — ${results.map((r) => `${r.path}: ${r.note}`).join(' · ')}` };
+  } finally {
+    cleanupTree(info, root);
+  }
+}
+
+// New test files (git-added, matching config.testGlobs), checked against whichever variant the
+// ticket itself asks for — the mutation one when it carries a "**Mutate:**" command, the
+// revert-to-base one (today's default, unchanged) otherwise. The variant is always the ticket's
+// own choice, never a land.mjs flag.
 //
 // The result is derived here, by running the tests: nothing anywhere declares to this gate
-// whether a revert failed, passed, or was not run, and no flag offers to say so. A declaration
-// about a test is not evidence about a test.
-//
-// A file this repo's own runner (`node --test`) can run directly is run directly; anything else
-// falls back to the whole `gates.commit` command (coarser: any red in that command counts as "a
-// failure" for this file, since isolating just its test lane out of an arbitrary configured
-// command isn't possible in general).
+// whether either variant failed, passed, or was not run, and no flag offers to say so. A
+// declaration about a test is not evidence about a test.
 function checkRevertTest(root, cfg, branch, parentBranch, files, issueText) {
-  const base = revertBaseRef(issueText) || parentBranch;
+  const mutate = mutateCommand(issueText);
+  const explicitBase = revertBaseRef(issueText);
+  // A ticket naming both answers two different questions with one field each — "where were these
+  // tests already known to fail" (revertBase) and "what breaks the implementation they catch"
+  // (mutate) — and only one of them actually runs. tk.mjs new already refuses this combination at
+  // creation; this is the defense-in-depth twin for a ticket that reached land.mjs with both set
+  // some other way (a hand-edited issue.md, most likely), so the ambiguity is never resolved by
+  // silently picking a winner.
+  if (mutate && explicitBase) {
+    return {
+      ok: false,
+      note: `ticket names both --mutate and a revert base (${explicitBase}) — only one revert-test variant runs, so the other would be silently ignored. Drop whichever this ticket doesn't mean`,
+    };
+  }
   // "No new test files in this diff" is only a result when the patterns this repository's tests
   // are named with are actually known. Without them the same ✓ would mean "I did not look", so
   // this refuses instead, and names the one setting that fixes it.
@@ -389,37 +489,8 @@ function checkRevertTest(root, cfg, branch, parentBranch, files, issueText) {
     return { ok: true, note: `no new test files in diff (looked for ${testGlobs.join(', ')})` };
   }
 
-  const baseSha = git(['rev-parse', '--verify', `${base}^{commit}`]);
-  if (!baseSha) return { ok: false, note: `revert base not found: ${base}` };
-
-  const info = resolveTree({ scratch: baseSha }, { cwd: root });
-  const tmp = info.path;
-  const results = [];
-  try {
-    for (const relPath of newTestFiles) {
-      const content = git(['show', `${branch}:${relPath}`], root);
-      if (content === null) { results.push({ path: relPath, ok: false, note: 'could not extract from branch' }); continue; }
-      const abs = join(tmp, relPath);
-      mkdirSync(dirname(abs), { recursive: true });
-      writeFileSync(abs, content);
-      if (/\.(m?js|c?js)$/.test(relPath)) {
-        const out = runCapture('node', ['--test', relPath], { cwd: tmp, env: childTestEnv() });
-        const summary = parseNodeTestSummary(out);
-        results.push({ path: relPath, ok: (summary.fail ?? 0) > 0, note: `${summary.fail ?? '?'} fail / ${summary.tests ?? '?'} tests` });
-      } else if (cfg.gates && cfg.gates.commit) {
-        let failed = false;
-        try { execSync(cfg.gates.commit, { cwd: tmp, stdio: 'pipe' }); } catch { failed = true; }
-        results.push({ path: relPath, ok: failed, note: failed ? 'gates.commit red (whole command — no test-only isolation available)' : 'gates.commit green — not load-bearing' });
-      } else {
-        results.push({ path: relPath, ok: false, note: 'no runner available (not a node test file, and no gates.commit configured)' });
-      }
-    }
-  } finally {
-    cleanupTree(info, root);
-  }
-  const ok = results.every((r) => r.ok);
-  const baseNote = base === parentBranch ? '' : `base ${base} — `;
-  return { ok, note: baseNote + results.map((r) => `${r.path}: ${r.note}`).join(' · ') };
+  if (mutate) return runMutateVariant(root, cfg, branch, mutate, newTestFiles);
+  return runRevertToBaseVariant(root, cfg, branch, parentBranch, explicitBase || parentBranch, newTestFiles);
 }
 
 // The repository's own gate command, run fresh on the branch's own tree. No recorded green run is

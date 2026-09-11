@@ -260,6 +260,37 @@ test('tk.mjs: new --revert-base sets the header; omitted, it renders empty (defa
   });
 });
 
+test('tk.mjs: new --mutate sets the header; omitted, it renders empty (default: revert to base)', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  await t.test('with --mutate', () => {
+    const r = run('tk.mjs', ['new', 'mutate-surface', '--title', 'Mutate it', '--node', 'core', '--class', 'sonnet', '--mutate', "sed -i '' 's/+/-/' surface.mjs"], dir);
+    assert.equal(r.code, 0);
+    const shown = run('tk.mjs', ['show', r.json.id], dir);
+    assert.match(shown.json.text, /\*\*Mutate:\*\* sed -i '' 's\/\+\/-\/' surface\.mjs/);
+  });
+
+  await t.test('without --mutate, the header renders with nothing after it', () => {
+    const r = run('tk.mjs', ['new', 'no-mutate', '--title', 'No mutate', '--node', 'core', '--class', 'sonnet'], dir);
+    const shown = run('tk.mjs', ['show', r.json.id], dir);
+    assert.match(shown.json.text, /\*\*Mutate:\*\* *\n/);
+  });
+
+  await t.test('--mutate together with --revert-base is refused — only one variant ever runs', () => {
+    const before = run('tk.mjs', ['list'], dir).json.length;
+    const r = run('tk.mjs', [
+      'new', 'both-fields', '--title', 'Both fields', '--node', 'core', '--class', 'sonnet',
+      '--revert-base', 'develop', '--mutate', 'true',
+    ], dir);
+    assert.notEqual(r.code, 0);
+    assert.match(r.stderr, /either --mutate or --revert-base, not both/);
+    const after = run('tk.mjs', ['list'], dir).json.length;
+    assert.equal(after, before, 'a refused ticket must not consume a ticket number');
+  });
+});
+
 test('tk.mjs: new --kind defaults to "work"; "quality" is the only other value accepted', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

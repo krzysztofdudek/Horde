@@ -134,12 +134,17 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
 its folder and of the `id:` its issue.md carries.
 - `new <slug> --title "…" --node n --class haiku|sonnet|opus [--severity high|medium|low]
   [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
-  [--produces <node>/<port>@<v>,…] [--evidence "…"]… [--revert-base <ref>]` — from
-  `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries
+  [--produces <node>/<port>@<v>,…] [--evidence "…"]… [--revert-base <ref>] [--mutate "<command>"]` —
+  from `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries
   a contract between them; three or more is refused — no owner holds the whole of such a diff.
   `--revert-base` names the ref where the ticket's new tests must fail (a contract test
   is green on the team tip by design; its red base is e.g. `develop`); `land`'s revert-test item reads it, or
-  a "red on <ref>" phrase in the acceptance lines. An
+  a "red on <ref>" phrase in the acceptance lines. `--mutate` names a shell command that swaps the
+  whole revert-to-base variant for a mutation one: `land`'s revert-test item runs it against a
+  scratch copy of the branch's own tip instead of extracting the new tests onto a base tree, and
+  requires them red there — for a ticket whose implementation is cheaper to break on purpose than
+  to name a meaningfully failing base for. Refused together with `--revert-base` — only one variant
+  ever runs, so declaring both would leave one of them silently unused. An
   `--evidence` value that is nothing but catalogue ids (`E2,E5`) fills the ticket's `**Evidence:**`
   field; any other value becomes its own `- [ ] …` line in the `## Acceptance — evidence`
   checklist, and any id cited inside it fills the field too. A catalogue id (`E1`, `E2`, …) must
@@ -704,8 +709,11 @@ the JSON, and every item below is measured against it:
    "declared `<n>` files, touched `<path>` outside them" — the fix is `tk.mjs edit NNN --files …`,
    which records the widening in the log, never a quiet pass;
 4. revert test — new test files in the diff, extracted onto the parent's tree, show at least one
-   failure. The result is derived by running them; nothing declares it to this gate, and no flag
-   offers to say so, because a declaration about a test is not evidence about a test;
+   failure; or, when the ticket carries a `**Mutate:**` command, run against a scratch copy of the
+   branch's own tip with that command applied, show at least one failure there instead. The variant
+   is always the ticket's own choice, never a `land.mjs` flag. The result is derived by running
+   them; nothing declares it to this gate, and no flag offers to say so, because a declaration
+   about a test is not evidence about a test;
 5. gate — `config.gates.<level>` run fresh on the branch's own tree. No recorded green run is
    accepted from anywhere: a "green at sha …" line in a ticket's log is a claim about a run this
    gate did not see. A command that hangs is stopped at `config.gateTimeoutMs` (default 15 minutes)
@@ -1026,6 +1034,18 @@ patterns it did look for. A matched file whose extension `node --test`
 can run directly is extracted and run that way; anything else falls back to running the whole
 `config.gates.commit` command in the scratch worktree, treating any red as "this file's a failure" —
 isolating just one file's test lane out of an arbitrary configured command isn't possible in general.
+
+Two variants exist, chosen by the ticket itself — never by a `land.mjs` flag. The default is the
+revert-to-base one above: new test files extracted onto the parent branch's tip (or another ref, via
+`--revert-base`), where the ticket's own implementation doesn't yet exist and the tests must
+therefore fail. When the ticket instead carries a `**Mutate:**` command (`tk.mjs new --mutate`),
+`land.mjs` runs the mutation variant: it builds a scratch copy of the branch's own tip — which
+already holds both the ticket's new tests and its implementation, so nothing needs extracting — runs
+the ticket's command there to deliberately break that implementation, and requires the same new test
+files to fail against the broken result. A ticket naming both `--revert-base` and `--mutate` is
+refused outright, at `tk.mjs new` and again as a defense-in-depth check inside `land.mjs`: only one
+variant ever runs, so the other would be silently unused, which is exactly the kind of ambiguity
+this tool set refuses rather than resolves by guessing.
 
 The gate item accepts no recorded green run from anywhere — not a cache, not a ticket's own log.
 It runs `config.gates.<level>` fresh on the branch's tree, every time. (`horde.mjs done` still
