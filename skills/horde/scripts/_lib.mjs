@@ -356,6 +356,25 @@ export function readConfig() {
   return readJSON(configPath(), null);
 }
 
+// The cost-class weights a fresh mission starts with. Host-neutral on purpose: Horde installs
+// the same way on Claude Code, Codex, Cursor… and each host has its own roster of model names
+// (Codex has no "sonnet"), so a default keyed by a Claude model name would mean nothing on most
+// of them. "light|standard|heavy|max" says only how a run's cost ranks against the others in the
+// same mission; an adopter maps each tier onto a real model through this same `config.classes`
+// map (Claude Code: light: haiku, standard: sonnet, heavy: opus; Codex: light: gpt-5-mini,
+// heavy: gpt-5; …) — that mapping is theirs to make, never Horde's to guess.
+export const DEFAULT_CLASSES = {
+  light: 1, standard: 3, heavy: 10, max: 30,
+};
+
+// firstClass(cfg) — the class a caller gets when none was named: the mission's own first
+// configured class when it has one (an adopter's config.classes carries their own choice and
+// order), otherwise DEFAULT_CLASSES' first key. Never a literal model name — see DEFAULT_CLASSES.
+export function firstClass(cfg) {
+  const keys = Object.keys((cfg && cfg.classes) || {});
+  return keys.length ? keys[0] : Object.keys(DEFAULT_CLASSES)[0];
+}
+
 export function writeConfig(cfg) {
   writeJSON(configPath(), cfg);
 }

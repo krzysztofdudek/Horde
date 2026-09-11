@@ -26,7 +26,7 @@ function writeTicketFixture(dir, { team = 'trunk', ticket, evidenceId, verifier,
   );
   writeFileSync(
     join(ticketDir, 'log.md'),
-    `## Verdict · ${ticket} · 2026-01-01 · by ${verifier} (sonnet)\n\n**Result:** ${result}\n`,
+    `## Verdict · ${ticket} · 2026-01-01 · by ${verifier} (standard)\n\n**Result:** ${result}\n`,
   );
 }
 
@@ -56,7 +56,7 @@ test('wave.mjs: start, note, merged, close, current', async (t) => {
   await t.test('note and merged append dated bullets to the journal', () => {
     run('wave.mjs', ['note', 'DAG composed'], dir);
     writeCostRuns(dir, 'mission1', [
-      { name: 'mission1-worker-trunk-1', role: 'worker', class: 'sonnet', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
+      { name: 'mission1-worker-trunk-1', role: 'worker', class: 'standard', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
     ]);
     run('wave.mjs', ['merged', '001', 'abc1234'], dir);
     const text = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
@@ -269,9 +269,9 @@ test('E14 — a wave close states parallelism, keys transferred, decisions per m
   initHorde(dir);
 
   // Three tickets, one of them waiting on another: the DAG the wave is planned against.
-  const alpha = run('tk.mjs', ['new', 'change-the-middle', '--title', 'One line in the middle of lib', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
-  const beta = run('tk.mjs', ['new', 'follow-on', '--title', 'The follow-on that waits', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
-  const gamma = run('tk.mjs', ['new', 'the-sibling', '--title', 'The sibling that lands first', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  const alpha = run('tk.mjs', ['new', 'change-the-middle', '--title', 'One line in the middle of lib', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
+  const beta = run('tk.mjs', ['new', 'follow-on', '--title', 'The follow-on that waits', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
+  const gamma = run('tk.mjs', ['new', 'the-sibling', '--title', 'The sibling that lands first', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
   run('queue.mjs', ['add', alpha], dir);
   run('queue.mjs', ['add', beta, '--depends', alpha], dir);
   run('queue.mjs', ['add', gamma], dir);

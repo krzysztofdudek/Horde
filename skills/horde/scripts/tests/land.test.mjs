@@ -44,7 +44,7 @@ function writeIssue(dir, team, id, {
   writeFileSync(join(dst, 'issue.md'), [
     `# ${id} · Sample ticket`, '',
     '**Status:** landed',
-    `**Node:** ${node} · **Class:** sonnet · **Severity:** medium · **Team:** ${team}`,
+    `**Node:** ${node} · **Class:** standard · **Severity:** medium · **Team:** ${team}`,
     `**Depends on:** none · **Branch:** mission1/t-${id}`,
     ...(files ? [`**Files:** ${files.join(', ')}`] : []),
     ...(produces ? [`**Consumes:** none · **Produces:** ${produces}`] : []),
@@ -68,7 +68,7 @@ function seedQueueItem(dir, team, id, branch) {
   const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', team, 'queue.json');
   const doc = JSON.parse(readFileSync(queuePath, 'utf8'));
   doc.items.push({
-    ticket: id, state: 'landed', class: 'sonnet', branch, dependsOn: [], agent: 'worker1', sha: null, notes: [], worktree: null,
+    ticket: id, state: 'landed', class: 'standard', branch, dependsOn: [], agent: 'worker1', sha: null, notes: [], worktree: null,
   });
   writeFileSync(queuePath, JSON.stringify(doc, null, 2));
 }
@@ -441,7 +441,7 @@ test('land.mjs: the revert test uses the ticket\'s "**Revert base:**" header ins
   writeFileSync(join(dst, 'issue.md'), [
     '# 011 · Sample ticket', '',
     '**Status:** landed',
-    '**Node:** feature · **Class:** sonnet · **Severity:** medium · **Team:** trunk',
+    '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',
     '**Depends on:** none · **Branch:** mission1/t-011',
     '**Revert base:** develop', '',
     '## Acceptance — evidence', '', '- [ ] pins the surface', '',
@@ -970,7 +970,7 @@ function chainOfTwo(dir, { parentLine = 5, childLine = 30 } = {}) {
   addNode(dir, 'feature', { mapping: ['lib.mjs', 'other.mjs'] });
   commitGraph(dir);
 
-  const parentId = run('tk.mjs', ['new', 'the-first-link', '--title', 'First link', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  const parentId = run('tk.mjs', ['new', 'the-first-link', '--title', 'First link', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
   run('queue.mjs', ['add', parentId], dir);
   const parent = run('queue.mjs', ['set', parentId, 'running', '--agent', 'worker1'], dir).json;
   writeFileSync(join(parent.worktree, 'lib.mjs'), libWithLines({ [parentLine]: 500 }));
@@ -978,7 +978,7 @@ function chainOfTwo(dir, { parentLine = 5, childLine = 30 } = {}) {
   git(['commit', '-qm', `ticket ${parentId}`], parent.worktree);
   run('tk.mjs', ['log', parentId, 'ready to land'], dir);
 
-  const childId = run('tk.mjs', ['new', 'the-second-link', '--title', 'Second link', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  const childId = run('tk.mjs', ['new', 'the-second-link', '--title', 'Second link', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
   run('queue.mjs', ['add', childId, '--depends', parentId], dir);
   const started = run('queue.mjs', ['set', childId, 'running', '--agent', 'worker2', '--on', parentId], dir);
   assert.equal(started.code, 0, started.stderr);
@@ -1043,7 +1043,7 @@ test('land.mjs: a red gate puts the ticket on "changes" with the gate\'s own wor
   addNode(dir, 'feature', { mapping: ['lib.mjs', 'lib.test.mjs'], aspects: ['no-marker'] });
   commitGraph(dir);
 
-  const id = run('tk.mjs', ['new', 'a-ticket', '--title', 'A ticket', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  const id = run('tk.mjs', ['new', 'a-ticket', '--title', 'A ticket', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
   run('queue.mjs', ['add', id], dir);
   const item = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir).json;
   writeFileSync(join(item.worktree, 'lib.mjs'), 'export const value = 1; // UNFINISHED\n');

@@ -18,7 +18,7 @@ function git(args, cwd) {
 
 function mkTicket(dir, slug, opts = {}) {
   const {
-    node = 'core', class: cls = 'sonnet', severity, files, depends,
+    node = 'core', class: cls = 'standard', severity, files, depends,
   } = opts;
   const flags = ['--node', node, '--class', cls];
   if (severity) flags.push('--severity', severity);
@@ -190,7 +190,7 @@ test('tick.mjs dispatch: what goes on the list, in what order, and what never go
   t.after(() => quietRm(dir));
   initHorde(dir);
 
-  const ready = mkTicket(dir, 'ready-work', { files: 'src/ready.ts', class: 'opus' });
+  const ready = mkTicket(dir, 'ready-work', { files: 'src/ready.ts', class: 'heavy' });
   const blocked = mkTicket(dir, 'stopped-work', { files: 'src/stopped.ts' });
   const proposal = mkTicket(dir, 'a-proposal', { files: 'src/proposal.ts' });
   run('queue.mjs', ['add', ready], dir);
@@ -210,7 +210,7 @@ test('tick.mjs dispatch: what goes on the list, in what order, and what never go
   await t.test('the model on every entry is the ticket\'s own class, never a default', () => {
     const entry = r.json.spawn.find((s) => s.ticket === ready);
     assert.ok(entry, 'the ready ticket is handed out');
-    assert.equal(entry.model, 'opus');
+    assert.equal(entry.model, 'heavy');
   });
 
   await t.test('the brief is a command that names the worktree the ticket was cut into', () => {
@@ -380,7 +380,7 @@ test('tick.mjs cost: one entry per thing handed out, keyed so two runs over one 
   initHorde(dir);
   run('wave.mjs', ['start'], dir);
 
-  const id = mkTicket(dir, 'billed-work', { files: 'src/billed.ts', class: 'opus' });
+  const id = mkTicket(dir, 'billed-work', { files: 'src/billed.ts', class: 'heavy' });
   run('queue.mjs', ['add', id], dir);
 
   const first = tick(dir);
@@ -391,7 +391,7 @@ test('tick.mjs cost: one entry per thing handed out, keyed so two runs over one 
     const entry = runs.find((x) => x.ticket === id);
     assert.ok(entry, 'the worker is booked');
     assert.equal(entry.role, 'worker');
-    assert.equal(entry.class, 'opus');
+    assert.equal(entry.class, 'heavy');
     assert.equal(entry.wave, '1');
   });
 
@@ -408,7 +408,7 @@ test('tick.mjs cost: one entry per thing handed out, keyed so two runs over one 
     const r = run('cost.mjs', ['report'], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.ok(r.json.runs >= 1);
-    assert.ok(r.json.weighted >= 10, 'an opus run weighs 10');
+    assert.ok(r.json.weighted >= 10, 'a heavy run weighs 10');
   });
 
   await t.test('an entry seeded before this run is recognised rather than written a second time', () => {
@@ -418,7 +418,7 @@ test('tick.mjs cost: one entry per thing handed out, keyed so two runs over one 
     const seeded = mkTicket(fresh, 'already-billed', { files: 'src/seeded.ts' });
     run('queue.mjs', ['add', seeded], fresh);
     writeCostRuns(fresh, 'mission1', [{
-      name: `w-${seeded}`, role: 'worker', class: 'sonnet', ticket: seeded, wave: null, at: '2026-01-01T00:00:00.000Z',
+      name: `w-${seeded}`, role: 'worker', class: 'standard', ticket: seeded, wave: null, at: '2026-01-01T00:00:00.000Z',
     }]);
     const r = tick(fresh);
     assert.equal(r.code, 0, r.stderr);

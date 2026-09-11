@@ -59,7 +59,7 @@ function missionRepo(t, { files } = {}) {
   git(['commit', '-qm', 'graph: the core component and its boundary'], dir);
 
   const created = run('tk.mjs', ['new', 'retry', '--title', 'Retry a failed call three times',
-    '--node', 'core', '--class', 'sonnet',
+    '--node', 'core', '--class', 'standard',
     ...(files ? ['--files', files] : []),
     '--evidence', 'node --test src/retry.test.mjs prints 1 pass'], dir);
   assert.equal(created.code, 0, created.stderr);
@@ -100,7 +100,7 @@ function recordVerdict(dir, ticketId, {
   const rowsText = rows.map(([item, command, saw]) => `| ${item} | ${command} | ${saw} |`).join('\n');
   const gateLine = gateSha ? `green at sha ${gateSha}` : 'not run';
   const block = [
-    `## Verdict · ${ticketId} · 2026-01-01 · by ${by} (sonnet)`,
+    `## Verdict · ${ticketId} · 2026-01-01 · by ${by} (standard)`,
     '',
     `**Result:** ${result}`,
     '',

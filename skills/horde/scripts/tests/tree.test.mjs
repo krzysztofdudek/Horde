@@ -23,7 +23,7 @@ function git(args, cwd) {
 }
 
 function newTicket(dir, slug) {
-  const r = run('tk.mjs', ['new', slug, '--title', slug, '--node', 'core', '--class', 'sonnet', '--evidence', 'it works'], dir);
+  const r = run('tk.mjs', ['new', slug, '--title', slug, '--node', 'core', '--class', 'standard', '--evidence', 'it works'], dir);
   if (r.code !== 0) throw new Error(`tk new (${slug}) failed: ${r.stderr}`);
   return r.json.id;
 }

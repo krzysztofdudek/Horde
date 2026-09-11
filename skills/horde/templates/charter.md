@@ -39,8 +39,9 @@ Every row gets an id — E1, E2, E3 … — because that is how a ticket says wh
 
 ## Nodes
 
-Touched: the nodes the mission changes, each with its owner's class (sonnet | opus) and lease
-(mission | wave; default mission when the node has three or more tickets, wave otherwise).
+Touched: the nodes the mission changes, each with its owner's class (this repository's own
+config.classes, e.g. light | standard | heavy | max) and lease (mission | wave; default mission
+when the node has three or more tickets, wave otherwise).
 New: nodes the mission creates, each with the reason the graph needs it.
 Cut made with the chairman on {{date}}; refinements are the architect's.
 

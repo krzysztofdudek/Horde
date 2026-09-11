@@ -20,7 +20,7 @@ test('status.mjs: no horde, then a populated digest', async (t) => {
     initHorde(dir, 'mission1');
     run('ask.mjs', ['add', 'q', '--kind', 'charter'], dir);
     writeCostRuns(dir, 'mission1', [
-      { name: 'mission1-worker-trunk-1', role: 'worker', class: 'haiku', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
+      { name: 'mission1-worker-trunk-1', role: 'worker', class: 'light', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
     ]);
 
     const r = run('status.mjs', [], dir);
@@ -84,7 +84,7 @@ test('status.mjs: old-format roster.json/dissents.json/escalations.json on disk 
 
   const hordeDir = join(dir, '.horde', 'hordes', 'mission1');
   writeFileSync(join(hordeDir, 'roster.json'), JSON.stringify({
-    entries: [{ role: 'steward', team: 'goblins', parent: 'trunk', class: 'sonnet', name: 'steward-goblins-1' }],
+    entries: [{ role: 'steward', team: 'goblins', parent: 'trunk', class: 'standard', name: 'steward-goblins-1' }],
   }));
   writeFileSync(join(hordeDir, 'dissents.json'), JSON.stringify({
     items: [{ id: 'D1', ticket: '001', by: 'owner', state: 'open', text: 'q' }],
@@ -114,7 +114,7 @@ test('status.mjs: leases held by other hordes on nodes this one touches', async 
 
   // alpha leases "shared"; beta's own ticket names it too, without ever leasing it.
   run('node.mjs', ['bind', 'shared', '--horde', 'alpha'], dir);
-  run('tk.mjs', ['new', 'use-shared', '--title', 'Use shared', '--node', 'shared', '--class', 'sonnet', '--horde', 'beta'], dir);
+  run('tk.mjs', ['new', 'use-shared', '--title', 'Use shared', '--node', 'shared', '--class', 'standard', '--horde', 'beta'], dir);
 
   await t.test('beta sees alpha\'s lease on the node its own ticket touches', () => {
     const r = run('status.mjs', ['--horde', 'beta'], dir);

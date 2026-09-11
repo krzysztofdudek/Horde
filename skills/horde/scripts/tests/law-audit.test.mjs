@@ -326,7 +326,7 @@ test('the law audit: the Grain sweep reads the leased territories, down the same
     // component of it is ever bound by name — which is exactly the case a node-keyed lookup got
     // wrong.
     writeFileSync(join(dir, '.horde', 'hordes', 'mission1', 'territories.json'), `${JSON.stringify({
-      'the feature': { nodes: ['feature'], class: 'sonnet', why: 'The one area this mission is about.' },
+      'the feature': { nodes: ['feature'], class: 'standard', why: 'The one area this mission is about.' },
     }, null, 2)}\n`);
     const cut = run('refine.mjs', ['--step', 'cut'], dir);
     assert.equal(cut.code, 0, cut.stderr);

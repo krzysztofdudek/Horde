@@ -57,17 +57,17 @@ function makeSixTicketFixture(dir) {
   addNode(dir, 'web', { mapping: ['src/web/**'], relations: [{ target: 'auth', type: 'uses', consumes: ['policy'] }] });
   addNode(dir, 'cli', { mapping: ['src/cli/**'], relations: [{ target: 'auth', type: 'uses', consumes: ['policy'] }] });
 
-  tk(dir, ['policy-engine', '--title', 'policy engine', '--node', 'auth', '--class', 'sonnet',
+  tk(dir, ['policy-engine', '--title', 'policy engine', '--node', 'auth', '--class', 'standard',
     '--files', 'src/auth/policy.ts,src/auth/policy.test.ts', '--produces', 'auth/policy', '--evidence', 'E1']);
-  tk(dir, ['api-guard', '--title', 'api guard on the engine', '--node', 'api', '--class', 'sonnet',
+  tk(dir, ['api-guard', '--title', 'api guard on the engine', '--node', 'api', '--class', 'standard',
     '--files', 'src/api/guard.ts,src/api/guard.test.ts', '--consumes', 'auth/policy', '--evidence', 'E2']);
-  tk(dir, ['web-session', '--title', 'web session on the engine', '--node', 'web', '--class', 'sonnet',
+  tk(dir, ['web-session', '--title', 'web session on the engine', '--node', 'web', '--class', 'standard',
     '--files', 'src/web/session.ts,src/web/session.test.ts', '--consumes', 'auth/policy']);
-  tk(dir, ['cli-auth', '--title', 'cli on the engine', '--node', 'cli', '--class', 'sonnet',
+  tk(dir, ['cli-auth', '--title', 'cli on the engine', '--node', 'cli', '--class', 'standard',
     '--files', 'src/cli/auth.ts,src/cli/auth.test.ts', '--consumes', 'auth/policy', '--evidence', 'E3']);
-  tk(dir, ['drop-roles', '--title', 'drop the role tables', '--node', 'auth', '--class', 'sonnet',
+  tk(dir, ['drop-roles', '--title', 'drop the role tables', '--node', 'auth', '--class', 'standard',
     '--files', 'src/auth/roles.ts,src/auth/roles.test.ts', '--depends', '102,103,104']);
-  tk(dir, ['web-theme', '--title', 'web theme', '--node', 'web', '--class', 'sonnet',
+  tk(dir, ['web-theme', '--title', 'web theme', '--node', 'web', '--class', 'standard',
     '--files', 'src/web/theme.ts']);
   for (const id of ['101', '102', '103', '104', '105', '106']) run('queue.mjs', ['add', id], dir);
 }
@@ -125,7 +125,7 @@ test('queue.mjs plan: the six-ticket worked example — layers, critical path, o
   });
 
   await t.test('cost and waves are counted, not guessed', () => {
-    assert.equal(plan.cost.estimate, 36); // six sonnet tickets, weight 3, two runs each
+    assert.equal(plan.cost.estimate, 36); // six standard tickets, weight 3, two runs each
     assert.equal(plan.waves.estimated, 3);
     assert.equal(plan.waves.parallelism, 6);
   });
@@ -155,9 +155,9 @@ test('queue.mjs plan: two tickets claiming the same file with no order between t
   initHorde(dir);
   run('node.mjs', ['new', 'web', '--boundary', 'src/web/'], dir);
 
-  const a = tk(dir, ['session-copy', '--title', 'session copy', '--node', 'web', '--class', 'sonnet',
+  const a = tk(dir, ['session-copy', '--title', 'session copy', '--node', 'web', '--class', 'standard',
     '--files', 'src/web/session.ts,src/web/session.test.ts,src/web/util.ts']);
-  const b = tk(dir, ['session-rename', '--title', 'session rename', '--node', 'web', '--class', 'sonnet',
+  const b = tk(dir, ['session-rename', '--title', 'session rename', '--node', 'web', '--class', 'standard',
     '--files', 'src/web/session.ts']);
   run('queue.mjs', ['add', a], dir);
   run('queue.mjs', ['add', b], dir);
@@ -191,7 +191,7 @@ test('queue.mjs plan: a file three tickets claim is named as a hub', async (t) =
   run('node.mjs', ['new', 'core', '--boundary', 'src/core/'], dir);
   const ids = [];
   for (const n of ['one', 'two', 'three']) {
-    ids.push(tk(dir, [`hub-${n}`, '--title', `hub ${n}`, '--node', 'core', '--class', 'sonnet',
+    ids.push(tk(dir, [`hub-${n}`, '--title', `hub ${n}`, '--node', 'core', '--class', 'standard',
       '--files', `src/core/registry.ts,src/core/${n}.ts`]));
   }
   for (const id of ids) run('queue.mjs', ['add', id], dir);
@@ -210,8 +210,8 @@ test('queue.mjs plan: a circle of dependencies is refused, with the circle print
   // Two owners, each waiting on the other: the first ticket is filed depending on the number the
   // second will get, the second depending on the first. Both are written by the ticket tool, the
   // way an owner writes them, and the circle only exists once both are on file.
-  const a = tk(dir, ['first', '--title', 'first', '--node', 'core', '--class', 'sonnet', '--depends', '002']);
-  const b = tk(dir, ['second', '--title', 'second', '--node', 'core', '--class', 'sonnet', '--depends', a]);
+  const a = tk(dir, ['first', '--title', 'first', '--node', 'core', '--class', 'standard', '--depends', '002']);
+  const b = tk(dir, ['second', '--title', 'second', '--node', 'core', '--class', 'standard', '--depends', a]);
   assert.equal(b, '002');
 
   run('queue.mjs', ['add', a], dir);
@@ -228,9 +228,9 @@ test('queue.mjs plan: a consumed port nobody produces is named', async (t) => {
   initHorde(dir);
   run('node.mjs', ['new', 'api', '--boundary', 'src/api/'], dir);
   run('node.mjs', ['new', 'auth', '--boundary', 'src/auth/'], dir);
-  const producer = tk(dir, ['engine', '--title', 'engine', '--node', 'auth', '--class', 'sonnet',
+  const producer = tk(dir, ['engine', '--title', 'engine', '--node', 'auth', '--class', 'standard',
     '--produces', 'auth/policy']);
-  const consumer = tk(dir, ['guard', '--title', 'guard', '--node', 'api', '--class', 'sonnet',
+  const consumer = tk(dir, ['guard', '--title', 'guard', '--node', 'api', '--class', 'standard',
     '--consumes', 'auth/policy']);
   run('queue.mjs', ['add', producer], dir);
   run('queue.mjs', ['add', consumer], dir);
@@ -268,11 +268,11 @@ function makeConsumerFixture(dir) {
     relations: [{ target: 'auth', type: 'uses', consumes: ['policy'] }],
   });
 
-  const producer = tk(dir, ['engine', '--title', 'policy engine', '--node', 'auth', '--class', 'sonnet',
+  const producer = tk(dir, ['engine', '--title', 'policy engine', '--node', 'auth', '--class', 'standard',
     '--files', 'src/auth/policy.ts', '--produces', 'auth/policy']);
-  const apiTicket = tk(dir, ['guard', '--title', 'api guard', '--node', 'api', '--class', 'sonnet',
+  const apiTicket = tk(dir, ['guard', '--title', 'api guard', '--node', 'api', '--class', 'standard',
     '--files', 'src/api/guard.ts', '--consumes', 'auth/policy']);
-  const mobileTicket = tk(dir, ['app', '--title', 'mobile app', '--node', 'mobile', '--class', 'sonnet',
+  const mobileTicket = tk(dir, ['app', '--title', 'mobile app', '--node', 'mobile', '--class', 'standard',
     '--files', 'src/mobile/app.ts', '--consumes', 'auth/policy']);
   for (const id of [producer, apiTicket, mobileTicket]) run('queue.mjs', ['add', id], dir);
   return { producer, apiTicket, mobileTicket };

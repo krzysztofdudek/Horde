@@ -301,3 +301,28 @@ test('_lib.mjs leases: one mechanism, keyed by whatever is being held — a node
     process.chdir(origCwd);
   }
 });
+
+// task 049 — cost-class names are host-neutral, never a Claude model name, and the generic
+// fallback (config.classes' own first key, DEFAULT_CLASSES' first key with no config yet) never
+// falls back to a literal "sonnet".
+test('_lib.mjs: DEFAULT_CLASSES and firstClass are host-neutral', async (t) => {
+  const { DEFAULT_CLASSES, firstClass } = await import('../_lib.mjs');
+  const CLAUDE_MODEL_NAMES = ['haiku', 'sonnet', 'opus', 'fable'];
+
+  await t.test('DEFAULT_CLASSES carries none of the four Claude model names as a key', () => {
+    for (const name of CLAUDE_MODEL_NAMES) {
+      assert.equal(Object.prototype.hasOwnProperty.call(DEFAULT_CLASSES, name), false, `DEFAULT_CLASSES should not key on "${name}"`);
+    }
+  });
+
+  await t.test('firstClass(cfg) returns the mission\'s own first configured class', () => {
+    assert.equal(firstClass({ classes: { heavy: 10, light: 1 } }), 'heavy');
+  });
+
+  await t.test('firstClass(cfg) falls back to DEFAULT_CLASSES\' first key with no config yet, never "sonnet"', () => {
+    assert.equal(firstClass(null), Object.keys(DEFAULT_CLASSES)[0]);
+    assert.equal(firstClass({}), Object.keys(DEFAULT_CLASSES)[0]);
+    assert.equal(firstClass({ classes: {} }), Object.keys(DEFAULT_CLASSES)[0]);
+    assert.notEqual(firstClass(null), 'sonnet');
+  });
+});

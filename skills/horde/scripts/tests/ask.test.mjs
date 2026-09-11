@@ -80,7 +80,7 @@ test('ask.mjs add: input validation', async (t) => {
   });
 
   await t.test('the id carries prefix "a-" from the same counter as tickets and graph items', () => {
-    const ticket = run('tk.mjs', ['new', 'first-ticket', '--title', 'First', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir);
+    const ticket = run('tk.mjs', ['new', 'first-ticket', '--title', 'First', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir);
     assert.equal(ticket.json.id, '001');
     const opened = run('ask.mjs', ['add', 'a question', '--kind', 'stop'], dir);
     assert.equal(opened.code, 0, opened.stderr);
@@ -151,7 +151,7 @@ test('ask.mjs: lifecycle — answer, list, show, and the stop/stuck ticket rule'
   });
 
   await t.test('a "stop" item does not let its ticket back onto spawn — filing it never touches the queue', () => {
-    const ticket = run('tk.mjs', ['new', 'ran-dry', '--title', 'Ran dry', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+    const ticket = run('tk.mjs', ['new', 'ran-dry', '--title', 'Ran dry', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
     run('queue.mjs', ['add', ticket], dir);
     run('queue.mjs', ['set', ticket, 'running', '--agent', 'w'], dir);
     const before = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === ticket);
@@ -167,7 +167,7 @@ test('ask.mjs: an answer to "stuck" either returns the ticket to queue or closes
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  const id = run('tk.mjs', ['new', 'going-nowhere', '--title', 'Going nowhere', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  const id = run('tk.mjs', ['new', 'going-nowhere', '--title', 'Going nowhere', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
   run('queue.mjs', ['add', id], dir);
 
   // tick.mjs (017) is the one that files "stuck" — this exercises the same fileAsk path a spent
@@ -246,7 +246,7 @@ test('ask.mjs / tick.mjs: askClient carries only open items, and a "stuck" item 
     assert.deepEqual(r.json.askClient, []);
   });
 
-  const id = run('tk.mjs', ['new', 'red-forever', '--title', 'Red forever', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  const id = run('tk.mjs', ['new', 'red-forever', '--title', 'Red forever', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
   run('queue.mjs', ['add', id], dir);
   const running = run('queue.mjs', ['set', id, 'running', '--agent', 'w'], dir);
   git(['-C', running.json.worktree, 'commit', '--allow-empty', '-qm', 'work'], dir);

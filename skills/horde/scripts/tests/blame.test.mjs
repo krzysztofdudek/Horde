@@ -78,7 +78,7 @@ function renderVerdictBlock({
 // that predates the migration — exactly the shape blame.mjs's backward-compat reading exists for.
 function landOneTicket(dir, horde) {
   const ticket = run('tk.mjs', [
-    'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'sonnet',
+    'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'standard',
     '--evidence', 'the hook returns hooked',
   ], dir);
   assert.equal(ticket.code, 0, ticket.stderr);
@@ -111,7 +111,7 @@ function landOneTicket(dir, horde) {
   const block = renderVerdictBlock({
     ticketId: id,
     verifier: 'verifier-1',
-    cls: 'sonnet',
+    cls: 'standard',
     result: 'reproduced',
     rows: [{ text: 'the hook returns hooked', command: 'manual check', saw: 'hooked' }],
   });
@@ -158,7 +158,7 @@ test('blame.mjs: E15 — full custody chain for a line a merged ticket introduce
   assert.deepEqual(r.ticket.nodes, ['model']);
   assert.equal(r.ticket.author, 'worker-1');
   assert.equal(r.ticket.verifier.name, 'verifier-1');
-  assert.equal(r.ticket.verifier.class, 'sonnet');
+  assert.equal(r.ticket.verifier.class, 'standard');
   assert.match(r.ticket.ownerApprovals.model, /^owner-1@/);
   assert.equal(r.ticket.evidence.length, 1);
   assert.equal(r.ticket.evidence[0].text, 'the hook returns hooked');
@@ -179,7 +179,7 @@ test('blame.mjs: E15 — full custody chain for a line a merged ticket introduce
   assert.match(human.stdout, /extract the hook/);
   assert.match(human.stdout, new RegExp(`${id} · Extract the hook`));
   assert.match(human.stdout, /author:\s+worker-1/);
-  assert.match(human.stdout, /verifier: verifier-1 \(sonnet\)/);
+  assert.match(human.stdout, /verifier: verifier-1 \(standard\)/);
   assert.match(human.stdout, /owner-1@/);
   assert.match(human.stdout, /the hook returns hooked — reproduced — saw: hooked/);
   assert.match(human.stdout, /house\/no-console \[enforced\] — approved/);
@@ -192,7 +192,7 @@ test('blame.mjs: a ticket with an old ## Verdict block but no **Keys:** line at 
 
   const horde = 'mission1';
   const ticket = run('tk.mjs', [
-    'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'sonnet',
+    'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'standard',
     '--evidence', 'the hook returns hooked',
   ], dir);
   assert.equal(ticket.code, 0, ticket.stderr);
@@ -219,7 +219,7 @@ test('blame.mjs: a ticket with an old ## Verdict block but no **Keys:** line at 
   const block = renderVerdictBlock({
     ticketId: id,
     verifier: 'verifier-1',
-    cls: 'sonnet',
+    cls: 'standard',
     result: 'reproduced',
     rows: [{ text: 'the hook returns hooked', command: 'manual check', saw: 'hooked' }],
   });
@@ -243,7 +243,7 @@ test('blame.mjs: a ticket with an old ## Verdict block but no **Keys:** line at 
   assert.equal(r.ticket.verifier.name, '—');
   // … but verifierVerdict() falls back to the last verdict block in the log rather than finding
   // nothing, so its class and result still come through.
-  assert.equal(r.ticket.verifier.class, 'sonnet');
+  assert.equal(r.ticket.verifier.class, 'standard');
   assert.equal(r.ticket.evidence.length, 1);
   assert.equal(r.ticket.evidence[0].state, 'reproduced');
   assert.equal(r.ticket.evidence[0].saw, 'hooked');
@@ -332,7 +332,7 @@ test('blame.mjs: --horde narrows the search to one horde', async (t) => {
 // journal. Nothing but the commit itself can say which ticket owns this line.
 function landWithTrailersOnly(dir, horde, { evidence = null, law = null } = {}) {
   const ticket = run('tk.mjs', [
-    'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'sonnet',
+    'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'standard',
     '--evidence', 'the hook returns hooked',
   ], dir);
   assert.equal(ticket.code, 0, ticket.stderr);
@@ -393,7 +393,7 @@ test('blame.mjs: without the trailer, the same history answers nothing — which
   // The identical sequence with the trailer left off the merge message. Every indirect source is
   // absent here too, so this is the measure of exactly how much the trailer is carrying.
   const ticket = run('tk.mjs', [
-    'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'sonnet',
+    'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'standard',
     '--evidence', 'the hook returns hooked',
   ], dir);
   const { id } = ticket.json;

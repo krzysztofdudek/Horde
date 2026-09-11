@@ -91,7 +91,7 @@ function lawFixture(dir, id, mutate, { declared = DECLARED, graph = {}, extraBas
   writeFileSync(join(dst, 'issue.md'), [
     `# ${id} · Sample ticket`, '',
     '**Status:** landed',
-    '**Node:** feature · **Class:** sonnet · **Severity:** medium · **Team:** trunk',
+    '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',
     `**Depends on:** none · **Branch:** ${branch}`,
     `**Files:** ${declared.join(', ')}`, '',
     '## Acceptance — evidence', '', '- [ ] does the thing', '',
@@ -101,7 +101,7 @@ function lawFixture(dir, id, mutate, { declared = DECLARED, graph = {}, extraBas
   const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
   const doc = JSON.parse(readFileSync(queuePath, 'utf8'));
   doc.items.push({
-    ticket: id, state: 'landed', class: 'sonnet', branch, dependsOn: [], agent: 'worker1', sha: null, notes: [], worktree: null,
+    ticket: id, state: 'landed', class: 'standard', branch, dependsOn: [], agent: 'worker1', sha: null, notes: [], worktree: null,
   });
   writeFileSync(queuePath, JSON.stringify(doc, null, 2));
   return { branch, issueDir: dst };
@@ -273,7 +273,7 @@ test('law guard: "scope: once" is spent by the landing that used it; "scope: mis
     writeFileSync(join(dst, 'issue.md'), [
       '# 125 · Sample ticket', '',
       '**Status:** landed',
-      '**Node:** feature · **Class:** sonnet · **Severity:** medium · **Team:** trunk',
+      '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',
       '**Depends on:** none · **Branch:** mission1/t-125',
       `**Files:** ${DECLARED.join(', ')}`, '',
       '## Acceptance — evidence', '', '- [ ] does the thing', '',
@@ -282,7 +282,7 @@ test('law guard: "scope: once" is spent by the landing that used it; "scope: mis
     const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
     const doc = JSON.parse(readFileSync(queuePath, 'utf8'));
     doc.items.push({
-      ticket: '125', state: 'landed', class: 'sonnet', branch: 'mission1/t-125', dependsOn: [], agent: 'worker1', sha: null, notes: [], worktree: null,
+      ticket: '125', state: 'landed', class: 'standard', branch: 'mission1/t-125', dependsOn: [], agent: 'worker1', sha: null, notes: [], worktree: null,
     });
     writeFileSync(queuePath, JSON.stringify(doc, null, 2));
 

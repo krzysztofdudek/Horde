@@ -415,8 +415,8 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     // node ids here are the ones Grain mined and Yggdrasil accepted in step 2 — that identity
     // travelling this far intact is one of the seams this test exists for.
     writeFileSync(asked.json.file, `${JSON.stringify({
-      'the shop front': { nodes: ['src/orders'], class: 'sonnet', why: 'Everything an order does to itself.' },
-      'the ledger': { nodes: ['src/billing'], class: 'haiku', why: 'What the money side records, and nothing else.' },
+      'the shop front': { nodes: ['src/orders'], class: 'standard', why: 'Everything an order does to itself.' },
+      'the ledger': { nodes: ['src/billing'], class: 'light', why: 'What the money side records, and nothing else.' },
     }, null, 2)}\n`);
 
     const accepted = run('refine.mjs', ['--step', 'cut', '--horde', 'family'], dir);
@@ -441,7 +441,7 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     assert.deepEqual(consult.json.spawns.map((s) => s.territory).sort(), ['the ledger', 'the shop front']);
 
     const front = consult.json.spawns.find((s) => s.territory === 'the shop front');
-    assert.equal(front.class, 'sonnet');
+    assert.equal(front.class, 'standard');
     assert.doesNotMatch(front.brief, /\{\{/);
     // Its own territory's components, and not the other's: a consultant proposing rules for an
     // area they do not work in is the thing this split exists to prevent.
@@ -452,7 +452,7 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
   await t.test('7. a ticket is filed as a proposal, with Files, Produces and Evidence', () => {
     const ticket = run('tk.mjs', [
       'new', 'order-discount', '--title', 'An order can carry a discount',
-      '--node', 'src/orders', '--class', 'sonnet',
+      '--node', 'src/orders', '--class', 'standard',
       '--files', 'src/orders/discount.mjs,src/orders/discount.test.mjs',
       '--produces', 'src/orders/apply-discount',
       '--evidence', 'E1 — node --test src/orders/discount.test.mjs passes on the merged tree',
@@ -537,7 +537,7 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
 
     const entry = tick.json.spawn.find((s) => s.ticket === '001');
     assert.ok(entry, `nothing was handed out: ${JSON.stringify(tick.json.spawn)}`);
-    assert.equal(entry.model, 'sonnet', 'the ticket\'s own class, never a default');
+    assert.equal(entry.model, 'standard', 'the ticket\'s own class, never a default');
     assert.equal(entry.branch, 'family/t-001');
     // The branch and the worktree are already cut, so the brief on the entry renders against a
     // tree that exists — tick hands out work, it does not promise to.

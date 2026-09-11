@@ -17,7 +17,7 @@ import {
   repoRoot, hordeRoot, hordePath, readConfig, writeConfig, listHordes, readJSON,
   writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
   readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
-  qualityPolicyIn, QUALITY_POLICIES, resolveTree,
+  qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES,
 } from './_lib.mjs';
 import {
   currentWaveNumber, lastWaveNumber, parseEvidenceRows, mentionsEvidenceId, wave1Started,
@@ -26,8 +26,6 @@ import {
 import { writeLawDiff } from './law.mjs';
 import { sumEntries, readCostLimit } from './cost.mjs';
 import { RETRO_SCHEMA, collectRetroInput, missionState } from './retro.mjs';
-
-const DEFAULT_CLASSES = { haiku: 1, sonnet: 3, opus: 10, fable: 30 };
 
 const USAGE = `usage: horde.mjs <command> [options]
 

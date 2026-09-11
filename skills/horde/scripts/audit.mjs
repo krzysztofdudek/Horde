@@ -68,7 +68,7 @@
 
 import { execFileSync } from 'node:child_process';
 import {
-  asArray, readTerritories, leaseHolderForNode, today, qualityPolicy,
+  asArray, readTerritories, leaseHolderForNode, today, qualityPolicy, firstClass,
 } from './_lib.mjs';
 import {
   ygJson, ygCommand, readAuditLedger, recordAudit, readAspectLedger, listAllNodes,
@@ -237,15 +237,15 @@ function ownerFor(horde, nodes) {
 }
 
 // The class a ticket on this territory is worked at — the territory's own, when the cut named one
-// this horde has, otherwise the mission's first configured class. A class the config does not know
-// would be refused by createTicket, so it is never passed on.
+// this horde has, otherwise the mission's first configured class (never a specific model name:
+// see DEFAULT_CLASSES in _lib.mjs). A class the config does not know would be refused by
+// createTicket, so it is never passed on.
 function classFor(horde, cfg, territory) {
   const classes = Object.keys((cfg && cfg.classes) || {});
   const territories = readTerritories(horde);
   const declared = territory && territories[territory] ? territories[territory].class : null;
   if (declared && (classes.length === 0 || classes.includes(declared))) return declared;
-  if (classes.includes('sonnet')) return 'sonnet';
-  return classes[0] || 'sonnet';
+  return firstClass(cfg);
 }
 
 // ---- the tickets ------------------------------------------------------------------------------

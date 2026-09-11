@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, leaseHolderForNode,
-  resolveTree, provisionTree, provenanceLine, withProvenance,
+  resolveTree, provisionTree, provenanceLine, withProvenance, firstClass,
 } from './_lib.mjs';
 import {
   findTicket, parseField, padId, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, createTicket, setTicketBody, acceptanceLines,
@@ -212,7 +212,7 @@ export function newQueueItem(ticket, dependsOn = [], state = 'queued') {
   return {
     ticket: ticket.id,
     state,
-    class: parseField(ticket.text, 'Class') || 'sonnet',
+    class: parseField(ticket.text, 'Class') || firstClass(readConfig()),
     branch: null,
     worktree: null,
     dependsOn,
@@ -426,7 +426,7 @@ function cmdQuality(horde, positional, flags) {
       slug: `quality-${kind}-${node}`,
       title,
       nodes: [node],
-      cls: flags.class || 'sonnet',
+      cls: flags.class || firstClass(cfg),
       severity: 'low',
       kind: 'quality',
       team,
@@ -962,7 +962,7 @@ export function buildPlan(horde, team, cfg, { tree } = {}) {
       id: t.id,
       title: titleOf(t.text),
       nodes,
-      class: parseField(t.text, 'Class') || 'sonnet',
+      class: parseField(t.text, 'Class') || firstClass(cfg),
       severity: parseField(t.text, 'Severity') || 'medium',
       state: item ? item.state : t.status,
       files: ticketFiles(t.text),

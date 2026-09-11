@@ -85,7 +85,7 @@ test('two hordes on one repository: independent state, shared refusal without --
 
   await t.test('both create ticket 001 and set it running, each in its own worktree', () => {
     for (const horde of ['red', 'blue']) {
-      const t1 = run('tk.mjs', ['new', 'sample', '--title', 'Sample', '--node', 'x', '--class', 'sonnet', '--horde', horde, '--evidence', 'it works'], dir);
+      const t1 = run('tk.mjs', ['new', 'sample', '--title', 'Sample', '--node', 'x', '--class', 'standard', '--horde', horde, '--evidence', 'it works'], dir);
       assert.equal(t1.code, 0, t1.stderr);
       assert.equal(t1.json.id, '001');
       const queued = run('queue.mjs', ['add', '001', '--horde', horde], dir);
@@ -130,7 +130,7 @@ test('cold boot: queue reconcile sorts three running tickets by their actual git
 
   const ids = {};
   for (const slug of ['ticket-a', 'ticket-b', 'ticket-c']) {
-    const t1 = run('tk.mjs', ['new', slug, '--title', slug, '--node', 'x', '--class', 'sonnet', '--evidence', 'it works'], dir);
+    const t1 = run('tk.mjs', ['new', slug, '--title', slug, '--node', 'x', '--class', 'standard', '--evidence', 'it works'], dir);
     assert.equal(t1.code, 0, t1.stderr);
     ids[slug] = t1.json.id;
     assert.equal(run('queue.mjs', ['add', t1.json.id], dir).code, 0);
@@ -185,7 +185,7 @@ test('dependency discovered mid-flight: queue dep blocks and unblocks, and refus
   t.after(() => rmRepo(dir));
   initHorde(dir);
 
-  const t1 = run('tk.mjs', ['new', 'needs-x', '--title', 'Needs X', '--node', 'model', '--class', 'sonnet', '--evidence', 'it works'], dir);
+  const t1 = run('tk.mjs', ['new', 'needs-x', '--title', 'Needs X', '--node', 'model', '--class', 'standard', '--evidence', 'it works'], dir);
   const id1 = t1.json.id;
   assert.equal(run('queue.mjs', ['add', id1], dir).code, 0);
   const running1 = run('queue.mjs', ['set', id1, 'running', '--agent', 'worker1'], dir);
@@ -194,7 +194,7 @@ test('dependency discovered mid-flight: queue dep blocks and unblocks, and refus
   const logged = run('tk.mjs', ['log', id1, 'needs X in node ui'], dir);
   assert.equal(logged.code, 0, logged.stderr);
 
-  const t2 = run('tk.mjs', ['new', 'the-x', '--title', 'The X', '--node', 'ui', '--class', 'sonnet', '--evidence', 'it works'], dir);
+  const t2 = run('tk.mjs', ['new', 'the-x', '--title', 'The X', '--node', 'ui', '--class', 'standard', '--evidence', 'it works'], dir);
   const id2 = t2.json.id;
   assert.equal(run('queue.mjs', ['add', id2], dir).code, 0);
 
@@ -240,7 +240,7 @@ test('ask answer records a decision', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  const ticket = run('tk.mjs', ['new', 'contested', '--title', 'Contested', '--node', 'model', '--class', 'sonnet', '--evidence', 'it works'], dir);
+  const ticket = run('tk.mjs', ['new', 'contested', '--title', 'Contested', '--node', 'model', '--class', 'standard', '--evidence', 'it works'], dir);
   const id = ticket.json.id;
 
   const opened = run('ask.mjs', ['add', 'boundary is ambiguous', '--kind', 'stop', '--ticket', id], dir);
@@ -271,13 +271,13 @@ test('cost limit: charter Limit line gates limit-reached and cost report', async
     writeFileSync(charterPath, charter);
   };
 
-  await t.test('three opus runs (weighted 30) pass a Limit: 20 charter line', () => {
+  await t.test('three heavy runs (weighted 30) pass a Limit: 20 charter line', () => {
     setLimit('20');
     // A test that needs cost data seeds the ledger directly, in the shape cost.mjs reads, rather
     // than running the tick that would bill it — the limit is what is under test here, not the
     // billing.
     writeCostRuns(dir, 'mission1', [0, 1, 2].map((i) => ({
-      name: `worker-${i}`, role: 'worker', class: 'opus', ticket: null, team: null, wave: null, at: new Date().toISOString(),
+      name: `worker-${i}`, role: 'worker', class: 'heavy', ticket: null, team: null, wave: null, at: new Date().toISOString(),
     })));
     const reached = run('cost.mjs', ['limit-reached'], dir);
     assert.equal(reached.code, 0, reached.stderr);
@@ -319,7 +319,7 @@ test('the graph: node.mjs reads it through the CLI and writes nothing into it', 
   // a component any more, so the column that used to say who does reads as the honest "nobody",
   // which is what this checks — the field is still on the document, and still answered truthfully.
   await t.test('map shows a component a ticket names, and nobody is recorded as holding it', () => {
-    const ticket = run('tk.mjs', ['new', 'core-thing', '--title', 'Core thing', '--node', 'core', '--class', 'sonnet', '--evidence', 'it works'], dir);
+    const ticket = run('tk.mjs', ['new', 'core-thing', '--title', 'Core thing', '--node', 'core', '--class', 'standard', '--evidence', 'it works'], dir);
     assert.equal(ticket.code, 0, ticket.stderr);
     const map = run('node.mjs', ['map'], dir);
     assert.equal(map.code, 0, map.stderr);
@@ -362,7 +362,7 @@ test('protected path: land.mjs scope check fails a branch that touches config.pr
 
   addNode(dir, 'x', { mapping: ['package.json'] });
 
-  const ticket = run('tk.mjs', ['new', 'touches-protected', '--title', 'Touches protected', '--node', 'x', '--class', 'sonnet', '--evidence', 'it works'], dir);
+  const ticket = run('tk.mjs', ['new', 'touches-protected', '--title', 'Touches protected', '--node', 'x', '--class', 'standard', '--evidence', 'it works'], dir);
   const id = ticket.json.id;
   assert.equal(run('queue.mjs', ['add', id], dir).code, 0);
   const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir);
@@ -390,12 +390,12 @@ test('class overloaded: a queued item waits, next skips it, reconcile leaves it 
   t.after(() => rmRepo(dir));
   initHorde(dir);
 
-  const heavy = run('tk.mjs', ['new', 'heavy', '--title', 'Heavy', '--node', 'x', '--class', 'opus', '--evidence', 'it works'], dir);
-  const light = run('tk.mjs', ['new', 'light', '--title', 'Light', '--node', 'x', '--class', 'sonnet', '--evidence', 'it works'], dir);
+  const heavy = run('tk.mjs', ['new', 'heavy', '--title', 'Heavy', '--node', 'x', '--class', 'heavy', '--evidence', 'it works'], dir);
+  const light = run('tk.mjs', ['new', 'light', '--title', 'Light', '--node', 'x', '--class', 'standard', '--evidence', 'it works'], dir);
   assert.equal(run('queue.mjs', ['add', heavy.json.id], dir).code, 0);
   assert.equal(run('queue.mjs', ['add', light.json.id], dir).code, 0);
 
-  const waited = run('queue.mjs', ['set', heavy.json.id, 'waiting', '--note', 'opus class overloaded'], dir);
+  const waited = run('queue.mjs', ['set', heavy.json.id, 'waiting', '--note', 'heavy class overloaded'], dir);
   assert.equal(waited.code, 0, waited.stderr);
   assert.equal(waited.json.state, 'waiting');
   assert.equal(waited.json.branch, null);
@@ -420,7 +420,7 @@ test('class overloaded: a queued item waits, next skips it, reconcile leaves it 
     assert.equal(requeued.code, 0, requeued.stderr);
     assert.equal(requeued.json.state, 'queued');
 
-    const next = run('queue.mjs', ['next', '--class', 'opus'], dir);
+    const next = run('queue.mjs', ['next', '--class', 'heavy'], dir);
     assert.equal(next.code, 0, next.stderr);
     assert.equal(next.json.ticket, heavy.json.id);
   });
@@ -436,13 +436,13 @@ test('two hordes, one with a waiting item and one without: status --json reports
   initHorde(dir, 'red');
   initHorde(dir, 'blue');
 
-  const redTicket = run('tk.mjs', ['new', 'red-thing', '--title', 'Red thing', '--node', 'x', '--class', 'sonnet', '--horde', 'red', '--evidence', 'it works'], dir);
+  const redTicket = run('tk.mjs', ['new', 'red-thing', '--title', 'Red thing', '--node', 'x', '--class', 'standard', '--horde', 'red', '--evidence', 'it works'], dir);
   assert.equal(redTicket.code, 0, redTicket.stderr);
   assert.equal(run('queue.mjs', ['add', redTicket.json.id, '--horde', 'red'], dir).code, 0);
   const waited = run('queue.mjs', ['set', redTicket.json.id, 'waiting', '--note', 'class overloaded', '--horde', 'red'], dir);
   assert.equal(waited.code, 0, waited.stderr);
 
-  const blueTicket = run('tk.mjs', ['new', 'blue-thing', '--title', 'Blue thing', '--node', 'x', '--class', 'sonnet', '--horde', 'blue', '--evidence', 'it works'], dir);
+  const blueTicket = run('tk.mjs', ['new', 'blue-thing', '--title', 'Blue thing', '--node', 'x', '--class', 'standard', '--horde', 'blue', '--evidence', 'it works'], dir);
   assert.equal(blueTicket.code, 0, blueTicket.stderr);
   assert.equal(run('queue.mjs', ['add', blueTicket.json.id, '--horde', 'blue'], dir).code, 0);
 
@@ -524,7 +524,7 @@ test('land.mjs --background: the run is let go of, but not forgotten — the res
   writeFileSync(join(issueDirPath, 'issue.md'), [
     `# ${id} · Sample ticket`, '',
     '**Status:** landed',
-    '**Node:** feature · **Class:** sonnet · **Severity:** medium · **Team:** trunk',
+    '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',
     `**Depends on:** none · **Branch:** ${branch}`, '',
     '## Acceptance — evidence', '', '- [ ] does the thing', '',
   ].join('\n'));
@@ -533,7 +533,7 @@ test('land.mjs --background: the run is let go of, but not forgotten — the res
   const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
   const queueDoc = JSON.parse(readFileSync(queuePath, 'utf8'));
   queueDoc.items.push({
-    ticket: id, state: 'landed', class: 'sonnet', branch, dependsOn: [], agent: 'worker1', sha: null, notes: [], worktree: null,
+    ticket: id, state: 'landed', class: 'standard', branch, dependsOn: [], agent: 'worker1', sha: null, notes: [], worktree: null,
   });
   writeFileSync(queuePath, JSON.stringify(queueDoc, null, 2));
 

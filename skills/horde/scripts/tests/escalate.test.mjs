@@ -15,11 +15,11 @@ test('escalate.mjs recurring: the third answer of a kind on one territory is a r
 
   const onCheckout = [];
   for (let i = 0; i < 3; i++) {
-    const created = run('tk.mjs', ['new', `checkout-${i}`, '--title', `Checkout question ${i}`, '--node', 'checkout', '--class', 'sonnet', '--evidence', 'it works'], dir);
+    const created = run('tk.mjs', ['new', `checkout-${i}`, '--title', `Checkout question ${i}`, '--node', 'checkout', '--class', 'standard', '--evidence', 'it works'], dir);
     assert.equal(created.code, 0, created.stderr);
     onCheckout.push(created.json.id);
   }
-  const onBilling = run('tk.mjs', ['new', 'billing-0', '--title', 'Billing question', '--node', 'billing', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  const onBilling = run('tk.mjs', ['new', 'billing-0', '--title', 'Billing question', '--node', 'billing', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
 
   await t.test('nothing to propose while no answer has been given three times', () => {
     for (const [i, ticket] of onCheckout.slice(0, 2).entries()) {

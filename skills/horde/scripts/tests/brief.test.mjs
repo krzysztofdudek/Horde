@@ -24,12 +24,12 @@ function seedTicket(dir, horde, team, id, {
   const issueDir = join(dir, '.horde', 'hordes', horde, 'teams', team, 'issues', `${id}-sample-ticket`);
   mkdirSync(issueDir, { recursive: true });
   const header = title === null ? '' : `# ${id} · ${title}\n\n`;
-  writeFileSync(join(issueDir, 'issue.md'), `${header}**Node:** ${node} · **Class:** sonnet · **Severity:** medium · **Team:** ${team}\n\n${body}\n`);
+  writeFileSync(join(issueDir, 'issue.md'), `${header}**Node:** ${node} · **Class:** standard · **Severity:** medium · **Team:** ${team}\n\n${body}\n`);
 
   const queuePath = join(dir, '.horde', 'hordes', horde, 'teams', team, 'queue.json');
   const existing = JSON.parse(readFileSync(queuePath, 'utf8'));
   existing.items.push({
-    ticket: id, state: 'running', class: 'sonnet', branch, worktree, dependsOn: [], agent: null, sha: sha || null, notes: [],
+    ticket: id, state: 'running', class: 'standard', branch, worktree, dependsOn: [], agent: null, sha: sha || null, notes: [],
   });
   writeFileSync(queuePath, JSON.stringify(existing, null, 2));
 }
@@ -54,7 +54,7 @@ test('brief.mjs: renders worker and architect from a seeded ticket, queue and ro
   const charter = readFileSync(charterPath, 'utf8');
   writeFileSync(charterPath, charter.replace(
     '## Nodes\n',
-    '## Nodes\n\nTouched: nodeA (sonnet, mission) — the widget layer.\n',
+    '## Nodes\n\nTouched: nodeA (standard, mission) — the widget layer.\n',
   ));
 
   // A pre-migration mission can still carry a roster.json with a steward entry (nothing writes
@@ -128,12 +128,12 @@ test('brief.mjs worker --takeover: renders the prior worker\'s log and how many 
   initHorde(dir);
   seedNode(dir, 'nodeA', ['src/a/**']);
 
-  const ticket = run('tk.mjs', ['new', 'takeover-thing', '--title', 'Needs a takeover', '--node', 'nodeA', '--class', 'sonnet', '--evidence', 'it works'], dir);
+  const ticket = run('tk.mjs', ['new', 'takeover-thing', '--title', 'Needs a takeover', '--node', 'nodeA', '--class', 'standard', '--evidence', 'it works'], dir);
   const id = ticket.json.id;
   const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
   const q = JSON.parse(readFileSync(queuePath, 'utf8'));
   q.items.push({
-    ticket: id, state: 'running', class: 'sonnet', branch: 'mission1/t-001', worktree: '.horde/worktrees/mission1/t-001', dependsOn: [], agent: null, sha: null, notes: [],
+    ticket: id, state: 'running', class: 'standard', branch: 'mission1/t-001', worktree: '.horde/worktrees/mission1/t-001', dependsOn: [], agent: null, sha: null, notes: [],
   });
   writeFileSync(queuePath, JSON.stringify(q, null, 2));
 
@@ -218,8 +218,8 @@ test('brief.mjs: a stacked ticket\'s brief names the branch it was started from,
   initHorde(dir);
   seedNode(dir, 'feature', ['lib.mjs']);
 
-  const first = run('tk.mjs', ['new', 'first-link', '--title', 'First link', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
-  const second = run('tk.mjs', ['new', 'second-link', '--title', 'Second link', '--node', 'feature', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  const first = run('tk.mjs', ['new', 'first-link', '--title', 'First link', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
+  const second = run('tk.mjs', ['new', 'second-link', '--title', 'Second link', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
   run('queue.mjs', ['add', first], dir);
   run('queue.mjs', ['add', second, '--depends', first], dir);
   const parent = run('queue.mjs', ['set', first, 'running', '--agent', 'worker1'], dir).json;
@@ -301,8 +301,8 @@ test('brief.mjs legislate: one territory\'s own law, and nothing from anyone els
   seedNode(dir, 'nodeA', ['src/a/**']);
   seedNode(dir, 'nodeB', ['src/b/**']);
   seedTerritories(dir, 'mission1', {
-    heart: { nodes: ['nodeA'], class: 'sonnet', why: 'the middle of it' },
-    edge: { nodes: ['nodeB'], class: 'sonnet', why: 'the outside' },
+    heart: { nodes: ['nodeA'], class: 'standard', why: 'the middle of it' },
+    edge: { nodes: ['nodeB'], class: 'standard', why: 'the outside' },
   });
   seedTicket(dir, 'mission1', 'trunk', '001', { title: 'Inside the heart', node: 'nodeA', branch: 'mission1/t-001' });
   seedTicket(dir, 'mission1', 'trunk', '002', { title: 'Out on the edge', node: 'nodeB', branch: 'mission1/t-002' });
@@ -367,7 +367,7 @@ test('brief.mjs: a role whose template file was deleted refuses naming the missi
   t.after(() => rmRepo(dir));
   initHorde(dir);
   seedNode(dir, 'nodeA', ['src/a/**']);
-  seedTerritories(dir, 'mission1', { heart: { nodes: ['nodeA'], class: 'sonnet', why: 'the middle' } });
+  seedTerritories(dir, 'mission1', { heart: { nodes: ['nodeA'], class: 'standard', why: 'the middle' } });
 
   const rolePath = join(SCRIPTS_DIR, '..', 'reference', 'roles', 'legislate.md');
   const original = readFileSync(rolePath, 'utf8');
@@ -387,7 +387,7 @@ test('brief.mjs: a role whose template has a key nothing fills refuses, naming t
   t.after(() => rmRepo(dir));
   initHorde(dir);
   seedNode(dir, 'nodeA', ['src/a/**']);
-  seedTerritories(dir, 'mission1', { heart: { nodes: ['nodeA'], class: 'sonnet', why: 'the middle' } });
+  seedTerritories(dir, 'mission1', { heart: { nodes: ['nodeA'], class: 'standard', why: 'the middle' } });
 
   // The real role file, with one placeholder nothing fills added to it — the refusal under test is
   // renderRole's, and it has to name the key rather than print "{{…}}" into an agent's prompt.

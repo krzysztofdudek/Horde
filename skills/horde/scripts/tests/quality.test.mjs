@@ -436,6 +436,16 @@ test('E17 — a quality ticket is filed and queued from a grain-advice/1 documen
     assert.match(ticket.json.text, /\*\*Severity:\*\* low/);
   });
 
+  // task 049 — `queue.mjs quality` was called above with no --class: the ticket it filed should
+  // carry the mission's own first configured class ("light", DEFAULT_CLASSES' first key on a
+  // freshly-init'd mission), never the old hardcoded literal "sonnet".
+  await t.test('with no --class, the filed ticket gets the mission\'s first configured class, never a literal "sonnet"', () => {
+    const classes = run('horde.mjs', ['config', 'get', 'classes'], dir).json.value;
+    const ticket = run('tk.mjs', ['show', filed.json.filed[0].ticket], dir);
+    assert.match(ticket.json.text, new RegExp(`\\*\\*Class:\\*\\* ${Object.keys(classes)[0]}\\b`));
+    assert.doesNotMatch(ticket.json.text, /\*\*Class:\*\* sonnet\b/);
+  });
+
   await t.test('it is queued, and no ask was opened to get it there', () => {
     const queued = run('queue.mjs', ['list'], dir).json;
     assert.deepEqual(queued.map((i) => [i.ticket, i.state]), [[filed.json.filed[0].ticket, 'queued']]);
@@ -450,7 +460,7 @@ test('E17 — a quality ticket is filed and queued from a grain-advice/1 documen
   });
 
   await t.test('the mission\'s own work still goes first', () => {
-    const work = run('tk.mjs', ['new', 'the-work', '--title', 'What the mission asked for', '--node', 'feature', '--class', 'sonnet', '--severity', 'low', '--evidence', 'it works'], dir);
+    const work = run('tk.mjs', ['new', 'the-work', '--title', 'What the mission asked for', '--node', 'feature', '--class', 'standard', '--severity', 'low', '--evidence', 'it works'], dir);
     run('queue.mjs', ['add', work.json.id], dir);
     assert.equal(run('queue.mjs', ['next'], dir).json.ticket, work.json.id);
   });

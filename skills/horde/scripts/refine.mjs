@@ -28,6 +28,7 @@ import { execFileSync } from 'node:child_process';
 import {
   hordePath, readJSON, readText, writeText, readConfig, fail, parseArgs, emit, isMain,
   resolveHorde, resolveTree, git, claimLease, assertLeaseAvailable, provenanceLine, withProvenance,
+  firstClass,
 } from './_lib.mjs';
 import {
   ygCommand, ygNode, ygContext, nodeExists, nodeBoundary, nodeRules, renderRules, listAllNodes,
@@ -292,7 +293,7 @@ function cutBrief(horde, root, cfg, info, charter) {
     '{',
     '  "<territory>": {',
     '    "nodes": ["<component>", "<component>"],',
-    `    "class": "${Object.keys(classes)[0] || 'sonnet'}",`,
+    `    "class": "${firstClass(cfg)}",`,
     '    "why": "<one sentence: why these belong together>"',
     '  }',
     '}',

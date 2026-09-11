@@ -109,22 +109,22 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
   // the ones that still exist — a run is booked against the kind of agent that made it.
   await t.test('4. cost: seeded runs sum in a mission-level report', () => {
     costRuns = [
-      { name: 'architect1', role: 'architect', class: 'opus', ticket: null, wave: null, at: '2026-01-01T00:00:00.000Z' },
-      { name: 'legislate-1', role: 'legislate', class: 'sonnet', ticket: null, wave: null, at: '2026-01-01T00:00:00.000Z' },
-      { name: 'retro-1', role: 'retro', class: 'sonnet', ticket: null, wave: null, at: '2026-01-01T00:00:00.000Z' },
+      { name: 'architect1', role: 'architect', class: 'heavy', ticket: null, wave: null, at: '2026-01-01T00:00:00.000Z' },
+      { name: 'legislate-1', role: 'legislate', class: 'standard', ticket: null, wave: null, at: '2026-01-01T00:00:00.000Z' },
+      { name: 'retro-1', role: 'retro', class: 'standard', ticket: null, wave: null, at: '2026-01-01T00:00:00.000Z' },
     ];
     writeCostRuns(dir, 'pilot', costRuns);
 
     const missionCost = run('cost.mjs', ['report', '--mission'], dir);
     assert.equal(missionCost.code, 0, missionCost.stderr);
     assert.equal(missionCost.json.runs, 3);
-    assert.equal(missionCost.json.weighted, 3 + 3 + 10); // sonnet(3) + sonnet(3) + opus(10)
+    assert.equal(missionCost.json.weighted, 3 + 3 + 10); // standard(3) + standard(3) + heavy(10)
   });
 
   let ticketId;
   await t.test('5. ticket, queue, wave start', () => {
     const ticket = run('tk.mjs', [
-      'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'sonnet',
+      'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'standard',
       '--evidence', 'tests/hook.test.mjs green',
     ], dir);
     assert.equal(ticket.code, 0, ticket.stderr);
@@ -199,7 +199,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
   // "proposed" (016) is the state a ticket nobody has ruled on sits in: in the queue, listed and
   // counted, and never a candidate for anyone to start.
   await t.test('9. proposed: a ticket nobody has ruled on is counted, and never handed out', () => {
-    const proposal = run('tk.mjs', ['new', 'maybe-later', '--title', 'Maybe later', '--node', 'ui', '--class', 'sonnet', '--evidence', 'it works'], dir);
+    const proposal = run('tk.mjs', ['new', 'maybe-later', '--title', 'Maybe later', '--node', 'ui', '--class', 'standard', '--evidence', 'it works'], dir);
     assert.equal(proposal.code, 0, proposal.stderr);
     const added = run('queue.mjs', ['add', proposal.json.id, '--proposed'], dir);
     assert.equal(added.code, 0, added.stderr);
@@ -268,13 +268,13 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     // One run belongs to this wave — the worker's — seeded the same way the mission-level runs
     // were, in step 4.
     costRuns.push({
-      name: workerName, role: 'worker', class: 'sonnet', ticket: ticketId, wave: '1', at: '2026-01-01T00:00:00.000Z',
+      name: workerName, role: 'worker', class: 'standard', ticket: ticketId, wave: '1', at: '2026-01-01T00:00:00.000Z',
     });
     writeCostRuns(dir, 'pilot', costRuns);
 
     const waveCost = run('cost.mjs', ['report', '--wave', '1'], dir);
     assert.equal(waveCost.code, 0, waveCost.stderr);
-    assert.equal(waveCost.json.runs, 1); // just the worker, sonnet — the mission-level runs predate wave 1
+    assert.equal(waveCost.json.runs, 1); // just the worker, standard — the mission-level runs predate wave 1
     assert.equal(waveCost.json.weighted, 3);
 
     const status = run('status.mjs', ['--horde', 'pilot'], dir);
@@ -287,7 +287,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
   // Cold boot: nothing lives between runs, so the only thing that can say what a returned worker
   // left behind is the git state of its branch. queue.mjs's own reconcile is what reads it.
   await t.test('12. cold boot: a dirty running item is reclaimed, and handoff survives the restart', () => {
-    const ticket2 = run('tk.mjs', ['new', 'second-thing', '--title', 'A second thing', '--node', 'model', '--class', 'sonnet', '--evidence', 'it works'], dir);
+    const ticket2 = run('tk.mjs', ['new', 'second-thing', '--title', 'A second thing', '--node', 'model', '--class', 'standard', '--evidence', 'it works'], dir);
     assert.equal(ticket2.code, 0, ticket2.stderr);
     const ticket2Id = ticket2.json.id;
     run('queue.mjs', ['add', ticket2Id], dir);
@@ -319,7 +319,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
   // so spending them is a matter of writing the lines a red gate would have written; the cap is
   // config.fixRounds.resume + .fresh, which init writes as 3 + 2.
   await t.test('13. blocked: a ticket whose fix rounds are spent stops, and is never handed out again', () => {
-    const stuck = run('tk.mjs', ['new', 'going-nowhere', '--title', 'Going nowhere', '--node', 'model', '--class', 'sonnet', '--evidence', 'it works'], dir);
+    const stuck = run('tk.mjs', ['new', 'going-nowhere', '--title', 'Going nowhere', '--node', 'model', '--class', 'standard', '--evidence', 'it works'], dir);
     assert.equal(stuck.code, 0, stuck.stderr);
     const stuckId = stuck.json.id;
     assert.equal(run('queue.mjs', ['add', stuckId], dir).code, 0);

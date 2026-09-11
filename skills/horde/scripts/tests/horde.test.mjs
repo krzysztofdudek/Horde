@@ -52,6 +52,18 @@ test('horde.mjs: init, list, config, archive', async (t) => {
     assert.deepEqual(paths.json.value, ['a/b', 'c/d']);
   });
 
+  // task 049 — a fresh mission's default cost classes are host-neutral (Horde installs the same
+  // way on Claude Code, Codex, Cursor…), never named after a Claude model.
+  await t.test('a fresh mission\'s default classes carry no Claude model name', () => {
+    const classes = run('horde.mjs', ['config', 'get', 'classes'], dir).json.value;
+    assert.deepEqual(classes, {
+      light: 1, standard: 3, heavy: 10, max: 30,
+    });
+    for (const name of ['haiku', 'sonnet', 'opus', 'fable']) {
+      assert.equal(Object.prototype.hasOwnProperty.call(classes, name), false, `classes should not key on "${name}"`);
+    }
+  });
+
   await t.test('list shows the horde with trunk sha, base and open ticket count', () => {
     const r = run('horde.mjs', ['list'], dir);
     assert.equal(r.code, 0);
@@ -168,6 +180,49 @@ test('horde.mjs config set: a list-valued key takes a list, in either notation',
   const broken = run('horde.mjs', ['config', 'set', 'testGlobs', '["unclosed"'], dir);
   assert.equal(broken.code, 1);
   assert.match(broken.stderr, /not a readable list/);
+});
+
+// task 049 — DEFAULT_CLASSES only changes what a FRESH mission's config.json starts with. A
+// mission whose config.json was already on disk before this change, still keyed by the old
+// Claude model names, reads exactly what is written there (config.classes is a plain map, read
+// with no knowledge of any particular name) and keeps working unchanged.
+test('horde.mjs: a mission with an old on-disk config.classes (Claude model names) keeps working unchanged', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir, 'mission1');
+
+  const cfgPath = join(dir, '.horde', 'config.json');
+  const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+  cfg.classes = {
+    haiku: 1, sonnet: 3, opus: 10, fable: 30,
+  };
+  writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+
+  await t.test('a ticket still takes the old class name', () => {
+    const created = run('tk.mjs', [
+      'new', 'old-scheme', '--title', 'Old scheme', '--node', 'core', '--class', 'sonnet', '--evidence', 'it works',
+    ], dir);
+    assert.equal(created.code, 0, created.stderr);
+    const shown = run('tk.mjs', ['show', created.json.id], dir);
+    assert.match(shown.json.text, /\*\*Class:\*\* sonnet\b/);
+  });
+
+  await t.test('a class this old config never had (a new-scheme name) is still refused, listing the old names', () => {
+    const refused = run('tk.mjs', [
+      'new', 'new-scheme', '--title', 'New scheme', '--node', 'core', '--class', 'light', '--evidence', 'it works',
+    ], dir);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /haiku, sonnet, opus, fable/);
+  });
+
+  await t.test('cost weighting still reads the old weight for the old name (sonnet = 3)', () => {
+    writeCostRuns(dir, 'mission1', [
+      { name: 'w-1', role: 'worker', class: 'sonnet', ticket: null, team: 'trunk', wave: '1', at: new Date().toISOString() },
+    ]);
+    const report = run('cost.mjs', ['report'], dir);
+    assert.equal(report.code, 0, report.stderr);
+    assert.equal(report.json.weighted, 3, 'the old config\'s own "sonnet": 3 weight, unchanged by DEFAULT_CLASSES');
+  });
 });
 
 test('horde.mjs charter: show prints it, edit replaces it from stdin', async (t) => {
@@ -391,7 +446,7 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
   const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-slug');
   mkdirSync(ticketDir, { recursive: true });
   writeFileSync(join(ticketDir, 'issue.md'), '# 001 · slug\n\n**Status:** merged\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
-  writeFileSync(join(ticketDir, 'log.md'), '## Verdict · 001 · 2026-01-01 · by verifier-1 (sonnet)\n\n**Result:** reproduced\n');
+  writeFileSync(join(ticketDir, 'log.md'), '## Verdict · 001 · 2026-01-01 · by verifier-1 (standard)\n\n**Result:** reproduced\n');
 
   await t.test('refuses naming the missing cost report once evidence and gate are clear', () => {
     // The seat that used to sample this mission's own work is gone entirely — done's gate is now
@@ -404,7 +459,7 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
   });
 
   writeCostRuns(dir, 'mission1', [
-    { name: 'mission1-worker-trunk-1', role: 'worker', class: 'sonnet', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
+    { name: 'mission1-worker-trunk-1', role: 'worker', class: 'standard', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
   ]);
 
   const retroClasses = join(dir, '.horde', 'hordes', 'mission1', 'retro-classes.json');

@@ -47,8 +47,8 @@ function writeTerritories(dir, horde, doc) {
 }
 
 const TWO_TERRITORIES = {
-  'the front door': { nodes: ['auth', 'api'], class: 'sonnet', why: 'Both of these are how a request gets in.' },
-  numbers: { nodes: ['reporting'], class: 'haiku', why: 'The month-end figures, and nothing else.' },
+  'the front door': { nodes: ['auth', 'api'], class: 'standard', why: 'Both of these are how a request gets in.' },
+  numbers: { nodes: ['reporting'], class: 'light', why: 'The month-end figures, and nothing else.' },
 };
 
 // The charter's evidence catalogue, written the way a framing session would leave it.
@@ -89,7 +89,7 @@ test('refine.mjs --step cut: the cut is checked against the graph, not trusted',
   });
 
   await t.test('a territory naming a file inside a component is refused, naming the component it would split', () => {
-    writeTerritories(dir, 'm1', { doors: { nodes: ['src/auth/login.mjs'], class: 'sonnet', why: 'w' } });
+    writeTerritories(dir, 'm1', { doors: { nodes: ['src/auth/login.mjs'], class: 'standard', why: 'w' } });
     const r = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /src\/auth\/login\.mjs/);
@@ -99,8 +99,8 @@ test('refine.mjs --step cut: the cut is checked against the graph, not trusted',
 
   await t.test('two territories sharing one component are refused, naming the component and both territories', () => {
     writeTerritories(dir, 'm1', {
-      doors: { nodes: ['auth'], class: 'sonnet', why: 'w' },
-      'also doors': { nodes: ['auth', 'api'], class: 'sonnet', why: 'w' },
+      doors: { nodes: ['auth'], class: 'standard', why: 'w' },
+      'also doors': { nodes: ['auth', 'api'], class: 'standard', why: 'w' },
     });
     const r = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir);
     assert.equal(r.code, 1);
@@ -110,7 +110,7 @@ test('refine.mjs --step cut: the cut is checked against the graph, not trusted',
   });
 
   await t.test('a component the graph does not have is refused by name, with the ones it does have', () => {
-    writeTerritories(dir, 'm1', { doors: { nodes: ['billing'], class: 'sonnet', why: 'w' } });
+    writeTerritories(dir, 'm1', { doors: { nodes: ['billing'], class: 'standard', why: 'w' } });
     const r = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /no component "billing"/);
@@ -118,7 +118,7 @@ test('refine.mjs --step cut: the cut is checked against the graph, not trusted',
   });
 
   await t.test('an empty territory is refused', () => {
-    writeTerritories(dir, 'm1', { doors: { nodes: [], class: 'sonnet', why: 'w' } });
+    writeTerritories(dir, 'm1', { doors: { nodes: [], class: 'standard', why: 'w' } });
     const r = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /territory "doors" is empty/);
@@ -129,11 +129,11 @@ test('refine.mjs --step cut: the cut is checked against the graph, not trusted',
     const r = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /class "gpt"/);
-    assert.match(r.stderr, /haiku, sonnet, opus, fable/);
+    assert.match(r.stderr, /light, standard, heavy, max/);
   });
 
   await t.test('a territory that says no why is refused — the client reads it', () => {
-    writeTerritories(dir, 'm1', { doors: { nodes: ['auth'], class: 'sonnet', why: '  ' } });
+    writeTerritories(dir, 'm1', { doors: { nodes: ['auth'], class: 'standard', why: '  ' } });
     const r = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /says no why/);
@@ -154,7 +154,7 @@ test('refine.mjs --step cut: the cut is checked against the graph, not trusted',
     assert.deepEqual(r.json.territories.map((x) => x.territory).sort(), ['numbers', 'the front door']);
     const front = r.json.territories.find((x) => x.territory === 'the front door');
     assert.deepEqual(front.nodes, ['auth', 'api']);
-    assert.equal(front.class, 'sonnet');
+    assert.equal(front.class, 'standard');
     assert.ok(front.bytes.code > 0, 'the code it maps is counted');
     assert.ok(front.bytes.aspects > 0, 'so is the text of the rule that reaches it');
     assert.equal(front.bytes.total, front.bytes.code + front.bytes.aspects + front.bytes.logs);
@@ -170,7 +170,7 @@ test('refine.mjs --step cut: one size for the whole horde, and the limit is clos
   t.after(() => rmRepo(dir));
   graphFixture(dir);
   initHorde(dir, 'm1');
-  writeTerritories(dir, 'm1', { doors: { nodes: ['auth'], class: 'sonnet', why: 'The way in.' } });
+  writeTerritories(dir, 'm1', { doors: { nodes: ['auth'], class: 'standard', why: 'The way in.' } });
 
   const measured = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).json.territories[0].bytes;
 
@@ -198,10 +198,10 @@ test('refine.mjs --step cut: one size for the whole horde, and the limit is clos
   });
 
   await t.test('the limit is one number for the horde, not one per class — a heavier class does not buy room', () => {
-    writeTerritories(dir, 'm1', { doors: { nodes: ['auth'], class: 'opus', why: 'The way in.' } });
+    writeTerritories(dir, 'm1', { doors: { nodes: ['auth'], class: 'heavy', why: 'The way in.' } });
     assert.equal(run('horde.mjs', ['config', 'set', 'territory.maxBytes', String(measured.total - 1)], dir).code, 0);
     const r = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir);
-    assert.equal(r.code, 1, 'opus is more expensive, not bigger');
+    assert.equal(r.code, 1, 'heavy is more expensive, not bigger');
     assert.match(r.stderr, new RegExp(`limit of ${measured.total - 1}`));
   });
 });
@@ -222,7 +222,7 @@ test('refine.mjs: a territory is leased across every live horde on the repositor
   });
 
   await t.test('another live horde is refused, and told who holds it and when they last moved', () => {
-    writeTerritories(dir, 'm2', { 'the front door': { nodes: ['auth'], class: 'sonnet', why: 'Mine now.' } });
+    writeTerritories(dir, 'm2', { 'the front door': { nodes: ['auth'], class: 'standard', why: 'Mine now.' } });
     const r = run('refine.mjs', ['--step', 'cut', '--horde', 'm2'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /territory "the front door" is leased by horde "m1"/);
@@ -279,7 +279,7 @@ test('refine.mjs --step consult: one spawn per territory, each seeing only its o
     assert.equal(r.json.spawns.length, 2);
     assert.deepEqual(
       r.json.spawns.map((s) => [s.territory, s.class]).sort(),
-      [['numbers', 'haiku'], ['the front door', 'sonnet']],
+      [['numbers', 'light'], ['the front door', 'standard']],
     );
   });
 
@@ -368,7 +368,7 @@ test('refine.mjs: a consultant\'s ticket is a proposal — in the queue, never d
   seedCharter(dir, 'm1', [{ id: 'E1', evidence: 'a signed-in user reaches /me', node: 'auth' }]);
 
   const id = fileTicket(dir, 'm1', [
-    'login', '--title', 'Let a user sign in', '--node', 'auth', '--class', 'sonnet',
+    'login', '--title', 'Let a user sign in', '--node', 'auth', '--class', 'standard',
     '--files', 'src/auth/login.mjs', '--evidence', 'E1', '--evidence', 'a signed-in user reaches /me',
   ]);
 
@@ -403,11 +403,11 @@ test('refine.mjs --step review: the architect\'s ruling is the only way out of "
   assert.equal(run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).code, 0);
 
   const first = fileTicket(dir, 'm1', [
-    'login', '--title', 'Let a user sign in', '--node', 'auth', '--class', 'sonnet',
+    'login', '--title', 'Let a user sign in', '--node', 'auth', '--class', 'standard',
     '--files', 'src/auth/login.mjs', '--evidence', 'E1', '--evidence', 'a signed-in user reaches /me',
   ]);
   const second = fileTicket(dir, 'm1', [
-    'route', '--title', 'Answer 404 for a stranger', '--node', 'api', '--class', 'haiku',
+    'route', '--title', 'Answer 404 for a stranger', '--node', 'api', '--class', 'light',
     '--files', 'src/api/routes.mjs', '--evidence', 'E2', '--evidence', 'the route answers 404',
   ]);
   assert.equal(run('queue.mjs', ['add', first, '--proposed', '--horde', 'm1'], dir).code, 0);
@@ -484,11 +484,11 @@ test('refine.mjs --step review: a circle is refused, and the circle travels with
   seedCharter(dir, 'm1', [{ id: 'E1', evidence: 'a signed-in user reaches /me', node: 'auth' }]);
 
   const a = fileTicket(dir, 'm1', [
-    'first', '--title', 'First', '--node', 'auth', '--class', 'sonnet',
+    'first', '--title', 'First', '--node', 'auth', '--class', 'standard',
     '--files', 'src/auth/login.mjs', '--evidence', 'E1', '--evidence', 'a signed-in user reaches /me',
   ]);
   const b = fileTicket(dir, 'm1', [
-    'second', '--title', 'Second', '--node', 'api', '--class', 'sonnet',
+    'second', '--title', 'Second', '--node', 'api', '--class', 'standard',
     '--files', 'src/api/routes.mjs', '--evidence', 'the route answers',
   ]);
   assert.equal(run('queue.mjs', ['add', a, '--proposed', '--horde', 'm1'], dir).code, 0);
@@ -523,7 +523,7 @@ test('refine.mjs --step frame: three sections, in the client\'s words and nobody
   assert.equal(run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).code, 0);
 
   const id = fileTicket(dir, 'm1', [
-    'login', '--title', 'Let a user sign in', '--node', 'auth', '--class', 'sonnet',
+    'login', '--title', 'Let a user sign in', '--node', 'auth', '--class', 'standard',
     '--files', 'src/auth/login.mjs', '--evidence', 'E1', '--evidence', 'a signed-in user reaches /me',
   ]);
   assert.equal(run('queue.mjs', ['add', id, '--proposed', '--horde', 'm1'], dir).code, 0);
@@ -584,10 +584,10 @@ test('refine.mjs --step frame: one area with one piece of work says so plainly',
   graphFixture(dir);
   initHorde(dir, 'm1');
   seedCharter(dir, 'm1', [{ id: 'E1', evidence: 'a signed-in user reaches /me', node: 'auth' }]);
-  writeTerritories(dir, 'm1', { doors: { nodes: ['auth'], class: 'sonnet', why: 'The way in, and nothing else.' } });
+  writeTerritories(dir, 'm1', { doors: { nodes: ['auth'], class: 'standard', why: 'The way in, and nothing else.' } });
   assert.equal(run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).code, 0);
   const id = fileTicket(dir, 'm1', [
-    'login', '--title', 'Let a user sign in', '--node', 'auth', '--class', 'sonnet',
+    'login', '--title', 'Let a user sign in', '--node', 'auth', '--class', 'standard',
     '--files', 'src/auth/login.mjs', '--evidence', 'E1', '--evidence', 'a signed-in user reaches /me',
   ]);
   assert.equal(run('queue.mjs', ['add', id, '--proposed', '--horde', 'm1'], dir).code, 0);

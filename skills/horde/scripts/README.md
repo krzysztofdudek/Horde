@@ -61,7 +61,9 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   and 2), `liveness.stewardMinutes|ownerMinutes`
   (also accepts `liveness.stewardSeconds|ownerSeconds` — a `*Seconds` key wins over its `*Minutes`
   counterpart when both are set; useful for tests and fast-loop tuning where a whole minute isn't
-  practical), `classes` (weights: haiku 1, sonnet 3, opus 10, fable 30 — defaults), `parallelism`.
+  practical), `classes` (weights: light 1, standard 3, heavy 10, max 30 — defaults, host-neutral;
+  an adopter maps each tier onto a real model, e.g. Claude Code: `light: haiku, standard: sonnet,
+  heavy: opus`), `parallelism`.
   A list-valued key (`testGlobs`, `protectedPaths`) takes either a comma-separated list or a JSON
   array and is stored as a list either way — never as the text of one.
 - `charter show|edit [--ask id]` — the mission charter. `show` prints it; `edit` replaces it
@@ -132,7 +134,7 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
 `hordes/<horde>/counter.json` — the one counter EVERYTHING the horde numbers comes out of, see
 "Identifiers" below). A ticket reads as `t-NNN`; NNN alone is the same ticket, and stays the name of
 its folder and of the `id:` its issue.md carries.
-- `new <slug> --title "…" --node n --class haiku|sonnet|opus [--severity high|medium|low]
+- `new <slug> --title "…" --node n --class light|standard|heavy|max [--severity high|medium|low]
   [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
   [--produces <node>/<port>@<v>,…] [--evidence "…"]… [--revert-base <ref>] [--mutate "<command>"]` —
   from `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries

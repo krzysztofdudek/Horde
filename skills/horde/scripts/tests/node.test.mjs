@@ -436,7 +436,7 @@ test('queue.mjs plan: a ticket\'s approvals follow consumersOf\'s exact port mat
     if (r.code !== 0) throw new Error(`tk new failed: ${r.stderr}`);
     return r.json.id;
   };
-  const id = newTicket(['bump-p', '--title', 'bump p', '--node', 'shared', '--class', 'sonnet', '--files', 'src/shared/p.ts', '--produces', 'shared/p']);
+  const id = newTicket(['bump-p', '--title', 'bump p', '--node', 'shared', '--class', 'standard', '--files', 'src/shared/p.ts', '--produces', 'shared/p']);
   run('queue.mjs', ['add', id], dir);
 
   const r = run('queue.mjs', ['plan'], dir);
@@ -696,7 +696,7 @@ test('the horde numbers everything from one counter, with one prefix per kind', 
   addNode(dir, 'core', { mapping: ['src/core/**'] });
 
   await t.test('a ticket, a graph item and a question to the client take consecutive numbers', async () => {
-    const ticket = run('tk.mjs', ['new', 'first', '--title', 'First', '--node', 'core', '--class', 'sonnet'], dir);
+    const ticket = run('tk.mjs', ['new', 'first', '--title', 'First', '--node', 'core', '--class', 'standard'], dir);
     assert.equal(ticket.code, 0, ticket.stderr);
     assert.equal(ticket.json.ref, 't-001');
     assert.equal(ticket.json.id, '001', 'the number on its own is still what names the folder on disk');
@@ -714,7 +714,7 @@ test('the horde numbers everything from one counter, with one prefix per kind', 
     try { ask = allocateId('mission1', 'ask'); } finally { process.chdir(prevCwd); }
     assert.equal(ask.id, 'a-003');
 
-    const second = run('tk.mjs', ['new', 'second', '--title', 'Second', '--node', 'core', '--class', 'sonnet'], dir);
+    const second = run('tk.mjs', ['new', 'second', '--title', 'Second', '--node', 'core', '--class', 'standard'], dir);
     assert.equal(second.json.ref, 't-004', 'the ticket sequence never restarts beside the others');
   });
 
@@ -790,7 +790,7 @@ test('a graph.json from before the shared counter reads without collision, and n
     assert.equal(fresh.code, 0, fresh.stderr);
     assert.equal(fresh.json.id, 'g-003', 'counter.json said 1; the file already held 1 and 2, so the next free number is 3');
 
-    const ticket = run('tk.mjs', ['new', 'after-migration', '--title', 'After', '--node', 'core', '--class', 'sonnet'], dir);
+    const ticket = run('tk.mjs', ['new', 'after-migration', '--title', 'After', '--node', 'core', '--class', 'standard'], dir);
     assert.equal(ticket.json.ref, 't-004');
 
     // The old file's own two "1"s stay exactly as they were — nothing rewrites history. What must

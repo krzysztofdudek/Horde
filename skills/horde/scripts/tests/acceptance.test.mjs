@@ -20,12 +20,12 @@ test('queue.mjs add: refuses a ticket with no acceptance line, accepts one with 
   t.after(() => rmRepo(dir));
   initHorde(dir);
   addNode(dir, 'nodeA', { mapping: ['src/nodeA/**'] });
-  const bare = run('tk.mjs', ['new', 'bare', '--title', 'No evidence', '--node', 'nodeA', '--class', 'sonnet'], dir);
+  const bare = run('tk.mjs', ['new', 'bare', '--title', 'No evidence', '--node', 'nodeA', '--class', 'standard'], dir);
   assert.equal(bare.code, 0);
   const refused = run('queue.mjs', ['add', bare.json.id], dir);
   assert.notEqual(refused.code, 0);
   assert.match(refused.stderr, /no acceptance line/);
-  const good = run('tk.mjs', ['new', 'good', '--title', 'With evidence', '--node', 'nodeA', '--class', 'sonnet', '--evidence', 'the page renders'], dir);
+  const good = run('tk.mjs', ['new', 'good', '--title', 'With evidence', '--node', 'nodeA', '--class', 'standard', '--evidence', 'the page renders'], dir);
   assert.equal(good.code, 0);
   const queued = run('queue.mjs', ['add', good.json.id], dir);
   assert.equal(queued.code, 0, queued.stderr);
