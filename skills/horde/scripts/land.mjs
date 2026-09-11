@@ -316,9 +316,21 @@ function runCapture(cmd, args, opts) {
 // Strips the markers that tell a nested `node --test` it's already inside a test run (this tool
 // itself is regularly invoked from inside one, e.g. by its own test suite) — Node's test runner
 // otherwise treats them as a signal to no-op the nested run instead of actually executing it.
+//
+// Also forces color off. `parseNodeTestSummary` below expects a plain-text "ℹ tests N" line
+// anchored at column zero — whoever runs `land` (a person at a color terminal, an agent, a CI
+// runner with color forced on) can have FORCE_COLOR/COLORTERM set in their own shell, and Node's
+// test runner honors that over TTY detection, so the nested run's summary line arrives prefixed
+// with an ANSI escape and the regex misses it. That reads back as "? fail / ? tests" — an
+// unparseable note, not a "some tests failed" note — which fails the whole revert-test item and,
+// with it, the gate, on a branch that may have been perfectly fine. Silencing color here, not on
+// this process's own stdout, keeps it from ever depending on who is running `land` from where.
 function childTestEnv() {
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
+  delete env.FORCE_COLOR;
+  delete env.COLORTERM;
+  env.NO_COLOR = '1';
   if (env.NODE_OPTIONS) {
     const kept = env.NODE_OPTIONS.split(/\s+/).filter((tok) => tok && !tok.startsWith('--test')).join(' ');
     if (kept) env.NODE_OPTIONS = kept; else delete env.NODE_OPTIONS;

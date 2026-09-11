@@ -153,9 +153,18 @@ function runCapture(cmd, args, opts) {
 
 // A nested `node --test` no-ops when it thinks it is already inside a test run; this tool is run
 // from inside one by its own suite, so those markers come off before the child starts.
+//
+// Also forces color off, for the same reason land.mjs's own copy of this function does:
+// parseNodeTestSummary expects a plain "ℹ tests N" line at column zero, and FORCE_COLOR/COLORTERM
+// inherited from whoever is running this tool (a color terminal, an agent, a CI runner) makes
+// Node's test runner prefix that line with an ANSI escape regardless of TTY, turning a real
+// "N fail / N tests" into an unparseable "? fail / ? tests".
 function childTestEnv() {
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
+  delete env.FORCE_COLOR;
+  delete env.COLORTERM;
+  env.NO_COLOR = '1';
   if (env.NODE_OPTIONS) {
     const kept = env.NODE_OPTIONS.split(/\s+/).filter((tok) => tok && !tok.startsWith('--test')).join(' ');
     if (kept) env.NODE_OPTIONS = kept; else delete env.NODE_OPTIONS;
