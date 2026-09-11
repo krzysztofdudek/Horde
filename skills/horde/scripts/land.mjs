@@ -34,7 +34,7 @@ import {
   ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, verdictCommandsFor,
   globToRegExp, pathInBoundary, ticketBoundary, ygFileContext, ygAvailable, ygJson,
 } from './node.mjs';
-import { ticketFiles, findTicket, changesRoundInfo, transitionStatus } from './tk.mjs';
+import { ticketFiles, ticketEvidence, findTicket, changesRoundInfo, transitionStatus } from './tk.mjs';
 import { recordMerged } from './queue.mjs';
 
 const USAGE = `usage: land.mjs <ticket|branch> [--level trunk] [--no-gate] [--background] [--horde h]
@@ -1022,8 +1022,75 @@ function conflictingFiles(tree) {
   return diffPaths(['diff', '--name-only', '--diff-filter=U'], tree);
 }
 
-function mergeIntoParent(root, cfg, branch, parentBranch, parentTip, ticketId, cleaner) {
-  const message = `merge ${ticketId}: ${branch}`;
+// ---- trailers -----------------------------------------------------------------------------
+//
+// Who worked what, and when, belongs to git — not to `.horde/`, which is uncommitted and gone the
+// moment a checkout is thrown away. So the merge commit this tool writes carries the three facts
+// that outlive the horde: the ticket it landed, the evidence rows it earned, and what it did to
+// the law. `blame.mjs` then reads the edge commit → ticket straight off the commit instead of
+// reconstructing it from three places in `.horde/`.
+//
+// Ordinary git trailers, so `git interpret-trailers` and every tool that already reads them work
+// unchanged: one blank line after the subject, then `Key: value` lines. A value is put through
+// `trailerValue` first — a newline inside one would end the trailer block early and silently drop
+// every line after it, whereas a colon or a non-ASCII character is ordinary content that only a
+// parser splitting on the LAST colon, or assuming ASCII, could get wrong (this file's reader, and
+// blame.mjs's, both split on the first).
+//
+// This is the only place trailers are written, because 015 made this the only place a merge commit
+// is made at all. An adopter whose history already has its own convention for this is the case to
+// watch: adopt theirs and say so, rather than writing a second, competing one beside it.
+function trailerValue(raw) {
+  return String(raw == null ? '' : raw).replace(/\s+/g, ' ').trim();
+}
+
+function renderTrailers(entries) {
+  return entries
+    .filter(([, value]) => trailerValue(value).length > 0)
+    .map(([key, value]) => `${key}: ${trailerValue(value)}`);
+}
+
+// What the branch did to the law, read off the files it changed: a rule's own directory under
+// `.yggdrasil/aspects/<id>/` appearing is a rule added, and a change inside one that was already
+// there is a rule changed. Read from the diff rather than by asking Yggdrasil twice — the gate has
+// already run `yg check` on this tree, and the question here is only which rules the diff touched.
+function lawTrailers(root, branch, parentBranch) {
+  const rows = (git(['diff', '--name-status', `${parentBranch}...${branch}`], root) || '')
+    .split('\n').map((l) => l.trim()).filter(Boolean);
+  const byAspect = new Map();
+  for (const row of rows) {
+    const [status, ...rest] = row.split(/\t/);
+    const m = /^\.yggdrasil\/aspects\/([^/]+)\//.exec(rest[rest.length - 1] || '');
+    if (!m) continue;
+    const added = status.startsWith('A');
+    const seen = byAspect.get(m[1]);
+    // One rule, one line: a rule whose diff both adds and edits files is a rule this branch added.
+    if (!seen || added) byAspect.set(m[1], added ? 'added' : 'changed');
+  }
+  return [...byAspect.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([id, what]) => ['Law', `${id} ${what}`]);
+}
+
+function mergeMessage(root, horde, branch, parentBranch, ticketId) {
+  const ticket = findTicket(horde, ticketId);
+  const evidence = ticket ? ticketEvidence(ticket.text) : [];
+  const trailers = renderTrailers([
+    // `t-001`, not the bare `001` this tool passes around internally: the trailer is read in git
+    // log, months later, beside trailers from every other tool an adopter runs, and a bare number
+    // there says nothing. It is the same shape the ticket's own branch carries.
+    ['Ticket', `t-${ticketId}`],
+    // A ticket that earned no catalogue row gets no Evidence line at all — an empty one would read
+    // as "this landed proving nothing", which is a different and false claim.
+    ['Evidence', evidence.join(', ')],
+    ...lawTrailers(root, branch, parentBranch),
+  ]);
+  return `merge ${ticketId}: ${branch}\n\n${trailers.join('\n')}\n`;
+}
+
+function mergeIntoParent(root, cfg, branch, parentBranch, parentTip, ticketId, cleaner, horde) {
+  // Derived from the ticket and from the diff, and from nothing about this run — so a merge an
+  // adopter's commit hook rejects costs the commit nothing: the next landing builds the same
+  // trailers, byte for byte, rather than a shorter message the second time round.
+  const message = mergeMessage(root, horde, branch, parentBranch, ticketId);
   const checkout = worktreeOn(root, parentBranch);
 
   if (checkout) {
@@ -1207,7 +1274,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       if (nowSha !== branchSha) {
         fail(`${branch} moved while this landing ran — every item above was measured at ${short(branchSha)} and the branch now stands at ${short(nowSha)}. Nothing was merged; land again against the branch as it stands now`);
       }
-      const merged = mergeIntoParent(root, cfg, branch, parentBranch, parentTip, ticketId, cleaner);
+      const merged = mergeIntoParent(root, cfg, branch, parentBranch, parentTip, ticketId, cleaner, horde);
       if (!merged.ok) {
         checks.push({ name: 'merge', ok: false, note: merged.note });
         recordChanges(horde, ticketId, checks);

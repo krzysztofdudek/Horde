@@ -37,7 +37,10 @@ import { buildPlan, renderPlan, titleOf } from './queue.mjs';
 import {
   findTicket, allTickets, nodesOf, ticketEvidence,
 } from './tk.mjs';
-import { parseEvidenceRows } from './wave.mjs';
+import {
+  parseEvidenceRows, EVIDENCE_SECTION, catalogueCut, upsertCharterSection,
+} from './wave.mjs';
+import { detectEvidenceLayer, renderEvidenceJudgement, PROMISES_OFFER } from './horde.mjs';
 
 const STEPS = ['cut', 'consult', 'review', 'frame'];
 
@@ -368,7 +371,10 @@ function grainSection(cfg, root, asks) {
 // area — and the evidence rows that belong to this territory or to nobody yet.
 function charterForTerritory(charter, nodes) {
   const text = String(charter || '');
-  const wanted = ['Goal', 'Non-goals', 'Constraints'];
+  // The evidence judgement travels with them: a consultant deciding what a ticket proves has to
+  // know what proof is in this repository, and it is the one section outside the mission's own
+  // three that is about the whole mission rather than about somebody else's area.
+  const wanted = ['Goal', 'Non-goals', 'Constraints', EVIDENCE_SECTION];
   const out = [];
   for (const heading of wanted) {
     const body = charterSection(text, heading);
@@ -445,6 +451,8 @@ function consultBrief(horde, root, cfg, info, charter, territory) {
       })),
     ]),
     '',
+    ...evidenceLayerSection(),
+    '',
     '## The five questions',
     '',
     'Answer these, in this order, about your territory alone:',
@@ -487,6 +495,44 @@ function consultBrief(horde, root, cfg, info, charter, territory) {
     'the whole of what you may say about anywhere else.',
   );
   return lines.join('\n');
+}
+
+// What a consultant is told about proof before it writes a single evidence row. The judgement
+// itself is already in the charter above — this says how to read it, how to correct it, and the
+// one case in which Horde is allowed to offer a solution of its own.
+function evidenceLayerSection() {
+  return [
+    '## Recognising the evidence layer',
+    '',
+    'The charter above already says what proof is in this repository. It was judged once, by reading the',
+    'repository, and it is what every evidence row you write refers back to. Read it before you name any',
+    'evidence, and if it is wrong about your territory, say so on a ticket — a judgement in a file is',
+    'correctable, which is the whole reason it is in the file.',
+    '',
+    'The signals it was made from, in the order they beat each other:',
+    '',
+    '- **A directory of promises** — markdown, one file per promise, each carrying a status field, and a',
+    '  mirror in the tests: a test named for the promise it keeps. Where the graph has pairing rules',
+    '  attaching the two, those rules are the law that keeps them honest.',
+    '- **Test suites** — the build file names the command, and the file-name patterns say what a test in',
+    '  this repository is called. This is the common case and it is enough.',
+    '- **A scenario runner** — a runner plus its input files (feature files, fixtures, recorded',
+    '  sessions). The inputs are the evidence; the runner is only how they are replayed.',
+    '',
+    'When a promises directory exists, it is **maintained by whoever works the ticket**, in that ticket,',
+    'like any other file the ticket touches — there is no separate step and no separate owner. Its shape',
+    'is the repository\'s own law to enforce, through the graph\'s rules, not something Horde checks.',
+    '',
+    'Say "no evidence layer found" only when there is genuinely nothing: no suite, no promises, no file',
+    'named like a test. A suite under a build system this tool does not recognise is **not** nothing — it',
+    'is an evidence layer nobody has told the tool about, and the answer there is to give the patterns by',
+    'hand, not to add anything. Only on real emptiness is an offer made, and it is one sentence:',
+    '',
+    `> ${PROMISES_OFFER}`,
+    '',
+    'Nothing beyond that sentence. Horde is as good at proof as this repository lets it be, and it says so',
+    'once.',
+  ];
 }
 
 // The intent Grain is asked about: the mission's own title, which is the shortest true description
@@ -615,6 +661,8 @@ function stepCut(horde, flags) {
     }
   });
 
+  const evidence = writeEvidenceJudgement(horde, info.path, cfg);
+
   emit(withProvenance({
     step: 'cut',
     horde,
@@ -623,12 +671,53 @@ function stepCut(horde, flags) {
     maxBytes: cfg.territory.maxBytes,
     territories,
     leases: leases.map((l) => ({ territory: l.node, status: l.status })),
+    evidenceLayer: evidence.layer,
   }, info), flags, () => [
     `cut accepted: ${territories.length} territor${territories.length === 1 ? 'y' : 'ies'} (limit ${cfg.territory.maxBytes} bytes each)`,
     ...territories.map((t) => `  ${t.territory}  [${t.class}]  ${t.nodes.join(', ')}  — ${t.bytes.total} bytes (code ${t.bytes.code} · rules ${t.bytes.aspects} · logs ${t.bytes.logs})`),
     `leases taken: ${leases.map((l) => `${l.node} (${l.status})`).join(', ')}`,
+    `evidence layer: ${evidence.layer.kind} — written into "${EVIDENCE_SECTION}" in ${evidence.path}`,
     provenanceLine(info),
   ].join('\n'));
+}
+
+// ---- the evidence-layer judgement ----------------------------------------------------------
+//
+// Made once per mission, here, at the first moment a tool holds both the repository and the
+// charter: the cut is accepted, no ticket exists yet, and every ticket that comes after refers its
+// evidence rows back to this paragraph. Horde brings no idea of proof of its own — it names
+// whatever this repository already has, and only offers a package when it can see nothing at all.
+//
+// Two things are checked before a byte is written. A charter whose catalogue is already cut in two
+// by a heading standing inside "## Acceptance" is refused rather than written into: the rows below
+// that heading are invisible to parseEvidenceRows and to tk.mjs's own copy of that read, so a
+// mission that carried on would be working to a catalogue quietly shorter than the one the
+// chairman agreed to. And a charter that cannot be written is a refusal naming the path — never a
+// silent skip that leaves the judgement in nobody's head.
+function writeEvidenceJudgement(horde, root, cfg) {
+  const path = hordePath(horde, 'charter.md');
+  const before = readText(path) || '';
+  const cut = catalogueCut(before);
+  if (cut) {
+    fail(
+      `${path}: the evidence catalogue is cut in two. This charter holds ${cut.present} catalogue row(s) `
+      + `and only ${cut.read} of them are inside "## Acceptance" — "## ${cut.heading}" stands in the middle of the `
+      + `table, and every row below it is invisible both here and to tk.mjs, which checks a ticket's `
+      + `--evidence ids against this same table. Move that heading out of the catalogue's own section `
+      + '(above "## Acceptance", or below the last row) and run this step again. Nothing was written.',
+    );
+  }
+  const layer = detectEvidenceLayer(root, cfg);
+  const text = upsertCharterSection(before, EVIDENCE_SECTION, renderEvidenceJudgement(layer), { before: '## Acceptance' });
+  try {
+    writeText(path, text);
+  } catch (e) {
+    fail(
+      `${path} could not be written, so this mission's judgement of what counts as evidence here is `
+      + `not on file: ${e.message}`,
+    );
+  }
+  return { layer, path };
 }
 
 function requireTerritories(horde, root, cfg) {
@@ -790,6 +879,7 @@ function stepFrame(horde, flags) {
     .filter((p) => p.kind === 'rule' && p.status !== 'vetoed')
     .map((p) => ({ says: String(p.text).trim(), where: p.node || null }));
 
+  const noEvidenceLayer = /no evidence layer found/i.test(charterSection(charter, EVIDENCE_SECTION) || '');
   const oneOfEach = areas.length === 1 && areas[0].work.length === 1;
   const shape = oneOfEach
     ? 'One area, one piece of work, one check before it counts as done.'
@@ -808,6 +898,10 @@ function stepFrame(horde, flags) {
         : 'Everything below is something you can watch happen, and each one has somebody building it.',
       proofs: rows,
       untaken: rows.filter((r) => !r.taken).map((r) => r.id),
+      // Said once, in the one place the client reads, and only when the charter's own judgement
+      // says this repository has nothing to point at. Read off the charter rather than detected
+      // again here, so a judgement a person corrected by hand is the one that stands.
+      offer: noEvidenceLayer ? PROMISES_OFFER : null,
     },
     {
       title: 'What the rules gain',
@@ -838,6 +932,7 @@ function stepFrame(horde, flags) {
         '',
       ]) : []),
       ...(s.proofs ? s.proofs.map((r) => `- ${r.id}: ${r.proves}${r.taken ? '' : '  — nobody is building this yet'}`) : []),
+      ...(s.offer ? ['', s.offer] : []),
       ...(s.rules ? s.rules.map((r) => `- ${r.says}`) : []),
       '',
     ]),

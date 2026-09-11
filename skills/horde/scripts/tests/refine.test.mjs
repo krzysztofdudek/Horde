@@ -641,3 +641,197 @@ test('refine.mjs: the broken states, each refused in its own words', async (t) =
     );
   });
 });
+
+// ---- the evidence-layer judgement ------------------------------------------------------------
+//
+// Made once per mission, when the cut is accepted, and written into the charter — so it is in a
+// file a person can correct rather than in an agent's head, and the next mission makes it again
+// from scratch. Horde brings no idea of proof of its own: it names whatever this repository
+// already has, and offers a package of its own only when it can see nothing at all.
+//
+// One fixture per case, because the whole question is what the repository looks like.
+
+function cutAccepted(dir, horde) {
+  writeTerritories(dir, horde, TWO_TERRITORIES);
+  const r = run('refine.mjs', ['--step', 'cut', '--horde', horde], dir);
+  assert.equal(r.code, 0, r.stderr);
+  return r;
+}
+
+function judgement(dir, horde) {
+  const text = readFileSync(hordeFile(dir, horde, 'charter.md'), 'utf8');
+  const idx = text.indexOf('## Evidence in this repository');
+  assert.notEqual(idx, -1, 'the charter has the judgement section');
+  const rest = text.slice(idx);
+  const next = rest.indexOf('\n## ', 1);
+  return (next === -1 ? rest : rest.slice(0, next)).trim();
+}
+
+test('refine.mjs: a repository with a test suite and no promises is told its suite and its globs', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  writeFile(dir, 'package.json', '{"scripts":{"test":"node --test"}}\n');
+  graphFixture(dir);
+  initHorde(dir, 'm1', ['--test-globs', '**/*.test.mjs']);
+
+  const r = cutAccepted(dir, 'm1');
+  assert.equal(r.json.evidenceLayer.kind, 'suite');
+
+  const said = judgement(dir, 'm1');
+  assert.match(said, /npm test suite/);
+  assert.match(said, /npm run test/);
+  assert.match(said, /\*\*\/\*\.test\.mjs/);
+  assert.match(said, /no promises directory/);
+  assert.doesNotMatch(said, /no evidence layer found/);
+  assert.doesNotMatch(said, /yg pack add/, 'a repository that has an evidence layer is offered nothing');
+});
+
+test('refine.mjs: a promises directory with a mirror in the tests is named, and so is the suite beside it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  writeFile(dir, 'package.json', '{"scripts":{"test":"node --test"}}\n');
+  writeFile(dir, 'promises/login-works.md', '# Login works\n\n**Status:** kept\n');
+  writeFile(dir, 'promises/reports-add-up.md', '# Reports add up\n\n**Status:** open\n');
+  writeFile(dir, 'tests/promises/login-works.test.mjs', '// keeps login-works\n');
+  writeFile(dir, 'tests/promises/reports-add-up.test.mjs', '// keeps reports-add-up\n');
+  graphFixture(dir);
+  initHorde(dir, 'm1', ['--test-globs', '**/*.test.mjs']);
+
+  const r = cutAccepted(dir, 'm1');
+  assert.equal(r.json.evidenceLayer.kind, 'promises');
+  assert.equal(r.json.evidenceLayer.promises.count, 2);
+  assert.equal(r.json.evidenceLayer.promises.mirror.dir, 'tests/promises');
+
+  const said = judgement(dir, 'm1');
+  assert.match(said, /promises directory `promises\/`/);
+  assert.match(said, /2 promise\(s\)/);
+  assert.match(said, /tests\/promises\//, 'the mirror is named, not just counted');
+  assert.match(said, /npm test suite/, 'and so is the suite standing beside it');
+  // Whose job the directory is, said where the mission will read it.
+  assert.match(said, /maintained by whoever works the ticket/);
+  assert.match(said, /repository's own law/);
+  assert.doesNotMatch(said, /yg pack add/);
+});
+
+test('refine.mjs: a repository with nothing says so, and offers the package once, in the frame', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  // No build files, and no patterns declared either — the genuinely empty repository, which is the
+  // only state the offer is ever made in.
+  initHorde(dir, 'm1', ['--test-globs', '']);
+
+  const r = cutAccepted(dir, 'm1');
+  assert.equal(r.json.evidenceLayer.kind, 'none');
+
+  const said = judgement(dir, 'm1');
+  assert.match(said, /No evidence layer found/);
+  assert.match(said, /yg pack add promises/);
+
+  // Exactly one sentence of offer, and it reaches the client in the frame — the one place the
+  // client reads. Said once there, not once per area and not once per evidence row.
+  const frame = run('refine.mjs', ['--step', 'frame', '--horde', 'm1'], dir, { json: false });
+  assert.equal(frame.code, 0, frame.stderr);
+  assert.equal(frame.stdout.split('yg pack add promises').length - 1, 1, 'said once, not twice');
+  assert.match(frame.stdout, /`promises` package adds one/);
+});
+
+test('refine.mjs: a suite under a build system nobody recognises is not "no evidence layer"', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // A real test suite under a build system outside the eight this tool reads — nothing names the
+  // command, and nothing names the patterns, but the tests are plainly there.
+  writeFile(dir, 'BUILD.bazel', 'sh_test(name = "smoke", srcs = ["tests/smoke_test.sh"])\n');
+  writeFile(dir, 'tests/smoke_test.sh', '#!/bin/sh\nexit 0\n');
+  writeFile(dir, 'tests/login_test.sh', '#!/bin/sh\nexit 0\n');
+  graphFixture(dir);
+  initHorde(dir, 'm1', ['--test-globs', '']);
+
+  const r = cutAccepted(dir, 'm1');
+  assert.equal(r.json.evidenceLayer.kind, 'unreadable');
+
+  const said = judgement(dir, 'm1');
+  assert.doesNotMatch(said, /No evidence layer found/, 'this is not nothing — it is something unread');
+  assert.doesNotMatch(said, /yg pack add/, 'and nothing is offered for it');
+  assert.match(said, /tests\/smoke_test\.sh|tests\/login_test\.sh/, 'the files it saw are named');
+  assert.match(said, /config set testGlobs/, 'and the way to say what they are called');
+});
+
+test('refine.mjs: the judgement travels into every consultant brief', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  writeFile(dir, 'package.json', '{"scripts":{"test":"node --test"}}\n');
+  graphFixture(dir);
+  initHorde(dir, 'm1', ['--test-globs', '**/*.test.mjs']);
+  cutAccepted(dir, 'm1');
+
+  const r = run('refine.mjs', ['--step', 'consult', '--horde', 'm1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  for (const spawn of r.json.spawns) {
+    assert.match(spawn.brief, /## Recognising the evidence layer/);
+    assert.match(spawn.brief, /npm test suite/, 'the judgement itself, not only the instructions');
+    assert.match(spawn.brief, /maintained by whoever works the ticket/);
+    assert.match(spawn.brief, /yg pack add promises/, 'the offer is quoted as the one sentence it may say');
+  }
+});
+
+test('refine.mjs: the judgement is written once per mission, and re-run replaces it rather than repeating it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  writeFile(dir, 'package.json', '{"scripts":{"test":"node --test"}}\n');
+  graphFixture(dir);
+  initHorde(dir, 'm1', ['--test-globs', '**/*.test.mjs']);
+
+  cutAccepted(dir, 'm1');
+  cutAccepted(dir, 'm1');
+  const text = readFileSync(hordeFile(dir, 'm1', 'charter.md'), 'utf8');
+  assert.equal([...text.matchAll(/^## Evidence in this repository$/gm)].length, 1);
+});
+
+test('refine.mjs: the judgement\'s broken states, each refused or repaired in its own words', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  writeFile(dir, 'package.json', '{"scripts":{"test":"node --test"}}\n');
+  graphFixture(dir);
+  initHorde(dir, 'm1', ['--test-globs', '**/*.test.mjs']);
+
+  await t.test('a charter with no such section — a mission begun before it existed — gains it', () => {
+    const path = hordeFile(dir, 'm1', 'charter.md');
+    const text = readFileSync(path, 'utf8');
+    const start = text.indexOf('## Evidence in this repository');
+    const end = text.indexOf('## Acceptance');
+    writeFileSync(path, text.slice(0, start) + text.slice(end));
+    assert.doesNotMatch(readFileSync(path, 'utf8'), /## Evidence in this repository/);
+
+    const r = cutAccepted(dir, 'm1');
+    assert.equal(r.code, 0, 'an older charter is written into, never refused');
+    assert.match(judgement(dir, 'm1'), /npm test suite/);
+  });
+
+  await t.test('a section somebody put INSIDE the catalogue is refused, and nothing is written', () => {
+    const path = hordeFile(dir, 'm1', 'charter.md');
+    // Two real catalogue rows, with the section dropped between them — the exact shape that makes
+    // parseEvidenceRows, and tk.mjs's own copy of that read, quietly see one row instead of two.
+    const text = readFileSync(path, 'utf8')
+      .replace(/^## Evidence in this repository\n[\s\S]*?(?=^## Acceptance)/m, '')
+      .replace('| | | | |', [
+        '| E1 | the suite is green | api | |',
+        '',
+        '## Evidence in this repository',
+        '',
+        'somebody put it here',
+        '',
+        '| E2 | the film plays | auth | |',
+      ].join('\n'));
+    writeFileSync(path, text);
+    const before = readFileSync(path, 'utf8');
+
+    const r = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /evidence catalogue is cut in two/);
+    assert.match(r.stderr, /Evidence in this repository/);
+    assert.match(r.stderr, /tk\.mjs/, 'the second reader that would also lose the rows is named');
+    assert.match(r.stderr, /Nothing was written/);
+    assert.equal(readFileSync(path, 'utf8'), before, 'and nothing was');
+  });
+});

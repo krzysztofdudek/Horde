@@ -582,7 +582,14 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     assert.equal(done.json.evidence.total, 2);
     assert.equal(done.json.cost.runs, 1);
     assert.equal(done.json.retro.inexpressible, gathered.json.items.length);
-    assert.match(readFileSync(join(dir, '.horde', 'hordes', 'family', 'plan.md'), 'utf8'), /# Mission complete/);
+
+    // "done" is also where the mission files itself away: the horde's directory is marked with the
+    // date and the trunk sha it handed over at, and moved under _archive/. Everything it wrote is
+    // read back from where it now stands.
+    assert.ok(done.json.archived && done.json.archived.to, 'done says where it archived the mission to');
+    assert.equal(existsSync(join(dir, '.horde', 'hordes', 'family')), false);
+    assert.match(readFileSync(join(done.json.archived.to, 'plan.md'), 'utf8'), /# Mission complete/);
+    assert.match(readFileSync(join(done.json.archived.to, 'archived'), 'utf8'), /^\d{4}-\d{2}-\d{2} [0-9a-f]{40}$/m);
   });
 
   await t.test('10. blame on a merged line prints the whole chain back to the graph', () => {

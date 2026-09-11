@@ -36,7 +36,9 @@ function issueDir(dir, team, id) {
   return join(dir, '.horde', 'hordes', 'mission1', 'teams', team, 'issues', `${id}-sample-ticket`);
 }
 
-function writeIssue(dir, team, id, { node = 'feature', files = null, produces = null } = {}) {
+function writeIssue(dir, team, id, {
+  node = 'feature', files = null, produces = null, evidence = null,
+} = {}) {
   const dst = issueDir(dir, team, id);
   mkdirSync(dst, { recursive: true });
   writeFileSync(join(dst, 'issue.md'), [
@@ -46,6 +48,7 @@ function writeIssue(dir, team, id, { node = 'feature', files = null, produces = 
     `**Depends on:** none · **Branch:** mission1/t-${id}`,
     ...(files ? [`**Files:** ${files.join(', ')}`] : []),
     ...(produces ? [`**Consumes:** none · **Produces:** ${produces}`] : []),
+    ...(evidence ? [`**Evidence:** ${evidence.join(', ')}`] : []),
     '',
     '## Acceptance — evidence', '', '- [ ] does the thing', '',
   ].join('\n'));
@@ -105,6 +108,7 @@ function makeTicketBranch(dir, id, { fromRef = 'mission1/trunk', extraFiles = {}
 // test, and a queue item naming it.
 function setupLandable(dir, id, {
   marker = false, prose = false, reviewer = false, judge = 'one-shot', files = null, extraFiles = {}, mapping = null,
+  evidence = null,
 } = {}) {
   initHorde(dir);
   if (reviewer) assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
@@ -131,7 +135,7 @@ function setupLandable(dir, id, {
       ? { [`feature-${id}.mjs`]: 'export function add(a, b) { return a + b; } // UNFINISHED\n', ...extraFiles }
       : extraFiles,
   });
-  const dst = writeIssue(dir, 'trunk', id, files ? { files } : {});
+  const dst = writeIssue(dir, 'trunk', id, { ...(files ? { files } : {}), ...(evidence ? { evidence } : {}) });
   writeTicketLog(dst);
   seedQueueItem(dir, 'trunk', id, branch);
   return { branch, issueDir: dst };
@@ -995,4 +999,132 @@ test('land.mjs: a red gate puts the ticket on "changes" with the gate\'s own wor
     .find((d) => d.includes(`/${id}-`)), 'log.md'), 'utf8');
   assert.match(log, /land refused: /);
   assert.match(log, /round 1\/5 — resume same worker/);
+});
+
+// ---- trailers on the merge commit --------------------------------------------------------
+//
+// Who worked what, and when, belongs to git rather than to `.horde/`, which is uncommitted and
+// gone the moment a checkout is thrown away. This is the only place a merge commit is made, so it
+// is the only place the trailers are written.
+
+function trailersOf(dir, sha) {
+  const body = git(['show', '-s', '--format=%B', sha], dir);
+  const out = {};
+  for (const line of body.split('\n')) {
+    const at = line.indexOf(':');
+    if (at === -1) continue;
+    const key = line.slice(0, at).trim();
+    if (!/^(Ticket|Evidence|Law)$/.test(key)) continue;
+    (out[key] ||= []).push(line.slice(at + 1).trim());
+  }
+  return out;
+}
+
+test('land.mjs: the merge commit carries Ticket and Evidence, and Law when the branch touched a rule', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // A real rule, added by the branch — a script rule so the graph can answer for it for free, and
+  // declared on the ticket so the diff stays inside what the ticket said it would touch.
+  const { branch } = setupLandable(dir, '060', {
+    evidence: ['E1', 'E2'],
+    extraFiles: {
+      '.yggdrasil/aspects/reads-plainly/yg-aspect.yaml': [
+        'name: ReadsPlainly',
+        'description: Source files must not carry a second unfinished-work marker.',
+        'errs: under',
+        'status: draft',
+        'review_by: 2099-01-01',
+        '',
+      ].join('\n'),
+      '.yggdrasil/aspects/reads-plainly/check.mjs': MARKER_CHECK.replace('UNFINISHED', 'SCRATCH'),
+    },
+    mapping: ['feature-060.mjs', 'feature-060.test.mjs'],
+    files: [
+      'feature-060.mjs', 'feature-060.test.mjs',
+      '.yggdrasil/aspects/reads-plainly/yg-aspect.yaml',
+      '.yggdrasil/aspects/reads-plainly/check.mjs',
+    ],
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, `${r.stdout}${r.stderr}`);
+  assert.equal(r.json.ok, true);
+
+  const trailers = trailersOf(dir, r.json.landed.sha);
+  assert.deepEqual(trailers.Ticket, ['t-060']);
+  assert.deepEqual(trailers.Evidence, ['E1, E2']);
+  assert.deepEqual(trailers.Law, ['reads-plainly added']);
+
+  // Ordinary git trailers, so the tool everyone already has reads them.
+  const parsed = git(['show', '-s', '--format=%(trailers:key=Ticket,valueonly)', r.json.landed.sha], dir);
+  assert.equal(parsed.trim(), 't-060');
+});
+
+test('land.mjs: a ticket that earned no evidence row gets no Evidence trailer at all', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '061');
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, `${r.stdout}${r.stderr}`);
+
+  const trailers = trailersOf(dir, r.json.landed.sha);
+  assert.deepEqual(trailers.Ticket, ['t-061']);
+  // Not an empty one: "Evidence:" with nothing after it reads as "this landed proving nothing",
+  // which is a different and false claim from "this ticket earned no catalogue row".
+  assert.equal(trailers.Evidence, undefined);
+  assert.equal(trailers.Law, undefined);
+  assert.doesNotMatch(git(['show', '-s', '--format=%B', r.json.landed.sha], dir), /^Evidence:\s*$/m);
+});
+
+test('land.mjs: a trailer value holding a colon or a non-ASCII character survives the round trip', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // Free text rather than a catalogue id — the field takes either, and an adopter writing a path
+  // or a sentence is the case a parser splitting on the last colon would get wrong.
+  const { branch } = setupLandable(dir, '062', {
+    evidence: ['tests/płatności: kwota się zgadza', 'E7'],
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, `${r.stdout}${r.stderr}`);
+
+  const trailers = trailersOf(dir, r.json.landed.sha);
+  assert.deepEqual(trailers.Ticket, ['t-062']);
+  assert.deepEqual(trailers.Evidence, ['tests/płatności: kwota się zgadza, E7']);
+  assert.equal(
+    git(['show', '-s', '--format=%(trailers:key=Evidence,valueonly)', r.json.landed.sha], dir).trim(),
+    'tests/płatności: kwota się zgadza, E7',
+  );
+});
+
+test('land.mjs: an adopter hook that rejects the merge costs the commit none of its trailers', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '063', { evidence: ['E1'] });
+
+  // A commit-msg hook that refuses once and then lets the same message through — an adopter's own
+  // policy hook having a bad day, which is the case where a retry could quietly write a shorter
+  // message than the one that was refused.
+  const hookDir = join(dir, '.git', 'hooks');
+  mkdirSync(hookDir, { recursive: true });
+  const stamp = join(dir, '.git', 'hook-fired');
+  writeFileSync(join(hookDir, 'commit-msg'), [
+    '#!/bin/sh',
+    `if [ ! -f "${stamp}" ]; then touch "${stamp}"; echo "policy: not today" >&2; exit 1; fi`,
+    'exit 0',
+    '',
+  ].join('\n'), { mode: 0o755 });
+
+  const refused = run('land.mjs', [branch], dir);
+  assert.equal(refused.json.ok, false);
+  const mergeItem = refused.json.checks.find((c) => c.name === 'merge');
+  assert.ok(mergeItem && !mergeItem.ok, 'the merge item reports the refusal');
+  assert.equal(git(['rev-parse', 'mission1/trunk'], dir), git(['rev-parse', 'mission1/trunk'], dir));
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, `${r.stdout}${r.stderr}`);
+  const trailers = trailersOf(dir, r.json.landed.sha);
+  assert.deepEqual(trailers.Ticket, ['t-063']);
+  assert.deepEqual(trailers.Evidence, ['E1'], 'the retry wrote the same trailers, not fewer');
 });

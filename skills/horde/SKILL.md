@@ -108,6 +108,35 @@ prove, what the rules gain. Their "go" is the only approval in the whole run, an
 once, at the start — a request of one territory and one ticket says exactly that, and needs no more
 ceremony than a request of ten.
 
+## Recognising the evidence layer
+
+Horde brings no idea of proof of its own. At the start of a mission it reads the repository, names
+whatever is most like an evidence layer, and uses that — once, in the charter, under **Evidence in
+this repository**. `refine.mjs --step cut` writes the paragraph when the cut is accepted; it is in a
+file precisely so a person can correct it, and every ticket's evidence rows refer back to it. The
+next mission judges again from scratch.
+
+The signals, in the order they beat each other:
+
+- **A directory of promises** — markdown, one file per promise, each carrying a status field, and a
+  mirror in the tests: a test named for the promise it keeps. Where the graph has pairing rules tying
+  the two together, those rules are the law that keeps them honest.
+- **Test suites** — the build file names the command; the file-name patterns say what a test is
+  called here. This is the common case, and it is enough.
+- **A scenario runner** — a runner and its input files. The inputs are the evidence; the runner is
+  only how they are replayed.
+
+Where a promises directory exists, **the worker maintains it inside the ticket**, like any other file
+the ticket touches — no separate step, no separate owner. Its shape is the repository's own law to
+enforce, through the graph's rules; Horde does not check it.
+
+Say **"no evidence layer found"** only when there is genuinely nothing: no suite, no promises, no
+file named like a test. A suite under a build system Horde does not recognise is *not* nothing — it
+is an evidence layer nobody has told the tool about, and the answer is `horde.mjs config set
+testGlobs "<glob>,<glob>"`, not an installation. Only on real emptiness is an offer made, and it is
+one sentence naming the `promises` package and `yg pack add promises`. Nothing beyond that sentence:
+Horde is as good at proof as the repository lets it be, and it says so once.
+
 ## Staffing and planning — for now, two seats
 
 Interim shape: **worker** and **architect** are the only two seats, plus three one-shots — the
@@ -136,7 +165,10 @@ and planning work directly, through `tk.mjs`/`queue.mjs`, rather than through an
   it bite less is the chairman's alone, and the landing gate refuses a branch that tries.
 - Nobody merges by hand. `land.mjs <ticket>` is the last command of a ticket: nine checks, and on
   green it makes the merge commit itself, removes the branch and its worktree, and records the
-  landed sha. On red it refuses, puts the ticket back on `changes` with the gate's own words, and
+  landed sha. That merge commit carries `Ticket:`, `Evidence:` and `Law:` trailers — who worked
+  what, what it proves and what it did to the rules belong to git, which outlives `.horde/`. It is
+  the only place trailers are written, because it is the only place a merge commit is made. Where an
+  adopter's history already has its own convention for this, take theirs and say so. On red it refuses, puts the ticket back on `changes` with the gate's own words, and
   ticks the round counter. Two things it refuses outright rather than reporting: a branch that
   weakens a rule it is judged by, and a branch that sharpens a rule while changing the code that
   rule refuses. The first goes through only on the **client's** recorded answer — put it to them,
@@ -217,8 +249,16 @@ the horde's trunk, the cost report is written, and the retrospective has been ru
 now stands. "The queue is empty" is never "done" — `status.mjs` shows every charter row's own coverage
 (no ticket / queued / running / merged / reproduced) so you see what still stands in the way before you
 ask. `horde.mjs done` is the gate itself: it refuses, listing every reason, until all four hold, then
-stamps the charter, appends the completion block to the mission journal, and tells you what to do next.
-Only then do you present it to the user with the branch name. The pull request and the push are theirs.
+stamps the charter, appends the completion block to the mission journal, archives the horde, and tells
+you what to do next. Only then do you present it to the user with the branch name. The pull request and
+the push are theirs.
+
+**Archiving is part of `done`, not a step you remember.** The horde's directory gains an `archived` file
+carrying the date and the trunk sha it handed over at, and moves to `.horde/hordes/_archive/<h>-<date>/`
+— inside the repository's own ignored area (`.horde/.gitignore` is `*`), so nothing of it was ever in
+front of git. `blame.mjs` reads an archived horde exactly as it reads a live one, so a line's custody
+outlives the mission that wrote it. `horde.mjs archive <h>` still does the same thing on its own, for a
+mission abandoned rather than finished.
 
 ### The retrospective
 

@@ -178,6 +178,63 @@ function candidateShas(hordeId, ticket) {
   ];
 }
 
+// ---- the direct path: the merge commit's own trailers -----------------------------------
+//
+// From 6.0.0 on, land.mjs writes `Ticket:`, `Evidence:` and `Law:` trailers onto the merge commit
+// it makes, so the edge commit → ticket is a fact in git rather than something reconstructed from
+// three places in an uncommitted directory. This reads it in one step.
+//
+// The blamed commit is almost never the merge commit — it is a commit on the ticket's own branch —
+// so the trailer is looked for on the first merge that contains it. `--ancestry-path` keeps to
+// merges that actually descend from the blamed commit, and `rev-list` prints newest first, so the
+// LAST line is the oldest such merge: the one that brought this commit onto its parent branch.
+//
+// Nothing here replaces `findOwningTicket`. A horde archived before 6.0.0 has no trailers at all,
+// and that history is the reason the indirect reconstruction below stays exactly as it was.
+
+function trailerValues(body, key) {
+  const out = [];
+  const lines = String(body || '').split('\n');
+  for (const line of lines) {
+    // Split on the FIRST colon only: a value may hold colons of its own, and may hold anything
+    // that is not a newline — a path, a sentence, a non-ASCII rule name.
+    const at = line.indexOf(':');
+    if (at === -1) continue;
+    if (line.slice(0, at).trim().toLowerCase() !== key.toLowerCase()) continue;
+    const value = line.slice(at + 1).trim();
+    if (value) out.push(value);
+  }
+  return out;
+}
+
+function mergeThatLanded(root, sha) {
+  const out = git(['rev-list', '--ancestry-path', '--merges', `${sha}..HEAD`], root);
+  if (!out) return null;
+  const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.length ? lines[lines.length - 1] : null;
+}
+
+function ticketFromTrailers(root, sha, hordeFilter) {
+  for (const candidate of [sha, mergeThatLanded(root, sha)]) {
+    if (!candidate) continue;
+    const body = git(['show', '-s', '--format=%B', candidate], root);
+    const [raw] = trailerValues(body, 'Ticket');
+    if (!raw) continue;
+    // Written as `t-001`, carried around inside this tool as `001`. Read either, so a history
+    // written by a tool that used the bare id still resolves.
+    const id = raw.replace(/^t-/i, '');
+    for (const hordeId of allHordeIds(hordeFilter)) {
+      const ticket = allTickets(hordeId).find((t) => t.id === id);
+      if (ticket) {
+        return {
+          hordeId, ticket, sha: candidate, source: 'trailer', distance: 0,
+        };
+      }
+    }
+  }
+  return null;
+}
+
 function isAncestor(root, commit, sha) {
   return git(['merge-base', '--is-ancestor', commit, sha], root) !== null;
 }
@@ -192,6 +249,10 @@ function distanceTo(root, commit, sha) {
 // (live or archived, narrowed by --horde) and every ticket in it is walked; this is a search, not
 // an index, but a horde's ticket count keeps it cheap in practice.
 function findOwningTicket(root, commit, hordeFilter) {
+  // The trailer, when the merge that landed this commit has one — one `git show` instead of every
+  // horde times every ticket times every recorded sha.
+  const direct = ticketFromTrailers(root, commit, hordeFilter);
+  if (direct) return direct;
   let best = null;
   for (const hordeId of allHordeIds(hordeFilter)) {
     for (const ticket of allTickets(hordeId)) {
@@ -436,13 +497,19 @@ function main() {
   const rules = ruleVerdictsForFile(root, cfg, relFile);
 
   let ticket = null;
+  // How the edge commit → ticket was made: "trailer" is the commit saying so itself, anything else
+  // is the reconstruction from `.horde/`, which is all a pre-6.0.0 history leaves to go on.
+  let custody = null;
   if (!commit.uncommitted) {
     const owning = findOwningTicket(root, commit.sha, flags.horde);
-    if (owning) ticket = ticketDetail(owning.hordeId, owning.ticket);
+    if (owning) {
+      ticket = ticketDetail(owning.hordeId, owning.ticket);
+      custody = { source: owning.source, sha: owning.sha };
+    }
   }
 
   const result = {
-    file: relFile, line, commit, ticket, rules,
+    file: relFile, line, commit, ticket, custody, rules,
   };
 
   emit(result, flags, () => {

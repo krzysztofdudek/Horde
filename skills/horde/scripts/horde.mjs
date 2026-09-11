@@ -77,14 +77,16 @@ commands:
       must read "autonomous" or "only-the-work"; anything else is refused rather than read as the
       default, and a charter with no such section reads as "autonomous".
   archive <name>
-      moves hordes/<name> to hordes/_archive/<name>-<date>. Branches are untouched.
+      moves hordes/<name> to hordes/_archive/<name>-<date> and marks it archived (an "archived"
+      file carrying the date and the trunk sha). Branches are untouched, and nothing of it is
+      committed — .horde/ carries its own .gitignore of "*".
   done [--horde h]
       the mission's final gate. Refuses, listing every reason, when any evidence row is not
       reproduced, the trunk gate (config.gates.trunk) is not green at the trunk tip, no cost
       has ever been recorded, or the retrospective (retro.mjs) has not been run over the mission
       as it now stands. Otherwise stamps the charter, appends the completion block to the
-      mission journal, and prints what to do next (push — that decision is the chairman's, never
-      this tool's).
+      mission journal, archives the horde the way "archive" does, and prints what to do next
+      (push — that decision is the chairman's, never this tool's).
 
 options: --json  --help`;
 
@@ -165,6 +167,147 @@ function detectGates(root) {
 // past.
 function detectTestGlobs(root) {
   return [...new Set(detectEcosystems(root).flatMap((e) => e.testGlobs))];
+}
+
+// ---- what counts as evidence here ------------------------------------------------------
+//
+// Horde does not bring its own idea of proof. It reads the repository once per mission, names
+// whatever is most like an evidence layer, and uses that; only when it can see nothing at all does
+// it say so and name a package that would add one. The judgement is written into the charter, so
+// it is in a file a person can correct rather than in an agent's head, and the next mission makes
+// it again from scratch rather than inheriting a stale answer.
+//
+// The signals are the ones `init` already reads off the build files, plus two this adds: a
+// directory of promises (markdown, each with a status field, mirrored by tests) and — when neither
+// is there — whether anything in the repository so much as LOOKS like a test. That last one is the
+// difference between "this repository has no evidence layer" and "it has one this tool cannot
+// read", and telling a mission the first when the second is true is the expensive mistake.
+
+const PROMISE_DIRS = ['promises', 'docs/promises', '.promises', 'doc/promises'];
+const PROMISE_STATUS = /^\s*(?:\*\*status:\*\*|status:|- \*\*status:\*\*)/im;
+const MIRROR_DIRS = ['tests', 'test', 'spec', 'specs'];
+// Deliberately broader than any one ecosystem's globs: this is asked only when nothing was
+// recognised, and its whole job is to catch a suite written under a build system outside the eight.
+const LOOKS_LIKE_TEST = /(^|\/)(tests?|specs?)\/|[._-](test|spec|tests|specs)[._-]|[._-](test|spec)$|^(test|spec)_/i;
+
+function markdownFilesIn(dir) {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((d) => d.isFile() && d.name.endsWith('.md'))
+      .map((d) => d.name);
+  } catch { return []; }
+}
+
+// The tests that mirror a promises directory: a directory under one of the usual test roots
+// holding files whose base names are the promises' own. Named rather than counted, because what
+// the charter has to say is WHERE the mirror is.
+function findPromiseMirror(root, names) {
+  const bases = new Set(names.map((n) => n.replace(/\.md$/, '').toLowerCase()));
+  const seen = [];
+  const walk = (rel, depth) => {
+    let entries;
+    try { entries = readdirSync(join(root, rel), { withFileTypes: true }); } catch { return; }
+    let hit = 0;
+    for (const e of entries) {
+      if (e.isDirectory()) { if (depth < 2) walk(`${rel}/${e.name}`, depth + 1); continue; }
+      const base = e.name.replace(/\.[^.]+$/, '').replace(/[._-](test|spec)$/i, '').toLowerCase();
+      if (bases.has(base)) hit++;
+    }
+    if (hit) seen.push({ dir: rel, files: hit });
+  };
+  for (const rootDir of MIRROR_DIRS) walk(rootDir, 0);
+  seen.sort((a, b) => b.files - a.files);
+  return seen[0] || null;
+}
+
+function detectPromises(root) {
+  for (const rel of PROMISE_DIRS) {
+    const names = markdownFilesIn(join(root, rel));
+    const withStatus = names.filter((n) => {
+      try { return PROMISE_STATUS.test(readFileSync(join(root, rel, n), 'utf8')); } catch { return false; }
+    });
+    if (!withStatus.length) continue;
+    return { dir: rel, count: withStatus.length, mirror: findPromiseMirror(root, withStatus) };
+  }
+  return null;
+}
+
+// Tracked files that look like tests under no convention this tool knows. `git ls-files` rather
+// than a directory walk: an untracked build output full of test-shaped file names would otherwise
+// be reported as this repository's evidence layer.
+function testLookingFiles(root) {
+  const out = git(['ls-files'], root);
+  if (out === null) return [];
+  return out.split('\n').map((l) => l.trim()).filter(Boolean).filter((f) => LOOKS_LIKE_TEST.test(f));
+}
+
+// The judgement itself, as data — refine renders it into a paragraph, and the tests read the same
+// fields the paragraph is written from. `kind` is the whole of the answer: "suite", "promises",
+// "unreadable" (there are tests but nothing here can say what they are called) or "none".
+export function detectEvidenceLayer(root, cfg = {}) {
+  const ecosystems = detectEcosystems(root);
+  const configured = Array.isArray(cfg.testGlobs) ? cfg.testGlobs.filter(Boolean) : [];
+  const globs = configured.length ? configured : detectTestGlobs(root);
+  const promises = detectPromises(root);
+  const suites = ecosystems.map((e) => ({ name: e.name, gate: e.gate, testGlobs: e.testGlobs }));
+
+  if (promises) return { kind: 'promises', promises, suites, globs };
+  if (suites.length || globs.length) return { kind: 'suite', promises: null, suites, globs };
+
+  const looksLikeTests = testLookingFiles(root);
+  if (looksLikeTests.length) {
+    return {
+      kind: 'unreadable', promises: null, suites: [], globs: [], looksLikeTests: looksLikeTests.slice(0, 8), looksLikeCount: looksLikeTests.length,
+    };
+  }
+  return {
+    kind: 'none', promises: null, suites: [], globs: [], looksLikeTests: [], looksLikeCount: 0,
+  };
+}
+
+// The one sentence Horde is allowed to say about its own answer, and only when it has seen
+// nothing. It names the package and the command and stops there: offering a solution to a
+// repository that already has an evidence layer is exactly the behaviour this whole judgement
+// exists to prevent.
+export const PROMISES_OFFER = 'If this repository wants an evidence layer of its own, the `promises` '
+  + 'package adds one — a directory of promises with a status field, mirrored by the tests that keep '
+  + 'them: `yg pack add promises`.';
+
+function quoteList(items) {
+  return items.map((i) => `\`${i}\``).join(', ');
+}
+
+// The judgement as the paragraph that goes into the charter. Written from the same fields the
+// tests read, so what a mission is told and what this repository is are never two answers.
+export function renderEvidenceJudgement(layer, { date = today() } = {}) {
+  const judged = `Judged on ${date} by reading this repository; the next mission judges again from scratch.`;
+
+  if (layer.kind === 'promises') {
+    const { promises } = layer;
+    const mirror = promises.mirror
+      ? `mirrored by the tests under \`${promises.mirror.dir}/\` (${promises.mirror.files} of them match a promise by name)`
+      : 'with no mirror in the tests that this could find — a promise nothing runs is a claim, so say on the ticket which test keeps it';
+    const beside = layer.suites.length
+      ? ` Beside it stands the ${layer.suites.map((s) => `${s.name} test suite (\`${s.gate}\`)`).join(' and ')}, written under ${quoteList(layer.globs)}.`
+      : '';
+    return `Evidence here is the promises directory \`${promises.dir}/\` — ${promises.count} promise(s), each carrying a status field — ${mirror}.${beside} Every row in the catalogue below is reproduced through one of those. The promises directory is maintained by whoever works the ticket, like any other file in it, and its shape is the repository's own law to enforce, not Horde's. ${judged}`;
+  }
+
+  if (layer.kind === 'suite') {
+    const named = layer.suites.length
+      ? `the ${layer.suites.map((s) => `${s.name} test suite (\`${s.gate}\`)`).join(' and ')}`
+      : 'this repository\'s test suite';
+    const globs = layer.globs.length
+      ? `, written under ${quoteList(layer.globs)}`
+      : ', whose file patterns are not configured — set them with `horde.mjs config set testGlobs "<glob>,<glob>"`';
+    return `Evidence here is ${named}${globs}. Every row in the catalogue below is reproduced by running it, and a row that cannot be is a row that needs a scenario file, a measurement or a film named on its own line instead. There is no promises directory in this repository. ${judged}`;
+  }
+
+  if (layer.kind === 'unreadable') {
+    return `Evidence here looks like a test suite this tool cannot read: ${layer.looksLikeCount} tracked file(s) are named like tests (${quoteList(layer.looksLikeTests)}${layer.looksLikeCount > layer.looksLikeTests.length ? ', and more' : ''}), but none of the build systems this tool recognises — npm, Maven, Gradle, Cargo, Go, Python, Make — is configured here, so the patterns cannot be read off the build. They have to be given by hand before any landing can tell a new test from an old one: \`horde.mjs config set testGlobs "<glob>,<glob>"\` and \`horde.mjs config set gates.trunk "<command>"\`. This is not "no evidence layer" — it is one nobody has told the tool about. ${judged}`;
+  }
+
+  return `No evidence layer found — this repository has no test suite, no promises directory, and no file named like a test, so nothing here can be pointed at as proof. Every row in the catalogue below has to name its own way of being reproduced, in full, on its own line. ${PROMISES_OFFER} ${judged}`;
 }
 
 // ---- who judges this repository's prose rules ------------------------------------------
@@ -761,21 +904,56 @@ function cmdCharter(positional, flags) {
   ].join('\n'));
 }
 
-function cmdArchive(positional, flags) {
-  const name = positional[0];
-  if (!name) fail('archive requires <name>');
+// ---- archiving -----------------------------------------------------------------------------
+//
+// Archiving moves the horde's directory to `hordes/_archive/<name>-<date>` and touches no branch.
+// That IS "in place" in the sense that matters: inside `.horde/`, automatic, uncommitted, never
+// carried outside the repository — `.horde/` carries its own `.gitignore` of `*`, written when it
+// is created, so nothing under it ever reaches an index. blame.mjs enumerates `_archive/` and
+// treats what it finds there exactly like a live horde, which is why the move stays.
+//
+// What archiving gains here is the marker: an `archived` file carrying the date and the trunk sha
+// the mission was handed over at. The directory alone said when it moved and nothing about what it
+// moved from; a mission read back a year later needs the commit.
+//
+// The marker is written BEFORE the move, into the directory that is about to move, so a horde
+// whose directory cannot be written refuses with nothing moved rather than leaving a half-archived
+// mission behind. It is written whole every time: a second archive of the same mission overwrites
+// the date rather than adding a line under it.
+const ARCHIVED_MARKER = 'archived';
+
+function archiveHorde(name) {
   const src = hordePath(name);
   if (!existsSync(src)) fail(`no such horde: ${name}`);
+  const sha = git(['rev-parse', `${name}/trunk`]);
+  const marker = `${today()} ${sha || '(no trunk branch)'}\n`;
+  try {
+    writeFileSync(join(src, ARCHIVED_MARKER), marker);
+  } catch (e) {
+    fail(`${join(src, ARCHIVED_MARKER)} could not be written, so this mission cannot be marked archived: ${e.message}`);
+  }
   const dest = join(hordeRoot(), 'hordes', '_archive', `${name}-${today()}`);
-  mkdirSync(dirname(dest), { recursive: true });
-  renameSync(src, dest);
+  try {
+    mkdirSync(dirname(dest), { recursive: true });
+    renameSync(src, dest);
+  } catch (e) {
+    fail(`${src} could not be moved to ${dest}: ${e.message}`);
+  }
   // node-lease-across-hordes: an archived horde is no longer live, so every node it held is free
   // the moment it archives — the same instant node.mjs bind and horde.mjs init start treating it
   // as no obstacle for another horde.
-  const releasedLeases = releaseLeasesForHorde(name);
-  emit({ from: src, to: dest, releasedLeases }, flags, () => [
-    `archived: ${name} -> ${dest}`,
-    releasedLeases.length ? `released lease(s): ${releasedLeases.join(', ')}` : 'held no node leases',
+  return {
+    from: src, to: dest, sha, date: today(), releasedLeases: releaseLeasesForHorde(name),
+  };
+}
+
+function cmdArchive(positional, flags) {
+  const name = positional[0];
+  if (!name) fail('archive requires <name>');
+  const archived = archiveHorde(name);
+  emit(archived, flags, () => [
+    `archived: ${name} -> ${archived.to} (${archived.date}, trunk at ${short(archived.sha)})`,
+    archived.releasedLeases.length ? `released lease(s): ${archived.releasedLeases.join(', ')}` : 'held no node leases',
   ].join('\n'));
 }
 
@@ -913,21 +1091,34 @@ function cmdDone(positional, flags) {
   });
   appendText(hordePath(horde, 'plan.md'), `\n${rendered}`);
 
+  // The mission is over, so the horde is archived here and not by a separate command somebody has
+  // to remember: the same move `archive` makes, with the same marker, releasing the same leases.
+  // Everything above has already been written, so the paths this reports are the paths inside the
+  // archived directory — where the documents now are, rather than where they were made.
+  const lawPath = law.path;
+  const retroPath = hordePath(horde, 'retro.json');
+  const archived = archiveHorde(horde);
+  const relocate = (p) => (p.startsWith(archived.from) ? archived.to + p.slice(archived.from.length) : p);
+
   const result = {
     horde,
     evidence: { green: coverage.length, total: coverage.length },
     gate: { level: 'trunk', sha: trunkSha, result: 'green' },
     cost: { runs, weighted, limit },
-    law: { path: law.path, added: law.doc.added.length, raised: law.doc.raised.length, attached: law.doc.attached.length },
-    retro: { path: hordePath(horde, 'retro.json'), law: retro.law.length, inexpressible: retro.inexpressible.length },
+    law: {
+      path: relocate(lawPath), added: law.doc.added.length, raised: law.doc.raised.length, attached: law.doc.attached.length,
+    },
+    retro: { path: relocate(retroPath), law: retro.law.length, inexpressible: retro.inexpressible.length },
+    archived: { to: archived.to, date: archived.date, releasedLeases: archived.releasedLeases },
   };
   emit(result, flags, () => [
     `mission "${horde}" is done — evidence ${coverage.length}/${coverage.length} green, trunk gate green at ${short(trunkSha)}, `
       + `cost ${runs} runs (weighted ${weighted}).`,
     `What the law gained over this mission — ${law.doc.added.length} rule(s) added, ${law.doc.raised.length} raised, `
-      + `${law.doc.attached.length} newly attached: ${law.path}`,
+      + `${law.doc.attached.length} newly attached: ${result.law.path}`,
     `What the law still cannot say — ${retro.inexpressible.length} item(s), beside ${retro.law.length} rule proposal(s) `
-      + `the retrospective raised: ${hordePath(horde, 'retro.json')}`,
+      + `the retrospective raised: ${result.retro.path}`,
+    `Archived: ${archived.to} — marked ${archived.date} at ${short(archived.sha)}, and nothing of it is committed.`,
     `Push when ready: git push <remote> ${trunkBranch} — and open the pull request. That decision is the chairman's, never this tool's.`,
   ].join('\n'));
 }

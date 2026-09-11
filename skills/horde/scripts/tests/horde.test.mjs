@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -417,6 +417,15 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
     assert.match(r.stderr, /retro\.mjs --horde mission1/);
   });
 
+  // Read here rather than after "done": the stamp is made by every "done" run, refusal or not
+  // (stampMissionEvidence is what the evidence check itself reads), and once the mission is done
+  // its horde is archived — a live-horde reader has nothing left to be asked about.
+  await t.test('status.mjs shows the row as reproduced, stamped by the checks done already ran', () => {
+    const r = run('status.mjs', ['--horde', 'mission1'], dir);
+    assert.equal(r.json.hordes[0].evidence.rows[0].state, 'reproduced');
+    assert.equal(r.json.hordes[0].evidence.rows[0].reproducedBy, 'verifier-1');
+  });
+
   await t.test('refuses when the retrospective was taken before the last ticket landed', () => {
     // This ticket's log carries no remark and nothing was refused, so the classification is empty
     // and the retrospective is the one run, not the one-shot's answer.
@@ -445,19 +454,42 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
     assert.equal(r.json.gate.result, 'green');
     assert.equal(r.json.cost.runs, 1);
 
-    const stamped = readFileSync(charterPath, 'utf8');
+    // The mission is over, so the horde is archived by "done" itself — everything it wrote is read
+    // back from where it now stands, and nothing is left live for a later run to pick up.
+    assert.ok(r.json.archived && r.json.archived.to, 'done reports where the horde was archived to');
+    assert.equal(existsSync(join(dir, '.horde', 'hordes', 'mission1')), false, 'the live horde directory is gone');
+    const archivedDir = r.json.archived.to;
+
+    const marker = readFileSync(join(archivedDir, 'archived'), 'utf8');
+    assert.equal(marker.trim().split('\n').length, 1, 'the marker is one line, not a log');
+    const [markedDate, markedSha] = marker.trim().split(' ');
+    assert.equal(markedDate, r.json.archived.date);
+    assert.equal(markedSha, r.json.gate.sha, 'the marker carries the trunk sha the mission handed over at');
+
+    const stamped = readFileSync(join(archivedDir, 'charter.md'), 'utf8');
     assert.match(stamped, /\| E1 \| the suite is green \| api \| verifier-1 \|/);
 
-    const plan = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
+    const plan = readFileSync(join(archivedDir, 'plan.md'), 'utf8');
     assert.match(plan, /# Mission complete/);
     assert.match(plan, /Evidence catalogue:\*\* 1\/1 green/);
     assert.match(plan, /Ready to push: `mission1\/trunk`/);
+
+    // Nothing of .horde/ has ever been a candidate for the index, and "done" is the run most
+    // likely to have slipped something in — it writes a charter, a journal and a marker. (The
+    // fixture's own untracked files are Yggdrasil's, written by `yg init`, and not this tool's
+    // business either way.)
+    const porcelain = execFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(porcelain.split('\n').filter((l) => l.includes('.horde')).join('\n'), '', 'done puts nothing of .horde/ in front of git');
+    assert.match(readFileSync(join(dir, '.horde', '.gitignore'), 'utf8'), /^\*$/m);
 
     // The last word on what this mission did to the law, taken at the trunk it is handing over.
     assert.ok(r.json.law && r.json.law.path, 'done reports where the law document is');
     assert.ok(r.json.retro && r.json.retro.path, 'done reports where the retrospective is');
     assert.equal(r.json.retro.law, 0);
     assert.equal(r.json.retro.inexpressible, 0);
+    // The reported paths are where the documents now are, not where they were written.
+    assert.ok(r.json.law.path.startsWith(archivedDir), 'the law document is reported at its archived path');
+    assert.ok(r.json.retro.path.startsWith(archivedDir), 'the retrospective is reported at its archived path');
     const law = JSON.parse(readFileSync(r.json.law.path, 'utf8'));
     assert.equal(law.schema, 'horde-law/1');
     assert.equal(law.horde, 'mission1');
@@ -465,12 +497,64 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
       assert.ok(Array.isArray(law[section]), `${section} is a list, empty or not`);
     }
   });
+});
 
-  await t.test('status.mjs now shows the row as reproduced', () => {
-    const r = run('status.mjs', ['--horde', 'mission1'], dir);
-    assert.equal(r.json.hordes[0].evidence.rows[0].state, 'reproduced');
-    assert.equal(r.json.hordes[0].evidence.rows[0].reproducedBy, 'verifier-1');
-  });
+// ---- the archived marker ----------------------------------------------------------------------
+//
+// "Archived" has to be readable off the directory itself, not inferred from where it sits: a
+// mission read back a year later needs the date it ended and the commit it handed over. The move
+// to hordes/_archive/<name>-<date> is unchanged — blame.mjs stands on it — and the marker is what
+// is new.
+
+test('horde.mjs archive: the moved directory carries an "archived" marker with the date and the sha', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const trunkSha = execFileSync('git', ['rev-parse', 'mission1/trunk'], { cwd: dir, encoding: 'utf8' }).trim();
+  const r = run('horde.mjs', ['archive', 'mission1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+
+  const marker = readFileSync(join(r.json.to, 'archived'), 'utf8');
+  assert.equal(marker.trim(), `${r.json.date} ${trunkSha}`);
+  assert.equal(existsSync(join(dir, '.horde', 'hordes', 'mission1')), false);
+});
+
+test('horde.mjs archive: an "archived" file already there is overwritten, never doubled', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  // A mission that was marked once already — by a run that got as far as the marker and no
+  // further, or by a hand. The second pass replaces the line; it does not write a second one.
+  writeFileSync(join(dir, '.horde', 'hordes', 'mission1', 'archived'), '1999-01-01 deadbeef\n');
+
+  const r = run('horde.mjs', ['archive', 'mission1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const marker = readFileSync(join(r.json.to, 'archived'), 'utf8');
+  assert.equal(marker.trim().split('\n').length, 1);
+  assert.doesNotMatch(marker, /1999-01-01/);
+  assert.match(marker, new RegExp(`^${r.json.date} `));
+});
+
+test('horde.mjs archive: a horde directory that cannot be written refuses, naming the path', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const hordeDir = join(dir, '.horde', 'hordes', 'mission1');
+  chmodSync(hordeDir, 0o500);
+
+  const r = run('horde.mjs', ['archive', 'mission1'], dir);
+  // Put it back before asserting: a thrown assertion would otherwise leave a directory the
+  // fixture's own cleanup cannot remove.
+  chmodSync(hordeDir, 0o700);
+
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /archived/);
+  assert.ok(r.stderr.includes(hordeDir), `the refusal names the path it could not write: ${r.stderr}`);
+  // Nothing moved: a refusal at the marker leaves the mission exactly where it was.
+  assert.equal(existsSync(join(hordeDir, 'charter.md')), true);
 });
 
 // ---- E10: the graph is Yggdrasil's, and init makes one where there is none -------------------

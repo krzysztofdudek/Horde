@@ -316,3 +316,159 @@ test('blame.mjs: --horde narrows the search to one horde', async (t) => {
   assert.equal(notFound.code, 0, notFound.stderr);
   assert.equal(notFound.json.ticket, null, '--horde other should not see mission1\'s ticket');
 });
+
+// ---- the direct path: trailers on the merge commit -------------------------------------------
+//
+// From 6.0.0 land.mjs writes `Ticket:`, `Evidence:` and `Law:` onto the merge commit it makes, so
+// the edge commit → ticket is a fact in git rather than something reconstructed from three places
+// in an uncommitted directory. The indirect reconstruction stays exactly as it was: no horde
+// archived before 6.0.0 has a trailer anywhere, and that history is the whole reason for it.
+//
+// The trailers themselves are written and asserted in land.test.mjs. What is measured here is the
+// reading — including the case where the trailer is the ONLY thing that could answer.
+
+// A ticket worked and merged with the trailers land.mjs writes, and with every indirect source
+// deliberately absent: no **Keys:** line, no verdict block, and no "merged:" line in the wave
+// journal. Nothing but the commit itself can say which ticket owns this line.
+function landWithTrailersOnly(dir, horde, { evidence = null, law = null } = {}) {
+  const ticket = run('tk.mjs', [
+    'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'sonnet',
+    '--evidence', 'the hook returns hooked',
+  ], dir);
+  assert.equal(ticket.code, 0, ticket.stderr);
+  const { id, dirName, team } = ticket.json;
+
+  assert.equal(run('queue.mjs', ['add', id], dir).code, 0);
+  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker-1'], dir);
+  assert.equal(running.code, 0, running.stderr);
+  const { worktree } = running.json;
+
+  mkdirSync(join(worktree, 'src', 'model'), { recursive: true });
+  writeFileSync(join(worktree, 'src', 'model', 'hook.mjs'), "export function useHook() { return 'hooked'; }\n");
+  git(['add', join('src', 'model', 'hook.mjs')], worktree);
+  git(['commit', '-qm', 'extract the hook'], worktree);
+
+  const message = [
+    `merge ${id}: ${horde}/t-${id}`,
+    '',
+    `Ticket: t-${id}`,
+    ...(evidence ? [`Evidence: ${evidence}`] : []),
+    ...(law ? [`Law: ${law}`] : []),
+    '',
+  ].join('\n');
+
+  git(['checkout', `${horde}/trunk`], dir);
+  git(['merge', '--no-ff', `${horde}/t-${id}`, '-m', message], dir);
+
+  return { id, dirName, team, mergeSha: git(['rev-parse', 'HEAD'], dir) };
+}
+
+test('blame.mjs: a line landed after 6.0.0 is read off the merge commit\'s own trailer, in one step', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  initHorde(dir);
+  writeGraph(dir, { node: 'model', mapping: ['src/model/**'], aspectId: 'house/no-console' });
+
+  const { id } = landWithTrailersOnly(dir, 'mission1', {
+    evidence: 'E1, tests/hook: returns hooked',
+    law: 'house/no-console raised',
+  });
+
+  const r = run('blame.mjs', ['src/model/hook.mjs:1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(r.json.ticket, 'the trailer names the ticket');
+  assert.equal(r.json.ticket.id, id);
+  assert.equal(r.json.ticket.title, 'Extract the hook');
+  assert.equal(r.json.custody.source, 'trailer', 'and it was read directly, not reconstructed');
+});
+
+test('blame.mjs: without the trailer, the same history answers nothing — which is what the trailer replaces', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  initHorde(dir);
+  writeGraph(dir, { node: 'model', mapping: ['src/model/**'], aspectId: 'house/no-console' });
+
+  // The identical sequence with the trailer left off the merge message. Every indirect source is
+  // absent here too, so this is the measure of exactly how much the trailer is carrying.
+  const ticket = run('tk.mjs', [
+    'new', 'extract-hook', '--title', 'Extract the hook', '--node', 'model', '--class', 'sonnet',
+    '--evidence', 'the hook returns hooked',
+  ], dir);
+  const { id } = ticket.json;
+  assert.equal(run('queue.mjs', ['add', id], dir).code, 0);
+  const { worktree } = run('queue.mjs', ['set', id, 'running', '--agent', 'worker-1'], dir).json;
+  mkdirSync(join(worktree, 'src', 'model'), { recursive: true });
+  writeFileSync(join(worktree, 'src', 'model', 'hook.mjs'), "export function useHook() { return 'hooked'; }\n");
+  git(['add', join('src', 'model', 'hook.mjs')], worktree);
+  git(['commit', '-qm', 'extract the hook'], worktree);
+  git(['checkout', 'mission1/trunk'], dir);
+  git(['merge', '--no-ff', `mission1/t-${id}`, '-m', `merge ticket ${id}`], dir);
+
+  const r = run('blame.mjs', ['src/model/hook.mjs:1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.ticket, null);
+  assert.equal(r.json.custody, null);
+  assert.match(run('blame.mjs', ['src/model/hook.mjs:1'], dir, { json: false }).stdout, /pre-horde: no ticket/);
+});
+
+test('blame.mjs: a line landed BEFORE 6.0.0 still answers by the old road', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  initHorde(dir);
+  writeGraph(dir, { node: 'model', mapping: ['src/model/**'], aspectId: 'house/no-console' });
+
+  // landOneTicket merges by hand with a plain "-m" message, exactly as a steward did before this
+  // tool made the merge commit at all — no trailer anywhere — and records the sha in the wave
+  // journal through queue.mjs, which is one of the three places the reconstruction reads.
+  const { id } = landOneTicket(dir, 'mission1');
+
+  const r = run('blame.mjs', ['src/model/hook.mjs:1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(r.json.ticket, 'the old road still finds it');
+  assert.equal(r.json.ticket.id, id);
+  assert.notEqual(r.json.custody.source, 'trailer');
+  assert.ok(['keys', 'verdict', 'journal'].includes(r.json.custody.source), r.json.custody.source);
+});
+
+test('blame.mjs: a trailer value holding a colon or a non-ASCII character does not break the read', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  initHorde(dir);
+  writeGraph(dir, { node: 'model', mapping: ['src/model/**'], aspectId: 'house/no-console' });
+
+  const { id, mergeSha } = landWithTrailersOnly(dir, 'mission1', {
+    evidence: 'tests/płatności: kwota się zgadza',
+    law: 'house/no-console: raised — na podstawie dowodu',
+  });
+
+  const r = run('blame.mjs', ['src/model/hook.mjs:1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.ticket.id, id, 'the Ticket trailer is still read past the ones with colons in them');
+  assert.equal(r.json.custody.source, 'trailer');
+  assert.equal(r.json.custody.sha, mergeSha);
+});
+
+test('blame.mjs: an archived horde answers exactly as a live one does, trailer or not', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  initHorde(dir);
+  writeGraph(dir, { node: 'model', mapping: ['src/model/**'], aspectId: 'house/no-console' });
+  const { id } = landWithTrailersOnly(dir, 'mission1', { evidence: 'E1' });
+
+  const live = run('blame.mjs', ['src/model/hook.mjs:1'], dir);
+  assert.equal(live.json.ticket.id, id);
+
+  const archived = run('horde.mjs', ['archive', 'mission1'], dir);
+  assert.equal(archived.code, 0, archived.stderr);
+  assert.match(readFileSync(join(archived.json.to, 'archived'), 'utf8'), /^\d{4}-\d{2}-\d{2} /);
+
+  const after = run('blame.mjs', ['src/model/hook.mjs:1'], dir);
+  assert.equal(after.code, 0, after.stderr);
+  assert.equal(after.json.ticket.id, id, 'the mission being over does not lose the line its custody');
+  assert.equal(after.json.custody.source, 'trailer');
+});

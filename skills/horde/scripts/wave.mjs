@@ -310,6 +310,72 @@ export function parseEvidenceRows(charterText) {
     .map(([id, evidence, node, reproducedBy]) => ({ id, evidence, node, reproducedBy: reproducedBy || '' }));
 }
 
+// ---- the charter's own shape, where a tool writes into it -------------------------------------
+//
+// The section naming what counts as evidence in THIS repository — refine writes it once per
+// mission, a person reads it, and every catalogue row above is reproduced through what it names.
+// It lives here, beside the catalogue's own reader, because the one thing that must never happen
+// to it is standing INSIDE the catalogue's section: parseEvidenceRows (and tk.mjs's own copy of
+// that read) slices "## Acceptance" up to the next "## " heading, so a heading dropped into the
+// middle of that table makes every row below it stop existing for both readers, silently and with
+// nothing wrong to see in the file.
+
+export const EVIDENCE_SECTION = 'Evidence in this repository';
+
+const CATALOGUE_HEADER = ['id', 'evidence', 'node', 'reproduced by'];
+
+// Every line anywhere in the charter that looks like a catalogue row — four cells, at least one
+// filled, and neither the header nor its separator. The same filters parseEvidenceRows applies
+// inside the section, applied to the whole document.
+function catalogueRowsAnywhere(charterText) {
+  return String(charterText || '').split('\n')
+    .filter((l) => l.trim().startsWith('|'))
+    .map((l) => l.split('|').slice(1, -1).map((c) => c.trim()))
+    .filter((cells) => cells.length === 4)
+    .filter((cells) => !cells.every((c, i) => c.toLowerCase() === CATALOGUE_HEADER[i]))
+    .filter((cells) => !cells.every((c) => c === '' || /^-+$/.test(c)))
+    .filter((cells) => cells.some((c) => c.length > 0));
+}
+
+// Null when the charter's catalogue is whole; otherwise how many rows the document holds, how many
+// the readers actually see, and the heading that cut it. A direct measure of the damage rather
+// than a guess at which heading is allowed where: any heading standing in the catalogue's table
+// hides the rows below it, whatever the heading is called.
+export function catalogueCut(charterText) {
+  const text = String(charterText || '');
+  const acceptance = text.indexOf('## Acceptance');
+  if (acceptance === -1) return null;
+  const read = parseEvidenceRows(text).length;
+  const present = catalogueRowsAnywhere(text).length;
+  if (present <= read) return null;
+  const rest = text.slice(acceptance);
+  const next = rest.indexOf('\n## ', 1);
+  const m = next === -1 ? null : /^## (.+)$/m.exec(rest.slice(next + 1));
+  return {
+    heading: m ? m[1].trim() : '(unknown)', read, present, lost: present - read,
+  };
+}
+
+// Replaces one "## <heading>" section's body, or adds the whole section when the charter has
+// none — a mission started before the section existed gains it rather than being refused. `before`
+// names the heading text the new section is placed above; without it (or when that anchor is
+// missing) the section goes at the end, which is always outside every machine-read section.
+export function upsertCharterSection(charterText, heading, body, { before = null } = {}) {
+  const text = String(charterText || '');
+  const block = `## ${heading}\n\n${String(body).trim()}\n`;
+  const at = text.search(new RegExp(`^##\\s+${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm'));
+  if (at !== -1) {
+    const rest = text.slice(at);
+    const end = rest.indexOf('\n## ', 1);
+    return end === -1 ? `${text.slice(0, at)}${block}` : `${text.slice(0, at)}${block}\n${rest.slice(end + 1)}`;
+  }
+  if (before) {
+    const anchor = text.indexOf(before);
+    if (anchor !== -1) return `${text.slice(0, anchor)}${block}\n${text.slice(anchor)}`;
+  }
+  return `${text.replace(/\s+$/, '')}\n\n${block}`;
+}
+
 // Writes a name into a row's "reproduced by" cell, matched by its id — the one edit any tool in
 // this skill is allowed to make to the charter, since it's recording evidence the mission itself
 // produced (a merged ticket's reproduced verdict), not a decision about the mission.

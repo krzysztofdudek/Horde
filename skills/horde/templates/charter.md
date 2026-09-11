@@ -16,6 +16,16 @@ What this mission will not do, even when it would be easy. Each line stops a tic
 Repository law that applies (gates, branches, protected paths, language rules), product rules that
 apply, and anything the chairman said that narrows the solution space.
 
+## Evidence in this repository
+
+What proof means here, judged once by reading this repository and written down before any ticket is
+filed: which test suites are the evidence and what patterns they are written under, whether there is
+a directory of promises with a status field and a mirror in the tests, whether a scenario runner and
+its input files are the real proof — or, when this repository has none of that, "no evidence layer
+found" and what a row in the catalogue below has to name instead. Every row below is reproduced
+through what this paragraph names. The next mission judges again from scratch; nothing here is
+carried forward.
+
 ## Acceptance — the evidence catalogue
 
 The mission is done when every item below is green. Each item is something a verifier can reproduce:
