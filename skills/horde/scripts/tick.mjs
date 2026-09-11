@@ -44,6 +44,7 @@ import {
 } from './tk.mjs';
 import { readLandResult, acquireGateLock, gateLockWaitMs } from './land.mjs';
 import { currentWaveNumber } from './wave.mjs';
+import { asksPath, loadAsks, addAsk } from './ask.mjs';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 // Sub-teams are gone, so there is one queue and it is the trunk's. Nothing here takes --team: a
@@ -78,19 +79,16 @@ options: --json  --help`;
 
 // ---- asks.json ---------------------------------------------------------------------------
 //
-// The client's own in-tray: the questions this horde cannot answer for itself. The file and the
-// commands that work it belong to a later task (`decide`, which reads an ask and records the
-// client's answer); tick is only ever its writer, and only for one kind — "stuck", the ticket whose
-// fix rounds are spent. Shape mirrors escalations.json deliberately, since it is the same kind of
-// document: `{items: [{id, kind, ticket, why, log, at, state}]}`.
+// The client's own in-tray (ask.mjs, 019): the questions this horde cannot answer for itself.
+// Tick is one of two writers — the other is a worker filing "stop" through the same tool — and
+// the only one that ever files "stuck": a ticket whose fix rounds are spent.
 //
-// Read defensively on purpose. A missing file is the ordinary state until that task lands, and it
-// must read as an empty in-tray rather than as a refusal; an unreadable one reads the same way, for
-// the same reason the landing gate's result file does — a document that records something is never
-// a substitute for the thing it records, so the worst a bad read costs is a question asked twice.
-function asksPath(horde) { return hordePath(horde, 'asks.json'); }
-
-function loadAsks(horde) {
+// Read defensively on purpose, unlike ask.mjs's own strict reader: a missing file is the ordinary
+// state (nothing has ever been asked) and must read as an empty in-tray rather than a refusal; an
+// unreadable one reads the same way, for the same reason the landing gate's result file does — a
+// document that records something is never a substitute for the thing it records, so the worst a
+// bad read costs here is a question asked twice.
+function loadAsksSafe(horde) {
   try {
     const doc = JSON.parse(readFileSync(asksPath(horde), 'utf8'));
     return doc && Array.isArray(doc.items) ? doc : { items: [] };
@@ -100,23 +98,19 @@ function loadAsks(horde) {
 }
 
 function openAsks(horde) {
-  return loadAsks(horde).items
+  return loadAsksSafe(horde).items
     .filter((a) => a && a.state === 'open')
     .map((a) => ({ id: a.id, kind: a.kind, why: a.why }));
 }
 
 // One ask per (kind, ticket) while it is open: a ticket that is stuck stays stuck across every
-// later run, and re-filing the same question every five minutes is how an in-tray stops being read.
+// later run, and re-filing the same question every five minutes is how an in-tray stops being
+// read. The write itself goes through ask.mjs's own addAsk, so the id comes from the one shared
+// counter and asks.md renders alongside asks.json exactly as every other write to it does.
 function fileAsk(horde, { kind, ticket, why, log }) {
-  const doc = loadAsks(horde);
-  const existing = doc.items.find((a) => a.kind === kind && a.ticket === ticket && a.state === 'open');
+  const existing = loadAsksSafe(horde).items.find((a) => a.kind === kind && a.ticket === ticket && a.state === 'open');
   if (existing) return { ask: existing, filed: false };
-  const id = `a-${doc.items.length + 1}`;
-  const ask = {
-    id, kind, ticket, why, log: log || null, at: nowIso(), state: 'open',
-  };
-  doc.items.push(ask);
-  writeJSON(asksPath(horde), doc);
+  const ask = addAsk(horde, { kind, ticket, why, log });
   return { ask, filed: true };
 }
 

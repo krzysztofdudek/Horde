@@ -16,9 +16,9 @@ test('status.mjs: no horde, then a populated digest', async (t) => {
     assert.deepEqual(json.json, { hordes: [] });
   });
 
-  await t.test('digest reflects trunk, queue, escalations and cost once a horde runs', () => {
+  await t.test('digest reflects trunk, queue, asks and cost once a horde runs', () => {
     initHorde(dir, 'mission1');
-    run('escalate.mjs', ['add', 'q', '--kind', 'charter', '--by', 'steward'], dir);
+    run('ask.mjs', ['add', 'q', '--kind', 'charter'], dir);
     writeCostRuns(dir, 'mission1', [
       { name: 'mission1-worker-trunk-1', role: 'worker', class: 'haiku', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
     ]);
@@ -30,7 +30,7 @@ test('status.mjs: no horde, then a populated digest', async (t) => {
     assert.equal(h.name, 'mission1');
     assert.equal(h.trunk.branch, 'mission1/trunk');
     assert.equal(h.trunk.sha.length > 0, true);
-    assert.equal(h.escalations.open, 1);
+    assert.equal(h.asks.open, 1);
     assert.equal(h.cost.runs, 1);
     assert.equal(h.cost.limit, null);
     assert.equal(h.teams.length, 1);
@@ -73,11 +73,11 @@ test('status.mjs: no horde, then a populated digest', async (t) => {
 });
 
 // A mission that started before this migration still has roster.json, dissents.json and
-// escalations.json on disk in their old shapes (the deleted roster tool, the deleted dissent tool and the 'structure'/
-// 'adjudicate' escalation kinds are all gone now). status.mjs no longer reads roster.json or
-// dissents.json at all, so their presence must not crash it, and its output must carry no
-// roster-derived field.
-test('status.mjs: an old-format roster.json/dissents.json on disk does not crash status and leaves no stewards/dissents key', async (t) => {
+// escalations.json on disk (the deleted roster tool, the deleted dissent tool, and the escalation
+// channel folded into ask.mjs in 019). status.mjs no longer reads any of the three, so their
+// presence must not crash it, and its output must carry no roster/dissent/escalation-derived
+// field — asks.json, absent here, reads as an empty in-tray.
+test('status.mjs: old-format roster.json/dissents.json/escalations.json on disk do not crash status and leave no stewards/dissents key or escalation count', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir, 'mission1');
@@ -99,8 +99,9 @@ test('status.mjs: an old-format roster.json/dissents.json on disk does not crash
   assert.equal(h.stewards, undefined);
   assert.equal(h.dissents, undefined);
   assert.deepEqual(h.teams.map((t) => t.name), ['trunk']);
-  // The old-format escalations.json still reads normally — only roster/dissents are dropped.
-  assert.equal(h.escalations.total, 1);
+  // The stray escalations.json is no longer read at all — asks.json does not exist here either,
+  // so the digest's own ask count reads as the empty in-tray it is.
+  assert.equal(h.asks.total, 0);
 });
 
 // ---- node-lease-across-hordes: leases block ---------------------------------------------------

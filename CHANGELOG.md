@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The loop can now run outside a session altogether. Point it at how your own tools start an agent, and it will keep reading the state, starting work and checking it in, with nobody sitting there to keep it going. Running it from your session, or from one agent that does nothing else, still works exactly as before — the only thing that changes is where the loop lives.
 - Anyone working in an area can add a rule there. Only whoever is asking for the work can take one away or make it bite less. And after every wave you get a list of what the rules gained: which ones are new, which now bite harder, which cover more of the code than they did, and why in each case.
 - There is a pass that writes an area's rules down. It reads what that area's own work was refused for and what its work notes say, and turns what people have been doing by hand into a rule the place enforces for itself. It only ever adds; a rule it wants gone still goes to you. A rule that covers nothing at all it can tidy away, and cost never comes into it.
+- There is one path to you now, and only four things travel down it: a worker stopped because it ran out of instructions, a piece of work that has been sent back too many times, a request to weaken a rule, and a change to the mission card itself. Answering one is recorded in the mission's own decision log, in your own words. Agreeing to weaken a rule defaults to covering just the one change in front of you — it stands for the rest of the mission only if you say so.
 
 ### Changed
 - No check accepts a result someone recorded earlier. The tests are run, the rules are read, and whether a new test really fails without the change is worked out by running it — nothing is taken on anyone's word, including the tool's own from a previous run. A test command that hangs is stopped and the time limit is named, rather than left running behind a check that never finishes.
@@ -39,11 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Everything a mission numbers now comes out of one sequence, and each number says what kind of thing it is: work, a decision for the architect, or a question for you. Two different things could both be called "1" before, so asking about a number was an ambiguous question. A number written the old way still works.
 
 ### Removed
-- There is no cast any more. A mission runs on two roles, a worker per ticket and one architect — no steward, no owner, no verifier, no auditor, no counsel, no sub-teams. The director now dispatches workers and rules on escalations directly.
+- There is no cast any more. A mission runs on two roles, a worker per ticket and one architect — no steward, no owner, no verifier, no auditor, no counsel, no sub-teams. The director now dispatches workers directly, and questions for you go through the one channel described below.
 - There are no signatures on a ticket any more. Merging no longer needs an author key, a verifier key, or a per-node approval; a ticket merges once its dependencies are in and its branch is named.
 - There is no document at a node any more. A node's rules, ports and log still show through `node show`; the separate charter file beside it is gone.
 - There is no audit sample any more. A wave close and the mission's own "done" check no longer ask for one.
-- A mission still running the previous release keeps working: its old tickets, its old logs, and its old roster and dissent records are read as history, never as something new to act on.
+- There is no escalation and no dissent any more. One path leads to whoever's asking, and only four things travel down it.
+- A mission still running the previous release keeps working: its old tickets, its old logs, and its old roster, dissent and escalation records are read as history, never as something new to act on.
 
 ## [0.4.0] - 2026-09-08
 

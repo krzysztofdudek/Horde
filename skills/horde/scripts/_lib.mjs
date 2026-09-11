@@ -585,7 +585,7 @@ export function leaseConflict(horde, subject) {
 // The refusal, in the subject's own words. Both halves matter: WHO holds it and how recently they
 // moved (so a horde nobody has touched in a week reads as the stale thing it is), and what the
 // taker can actually do about it. That second half differs by kind, because the ways out differ. A
-// node can be taken over on a ruled escalation. A territory cannot: who works an area when two
+// node can be taken over on an answered ask. A territory cannot: who works an area when two
 // hordes want it is the client's call, answered once at the frame, and there is no command here
 // that overrides it — so this says archive, and otherwise says to go and ask, rather than naming a
 // mechanism that would not run.
@@ -595,7 +595,7 @@ function leaseRefusalMessage(taker, subject, holder, kind) {
     + `${activity}) and that horde is not archived — archive it (\`horde.mjs archive ${holder.horde}\`) `;
   return kind === 'territory'
     ? `${head}or put it to the client, whose answer decides which mission gets this area; nothing here takes a territory over`
-    : `${head}or take the lease over a ruled escalation: \`node.mjs bind ${subject} --take --escalation <id> --horde ${taker}\``;
+    : `${head}or take the lease over an answered ask: \`node.mjs bind ${subject} --take --ask <id> --horde ${taker}\``;
 }
 
 // assertLeaseAvailable(horde, subject, {kind}) — throws leaseConflict's refusal, otherwise returns
@@ -608,7 +608,7 @@ export function assertLeaseAvailable(horde, subject, { kind = 'node' } = {}) {
   if (conflict) throw new Error(leaseRefusalMessage(horde, subject, conflict, kind));
 }
 
-// claimLease(horde, subject, {take, escalation, kind}) — the one path that acquires a lease, for a
+// claimLease(horde, subject, {take, ask, kind}) — the one path that acquires a lease, for a
 // node and for a territory alike. Ownership is exclusive across every live horde on a repository:
 // returns {status: 'held' | 'claimed' | 'taken', ...} on success; throws Error with a
 // what/why/next-shaped message the caller passes straight to fail() on any refusal. Shared by
@@ -621,7 +621,7 @@ export function assertLeaseAvailable(horde, subject, { kind = 'node' } = {}) {
 // read or an in-memory edit, so a run killed partway leaves the file exactly as it found it and
 // the subject free for the next attempt. Callers claiming several subjects at once hold to the
 // same shape by validating all of them before claiming any.
-export function claimLease(horde, subject, { take = false, escalation = null, kind = 'node' } = {}) {
+export function claimLease(horde, subject, { take = false, ask = null, kind = 'node' } = {}) {
   const doc = readLeases();
   const node = subject;
   const existing = doc.leases[node];
@@ -633,24 +633,24 @@ export function claimLease(horde, subject, { take = false, escalation = null, ki
   const conflict = leaseConflict(horde, node);
   if (conflict) {
     if (!take) throw new Error(leaseRefusalMessage(horde, node, conflict, kind));
-    if (!escalation) {
-      throw new Error('--take requires --escalation <id> — a ruled escalation on this horde justifying the take-over');
+    if (!ask) {
+      throw new Error('--take requires --ask <id> — an answered ask on this horde justifying the take-over');
     }
-    const escDoc = readJSON(hordePath(horde, 'escalations.json'), { items: [] });
-    const esc = (Array.isArray(escDoc.items) ? escDoc.items : []).find((it) => it.id === String(escalation));
-    if (!esc) throw new Error(`no such escalation: ${escalation} (on horde "${horde}")`);
-    if (esc.state !== 'ruled') {
-      throw new Error(`escalation ${escalation} is not ruled yet — \`escalate.mjs rule ${escalation} "<ruling>" --horde ${horde}\` first`);
+    const askDoc = readJSON(hordePath(horde, 'asks.json'), { items: [] });
+    const item = (Array.isArray(askDoc.items) ? askDoc.items : []).find((it) => it.id === String(ask));
+    if (!item) throw new Error(`no such ask: ${ask} (on horde "${horde}")`);
+    if (item.state !== 'answered') {
+      throw new Error(`ask ${ask} is not answered yet — \`ask.mjs answer ${ask} "<answer>" --horde ${horde}\` first`);
     }
     const from = conflict.horde;
     const at = nowIso();
     doc.leases[node] = { horde, since: at };
     doc.history.push({
-      node, event: 'take', horde, from, escalation: String(escalation), at,
+      node, event: 'take', horde, from, ask: String(ask), at,
     });
     writeLeases(doc);
     return {
-      status: 'taken', node, horde, from, escalation: String(escalation), ruling: esc.ruling,
+      status: 'taken', node, horde, from, ask: String(ask), answer: item.answer,
     };
   }
 
@@ -661,7 +661,7 @@ export function claimLease(horde, subject, { take = false, escalation = null, ki
   const at = nowIso();
   doc.leases[node] = { horde, since: at };
   doc.history.push({
-    node, event: 'bind', horde, from: freedFrom, escalation: null, at,
+    node, event: 'bind', horde, from: freedFrom, ask: null, at,
   });
   writeLeases(doc);
   return { status: 'claimed', node, horde, freedFrom };
@@ -811,7 +811,7 @@ export function emit(result, args, human) {
 }
 
 // True when this module was invoked directly as a script (not imported by another tool, e.g.
-// escalate.mjs importing decide.mjs's appendDecision).
+// ask.mjs importing decide.mjs's appendDecision).
 // compared as paths, not as URL strings: a directory with a space is percent-encoded in the
 // module URL and plain in argv, and a string comparison would silently never match
 export function isMain(moduleUrl) {

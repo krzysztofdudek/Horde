@@ -2,7 +2,7 @@
 // horde skill — status.mjs
 //
 // The session-start digest: every horde on this repository, one screen each. Reads across every
-// other tool's state files directly (queue.json, escalations.json, cost.json,
+// other tool's state files directly (queue.json, asks.json, cost.json,
 // cache/last-gate.json) rather than importing their tools, since it only ever reads — nothing
 // here mutates state, so there's no journal-format contract to share.
 
@@ -18,7 +18,7 @@ const USAGE = `usage: status.mjs [--horde h] [--team t] [--json]
 
 One screen: hordes on this repository, and for each: trunk sha and distance from base, its branch
 tip, ticket branches beyond it (landed / unverified / unmerged), queue counts by state, open
-escalations, the last recorded gate result, cost to date against the charter's limit, and any
+asks, the last recorded gate result, cost to date against the charter's limit, and any
 lease another live horde holds on a node this one touches (node-lease-across-hordes).
 
 --horde narrows to one horde, --team (within it) to one team.
@@ -76,8 +76,8 @@ function hordeDigest(horde, cfg, teamFilter) {
   const teamNames = (!teamFilter || teamFilter === 'trunk') ? ['trunk'] : [];
   const teams = teamNames.map((t) => teamDigest(horde, t));
 
-  const escalations = readJSON(hordePath(horde, 'escalations.json'), { items: [] });
-  const escItems = Array.isArray(escalations.items) ? escalations.items : [];
+  const asks = readJSON(hordePath(horde, 'asks.json'), { items: [] });
+  const askItems = Array.isArray(asks.items) ? asks.items : [];
 
   // Keyed by level: {commit, team, trunk}, each {sha, result, count, at} when land.mjs has
   // run at that level; absent levels simply aren't shown.
@@ -111,7 +111,7 @@ function hordeDigest(horde, cfg, teamFilter) {
     wave: currentWaveNumber(readText(hordePath(horde, 'plan.md'))) || null,
     teams,
     queue: { byState: queueTotals(horde), total: Object.values(queueTotals(horde)).reduce((a, b) => a + b, 0) },
-    escalations: { open: escItems.filter((i) => i.state !== 'ruled').length, total: escItems.length },
+    asks: { open: askItems.filter((i) => i.state !== 'answered').length, total: askItems.length },
     lastGate,
     cost: { runs, weighted, limit, reached: limit !== null && weighted >= limit },
     leases: { foreign: foreignLeases },
@@ -134,7 +134,7 @@ function printHorde(h) {
   }
   const qParts = Object.entries(h.queue.byState).map(([k, v]) => `${k}=${v}`).join(' ') || '(empty)';
   console.log(`  queue: total ${h.queue.total} — ${qParts}`);
-  console.log(`  escalations: ${h.escalations.open} open / ${h.escalations.total} total`);
+  console.log(`  asks: ${h.asks.open} open / ${h.asks.total} total`);
   const gateLevels = ['commit', 'team', 'trunk'].filter((lvl) => h.lastGate[lvl]);
   if (gateLevels.length === 0) {
     console.log('  last gate: (none recorded)');

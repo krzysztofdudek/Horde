@@ -601,7 +601,7 @@ test('node.mjs verdicts: the prose rules waiting on a judgement, with the comman
 
 // ---- E16: node ownership is exclusive across live hordes on one repository --------------------
 
-test('node.mjs bind: node-lease-across-hordes — exclusive across live hordes, --take needs a ruled escalation', async (t) => {
+test('node.mjs bind: node-lease-across-hordes — exclusive across live hordes, --take needs an answered ask', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir, 'alpha');
@@ -631,37 +631,37 @@ test('node.mjs bind: node-lease-across-hordes — exclusive across live hordes, 
     refusalText = r.stderr.trim();
   });
 
-  await t.test('the refusal names the escalation path, and --take without one is refused too', () => {
-    assert.match(refusalText, /--take --escalation <id>/);
+  await t.test('the refusal names the ask path, and --take without one is refused too', () => {
+    assert.match(refusalText, /--take --ask <id>/);
     const r = run('node.mjs', ['bind', 'shared', '--horde', 'beta', '--take'], dir);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /--escalation <id>/);
+    assert.match(r.stderr, /--ask <id>/);
   });
 
-  let escalationId;
-  await t.test('--take against an escalation that has not been ruled yet is refused', () => {
-    const esc = run('escalate.mjs', ['add', 'beta needs shared', '--kind', 'conflict', '--horde', 'beta'], dir);
-    assert.equal(esc.code, 0);
-    escalationId = esc.json.id;
-    const r = run('node.mjs', ['bind', 'shared', '--horde', 'beta', '--take', '--escalation', escalationId], dir);
+  let askId;
+  await t.test('--take against an ask that has not been answered yet is refused', () => {
+    const opened = run('ask.mjs', ['add', 'beta needs shared', '--kind', 'charter', '--horde', 'beta'], dir);
+    assert.equal(opened.code, 0);
+    askId = opened.json.id;
+    const r = run('node.mjs', ['bind', 'shared', '--horde', 'beta', '--take', '--ask', askId], dir);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /not ruled/);
+    assert.match(r.stderr, /not answered/);
   });
 
-  await t.test('--take over a ruled escalation succeeds and writes the take-over to the graph\'s own log', () => {
-    const ruled = run('escalate.mjs', ['rule', escalationId, 'beta takes "shared"; alpha no longer needs it', '--horde', 'beta'], dir);
-    assert.equal(ruled.code, 0);
+  await t.test('--take over an answered ask succeeds and writes the take-over to the graph\'s own log', () => {
+    const answered = run('ask.mjs', ['answer', askId, 'beta takes "shared"; alpha no longer needs it', '--horde', 'beta'], dir);
+    assert.equal(answered.code, 0);
 
-    const taken = run('node.mjs', ['bind', 'shared', '--horde', 'beta', '--take', '--escalation', escalationId], dir);
+    const taken = run('node.mjs', ['bind', 'shared', '--horde', 'beta', '--take', '--ask', askId], dir);
     assert.equal(taken.code, 0);
     assert.equal(taken.json.status, 'taken');
     assert.equal(taken.json.from, 'alpha');
-    assert.equal(taken.json.escalation, escalationId);
+    assert.equal(taken.json.ask, askId);
     assert.equal(taken.json.logged, true);
 
     const log = yg(dir, ['log', 'read', '--node', 'shared']);
     assert.equal(log.code, 0, log.out);
-    assert.match(log.out, new RegExp(`took the lease on "shared" from horde "alpha" over escalation ${escalationId}`));
+    assert.match(log.out, new RegExp(`took the lease on "shared" from horde "alpha" over ask ${askId}`));
 
     // alpha lost the lease entirely — beta is now the live holder, so alpha is refused in turn,
     // exactly as beta was before the take-over

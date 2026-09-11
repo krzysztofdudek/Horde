@@ -156,8 +156,8 @@ test('wave.mjs close: human decisions per merged ticket, and the trend across wa
     run('wave.mjs', ['merged', '001', 'aaa1111'], dir);
     run('wave.mjs', ['merged', '002', 'bbb2222'], dir);
     for (const why of ['who owns this contract', 'is this a boundary']) {
-      const opened = run('escalate.mjs', ['add', why, '--kind', 'contract'], dir);
-      run('escalate.mjs', ['rule', opened.json.id, 'ruled it'], dir);
+      const opened = run('ask.mjs', ['add', why, '--kind', 'stop'], dir);
+      run('ask.mjs', ['answer', opened.json.id, 'ruled it'], dir);
     }
     const r = run('wave.mjs', ['close'], dir);
     assert.equal(r.json.decisions.ruled, 2);
@@ -174,8 +174,8 @@ test('wave.mjs close: human decisions per merged ticket, and the trend across wa
     for (const [id, sha] of [['003', 'ccc3333'], ['004', 'ddd4444'], ['005', 'eee5555'], ['006', 'fff6666']]) {
       run('wave.mjs', ['merged', id, sha], dir);
     }
-    const opened = run('escalate.mjs', ['add', 'one more question', '--kind', 'conflict'], dir);
-    run('escalate.mjs', ['rule', opened.json.id, 'ruled it'], dir);
+    const opened = run('ask.mjs', ['add', 'one more question', '--kind', 'stop'], dir);
+    run('ask.mjs', ['answer', opened.json.id, 'ruled it'], dir);
     const r = run('wave.mjs', ['close'], dir);
     assert.equal(r.json.decisions.ruled, 1);
     assert.equal(r.json.decisions.merged, 4);
@@ -317,9 +317,9 @@ test('E14 — a wave close states parallelism, keys transferred, decisions per m
   run('queue.mjs', ['set', alpha, 'merged', '--sha', trunkTip], dir);
 
   // One question went to a human this wave; one is still open, so it is not a decision yet.
-  const ruled = run('escalate.mjs', ['add', 'who owns the contract lib publishes', '--kind', 'contract', '--ticket', alpha], dir);
-  run('escalate.mjs', ['rule', ruled.json.id, 'the feature node owns it; the consumer asks'], dir);
-  run('escalate.mjs', ['add', 'still thinking about this one', '--kind', 'claim'], dir);
+  const asked = run('ask.mjs', ['add', 'who owns the contract lib publishes', '--kind', 'stop', '--ticket', alpha], dir);
+  run('ask.mjs', ['answer', asked.json.id, 'the feature node owns it; the consumer asks'], dir);
+  run('ask.mjs', ['add', 'still thinking about this one', '--kind', 'stop'], dir);
 
   const closed = run('wave.mjs', ['close', '--gate', 'green', '--sha', trunkTip], dir);
   assert.equal(closed.code, 0, closed.stderr);
@@ -384,7 +384,7 @@ test('E14 — a wave close states parallelism, keys transferred, decisions per m
   console.log(block.split('\n## ')[0]);
 });
 
-test('wave.mjs close: a quality index that fell is an escalation, not a line in a report', async (t) => {
+test('wave.mjs close: a quality index that fell is a line in the report, not an escalation', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
 
@@ -395,7 +395,7 @@ test('wave.mjs close: a quality index that fell is an escalation, not a line in 
   const first = run('wave.mjs', ['close', '--gate', 'green'], dir);
   assert.equal(first.code, 0, first.stderr);
   assert.equal(first.json.quality.enforced, 1);
-  assert.equal(first.json.qualityEscalation, null, 'a first reading has nothing to have fallen from');
+  assert.deepEqual(first.json.qualityDeclined, [], 'a first reading has nothing to have fallen from');
 
   // The rule is taken off the node — enforcement the graph had, and now does not.
   const nodeFile = join(dir, '.yggdrasil', 'model', 'feature', 'yg-node.yaml');
@@ -407,14 +407,11 @@ test('wave.mjs close: a quality index that fell is an escalation, not a line in 
   assert.equal(second.code, 0, second.stderr);
   assert.equal(second.json.quality.enforced, 0);
   assert.deepEqual(second.json.qualityDeclined, ['enforced rules 1 → 0']);
-
-  const escalation = run('escalate.mjs', ['show', second.json.qualityEscalation], dir);
-  assert.equal(escalation.code, 0, escalation.stderr);
-  assert.equal(escalation.json.kind, 'quality');
-  assert.equal(escalation.json.state, 'open');
-  assert.match(escalation.json.why, /enforced rules 1 → 0/);
-  assert.match(escalation.json.why, /lowering it is not/);
+  assert.equal(second.json.qualityEscalation, undefined, 'escalations are gone — nothing opens on a fallen index');
+  assert.deepEqual(run('ask.mjs', ['list'], dir).json, [], 'no ask was filed for it either — this is a rendering line only, per the coordinator\'s provisional call');
 
   const plan = readFileSync(planPath(dir), 'utf8');
-  assert.match(plan.slice(plan.lastIndexOf('# Wave 2 — close')), /\*\*Quality index:\*\* enforced 0 [^\n]*Δ enforced -1/);
+  const closeBlock = plan.slice(plan.lastIndexOf('# Wave 2 — close'));
+  assert.match(closeBlock, /\*\*Quality index:\*\* enforced 0 [^\n]*Δ enforced -1/);
+  assert.match(closeBlock, /The quality index fell this wave: enforced rules 1 → 0/);
 });

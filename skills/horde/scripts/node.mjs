@@ -32,11 +32,11 @@ const USAGE = `usage: node.mjs <command> [options]
 commands:
   bind [--horde h]
       verifies the graph is readable through the Yggdrasil CLI; lists every node id.
-  bind <node> [--horde h] [--take --escalation <id>]
+  bind <node> [--horde h] [--take --ask <id>]
       node-lease-across-hordes: leases <node> to this horde in .horde/leases.json, exclusive
       across every live horde on the repository. Refuses a node already leased by another horde
       that is not archived, naming that horde and its last activity. --take overrides that
-      refusal but only over a ruled escalation on this horde (--escalation <id>); the take-over
+      refusal but only over an answered ask on this horde (--ask <id>); the take-over
       is written to the node's own log as well as to the lease history.
   map [--horde h]
       this mission's nodes (named by an owner in the roster or by a ticket) with owner, the
@@ -1539,7 +1539,7 @@ function cmdBind(horde, root, cfg, positional, flags, info) {
 
   let result;
   try {
-    result = claimLease(horde, node, { take: !!flags.take, escalation: flags.escalation || null });
+    result = claimLease(horde, node, { take: !!flags.take, ask: flags.ask || null });
   } catch (e) {
     fail(e.message);
     return;
@@ -1550,9 +1550,9 @@ function cmdBind(horde, root, cfg, positional, flags, info) {
     return;
   }
   if (result.status === 'taken') {
-    const reason = `took the lease on "${node}" from horde "${result.from}" over escalation ${result.escalation}: ${result.ruling}`;
+    const reason = `took the lease on "${node}" from horde "${result.from}" over ask ${result.ask}: ${result.answer}`;
     const logged = logNodeTakeover(root, cfg, node, reason);
-    emit({ ...result, logged }, flags, () => `"${node}" taken from "${result.from}" over escalation ${result.escalation} — ${logged ? 'logged on the node' : 'recorded in the lease history only (no node log to append to)'}`);
+    emit({ ...result, logged }, flags, () => `"${node}" taken from "${result.from}" over ask ${result.ask} — ${logged ? 'logged on the node' : 'recorded in the lease history only (no node log to append to)'}`);
     return;
   }
   emit(result, flags, () => (result.freedFrom

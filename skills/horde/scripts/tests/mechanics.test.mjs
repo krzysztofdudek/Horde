@@ -248,30 +248,31 @@ test('dependency discovered mid-flight: queue dep blocks and unblocks, and refus
 // product behavior that either test could exercise, so both are removed rather than reworked.
 
 // ---------------------------------------------------------------------------------------------
-// 3. Escalation ruling records a decision
+// 3. Ask answer records a decision
 // ---------------------------------------------------------------------------------------------
 
 // Formerly this test also covered "a dissent against a ruling is answered exactly once" —
 // the deleted dissent tool is deleted outright, and the owner role that used to file a dissent doesn't exist
 // any more either, so that coverage (an owner formally disagreeing with a ruling) is genuinely
-// gone for now, not replaced with anything.
-test('escalation ruling records a decision', async (t) => {
+// gone for now, not replaced with anything. Escalation is gone too (019) — the one channel to the
+// client is ask.mjs now.
+test('ask answer records a decision', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
   const ticket = run('tk.mjs', ['new', 'contested', '--title', 'Contested', '--node', 'model', '--class', 'sonnet', '--evidence', 'it works'], dir);
   const id = ticket.json.id;
 
-  const esc = run('escalate.mjs', ['add', 'boundary is ambiguous', '--kind', 'contract', '--ticket', id, '--by', 'steward'], dir);
-  assert.equal(esc.code, 0, esc.stderr);
-  const escId = esc.json.id;
+  const opened = run('ask.mjs', ['add', 'boundary is ambiguous', '--kind', 'stop', '--ticket', id], dir);
+  assert.equal(opened.code, 0, opened.stderr);
+  const askId = opened.json.id;
 
-  await t.test('escalate rule records a decision esc-<id>', () => {
-    const ruled = run('escalate.mjs', ['rule', escId, 'the boundary includes the adapter'], dir);
-    assert.equal(ruled.code, 0, ruled.stderr);
+  await t.test('ask answer records a decision ask-<id>', () => {
+    const answered = run('ask.mjs', ['answer', askId, 'the boundary includes the adapter'], dir);
+    assert.equal(answered.code, 0, answered.stderr);
     const decisions = run('decide.mjs', ['list'], dir);
     assert.equal(decisions.code, 0, decisions.stderr);
-    assert.ok(decisions.json.some((d) => d.slug === `esc-${escId}`), JSON.stringify(decisions.json));
+    assert.ok(decisions.json.some((d) => d.slug === `ask-${askId}`), JSON.stringify(decisions.json));
   });
 });
 

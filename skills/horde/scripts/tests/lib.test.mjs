@@ -279,7 +279,7 @@ test('_lib.mjs leases: one mechanism, keyed by whatever is being held — a node
     await t.test('the on-disk shape is unchanged — history keeps its "node" field, carrying the subject', () => {
       const { history } = readLeases();
       const entry = history.find((h) => h.node === 'the front door');
-      assert.deepEqual(Object.keys(entry).sort(), ['at', 'escalation', 'event', 'from', 'horde', 'node'].sort());
+      assert.deepEqual(Object.keys(entry).sort(), ['at', 'ask', 'event', 'from', 'horde', 'node'].sort());
       assert.equal(entry.event, 'bind');
       assert.equal(entry.horde, 'h1');
     });

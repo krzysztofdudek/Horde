@@ -67,11 +67,12 @@ commands:
       moment it is made — for whatever a worker's tools need that git itself does not check out
       (an untracked env file, a dependency cache); a path git already tracks is refused.
   charter show [--horde h]
-  charter edit [--escalation id] [--horde h]
+  charter edit [--ask id] [--horde h]
       the mission charter: "show" prints it, "edit" replaces it with what arrives on stdin and
       reports what that did to the evidence catalogue. Dropping a row is free before the mission's
-      wave 1 has started; after it, dropping one refuses unless --escalation names a ruled
-      escalation whose own text mentions the row's id. The Quality section's "**Policy:**" line
+      wave 1 has started; after it, dropping one refuses unless --ask names an answered ask of
+      kind "charter" whose own text mentions the row's id — removing a promised proof is lowering
+      the mission's own promise, and that is the client's call. The Quality section's "**Policy:**" line
       must read "autonomous" or "only-the-work"; anything else is refused rather than read as the
       default, and a charter with no such section reads as "autonomous".
   archive <name>
@@ -464,7 +465,6 @@ function cmdInit(positional, flags) {
 
   writeText(join(dest, 'decisions.md'), '# Decisions\n\n');
   writeText(join(dest, 'plan.md'), '# Plan\n\n');
-  writeJSON(join(dest, 'escalations.json'), { items: [] });
   writeJSON(join(dest, 'dissents.json'), { items: [] });
   writeJSON(join(dest, 'cost.json'), { runs: [] });
   writeJSON(join(dest, 'counter.json'), { next: 1 });
@@ -699,28 +699,31 @@ function cmdCharter(positional, flags) {
   const afterById = new Map(rowsAfter.map((r) => [r.id, r]));
 
   // A row dropped outright (present before, gone from this text entirely) is free before the
-  // mission's wave 1 has started — nothing has been built against it yet — and after it needs a
-  // ruled escalation whose own text names every id being dropped, so the reason survives in the
-  // log the escalation already writes (decide.mjs's esc-<id> entry), not just in this command's
-  // own stdout.
+  // mission's wave 1 has started — nothing has been built against it yet — and after it needs an
+  // answered ask of kind "charter" whose own text names every id being dropped, so the reason
+  // survives in the log ask.mjs already writes (decide.mjs's ask-<id> entry), not just in this
+  // command's own stdout. Dropping a promised proof is lowering the mission's own promise, and
+  // that is the client's call, not a build decision — the same reasoning "lower" already carries
+  // for a rule, applied to the mission card.
   const droppedIds = rowsBefore.filter((r) => !afterById.has(r.id)).map((r) => r.id);
   if (droppedIds.length && wave1Started(readText(hordePath(horde, 'plan.md')) || '')) {
-    if (!flags.escalation) {
+    if (!flags.ask) {
       fail(
         `this rewrite drops evidence row(s) ${droppedIds.join(', ')} after the mission's wave 1 started — that `
-        + `needs a ruled escalation naming them: escalate.mjs add "<why>" --kind charter, escalate.mjs rule <id> `
-        + `"<ruling mentioning ${droppedIds.join(', ')}>", then retry with --escalation <id>`,
+        + `needs an answered ask naming them: ask.mjs add "<why>" --kind charter, ask.mjs answer <id> `
+        + `"<answer mentioning ${droppedIds.join(', ')}>", then retry with --ask <id>`,
       );
     }
-    const escId = String(flags.escalation);
-    const doc = readJSON(hordePath(horde, 'escalations.json'), { items: [] });
-    const esc = (Array.isArray(doc.items) ? doc.items : []).find((it) => it.id === escId);
-    if (!esc) fail(`no such escalation: ${escId}`);
-    if (esc.state !== 'ruled') fail(`escalation ${escId} is not ruled yet (state: ${esc.state}) — rule it first: escalate.mjs rule ${escId} "<ruling>"`);
-    const escText = `${esc.why}\n${esc.ruling || ''}`;
-    const notMentioned = droppedIds.filter((id) => !mentionsEvidenceId(escText, id));
+    const askId = String(flags.ask);
+    const doc = readJSON(hordePath(horde, 'asks.json'), { items: [] });
+    const item = (Array.isArray(doc.items) ? doc.items : []).find((it) => it.id === askId);
+    if (!item) fail(`no such ask: ${askId}`);
+    if (item.kind !== 'charter') fail(`ask ${askId} is kind "${item.kind}", not "charter" — dropping an evidence row is a charter change and needs an ask of that kind`);
+    if (item.state !== 'answered') fail(`ask ${askId} is not answered yet (state: ${item.state}) — answer it first: ask.mjs answer ${askId} "<answer>"`);
+    const askText = `${item.why}\n${item.answer || ''}`;
+    const notMentioned = droppedIds.filter((id) => !mentionsEvidenceId(askText, id));
     if (notMentioned.length) {
-      fail(`escalation ${escId}'s text does not mention dropped row(s): ${notMentioned.join(', ')} — rule a new escalation that names them, or keep the row(s)`);
+      fail(`ask ${askId}'s text does not mention dropped row(s): ${notMentioned.join(', ')} — answer a new ask that names them, or keep the row(s)`);
     }
   }
 

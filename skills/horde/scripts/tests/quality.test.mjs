@@ -376,7 +376,7 @@ test('E17 — the wave close lists what was raised, what it earned, and how the 
   assert.equal(closed.code, 0, closed.stderr);
   assert.equal(closed.json.qualityPolicy, 'autonomous');
   assert.deepEqual(closed.json.promoted.map((p) => [p.aspect, p.from, p.to]), [['no-marker', 'draft', 'advisory']]);
-  assert.equal(closed.json.qualityEscalation, null, 'raising a rule is not a fall to escalate');
+  assert.deepEqual(closed.json.qualityDeclined, [], 'raising a rule is not a fall to report');
 
   const plan = readFileSync(planPath(dir), 'utf8');
   const block = plan.slice(plan.indexOf('## Quality — what the horde raised on its own')).split('\n## Graph changes')[0].trim();
@@ -436,10 +436,10 @@ test('E17 — a quality ticket is filed and queued from a grain-advice/1 documen
     assert.match(ticket.json.text, /\*\*Severity:\*\* low/);
   });
 
-  await t.test('it is queued, and no escalation was opened to get it there', () => {
+  await t.test('it is queued, and no ask was opened to get it there', () => {
     const queued = run('queue.mjs', ['list'], dir).json;
     assert.deepEqual(queued.map((i) => [i.ticket, i.state]), [[filed.json.filed[0].ticket, 'queued']]);
-    assert.deepEqual(run('escalate.mjs', ['list'], dir).json, [], 'nothing was escalated to get it queued');
+    assert.deepEqual(run('ask.mjs', ['list'], dir).json, [], 'nothing was asked to get it queued');
   });
 
   await t.test('a second pass over the same document files nothing twice', () => {

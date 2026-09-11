@@ -278,9 +278,9 @@ test('horde.mjs charter edit: a rewrite that drops a recorded verifier says so',
   assert.deepEqual(dropped.droppedEvidence, [{ id: 'E1', was: 'verifier1' }]);
 });
 
-// E13 — dropping a row outright is free before the mission's wave 1 starts, and needs a ruled
-// escalation naming it afterwards.
-test('horde.mjs charter edit: dropping a row is free before wave 1, refused after without a ruled escalation naming it', async (t) => {
+// E13 — dropping a row outright is free before the mission's wave 1 starts, and needs an answered
+// ask of kind "charter" naming it afterwards.
+test('horde.mjs charter edit: dropping a row is free before wave 1, refused after without an answered ask naming it', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -319,34 +319,45 @@ test('horde.mjs charter edit: dropping a row is free before wave 1, refused afte
 
   run('wave.mjs', ['start'], dir);
 
-  await t.test('after wave 1, dropping E2 without --escalation is refused', () => {
+  await t.test('after wave 1, dropping E2 without --ask is refused', () => {
     const r = charterEditRaw(withOne);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /drops evidence row\(s\) E2/);
-    assert.match(r.stderr, /escalate\.mjs add/);
+    assert.match(r.stderr, /ask\.mjs add/);
   });
 
-  await t.test('an --escalation that is not yet ruled is refused', () => {
-    const esc = run('escalate.mjs', ['add', 'field is unreachable', '--kind', 'charter', '--by', 'steward'], dir);
-    const r = charterEditRaw(withOne, ['--escalation', esc.json.id]);
+  await t.test('an --ask that is not yet answered is refused', () => {
+    const opened = run('ask.mjs', ['add', 'field is unreachable', '--kind', 'charter'], dir);
+    const r = charterEditRaw(withOne, ['--ask', opened.json.id]);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /not ruled yet/);
+    assert.match(r.stderr, /not answered yet/);
   });
 
-  await t.test('a ruled escalation whose text never names the dropped row is refused', () => {
-    const esc = run('escalate.mjs', ['add', 'field is unreachable', '--kind', 'charter', '--by', 'steward'], dir);
-    run('escalate.mjs', ['rule', esc.json.id, 'agreed, dropping a row', '--by', 'director'], dir);
-    const r = charterEditRaw(withOne, ['--escalation', esc.json.id]);
+  await t.test('an --ask of a kind other than "charter" is refused', () => {
+    const opened = run('ask.mjs', ['add', 'field is unreachable', '--kind', 'stop'], dir);
+    run('ask.mjs', ['answer', opened.json.id, 'agreed, dropping E2'], dir);
+    const r = charterEditRaw(withOne, ['--ask', opened.json.id]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /is kind "stop", not "charter"/);
+  });
+
+  await t.test('an answered ask whose text never names the dropped row is refused', () => {
+    const opened = run('ask.mjs', ['add', 'field is unreachable', '--kind', 'charter'], dir);
+    run('ask.mjs', ['answer', opened.json.id, 'agreed, dropping a row'], dir);
+    const r = charterEditRaw(withOne, ['--ask', opened.json.id]);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /does not mention dropped row\(s\): E2/);
   });
 
-  await t.test('a ruled escalation naming the row lets the drop through', () => {
-    const esc = run('escalate.mjs', ['add', 'E2 cannot be reproduced in this environment', '--kind', 'charter', '--by', 'steward'], dir);
-    run('escalate.mjs', ['rule', esc.json.id, 'agreed, E2 is dropped', '--by', 'director'], dir);
-    const r = charterEditRaw(withOne, ['--escalation', esc.json.id]);
+  await t.test('an answered ask naming the row lets the drop through, and the decision is cited in the charter', () => {
+    const opened = run('ask.mjs', ['add', 'E2 cannot be reproduced in this environment', '--kind', 'charter'], dir);
+    run('ask.mjs', ['answer', opened.json.id, 'agreed, E2 is dropped'], dir);
+    const r = charterEditRaw(`${withOne}\n_E2 dropped per ask-${opened.json.id}._\n`, ['--ask', opened.json.id]);
     assert.equal(r.code, 0);
     assert.equal(r.json.evidenceRows, 1);
+    const decision = run('decide.mjs', ['show', `ask-${opened.json.id}`], dir);
+    assert.equal(decision.code, 0, decision.stderr);
+    assert.match(decision.json.body, /E2 is dropped/);
   });
 });
 

@@ -107,17 +107,35 @@ function lawFixture(dir, id, mutate, { declared = DECLARED, graph = {}, extraBas
   return { branch, issueDir: dst };
 }
 
-// The client's answer, in the shape decisions.md carries one.
+// The client's answer. Kind "lower" goes through the real ask.mjs channel — the exact path
+// land.mjs's law guard now points to. `answer: null` leaves the ask open (filed, never
+// answered), which is what "nobody has answered yet" means for the guard.
+//
+// Kind "conflict" (the conflict-of-interest guard, further down this file) is NOT one of
+// ask.mjs's four kinds (019 defines stop/stuck/lower/charter only, and inventing a fifth was
+// explicitly out of scope) — flagged in land.mjs's own header comment as a real gap. Until that
+// is resolved, its only path is decisions.md written directly, exactly as ask.mjs's answerAsk
+// would shape it, which is what this branch does.
 function recordAnswer(dir, {
   kind = 'lower', aspect = 'no-marker', scope = 'once', answer = 'approved — we agreed this rule is superseded.',
 } = {}) {
-  const path = join(dir, '.horde', 'hordes', 'mission1', 'decisions.md');
-  const existing = readFileSync(path, 'utf8');
-  writeFileSync(path, `${existing}\n## ask · ${kind} · ${aspect} · 2026-09-11\n\n`
-    + `**Kind:** ${kind} · **Aspect:** ${aspect} · **Scope:** ${scope}\n`
-    + '**Question:** this branch weakens a rule the mission is judged by.\n'
-    + (answer === null ? '' : `**Answer:** ${answer}\n`)
-    + '**By:** client · **At:** 2026-09-11T09:00:00Z\n');
+  if (kind !== 'lower') {
+    const path = join(dir, '.horde', 'hordes', 'mission1', 'decisions.md');
+    const existing = readFileSync(path, 'utf8');
+    const id = `manual-${kind}-${aspect}`;
+    const block = [`## 2026-09-11 · ask-${id}`, '', `**Kind:** ${kind} · **Aspect:** ${aspect}`,
+      '**Question:** this branch sharpens a rule and changes the code it reaches in the same landing.'];
+    if (answer !== null) block.push(`**Answer:** ${answer}`, '**By:** client · **At:** 2026-09-11T09:00:00Z');
+    writeFileSync(path, `${existing}\n${block.join('\n')}\n`);
+    return;
+  }
+  const opened = run('ask.mjs', ['add', 'this branch weakens a rule the mission is judged by.', '--kind', kind, '--aspect', aspect], dir);
+  if (opened.code !== 0) throw new Error(`ask.mjs add failed: ${opened.stderr}`);
+  if (answer === null) return;
+  const args = ['answer', opened.json.id, answer];
+  if (scope) args.push('--scope', scope);
+  const answered = run('ask.mjs', args, dir);
+  if (answered.code !== 0) throw new Error(`ask.mjs answer failed: ${answered.stderr}`);
 }
 
 function said(r) { return `${r.stdout}${r.stderr}`; }
@@ -173,7 +191,8 @@ for (const [i, kase] of CASES.entries()) {
     assert.match(out, /no-marker/, 'the refusal names the rule');
     assert.match(out, new RegExp(kase.label.replace(/[_ ]/g, '[_ ]')), `the refusal names the case (${kase.label})`);
     assert.match(out, /decisions\.md/, 'and names the way out');
-    assert.match(out, /kind "lower"/);
+    assert.match(out, /ask\.mjs add/);
+    assert.match(out, /--kind lower/);
     // Nothing landed, and nothing this run made is left behind.
     assert.equal(git(['rev-list', '--count', '--merges', 'mission1/trunk'], dir), '0');
   });

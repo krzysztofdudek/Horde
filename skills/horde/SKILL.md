@@ -39,12 +39,12 @@ between agents are doorbells that say "look at file X".
 ```
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/status.mjs                 # hordes on this repo, branches, queues, last gate
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/handoff.mjs read           # state of intent: what was in flight, who was waited on, next steps
-node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/escalate.mjs list --open   # what waits for your ruling
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/ask.mjs list --open        # what waits for the client's answer
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/decide.mjs list            # rulings you do NOT re-derive
 ```
 
 `status` says "no horde" → the user is handing you a mission: go to **Framing**. Otherwise resume:
-rule on escalations, close a wave if its queue
+relay open asks to the client and record their answers, close a wave if its queue
 is empty, then hand off and wake later. First message to the user: one sentence of state, one of what
 you are doing first, nothing more.
 
@@ -149,18 +149,19 @@ rebuilds its subtree from the files.
 
 ## While the horde runs — what you do and do not do
 
-You do: rule on escalations (`escalate.mjs rule <id> "…" --by director`), close waves
+You do: relay open asks to the client and record their answers (`ask.mjs answer <id> "…"`), close waves
 (`wave.mjs close`), keep the charter current, and keep the horde alive (below).
 
-**Rulings that recur are law you have not written down yet.** Run `escalate.mjs recurring` at each
-close. Three rulings of the same kind on the same node is not a fourth decision waiting to happen —
-it is a rule, and the tool hands the architect the proposal with the rulings as its evidence and
+**Answers that recur are law you have not written down yet.** Run `escalate.mjs recurring` at each
+close. Three answers of the same kind on the same territory is not a fourth decision waiting to happen —
+it is a rule, and the tool hands the architect the proposal with the answers as its evidence and
 the steps that file it in the graph.
 
-**A wave close that shows the graph weaker files its own escalation.** Every close reads the
+**A wave close that shows the graph weaker names it in the report.** Every close reads the
 quality index — enforced rules, advisory rules with nothing against them, blocking violations, the
 noise floor, coverage — and compares it with the wave before. Raising it is the horde's own call
-and needs nobody. A fall is not: it opens a `quality` escalation, and that one goes to the user.
+and needs nobody. A fall is not: the close names what fell and asks nobody to accept it silently —
+whether that belongs to `ask.mjs` too is still open (see the CHANGELOG).
 
 You do not: merge, run suites, or write briefs by hand.
 
@@ -179,21 +180,14 @@ Every agent of the horde lives only while your session lives. Two consequences:
   the architect from the files and every worker its queue still shows running. Nothing is lost,
   because nothing was in anyone's head; a cold boot costs one brief per agent that was mid-flight.
 
-**Standard escalation list** (the worker escalates these to you; you rule; outside the list a
-worker acts alone and does not ask):
-
-1. a charter change, or work that would need one;
-2. a contract between nodes changing, when the architect vetoed it;
-3. anything that changes what the product claims to the user;
-4. a conflict — a merge conflict, or two tickets disagreeing about the same code;
-5. a claim that something is a boundary and should not be done;
-6. a deviation from the cost class, or the cost limit reached;
-7. a report you cannot reproduce yourself;
-8. a change to the rules, this skill, or the process;
-9. a quality index that fell over a wave — the close files this one itself, nobody files it by hand.
-
-Items 1, 5, 6 and 9 go on to the user. Everything else you rule on yourself, and the ruling is
-recorded. A ruling is complete when a worker can execute it without coming back: before approving a
+**What travels to the client, and what does not.** `ask.mjs` carries exactly four kinds: `stop` (a
+worker ran out of spec and wrote down the question instead of guessing — the ticket stays put),
+`stuck` (a ticket exhausted its fix rounds — tick files this one, not an agent), `lower` (a request
+to weaken a rule — demote, an added `yg-suppress` marker, a moved `review_by`, an aspect detached
+from a node; requires `--aspect`), and `charter` (a mission-card change: the goal, an exclusion, an
+evidence-catalogue row). A build decision — a contract, a boundary, a conflict between two tickets —
+is yours, not the client's; rule on it and record it with `decide.mjs add`. A ruling is complete when
+a worker can execute it without coming back: before approving a
 mapping read the node's type in `yg-architecture.yaml` and check the file against the type's
 `when:` globs — under a strict type a mapping the globs do not admit is refused, and that `when:`
 line is the user's, so ask for it in the same breath instead of a second round trip.
@@ -227,8 +221,8 @@ appends the completion block to the mission journal, and tells you what to do ne
 present it to the user with the branch name. The pull request and the push are theirs.
 
 A charter rewrite that drops an evidence row outright is free before the mission's wave 1 starts; after
-it, `horde.mjs charter edit` refuses the drop unless `--escalation <id>` names a ruled escalation whose
-own text names the row — a promise made to the chairman does not quietly disappear from a later edit.
+it, `horde.mjs charter edit` refuses the drop unless `--ask <id>` names an answered ask of kind `charter`
+whose own text names the row — a promise made to the chairman does not quietly disappear from a later edit.
 
 ## Where things are
 

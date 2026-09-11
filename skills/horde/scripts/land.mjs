@@ -664,24 +664,33 @@ function checkJournal(text, branch) {
 
 // ---- the client's answers ------------------------------------------------------------
 //
-// decisions.md is the mission's own record of what was put to the client and what came back. The
-// guards below read it; nothing here writes an ask into it (that is the escalation path's, filed
-// separately) except the one line that marks a once-only answer used up.
+// decisions.md is the mission's own record of what was put to the client and what came back.
+// ask.mjs (019) is the only writer — "ask add --kind lower --aspect <a>" opens the question, "ask
+// answer <id> "<answer>" [--scope once|mission]" records it, under slug "ask-<id>"; nothing here
+// writes to the file except the one line that marks a once-only answer used up.
 //
-// One block per ask, a heading and bold fields, matching how every other document in this tool is
-// written:
+// One block per ask: decide.mjs's own heading, then one line of bold fields and the question and
+// answer, exactly what ask.mjs's answerAsk builds:
 //
-//   ## ask · lower · no-marker · 2026-09-11
+//   ## 2026-09-11 · ask-a-007
 //
 //   **Kind:** lower · **Aspect:** no-marker · **Scope:** once
 //   **Question:** deleting this rule weakens what the mission is judged by.
 //   **Answer:** approved — superseded by the type-level check.
 //   **By:** client · **At:** 2026-09-11T09:00:00Z
 //
-// Kind is "lower" for a rule the branch weakens and "conflict" for a branch that sharpens a rule
-// and changes the code that rule reaches. Scope is "once" (used up by one landing, and this file
-// records which) or "mission" (stands until the mission closes). An ask with no Answer is still
-// open and passes nothing.
+// The fields below are read out of the block's body regardless of what the heading says — this
+// guard has never parsed the heading itself, only decide.mjs's own duplicate-slug check needs
+// that. Kind is "lower" for a rule the branch weakens, matched by the law guard below. Scope is
+// "once" (used up by one landing, and this file records which) or "mission" (stands until the
+// mission closes). An ask with no Answer is still open and passes nothing.
+//
+// The conflict-of-interest guard further down (conflictGuard) also calls findAnswer, with kind
+// "conflict" — a branch that sharpens a rule and changes the code it judges in one landing. That
+// is not one of ask.mjs's four kinds (019 only defines stop/stuck/lower/charter), so there is
+// today no sanctioned path that produces a "conflict" block: only a decisions.md entry written by
+// hand (decide.mjs add <slug> "**Kind:** conflict · **Aspect:** <id> ...") satisfies it. Flagged,
+// not fixed here — inventing a fifth ask kind is exactly what 019 says not to do on its own.
 function decisionsPath(horde) { return hordePath(horde, 'decisions.md'); }
 
 function parseAsks(text) {
@@ -878,7 +887,8 @@ function lawGuard(cfg, horde, baseTree, headTree) {
       aspect,
       case: kase,
       note: `${what} The rules a change is judged by are not the change's to weaken. If this really is right, it is the client's call, not this gate's: `
-        + `put it to them and record the answer in decisions.md as an ask of kind "lower" naming "${aspect}" (scope: once for this landing, mission to stand until the mission closes).`,
+        + `ask.mjs add "<why>" --kind lower --aspect "${aspect}", then ask.mjs answer <id> "<answer>" [--scope once|mission] — `
+        + 'once for this landing, mission to stand until the mission closes. The answer lands in decisions.md, which is what this guard reads.',
     });
     return null;
   };

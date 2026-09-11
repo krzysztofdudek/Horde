@@ -24,7 +24,7 @@ import { readCostLimit, sumEntries } from './cost.mjs';
 // here, is the thing worth avoiding: the parallelism a wave close reports as "planned" has to be
 // the plan's own layers.
 import { buildPlan } from './queue.mjs';
-import { addEscalation } from './escalate.mjs';
+import { loadAsks } from './ask.mjs';
 import { writeLawDiff } from './law.mjs';
 import {
   ygQualityIndex, observeAspects, pendingPromotions, markPromotionsReported,
@@ -55,7 +55,9 @@ commands:
       Also states, from the wave's own record: planned against achieved parallelism, the keys
       that carried over without a second reading, human decisions per merged ticket with its
       trend, and — where the nodes come from a graph — the quality index with its delta since
-      the last wave. A quality index that fell opens a "quality" escalation.
+      the last wave. A quality index that fell is a line in this report naming what fell; it does
+      not open anything of its own — provisional, pending the same "quality" ask-kind question
+      019 left open.
       It also closes the loop on the quality ruling: it takes each watched rule's reading for
       this wave (what the two-wave test for enforcement counts), and prints one block naming
       every rule the horde raised this wave with the evidence that earned it, every improvement
@@ -487,9 +489,9 @@ export function wilson(k, n, z = 1.96) {
 //
 // The learning KPI (ruling escalations-become-rules): how often a human had to answer a question
 // for each ticket that landed. It is supposed to fall from wave to wave — a horde that needs the
-// same number of rulings per ticket in wave six as in wave one has learned nothing.
+// same number of answers per ticket in wave six as in wave one has learned nothing.
 //
-// A wave's rulings are the escalations ruled since the wave opened, which is why the start bullet
+// A wave's decisions are the asks answered since the wave opened, which is why the start bullet
 // stamps the instant. A journal written before that stamp existed falls back to subtracting what
 // earlier closes already counted — the answer that is at worst coarse, never double-counted.
 
@@ -505,16 +507,15 @@ function previousDecisions(journalText) {
   return out;
 }
 
-function ruledEscalations(horde) {
-  const doc = readJSON(hordePath(horde, 'escalations.json'), { items: [] });
-  return (Array.isArray(doc.items) ? doc.items : []).filter((it) => it.state === 'ruled');
+function answeredAsks(horde) {
+  return loadAsks(horde).items.filter((it) => it.state === 'answered');
 }
 
 function decisionsKpi(horde, journalText, openedAt, mergedThisWave) {
-  const ruled = ruledEscalations(horde);
+  const ruled = answeredAsks(horde);
   const earlier = previousDecisions(journalText);
   const thisWave = openedAt
-    ? ruled.filter((it) => String(it.ruledAt || it.at || '') >= openedAt).length
+    ? ruled.filter((it) => String(it.answeredAt || it.at || '') >= openedAt).length
     : Math.max(0, ruled.length - earlier.reduce((sum, e) => sum + e.ruled, 0));
   const ratio = mergedThisWave > 0 ? (thisWave / mergedThisWave).toFixed(2) : '—';
   const series = [...earlier.map((e) => e.ratio), ratio];
@@ -655,14 +656,18 @@ function qualityMergesIn(horde, mergedTickets) {
 }
 
 function qualityBlock({
-  policy, promotions, qualityMerges, indexLine, observed,
+  policy, promotions, qualityMerges, indexLine, observed, declined = [],
 }) {
+  const declineLine = declined.length
+    ? `\n\nThe quality index fell this wave: ${declined.join('; ')} — nobody asked for this, and it is not the horde's `
+      + 'to accept lower. If it should stand, that is your call to make, not this report\'s.'
+    : '';
   if (policy === 'only-the-work') {
     return [
       'This mission is set to only-the-work: the horde raised no rule and filed no improvement of its own this',
       'wave, and it will not until the charter says otherwise.',
       '',
-      `Quality index: ${indexLine}`,
+      `Quality index: ${indexLine}${declineLine}`,
     ].join('\n');
   }
   const lines = [];
@@ -684,7 +689,7 @@ function qualityBlock({
     lines.push('Improvements finished this wave (filed by the horde, worked after everything the mission asked for):');
     for (const q of qualityMerges) lines.push(`- ${q.ticket} · ${q.node} — ${q.title}`);
   }
-  lines.push('', `Quality index: ${indexLine}`);
+  lines.push('', `Quality index: ${indexLine}${declineLine}`);
   lines.push(
     '',
     'Nothing above was asked for and nothing above was made weaker — a rule only ever moved up. If you want any',
@@ -767,20 +772,12 @@ function cmdClose(horde, positional, flags) {
 
   const quality = measureQuality(cfg);
   const prevQuality = previousQuality(journalText);
+  // A fallen quality index used to open a "quality" escalation; escalations are gone (019), and
+  // "quality" is not one of ask.mjs's four kinds — inventing a fifth was explicitly out of scope,
+  // so this is a rendering line only (see the delta already carried in qualityLine below and
+  // named again here) until a later task decides whether it needs an ask kind of its own.
+  // Provisional — flagged, not a settled design.
   const declined = withoutPromotionEffects(qualityDecline(quality, prevQuality), promotions, quality, prevQuality);
-  let qualityEscalation = null;
-  if (declined.length) {
-    try {
-      qualityEscalation = addEscalation(horde, {
-        kind: 'quality',
-        by: 'director',
-        why: `wave ${n} left the graph weaker than wave ${Number(n) - 1}: ${declined.join('; ')}. `
-          + 'Raising enforcement is the horde\'s own call; lowering it is not — this needs a ruling.',
-      });
-    } catch (e) {
-      fail(`the quality index fell but the escalation could not be opened: ${e.message}`);
-    }
-  }
 
   const cost = readJSON(hordePath(horde, 'cost.json'), { runs: [] });
   const costRuns = Array.isArray(cost.runs) ? cost.runs : [];
@@ -818,7 +815,7 @@ function cmdClose(horde, positional, flags) {
     decisionsLine: decisions.line,
     qualityLine: indexLine,
     qualityBlock: qualityBlock({
-      policy, promotions, qualityMerges, indexLine, observed,
+      policy, promotions, qualityMerges, indexLine, observed, declined,
     }),
     runs: waveSums.runs,
     weighted: waveSums.weighted,
@@ -851,7 +848,6 @@ function cmdClose(horde, positional, flags) {
     decisions: { ruled: decisions.ruled, merged: decisions.merged, perMergedTicket: decisions.ratio },
     quality,
     qualityDeclined: declined,
-    qualityEscalation: qualityEscalation ? qualityEscalation.id : null,
     qualityPolicy: policy,
     promoted: promotions.map((p) => ({
       aspect: p.aspect, from: p.from, to: p.to, at: p.at, evidence: p.evidence,
@@ -863,8 +859,8 @@ function cmdClose(horde, positional, flags) {
     const lines = [`wave ${n} closed — gate ${gate}, ${green}/${total} evidence green`];
     for (const p of promotions) lines.push(`rule raised: ${p.aspect} ${p.from} → ${p.to}`);
     if (qualityMerges.length) lines.push(`improvements finished: ${qualityMerges.map((q) => q.ticket).join(', ')}`);
-    if (qualityEscalation) {
-      lines.push(`the quality index fell (${declined.join('; ')}) — escalation ${qualityEscalation.id} opened`);
+    if (declined.length) {
+      lines.push(`the quality index fell: ${declined.join('; ')} — nobody asked for this; it is the client's call, not the horde's, to let it stand`);
     }
     lines.push(
       `what this mission has done to the law so far — ${law.doc.added.length} rule(s) added, `
