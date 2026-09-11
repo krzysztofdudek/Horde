@@ -375,7 +375,7 @@ test('E14 — a wave close states parallelism, keys transferred, decisions per m
     assert.equal(r.code, 1);
     assert.match(r.stderr, /predates/);
     assert.match(r.stderr, /yg-check\/1 and yg-aspects\/1/);
-    assert.match(r.stderr, /later than 5\.8\.0/);
+    assert.match(r.stderr, /later than 6\.0\.0/);
     assert.match(r.stderr, /reports version 5\.7\.9/);
     run('horde.mjs', ['config', 'set', 'ygCommand', yg], dir);
   });

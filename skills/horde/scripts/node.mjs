@@ -39,14 +39,14 @@ commands:
       refusal but only over an answered ask on this horde (--ask <id>); the take-over
       is written to the node's own log as well as to the lease history.
   map [--horde h]
-      this mission's nodes (named by an owner in the roster or by a ticket) with owner, the
-      ports they publish, and open port proposals.
+      this mission's nodes (named by a ticket, or by a pre-migration roster entry) with the
+      ports they publish and open port proposals.
   show <node> [--horde h]
       boundary, the rules in force on the node (with the status word that says what a refusal
       costs), the ports it publishes, last log entries.
   log <node> "<reason>" [--run] [--horde h]
       prints the "yg log add --reason" command for the node's own log; runs it too with --run.
-  contract propose <node> <port> "<text>" --by <owner> [--aspects a,b] [--horde h]
+  contract propose <node> <port> "<text>" --by <name> [--aspects a,b] [--horde h]
       port-is-contract: proposes adding a port to a node, or changing one it already publishes.
       There is no version — a port is referenced by name alone, everywhere. --aspects names the
       rules the port is to be held to; the filed record always carries the field, empty when
@@ -62,7 +62,7 @@ commands:
       the prose rules still waiting on a judgement in a tree, each with the exact
       "yg verdict package" and "yg verdict record" commands that judge it. --at names the
       worktree to read (default: this one).
-  propose <kind> "<text>" --by <owner> [--node n] [--boundary <glob>[,glob…]] [--horde h]
+  propose <kind> "<text>" --by <name> [--node n] [--boundary <glob>[,glob…]] [--horde h]
       kinds: new-node, move-boundary, rename, rule. move-boundary requires --node and --boundary
       so apply can name the exact edit later, not just record that it happened.
   proposals [--open] [--horde h]
@@ -119,10 +119,13 @@ export function ygCommand(cfg) {
   return { cmd: parts[0] || 'yg', prefix: parts.slice(1), display: parts.join(' ') || 'yg' };
 }
 
-// The release these machine documents arrived in. They are not in 5.8.0; a CLI that answers
-// `--json` with anything but the document is one from before them, and the horde says which
-// release to pass rather than degrading into reading the graph's files itself.
-const YG_DOCUMENTS_AFTER = '5.8.0';
+// The release line these machine documents arrived in. Checked by schema name, never by comparing
+// version numbers (`ygJson`'s own `parsed.schema === schema` test, below) — this constant names
+// nothing more than what the refusal tells a person to install. Horde tracks the family's own
+// 6.x line: an older Yggdrasil answers `--json` with something that is not the document at all,
+// and the horde says which release to pass rather than degrading into reading the graph's files
+// itself.
+const YG_DOCUMENTS_AFTER = '6.0.0';
 
 const YG_DOCUMENTS = 'yg-node/1, yg-context/1 and yg-impact/1';
 
@@ -1697,7 +1700,7 @@ function parseAspectList(v) {
 function cmdContractPropose(horde, root, cfg, positional, flags) {
   const [node, port, text] = positional;
   if (!node || !port || !text) fail('contract propose requires <node> <port> "<text>"');
-  if (!flags.by) fail('contract propose requires --by <owner>');
+  if (!flags.by) fail('contract propose requires --by <name>');
   if (!nodeExists(root, cfg, node)) fail(`no such node in the graph: ${node}`);
 
   const existing = nodePorts(root, cfg, node)[port];
@@ -1842,7 +1845,7 @@ function cmdPropose(horde, positional, flags) {
   const [kind, text] = positional;
   if (!kind || !text) fail(`propose requires <kind> "<text>" (kinds: ${PROPOSAL_KINDS.join(', ')})`);
   if (!PROPOSAL_KINDS.includes(kind)) fail(`unknown kind: ${kind} (kinds: ${PROPOSAL_KINDS.join(', ')})`);
-  if (!flags.by) fail('propose requires --by <owner>');
+  if (!flags.by) fail('propose requires --by <name>');
   if (kind === 'move-boundary' && (!flags.node || !flags.boundary)) {
     fail('propose move-boundary requires --node <n> --boundary <glob>[,glob…], so apply can name the exact edit');
   }

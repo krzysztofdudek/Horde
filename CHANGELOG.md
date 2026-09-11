@@ -53,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - There is no escalation and no dissent any more. One path leads to whoever's asking, and only four things travel down it.
 - A mission still running the previous release keeps working: its old tickets, its old logs, and its old roster, dissent and escalation records are read as history, never as something new to act on.
 
+### Migrating a mission already in flight
+
+If you started a mission on an earlier release and it's still running, don't try to carry it across as-is. Close the wave you're on and finish the mission the old way — it still reads its own old state and files itself away. Then start fresh on the same repository, from the same mission card. The new run reads the same evidence the old one left behind and rebuilds its work from it, at the cost of one conversation per area of the codebase the mission touches. What you lose is continuity of a wave already in flight; what you keep is everything the old mission proved and everything it decided.
+
 ## [0.4.0] - 2026-09-08
 
 Experimental. Needs Yggdrasil 5.9.0 or newer; an older one is refused with the release to install.

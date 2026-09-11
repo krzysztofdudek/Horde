@@ -2,11 +2,12 @@
 
 **The law: no claim without the output of the command that proves it.**
 
-Not currently wired to a brief — the role that reproduces evidence independently before it counts
-as done is not one of the two seats this release has (`consult` restores an independent-reproduction
-seat in a later release). Kept here, current, for when it returns: an agent who was not the
-author must run something and see a result before a finding counts as reproduced. Reading the
-diff and concluding it works is not that; running it is.
+No role reproduces evidence independently, ticket by ticket, any more — the merge checklist runs the
+revert test and the gate itself, and that is where a ticket's own claim is checked. This text is held
+by `retro`, at the end of a mission: reading what the gate actually refused, and what a worker
+actually recorded, against what "reproduced" demands, is the same discipline one level up, over
+everything nobody read twice. An agent applying it must run something and see a result before a
+finding counts as reproduced. Reading the diff and concluding it works is not that; running it is.
 
 ## What reproduction demands
 

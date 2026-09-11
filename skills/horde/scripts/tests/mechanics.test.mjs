@@ -19,7 +19,7 @@ function git(args, cwd) {
 }
 
 // Merges `sourceBranch` into `targetBranch` from a scratch worktree — nothing checks out another
-// branch in the same worktree a ticket branch lives in, per topology.md's rule (lifecycle.test.mjs
+// branch in the same worktree a ticket branch lives in, per model.md's rule (lifecycle.test.mjs
 // does the same). Reuses a worktree already checked out on targetBranch when one exists (git
 // refuses a second one on the same branch outright), and only falls back to a scratch worktree
 // (removed again afterward) when it doesn't.

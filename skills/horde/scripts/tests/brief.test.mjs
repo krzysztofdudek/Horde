@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync, readFileSync, writeFileSync, rmSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -99,7 +101,7 @@ test('brief.mjs: renders worker and architect from a seeded ticket, queue and ro
     ]);
     const worker = run('brief.mjs', ['worker', '001', '--name', 'mission1-worker-trunk-1'], dir);
     assert.equal(worker.code, 0, worker.stderr);
-    assert.match(worker.json.brief, /report to the steward \*\*mission1-steward-trunk-1 \(agent id a-999\)\*\*/);
+    assert.match(worker.json.brief, /report to \*\*mission1-steward-trunk-1 \(agent id a-999\)\*\*/);
   });
 });
 
@@ -344,8 +346,10 @@ test('brief.mjs legislate: one territory\'s own law, and nothing from anyone els
     assert.match(brief, /\*\*2\*\* closed waves reaching nothing/, 'config.law.retireAfterWaves, at its default');
   });
 
-  await t.test('it carries the framing checklist under ## Law, like the architect', () => {
+  await t.test('it carries the review discipline under ## Law, not framing', () => {
     assert.match(brief, /## Law/);
+    assert.match(brief, /### Findings with a severity/);
+    assert.doesNotMatch(brief, /### Framing before anything runs/);
   });
 
   await t.test('without a territory it refuses, and an unknown one names the cut', () => {
@@ -358,6 +362,26 @@ test('brief.mjs legislate: one territory\'s own law, and nothing from anyone els
     assert.match(wrong.stderr, /no such territory: nowhere/);
     assert.match(wrong.stderr, /edge, heart/);
   });
+});
+
+test('brief.mjs: a role whose template file was deleted refuses naming the missing file, not "unknown role"', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
+  seedTerritories(dir, 'mission1', { heart: { nodes: ['nodeA'], class: 'sonnet', why: 'the middle' } });
+
+  const rolePath = join(SCRIPTS_DIR, '..', 'reference', 'roles', 'legislate.md');
+  const original = readFileSync(rolePath, 'utf8');
+  t.after(() => writeFileSync(rolePath, original));
+  rmSync(rolePath);
+
+  const r = run('brief.mjs', ['legislate', 'heart', '--name', 'mission1-legislate-heart-1'], dir);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /has no template file/);
+  assert.match(r.stderr, /legislate\.md is missing/);
+  assert.doesNotMatch(r.stderr, /unknown role/);
+  assert.equal(r.stdout.trim(), '', 'nothing is printed as a brief when the template is missing');
 });
 
 test('brief.mjs: a role whose template has a key nothing fills refuses, naming that key', async (t) => {

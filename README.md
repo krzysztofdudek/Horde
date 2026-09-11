@@ -11,7 +11,7 @@
 /plugin install horde@horde-marketplace
 ```
 
-Run both, then `/reload-plugins` to activate it in this session (or restart Claude Code). Requires Node.js on your `PATH` (any recent version), since the skill's tools are plain ES modules with zero dependencies. It also needs Yggdrasil, and Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams) turned on, an experimental feature that is off by default; see [Requirements](#requirements) below before you invoke it. Invoke it by handing over a mission: `/horde <mission>`, or your own words for it ("let's run this as a horde").
+Run both, then `/reload-plugins` to activate it in this session (or restart Claude Code). Requires Node.js on your `PATH` (any recent version), since the skill's tools are plain ES modules with zero dependencies, and Yggdrasil; see [Requirements](#requirements) below before you invoke it. Invoke it by handing over a mission: `/horde <mission>`, or your own words for it ("let's run this as a horde").
 
 > MIT licensed · Node scripts, zero dependencies · needs [Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil), and creates the graph if your repository has none · part of the [Yggdrasil family](#the-yggdrasil-family) · [full skill body](skills/horde/SKILL.md)
 
@@ -19,29 +19,21 @@ Run both, then `/reload-plugins` to activate it in this session (or restart Clau
 
 ## Requirements
 
-**Yggdrasil.** Horde works on an architecture graph: the map it cuts the work by, the rules every ticket is held to, and the verdict that says a change is safe to merge all come from it. Install it once:
+Two things, and only two.
+
+**Node.js on your `PATH`** (any recent version). The skill's tools are plain ES modules with zero dependencies.
+
+**Yggdrasil**, the same 6.x line as this release of Horde. Horde works on an architecture graph: the map it cuts the work by, the rules every ticket is held to, and the verdict that says a change is safe to merge all come from it. Install it once:
 
 ```
 npm i -g @chrisdudek/yg
 ```
 
-Horde needs Yggdrasil 5.9.0 or newer, the first release that answers with the documents Horde reads the graph through. An older Yggdrasil is refused with the release to install, never read around.
+An older Yggdrasil — one that predates the versioned documents Horde reads the graph through — is refused with the release to install, never read around.
 
 If your repository already has a graph, Horde reads it. If it doesn't, `horde init` makes one for you before anything else happens. With [Grain](https://github.com/krzysztofdudek/Grain) installed as well, the graph it makes is read out of your own code — the components you actually have and the rules you already follow — and it tells you up front how much of the code you have today those rules would refuse. Without Yggdrasil, Horde stops and says so.
 
-**Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams)**, turned on before you hand over a mission. It's off by default and still experimental. Add this to your `settings.json`:
-
-```json
-{
-  "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  }
-}
-```
-
-Without it, Claude Code never raises a steward that stays alive and addressable for the length of a mission, so the skill has nothing to direct. It also needs an interactive session; headless mode (`-p`) won't spawn a team at all.
-
-Your own session is what raises the long-lived agents — a steward per team and the architect — and everything else runs underneath them as their own helpers, so the number of agents alive alongside you stays small and every one of them is yours to replace.
+That's it.
 
 ---
 
@@ -49,13 +41,13 @@ Your own session is what raises the long-lived agents — a steward per team and
 
 **The mission: migrate the app's permission system from roles to a policy engine, twelve modules touched.** Alone, an agent either tries to hold all twelve modules in its head and drifts by module nine, or works through them one at a time and forgets what it agreed with itself three files back.
 
-You and Horde write the charter together first: the goal, what's out of scope, and the evidence that proves it's done (tests, scenarios, nothing vaguer than that). Then it cuts the mission into nodes with you, once, and spawns a **steward** and an **architect** who can veto changes to the graph. The steward spawns an **owner** per node. Owners read their node and propose tickets; the steward assembles the proposals into a dependency graph and starts a wave.
+You and Horde write the charter together first: the goal, what's out of scope, and the evidence that proves it's done (tests, scenarios, nothing vaguer than that). Then it cuts the mission into territories — sets of whole components, sized so one agent can hold one and still have room to work — and spawns one **consultant** per territory, all at once. Each reads its own area and nothing else, and writes the tickets and the law it thinks the work has earned. Nothing any of them writes is dispatched yet: an **architect** rules the whole plan once, before anything starts — what's missing, what's buildable, what's circular, what's grown too big to be one piece.
 
-Workers pick up tickets, each in its own worktree, each against a locked spec. A **verifier who never verifies its own work** reproduces the evidence before anything merges. Nothing lands without two keys and one approval: the worker's key, the verifier's key, and the owner's review of every node the ticket touches. Once a wave closes, an Opus **auditor** redoes merged tickets from scratch, because a report is a hypothesis until someone who didn't write it reproduces it. How many is a sample size, not a habit: it doubles when an audit catches something, thins out after a long clean run, and never drops to nothing — and every wave close publishes what share of audited work didn't survive the second look, with how confident that share is.
+Workers pick up tickets, each in its own worktree, each against a locked spec. Nothing merges by hand: a nine-item checklist runs fresh on the branch itself, and the moment every item is green it makes the merge commit and moves on — new tests proven to fail without the change, the architecture rules read and satisfied, the diff kept inside what the ticket declared. After a wave, a **legislate** pass reads what that area's own work was refused for and writes the pattern down as a rule, so the next ticket in that area gets it enforced rather than repeated by hand.
 
-You never read a diff. What comes to you: a contract two owners can't agree on, a claim that something is a boundary and shouldn't be touched, a cost limit reached, anything genuinely unsure. Everything else, the horde rules on itself and writes down why, so the next session picks it up cold from the files, not from your memory of the conversation.
+You never read a diff. What comes to you: a worker that ran out of spec and stopped rather than guess, a request to weaken a rule, a cost limit reached, a change to the mission card itself. Everything else, the horde rules on itself and writes down why, so the next session picks it up cold from the files, not from your memory of the conversation. At the very end, a **retrospective** reads everything nobody read twice — every refusal, every note a worker left the next one — and sorts it into what the law could have said, what's worth one line in a component's own history, and what no rule will ever capture; that last list is yours to read, because it's the one thing the horde cannot learn on its own.
 
-Every line the horde ever merged has a custody chain: point at a file and a line and it tells you the commit that introduced it, the ticket that commit belongs to, who wrote it and who reviewed and verified it, what evidence that ticket was supposed to prove and whether it did, and what the graph currently says about the rules standing over that code. A closed mission is searched too; a line from before the horde ever touched the repository is reported as exactly that.
+Every line the horde ever merged has a custody chain: point at a file and a line and it tells you the commit that introduced it, the ticket that commit belongs to, who wrote it and what the merge checklist proved before it was let through, what evidence that ticket was supposed to prove and whether it did, and what the graph currently says about the rules standing over that code. A closed mission is searched too; a line from before the horde ever touched the repository is reported as exactly that.
 
 ---
 
@@ -72,24 +64,24 @@ Say `/horde <mission>`, or hand it over in your own words. A session that resume
 Three planes, two loops:
 
 ```
-INTENT   charter, rulings, evidence catalogue        you and the director
-META     the graph: nodes, charters, contracts       owners, the architect
-CODE     worktrees, branches, tests, scenarios        workers, verifiers
+INTENT   charter, evidence catalogue, asks           you and the director
+META     the graph: nodes, ports, contracts, rules   the architect, consultants, legislate
+CODE     worktrees, branches, tests, scenarios       workers
 ```
 
-Roles, and what each one is not allowed to do:
+Three functions carry the work, plus a one-shot review of the whole plan and the one client in the
+loop:
 
-| Role | Model | Decides | Never |
+| Function | Model | Decides | Never |
 |---|---|---|---|
-| Director | your own session | the escalation list, the charter, who audits | reads worker output, merges, dispatches tickets |
-| Steward | Sonnet, long-lived | scheduling, dispatch, merging on its branch | judgement, it escalates instead |
-| Owner | Sonnet, Opus for a hard node | the inside of its node, proposes tickets | contracts alone, reviewing its own ticket |
-| Architect | Opus, no node of its own | approves or vetoes graph changes | implementation |
-| Worker | the cheapest model that will pass verification | implementation detail | contracts, decisions, other branches |
-| Verifier | never the author, fresh context | reproducible or not | fixing what it finds |
-| Auditor | Opus, on a sample per wave | a process verdict on one merged ticket | nothing named |
+| Director | your own session | what to ask the client, the charter, build decisions between tickets | reads worker output, merges, dispatches tickets by hand |
+| Consultation | the territory's own class, one per territory | what a territory's own tickets and law should be | the boundary between territories |
+| Work | the cheapest model that will pass the merge checklist | implementation detail, one ticket at a time | contracts, decisions, other branches |
+| Legislation | the territory's own class, once per territory per wave | which pattern the code has already earned as a rule | lowering a rule |
+| Architect (one-shot) | Opus, no node of its own | approves or vetoes graph changes, rules the whole plan once | implementation |
+| Client | you | the mission, every answered ask, whether it ships | reviewing every diff |
 
-Every change belongs to exactly one ticket. Liveness is judged by files and branches, never by silence: a steward gone quiet for too long gets reclaimed and respawned from the same charter, not waited for. And it never pushes: starting a mission is your consent to local commits on the horde's own branches, nothing more. The pull request, and the push, stay yours.
+Every change belongs to exactly one ticket. Liveness is judged by files and branches, never by silence. And it never pushes: starting a mission is your consent to local commits on the horde's own branches, nothing more. The pull request, and the push, stay yours.
 
 ---
 
@@ -104,7 +96,7 @@ Two slash commands. The first registers this repo as a marketplace; the second i
 /plugin install horde@horde-marketplace
 ```
 
-Then run `/reload-plugins` to activate it in the current session (or restart Claude Code). Requires Node.js on `PATH` and Claude Code's Agent Teams turned on, see [Requirements](#requirements). No API key.
+Then run `/reload-plugins` to activate it in the current session (or restart Claude Code). Requires Node.js on `PATH` and Yggdrasil, see [Requirements](#requirements). No API key.
 
 To upgrade later, refresh the marketplace and reinstall:
 
@@ -170,9 +162,9 @@ that quietly reads worse than the repository deserves.
 
 It's not free. Every spawned agent is a real run on your account, at whatever cost class its ticket carries (Haiku, Sonnet, or Opus for the hard nodes and the rulings). The horde reports cost every wave rather than hiding it, and a charter can carry a cost limit that stops it after the running tickets land.
 
-The multi-agent mechanics run on Claude Code's own Agent Teams, see [Requirements](#requirements). The skill installs the same way on Codex, Cursor, and Copilot, and the discipline travels with it (evidence over reports, escalate rather than guess, nothing merges without two keys), but whether those hosts have anything equivalent to Agent Teams hasn't been checked at all. Try it there and watch whether the spawning holds before trusting it with something you can't easily undo.
+The default runner is your own session: your turn calls the loop, reads what it says to dispatch, and spawns the workers. Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams) — off by default, still experimental — lets the same loop instead be driven by one long-lived Sonnet teammate freed to call it on its own schedule; nothing about the loop itself changes either way, only where it lives. The skill installs the same way on Codex, Cursor, and Copilot, and the discipline travels with it (evidence over reports, ask rather than guess, nothing merges without a green checklist), but whether those hosts have anything equivalent to Agent Teams hasn't been checked at all. Try it there and watch whether the spawning holds before trusting it with something you can't easily undo.
 
-It's not a substitute for reading the result. You get the final branch, the evidence catalogue, and the cost report; whether the mission actually did what you meant is still your call, not the auditor's.
+It's not a substitute for reading the result. You get the final branch, the evidence catalogue, and the cost report; whether the mission actually did what you meant is still your call.
 
 ---
 

@@ -51,9 +51,14 @@ const ROLES = ['worker', 'architect', 'legislate', 'retro'];
 const ROLE_LAW = {
   worker: ['tdd', 'debugging'],
   architect: [{ discipline: 'framing', section: 'Checklist' }],
-  // A rule is a claim about this repository, and the one discipline that decides whether a claim
-  // is worth writing down is framing's own checklist — the same part the architect is held to.
-  legislate: [{ discipline: 'framing', section: 'Checklist' }],
+  // A pass over one territory is a weighing of what is worth writing down against what is an
+  // accident — the same three-word severity call the review discipline teaches, one level up:
+  // a refusal that happened three times is Critical/Important (write it down), one that happened
+  // once is Minor (the log, and nowhere else). The consultant is held to framing's checklist
+  // instead — filing a ticket is framing a piece of work — but not through this table: it is
+  // spawned by refine.mjs, never by brief.mjs, and splices that section into its own brief
+  // directly (see consultBrief in refine.mjs).
+  legislate: ['review'],
   // Sorting a mission's findings into rule, taste and inexpressible is the review discipline's own
   // weighing done one level up, so it gets the whole of that text rather than a section of it; and
   // the second half of the run is a measurement, which is verification's subject.
@@ -80,16 +85,20 @@ roles:
 
 Prints the rendered brief for the Agent tool's prompt, verbatim. Refuses — listing every unfilled
 placeholder — rather than print one with "{{…}}" left in it. A role held to a discipline gets it
-inline, under "## Law": worker (tdd, debugging), architect and legislate (framing's checklist), retro
-(review, verification).
+inline, under "## Law": worker (tdd, debugging), architect (framing's checklist), legislate (review),
+retro (review, verification). The consultant is held to framing's checklist too, spliced into its own
+brief by refine.mjs directly — it is spawned off disk, never through this command.
 
 options: --json  --help`;
 
 // ---- role template loading + rendering (reference/roles/, not templates/) --
 
+// Reached only for a role main() already checked is in ROLES — so a missing file here is never
+// "unknown role" (that refusal already happened) but the role's own template gone missing from
+// disk, and the refusal names the exact path rather than repeating the unknown-role message.
 function loadRoleTemplate(role) {
   const file = join(ROLES_DIR, `${role}.md`);
-  if (!existsSync(file)) fail(`unknown role: ${role} (roles: ${ROLES.join(', ')})`);
+  if (!existsSync(file)) fail(`role "${role}" has no template file: ${file} is missing`);
   return readFileSync(file, 'utf8');
 }
 
@@ -99,7 +108,11 @@ function loadRoleTemplate(role) {
 // an "### Title" under the brief's "## Law" — the texts are written to stand alone as files and
 // to read as sections here, without a second copy of either.
 
-function demoteHeadings(text) {
+// Exported for refine.mjs's consultBrief: the consultant is held to framing's checklist too, but
+// is spawned straight off disk rather than through this file's own renderRole/ROLE_LAW path, so it
+// splices the section in directly rather than gaining an entry in a table meant for roles brief.mjs
+// itself renders.
+export function demoteHeadings(text) {
   return text.replace(/^(#{1,4}) /gm, (whole, hashes) => `${hashes}## `);
 }
 
@@ -109,8 +122,9 @@ function disciplineTitle(text, file) {
   return m[1].trim();
 }
 
-// One "## <name>" section of a discipline file, without its own heading line.
-function disciplineSection(text, section, file) {
+// One "## <name>" section of a discipline file, without its own heading line. Exported for the
+// same reason demoteHeadings is.
+export function disciplineSection(text, section, file) {
   const idx = text.indexOf(`## ${section}\n`);
   if (idx === -1) fail(`discipline ${file} has no section "${section}"`);
   const rest = text.slice(idx + `## ${section}\n`.length);

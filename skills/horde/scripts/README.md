@@ -4,12 +4,14 @@ Every tool: Node ESM, zero dependencies, `--help`, `--json`, exit non-zero on fa
 stderr. All tools resolve the repository root by walking up to `.git`, then the shared state root as
 `<git common dir>/../.horde` so a worktree and the main checkout see the same state. `--horde <name>`
 selects the horde; when only one exists it is the default. `--team <name>` selects a team; default is
-`trunk`. `<name>` is always the team's short LEAF name (`alfa`), unique per horde — the same name a
-brief renders and a steward is spawned with — while sub-teams nest on disk
-(`teams/<parent>/teams/<child>/`) and the branch name also stays short (`<horde>/alfa`). `_lib.mjs`'s
-`teamPath()` resolves that nesting itself, by walking `roster.json`'s steward entries' own `parent`
-links back to `trunk`; a full slash path (`trunk/alfa`) is also accepted, but only when it matches what
-that resolution independently finds — anything else, including the literal segment `teams`, is
+`trunk`. `<name>` is always a team's short LEAF name (`alfa`), unique per horde — while nested
+sub-teams are still readable on disk (`teams/<parent>/teams/<child>/`), a fresh mission only ever
+files tickets on `trunk`: nothing spawns a sub-team any more, since that needed a steward to run it,
+and there is no such role now. `_lib.mjs`'s
+`teamPath()` still resolves that nesting for a pre-migration mission that has one, by walking
+`roster.json`'s own `parent` links back to `trunk`; a full slash path (`trunk/alfa`) is also accepted,
+but only when it matches what that resolution independently finds — anything else, including the
+literal segment `teams`, is
 refused rather than silently landing in the wrong directory. JSON files are the source of truth; every
 `.md` beside one is rendered on write and never parsed. No tool ever rewrites history in a journal;
 journals append.
@@ -43,7 +45,7 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   by every horde on the repository — and a node another *live* horde already leases refuses the
   whole command, naming that horde and its last activity, before the branch or any of this horde's
   own state is created. See `node.mjs bind` below for the same check made any time after init, and
-  "Node leases" in `reference/topology.md` for the full contract. `--quality autonomous|only-the-work`
+  "Node leases, kept as territories" in `reference/model.md` for the full contract. `--quality autonomous|only-the-work`
   writes the charter's quality policy; the template's own default is `autonomous`.
 - `list` — hordes with trunk, base, wave, open tickets, leased nodes, last activity.
 - `config get|set <key> [value]` — `.horde/config.json`: `base`, `gates.commit|team|trunk` (commands),
@@ -62,17 +64,17 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   practical), `classes` (weights: haiku 1, sonnet 3, opus 10, fable 30 — defaults), `parallelism`.
   A list-valued key (`testGlobs`, `protectedPaths`) takes either a comma-separated list or a JSON
   array and is stored as a list either way — never as the text of one.
-- `charter show|edit [--escalation id]` — the mission charter. `show` prints it; `edit` replaces it
-  with what arrives on stdin, the same shape as `node.mjs charter edit` for a node, and reports how
+- `charter show|edit [--ask id]` — the mission charter. `show` prints it; `edit` replaces it
+  with what arrives on stdin, and reports how
   many evidence rows the new text carries and how many are recorded as reproduced — naming any row
-  that was recorded and is no longer, since a rewrite that drops one loses a verifier's work
-  otherwise. This is how the goal, the non-goals, the evidence catalogue and every amendment are
+  that was recorded and is no longer, since a rewrite that drops one loses work already done against
+  it otherwise. This is how the goal, the non-goals, the evidence catalogue and every amendment are
   written: the charter is the one file where what the chairman asked for lands, and it is written
   through a tool like everything else. Dropping a row outright (present before, gone from the new
   text entirely) is free before the mission's wave 1 has started; once it has, the drop refuses
-  unless `--escalation <id>` names a ruled escalation (`escalate.mjs`) whose own text (its `why` and
-  its ruling together) names every row being dropped — the reason then lives in the escalation's own
-  ruling (`decisions.md`'s `esc-<id>` entry), not only in this command's own output.
+  unless `--ask <id>` names an answered ask of kind `charter` (`ask.mjs`) whose own text (its `why`
+  and the client's answer together) names every row being dropped — the reason then lives in the
+  ask's own answer (`decisions.md`'s `ask-<id>` entry), not only in this command's own output.
   The charter's `## Quality` section carries the one field of it a tool acts on rather than a person
   reads: `**Policy:** autonomous` (the default, and what a charter with no such section reads as) or
   `**Policy:** only-the-work`. Anything else is refused here rather than read as the default, since a
@@ -100,10 +102,10 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
 
 ## status.mjs — the digest
 
-One screen: hordes, for each: trunk sha and distance from base, teams with their branch tips, workers'
-branches beyond their team tip (landed, unverified, unmerged, waiting), stewards' last trace and
-liveness verdict, queue counts by state (including `waiting`), open escalations and dissents, last
-gate result per level, cost to date and limit, any lease another *live* horde holds on a node this
+One screen: hordes, for each: trunk sha and distance from base, its branch tip, ticket branches
+beyond it (landed, unverified, unmerged, waiting), queue counts by state (including `waiting`), open
+asks, the last recorded gate result per level, cost to date and limit, any lease another *live* horde
+holds on a node this
 horde's own tickets touch (node-lease-across-hordes — `.horde/leases.json`, shared by every horde
 on the repository), and an **evidence** block: every row of the charter's evidence catalogue in one
 of five states — `no-ticket` (nothing claims it), `queued` (a ticket names
@@ -116,12 +118,13 @@ narrow it. `--json`.
 
 ## handoff.mjs — state of intent
 
-`write --summary "…" [--next "…"]… [--by director|steward] [--team t]`, `read [--by director|steward]
-[--team t]`. `--by` decides the file: the director (the default) reads and writes the mission-level
-`hordes/<horde>/handoff.json` and ignores `--team`; a steward reads and writes its team's
-`teams/<team>/handoff.json`. `read` without `--by` prints both, mission first.
-`add-waiting <who> "<what>"`, `rm-waiting <who>`. Writes `handoff.json` (+ `.md`); `write` fills
-`inFlight` from the queue's running items and `head` from git. `read` prints "fresh start" when none.
+`write --summary "…" [--next "…"]…`, `read`, `add-waiting <who> "<what>"`, `rm-waiting <who>` — one
+handoff per horde, always at `hordes/<horde>/handoff.json` (+ `.md`). There is no `--by` or `--team`
+any more: with only a director and one-shots left, a handoff scoped to a steward's own team has
+nobody left to read it, and both flags are refused by name rather than silently accepted and
+ignored, so a caller that still passes one finds out at once. `write` fills
+`inFlight` from the queue's running items and `head` from git. `read` prints "fresh start — no
+handoff recorded" when none exists yet.
 
 ## tk.mjs — tickets
 
@@ -160,8 +163,9 @@ its folder and of the `id:` its issue.md carries.
   the graph — refused by name otherwise. Port existence is read through `node.mjs`'s graph reading,
   in one place, so a later change of where the graph comes from changes one function.
 - `list [--state s] [--node n] [--team t] [--review-pending] [--open]`, `show NNN [--log]`,
-  `status NNN <state> ["note"]` (states: proposed queued running landed changes verified merged
-  escalated dropped) — `changes` is the fix-loop breaker: it counts the round in the ticket's log
+  `status NNN <state> ["note"]` (states: proposed queued running landed changes blocked verified merged
+  escalated dropped — `blocked` is `tick.mjs`'s own, for a ticket whose fix rounds ran out) —
+  `changes` is the fix-loop breaker: it counts the round in the ticket's log
   and prints it (`config.fixRounds`, defaults `resume` 3, `fresh` 2). Rounds 1..`resume`: resume
   the same worker with the findings. Rounds `resume`+1..`resume`+`fresh`: the result says "fresh
   worker, class up" — a new one, one class heavier (`config.classes`), briefed with `brief.mjs
@@ -190,7 +194,7 @@ its folder and of the `id:` its issue.md carries.
 ## queue.mjs — the DAG
 
 `teams/<team>/queue.json`: items `{ticket, state, class, branch, worktree, dependsOn[], stackedOn, agent, sha, notes[]}`.
-States: `proposed queued waiting running landed merged escalated dropped`. `proposed` is a ticket
+States: `proposed queued waiting running landed blocked merged escalated dropped`. `proposed` is a ticket
 nobody has ruled on: listed and counted like any other, and never a candidate for `next`. A
 consultant files its own tickets and adds them with `add --proposed`; `refine.mjs --step review` is
 the only thing that moves one to `queued`.
@@ -342,8 +346,11 @@ guesses at an answer.
 
 ## brief.mjs — rendered briefs
 
-`brief.mjs <role> [args]` prints the brief for a role, filled from `reference/roles/<role>.md`:
-`architect`, `worker NNN [--takeover]`, `legislate <territory>`. `worker --takeover` renders a takeover section — a prior
+`brief.mjs <role> [args]` prints the brief for a role, filled from `reference/roles/<role>.md`. Four
+roles, a closed list: `architect`, `worker NNN [--takeover]`, `legislate <territory>`, `retro`. Any
+other name — including `steward`, `owner`, `verifier`, `auditor` or `counsel`, gone with the seat
+cassation — is refused as unknown, naming these four and no others. `worker --takeover` renders a
+takeover section — a prior
 worker attempted this ticket N times, the ticket is yours, here is its log — for the fresh,
 one-class-up worker `tk.mjs status NNN changes` hands a ticket to once its resume rounds
 (`config.fixRounds`) are spent; N and the log come from the ticket's own log, the same "round
@@ -352,10 +359,12 @@ N/cap" line `tk.mjs` itself wrote.
 Fills `{{…}}` from the charter, the config (`fastCheck` = `gates.commit`, `protectedPaths`), the
 cache (`fastCheckCount` from `cache/last-gate.json`, or "unknown — report the count you get"), the
 component (`node.mjs`: the ports on its border with their consumers — what the worker
-must not break), the ticket (`worktree` and `branch` from the queue item), and `reportsTo` — always
-"main", the director's own session name. Refuses to render with an unfilled placeholder. After the
+must not break), the ticket (`worktree` and `branch` from the queue item), and `reportsTo` — the
+agent's own parent, "main" (the director's own session name) whenever nothing more specific is on
+file. Refuses to render with an unfilled placeholder. After the
 role's own text it appends a `## Law` section: the disciplines that role is held to, inlined from
-`reference/discipline/` — worker (tdd, debugging), architect and legislate (framing's checklist). The
+`reference/discipline/` — worker (tdd, debugging), architect (framing's checklist), legislate
+(review), retro (review, verification). The
 texts live there once, so an edit to a discipline reaches every brief that carries it. Records
 nothing. The caller copies the output into the Agent tool's prompt verbatim.
 
@@ -368,6 +377,17 @@ landing gate's law guard refuses a branch that tries. The territory comes from `
 (`refine.mjs --step cut`); without one the command refuses rather than write law for an area nobody
 named.
 
+`retro` is the one-shot that runs once, at the end of a mission: see `retro.mjs` below for the
+gather/classify/write shape it fits into. Its brief carries the whole mission's gate refusals and
+ticket-log remarks inline — never a summary — because the cross-territory repetitions are the reason
+to read it in one place rather than once per area.
+
+The consultant `refine.mjs --step consult` spawns is not one of these four — it is never rendered
+through `brief.mjs`, has no entry in `reference/roles/` and no row in `ROLE_LAW`, and is spawned
+straight off disk by `refine.mjs` itself (see `refine.mjs` below). It is still held to framing's
+checklist, spliced into its own brief directly by that file, using `disciplineSection`/
+`demoteHeadings` exported from here for exactly that.
+
 ## node.mjs — nodes and the graph
 
 The only tool that speaks to the graph, and it speaks to it only through the Yggdrasil CLI's own
@@ -377,8 +397,8 @@ effective status and the channel it arrives by, plus, for a file, the component 
 `yg impact --node <path> --json` (`yg-impact/1` — who consumes each port, and what depends on the
 node). Nothing here parses a file the layer below owns. A CLI that cannot be started, and one that
 answers those calls with anything but the document, are both refusals that name what to do —
-install the CLI, point `config.ygCommand` at a build, or upgrade past 5.8.0, which is the release
-those documents arrived after. There is no second graph and no manual mode to fall back to.
+install the CLI, point `config.ygCommand` at a build, or upgrade to the same 6.x line as this
+release of Horde. There is no second graph and no manual mode to fall back to.
 
 The one thing read off disk is the list of node ids: the directory names under `.yggdrasil/model/`,
 which is what node identity IS in all three layers. Every fact about a node still comes from the
@@ -393,31 +413,33 @@ several users.
 
 - `bind` (no node) — verifies the graph is readable **through the CLI** (it asks the documents about
   a real node, so "readable" is not merely "a directory exists") and lists nodes.
-  `bind <node> [--horde h] [--take --escalation <id>]` — node-lease-across-hordes: leases `<node>`
+  `bind <node> [--horde h] [--take --ask <id>]` — node-lease-across-hordes: leases `<node>`
   to this horde in `.horde/leases.json` (node -> `{horde, since}`, shared across every horde on the
   repository, not per-horde). Binding a node this horde already holds is a no-op (`status: held`).
   Binding a free node claims it (`status: claimed`). Binding a node a *live* other horde holds
   refuses, naming that horde and its last activity, and names the take-over command; `--take`
-  overrides the refusal but only with `--escalation <id>` naming an escalation on this horde that
-  has actually been **ruled** (`escalate.mjs rule`) — a missing or unruled id is refused just like
-  no `--take` (`status: taken` on success, with `from` and `escalation` in the result). A take-over
+  overrides the refusal but only with `--ask <id>` naming an **answered** ask on this horde
+  (`ask.mjs`) — a missing or unanswered id is refused just like
+  no `--take` (`status: taken` on success, with `from` and `ask` in the result). A take-over
   is written to the node's own log (`yg log add --reason`, run for real, not merely printed) as well
   as to `leases.json`'s own append-only history; `logged` in the result says whether the node log
   write happened (it is skipped, never refused, when the node's own graph object doesn't exist yet
   to log against). `horde.mjs archive` is the only place a lease is released outright.
-- `map [--horde h]` — the mission's nodes with owner, the ports each publishes (by name), and
-  how many port proposals are open on it. There is no currency stamp: the lock binds every verdict
+- `map [--horde h]` — the mission's nodes with the ports each publishes (by name) and how many port
+  proposals are open on it. The `owner` column is read from a pre-migration mission's `roster.json`
+  only — nothing writes one any more, so a fresh mission always reads `-` there. There is no
+  currency stamp: the lock binds every verdict
   to the hash of the code it judged, so `yg check` is the one answer to "is this current", and a
   second one kept here could only disagree.
-- `show <node>` — boundary, **the rules in force on the node**, its ports, charter, last log entries.
-  The rules come from `yg context --node <n> --json`: every aspect the graph attaches to this node
+- `show <node>` — boundary, **the rules in force on the node**, its ports, last log entries. There is
+  no node charter any more (removed with the seat cassation) — a node's rules, ports and log are the
+  whole of what it carries. The rules come from `yg context --node <n> --json`: every aspect the graph
+  attaches to this node
   through any channel, each with the status word that says what a refusal costs (`enforced` blocks a
-  merge, `advisory` warns, `draft` is inert) and the channel it arrives by. The node charter's own
-  "Rules inherited from above" section, when it has one, is reproduced under them.
-- `charter edit <node>` (opens from template if missing; the caller writes the content via stdin),
-  `log <node> "…" [--run]` (prints the `yg log add` command; `--run` runs it).
+  merge, `advisory` warns, `draft` is inert) and the channel it arrives by.
+- `log <node> "…" [--run]` (prints the `yg log add` command; `--run` runs it).
 - **Ports are the contracts** (port-is-contract). `contract propose <node> <port> "<why>" --by
-  <owner> [--aspects a,b]` proposes adding a port, or changing one the node already publishes —
+  <name> [--aspects a,b]` proposes adding a port, or changing one the node already publishes —
   there is no version, in the graph or in Horde, so a port is referenced by name alone. The result
   names every node that already consumes it. `contracts [--pending] [--node n]` lists the ports
   the mission's nodes declare — name, description, consumers — read from `yg-node/1`, plus this
@@ -433,7 +455,7 @@ several users.
   would call a script rule a prose one on any tree where the free run had not happened and send a
   verifier off to judge what a command answers for nothing. Script rules still without a verdict are
   reported separately, with the free command that settles them.
-- `propose <kind> "…" --by <owner>` (kinds: new-node, move-boundary, rename, rule), `proposals
+- `propose <kind> "…" --by <name>` (kinds: new-node, move-boundary, rename, rule), `proposals
   [--open]`, `approve|veto <id> ["why"] --by architect`, `apply <id>`. Approval and apply record;
   filing into the graph is the architect's own `yg` calls, and `apply` prints the exact edit.
 - **The status ladder** (ruling quality-always-authorised). A rule goes draft → advisory → enforced,
@@ -529,26 +551,51 @@ before this. A `graph.json` from before the shared counter — where a port and 
 themselves "1" — is read exactly as it stands, and every number issued from then on clears the highest
 of both old sequences.
 
-## escalate.mjs — the channel up
+## ask.mjs — the one channel to the client
 
-`add "<why>" --kind charter|contract|claim|conflict|boundary|cost|unverifiable|rules|quality
-[--ticket NNN] [--by architect]`
-(`quality` is the one kind nobody files by hand — `wave.mjs close` opens it when the wave's
-quality index came out lower than the wave before it), `list [--open]`, `show <id>`, `rule <id>
-"<ruling>" [--by <name>] [--to-user]` (records the ruling as a decision, slug `esc-<id>`;
-`--to-user` marks it as forwarded to the chairman and leaves it open until `rule` is called again
-with the answer).
+Everything that used to travel as an escalation or a dissent goes down one channel now, and only
+four kinds travel down it: `stop` (a worker ran out of spec and wrote down the question instead of
+guessing — the ticket stays put), `stuck` (`tick.mjs` filed this one, not an agent — a ticket
+exhausted its fix rounds), `lower` (a request to weaken a rule: demote, an added `yg-suppress`
+marker, a moved `review_by`, an aspect detached from a node — requires `--aspect`), and `charter`
+(a mission-card change: the goal, an exclusion, an evidence-catalogue row).
 
-`recurring [--min <n>]` — the ruled escalations grouped by kind and by the node their ticket
-names (an escalation carries no node of its own; one with no ticket, or a ticket naming no node,
-groups under `(no node)`). A group of `<n>` (default 3, minimum 2) or more is an answer this
-horde keeps giving by hand, and the third time is not another decision — it is a rule. Each such
-group prints as a proposal: its rulings as evidence, one line of rule text quoting the latest of
-them, and the steps that file it — where the group has a node, filing the rule itself (an
-architect's own edit — this tool makes no graph object), then `<config.ygCommand> aspects log add
---aspect <id> --reason "…"`, since a rule's own reasoning belongs in its own log once it
-exists, not the node's; `decide.mjs add` where the group has no node to hang a rule on at all. It
-prints those steps and never runs them: filing a rule is the architect's move.
+- `add "<why>" --kind stop|stuck|lower|charter [--ticket NNN] [--territory t] [--aspect a] [--horde h]`
+  — `--aspect` is required for `lower` and refused for the other three kinds.
+- `list [--open]` — open first, newest first.
+- `show <id>`.
+- `answer <id> "<answer>" [--scope once|mission] [--horde h]` — the one place the client's word gets
+  recorded: it appends the answer to `decisions.md` (slug `ask-<id>`) **before** marking the item
+  answered, so a decision that failed to record — a duplicate slug, a read-only file — never leaves an
+  item silently closed with nothing durable behind it. `--scope` is accepted only for kind `lower`:
+  `once` (the default) spends the grant on the landing that uses it; `mission` stands until
+  `horde.mjs done`. `land.mjs`'s law guard reads this answer, not the raw item, to decide whether a
+  branch that weakens a rule may land; a `stuck` ticket returns to the queue or closes as not-done only
+  through an answer here.
+
+State: `hordes/<horde>/asks.json` (source of truth) + `asks.md` (rendered).
+
+## escalate.mjs — the recurring-answer scan
+
+Everything else the old escalation channel did — a build decision (a contract, a boundary, a
+conflict between two tickets), ruled and routed by hand — is gone with the roles that filed it: that
+is the director's own call now, recorded with `decide.mjs add`. What is left here is the one thing
+worth automating: noticing that the client keeps being asked, and answering, the same question. This
+is the second of the three triggers for legislation (the first is the consultant during `refine.mjs`,
+the third is `legislate.mjs` after a wave close). No state of its own — it reads `ask.mjs`'s own
+`asks.json` and only ever proposes, never files: filing a rule is the territory's own agent's move.
+
+`recurring [--min <n>]` — the **answered** asks (`ask.mjs`) grouped by kind and by territory (an ask
+with no territory groups under `(no territory)`). A group of `<n>` (default 3, minimum 2) or more is
+an answer this horde keeps giving the client by hand, and the third time is not another answer — it is
+a rule. Each such group prints as a proposal: the answers as evidence, one line of rule text quoting
+the latest of them, and the steps that file it — where the group has a territory, filing the rule
+itself (`.yggdrasil/aspects/<id>/yg-aspect.yaml`, attached to that territory's node — an edit this
+tool makes no graph object for), then `<config.ygCommand> aspects log add --aspect <id> --reason "…"`,
+since a rule's own reasoning belongs in its own log once it exists, not the node's; `decide.mjs add`
+where the group has no territory to hang a rule on at all. It
+prints those steps and never runs them — the agent that works that territory does the filing, in its
+own branch, and raises the rule on its own evidence with `node.mjs promote`.
 
 ## decide.mjs — rulings and lessons
 
@@ -878,7 +925,7 @@ anything.
 tickets as they now stand — `state` is how it tells a current retrospective from one taken before the
 last thing landed.
 
-## tick.mjs — the steward, as one run
+## tick.mjs — the loop, as one run
 
 `tick [--runner session|teammate|external] [--watch] [--stack] [--tree p] [--horde h]`. Four things
 in order, then it exits — nothing lives between runs, so there is no roster, no liveness threshold

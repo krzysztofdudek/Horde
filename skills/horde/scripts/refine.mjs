@@ -41,6 +41,7 @@ import {
   parseEvidenceRows, EVIDENCE_SECTION, catalogueCut, upsertCharterSection,
 } from './wave.mjs';
 import { detectEvidenceLayer, renderEvidenceJudgement, PROMISES_OFFER } from './horde.mjs';
+import { disciplineSection, demoteHeadings } from './brief.mjs';
 
 const STEPS = ['cut', 'consult', 'review', 'frame'];
 
@@ -459,6 +460,7 @@ function consultBrief(horde, root, cfg, info, charter, territory) {
     '',
     ...CONSULT_QUESTIONS.map((q, i) => `${i + 1}. ${q}`),
     '',
+    ...consultLawSection(),
     '## How you answer',
     '',
     'Not in prose. Nothing you write back in a message is read. You answer by writing two kinds of thing:',
@@ -495,6 +497,32 @@ function consultBrief(horde, root, cfg, info, charter, territory) {
     'the whole of what you may say about anywhere else.',
   );
   return lines.join('\n');
+}
+
+// The consultant is held to the same checklist the architect rules the whole plan by — filing a
+// ticket is framing a piece of work. Spliced in directly, rather than through brief.mjs's own
+// ROLE_LAW table: the consultant is spawned straight off disk by this file, never rendered by
+// brief.mjs, so it has no entry there to carry a discipline in.
+function consultLawSection() {
+  const file = join(here0(), '..', 'reference', 'discipline', 'framing.md');
+  const text = readText(file);
+  if (text === null) {
+    fail(`the framing discipline is missing at ${file} — the consultant's own checklist lives there and this step will not invent it`);
+  }
+  const titleMatch = /^#\s+(.+)$/m.exec(text);
+  const title = titleMatch ? titleMatch[1].trim() : 'Framing';
+  const section = demoteHeadings(disciplineSection(text, 'Checklist', 'framing.md'));
+  return [
+    '## Law',
+    '',
+    'You are held to the same checklist the architect rules the whole plan by — filing a ticket is',
+    'framing a piece of work, and nothing you write back is a good answer if it fails this reading:',
+    '',
+    `### ${title} — Checklist`,
+    '',
+    section,
+    '',
+  ];
 }
 
 // What a consultant is told about proof before it writes a single evidence row. The judgement

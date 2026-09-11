@@ -1,5 +1,5 @@
 // One end-to-end pass through a whole mini-wave, driven through the CLIs exactly as
-// reference/topology.md describes it — not through any tool's internals. Every step asserts the
+// reference/model.md describes it — not through any tool's internals. Every step asserts the
 // state the tools are supposed to leave on disk or in git, not just an exit code.
 //
 // task 014 ("seat cassation") removed the deleted roster tool, the deleted dissent tool and the deleted verify tool outright, along with
@@ -197,7 +197,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
   // still be driven and verified for real despite the gap above; the merge itself happens in the
   // trunk steward's own worktree (created straight from git in step 3a) — merging a ticket
   // branch into your own team branch from inside that team's own worktree is exactly what a
-  // steward does, not a violation of topology.md's "never check out another branch in your own
+  // steward does, not a violation of model.md's "never check out another branch in your own
   // worktree" rule, which is about checking out something else, not merging into what's already
   // checked out.
   let mergeSha;

@@ -328,6 +328,17 @@ test('refine.mjs --step consult: one spawn per territory, each seeing only its o
     assert.match(front, /node\.mjs propose rule/);
   });
 
+  await t.test('every consultant brief carries the framing checklist under ## Law, headings demoted like the other roles', () => {
+    for (const spawn of r.json.spawns) {
+      assert.match(spawn.brief, /## Law/, `${spawn.territory} is missing a Law section`);
+      assert.match(spawn.brief, /### Framing before anything runs — Checklist/);
+      assert.match(spawn.brief, /Approve unless a gap would produce the wrong plan\./);
+      // demoted like every other role's law section: no bare "## " left from the source file's
+      // own sub-headings once they have been folded under this brief's "## Law".
+      assert.doesNotMatch(spawn.brief, /^## Checklist$/m);
+    }
+  });
+
   await t.test('without a Grain CLI the brief still renders, and says what is missing', () => {
     const front = r.json.spawns.find((s) => s.territory === 'the front door').brief;
     assert.match(front, /no Grain CLI is configured/);

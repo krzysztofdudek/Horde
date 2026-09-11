@@ -3,7 +3,7 @@
 //
 // The wave journal: an append-only log of starts, notes, merges, key transfers and closes. The
 // mission's own wave cadence lives at hordes/<horde>/plan.md — matching the tree in
-// reference/topology.md, which lists plan.md once, at the horde root.
+// reference/model.md, which lists plan.md once, at the horde root.
 //
 // The close is where the journal stops being a record and becomes a report: it reads its own
 // bullets back — what the wave planned, what it merged and when, whose keys travelled — and
