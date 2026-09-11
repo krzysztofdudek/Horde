@@ -411,6 +411,15 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
     assert.match(plan, /# Mission complete/);
     assert.match(plan, /Evidence catalogue:\*\* 1\/1 green/);
     assert.match(plan, /Ready to push: `mission1\/trunk`/);
+
+    // The last word on what this mission did to the law, taken at the trunk it is handing over.
+    assert.ok(r.json.law && r.json.law.path, 'done reports where the law document is');
+    const law = JSON.parse(readFileSync(r.json.law.path, 'utf8'));
+    assert.equal(law.schema, 'horde-law/1');
+    assert.equal(law.horde, 'mission1');
+    for (const section of ['added', 'raised', 'attached']) {
+      assert.ok(Array.isArray(law[section]), `${section} is a list, empty or not`);
+    }
   });
 
   await t.test('status.mjs now shows the row as reproduced', () => {

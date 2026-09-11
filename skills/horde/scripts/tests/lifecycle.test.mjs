@@ -110,7 +110,11 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     ], dir);
     assert.equal(ticket.code, 0, ticket.stderr);
     ticketId = ticket.json.id;
-    assert.equal(ticketId, '001');
+    // One counter for the whole mission: the port proposal in step 2 took 001, so the first
+    // ticket is 002. A ticket and a graph item never wear the same number any more, which is what
+    // makes an id on its own an unambiguous question.
+    assert.equal(ticketId, '002');
+    assert.equal(ticket.json.ref, 't-002', 'a ticket reads with its kind on it');
 
     const queued = run('queue.mjs', ['add', ticketId], dir);
     assert.equal(queued.code, 0, queued.stderr);
@@ -129,16 +133,16 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
 
     const running = run('queue.mjs', ['set', ticketId, 'running', '--agent', workerName], dir);
     assert.equal(running.code, 0, running.stderr);
-    assert.equal(running.json.branch, 'pilot/t-001');
-    assert.ok(running.json.worktree.endsWith(join('worktrees', 'pilot', 't-001')));
-    assert.match(git(['branch', '--list', 'pilot/t-001'], dir), /pilot\/t-001/);
+    assert.equal(running.json.branch, `pilot/t-${ticketId}`);
+    assert.ok(running.json.worktree.endsWith(join('worktrees', 'pilot', `t-${ticketId}`)));
+    assert.match(git(['branch', '--list', `pilot/t-${ticketId}`], dir), new RegExp(`pilot/t-${ticketId}`));
     worktreePath = running.json.worktree;
     assert.equal(existsSync(worktreePath), true);
 
     const workerBrief = run('brief.mjs', ['worker', ticketId, '--name', workerName], dir);
     assert.equal(workerBrief.code, 0, workerBrief.stderr);
     assert.doesNotMatch(workerBrief.json.brief, /\{\{/);
-    assert.match(workerBrief.json.brief, /worktree is `.*t-001`/);
+    assert.match(workerBrief.json.brief, new RegExp(`worktree is \`.*t-${ticketId}\``));
   });
 
   let landedSha;
@@ -155,7 +159,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     ].join('\n'));
     git(['add', join('src', 'model', 'hook.mjs'), join('tests', 'hook.test.mjs')], worktreePath);
     git(['commit', '-qm', 'extract the hook'], worktreePath);
-    landedSha = git(['rev-parse', '--short', 'pilot/t-001'], dir);
+    landedSha = git(['rev-parse', '--short', `pilot/t-${ticketId}`], dir);
 
     const tkLog = run('tk.mjs', ['log', ticketId, `landed ${landedSha}`], dir);
     assert.equal(tkLog.code, 0, tkLog.stderr);
@@ -180,7 +184,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     //
     // "--level team" is refused now (task 014) — omitting --level still defaults to the team
     // gate, so it is simply dropped. "keys" is gone from the checklist entirely.
-    const gate = run('land.mjs', ['pilot/t-001', '--no-gate'], dir);
+    const gate = run('land.mjs', [`pilot/t-${ticketId}`, '--no-gate'], dir);
     const byName = Object.fromEntries(gate.json.checks.map((c) => [c.name, c]));
     for (const name of ['base freshness', 'scope', 'gate', 'journal', 'revert test']) {
       assert.equal(byName[name].ok, true, `${name}: ${byName[name].note}`);
@@ -198,14 +202,14 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
   // checked out.
   let mergeSha;
   await t.test('8c. a real merge into trunk, then queue set merged', () => {
-    git(['merge', '--no-ff', 'pilot/t-001', '-m', 'merge ticket 001'], stewardWorktree);
+    git(['merge', '--no-ff', `pilot/t-${ticketId}`, '-m', `merge ticket ${ticketId}`], stewardWorktree);
     mergeSha = git(['rev-parse', '--short', 'HEAD'], stewardWorktree);
 
     const merged = run('queue.mjs', ['set', ticketId, 'merged', '--sha', mergeSha], dir);
     assert.equal(merged.code, 0, merged.stderr);
     assert.equal(merged.json.worktree, null);
     assert.equal(existsSync(worktreePath), false);
-    assert.equal(git(['branch', '--list', 'pilot/t-001'], dir), '');
+    assert.equal(git(['branch', '--list', `pilot/t-${ticketId}`], dir), '');
   });
 
   await t.test('9. wave journal, ticket status, wave close, cost, status', () => {
@@ -247,7 +251,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     const ticket2 = run('tk.mjs', ['new', 'second-thing', '--title', 'A second thing', '--node', 'model', '--class', 'sonnet', '--evidence', 'it works'], dir);
     assert.equal(ticket2.code, 0, ticket2.stderr);
     const ticket2Id = ticket2.json.id;
-    assert.equal(ticket2Id, '002');
+    assert.equal(ticket2Id, '003', 'the shared counter has issued 001 (the port proposal) and 002 (the first ticket)');
     run('queue.mjs', ['add', ticket2Id], dir);
     const running2 = run('queue.mjs', ['set', ticket2Id, 'running', '--agent', workerName], dir);
     assert.equal(running2.code, 0, running2.stderr);

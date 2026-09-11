@@ -108,12 +108,13 @@ prove, what the rules gain. Their "go" is the only approval in the whole run, an
 once, at the start — a request of one territory and one ticket says exactly that, and needs no more
 ceremony than a request of ten.
 
-## Staffing and planning — for now, two roles
+## Staffing and planning — for now, two seats
 
-Interim shape: **worker** and **architect** are the only two seats, plus the one-shot **consultant**
-`refine.mjs` briefs per territory. Steward, owner, verifier, auditor and counsel do not exist right
-now — they are being rebuilt one at a time (`legislate` and `retro` land in later releases) rather
-than kept alive behind a flag. Until then, you (the director, this top-level session) do the staffing
+Interim shape: **worker** and **architect** are the only two seats, plus two one-shots — the
+**consultant** `refine.mjs` briefs per territory, and **legislate**, one pass over one territory that
+writes down the rules that territory's own work has been following by hand. Steward, owner, verifier,
+auditor and counsel do not exist right now — they are being rebuilt one at a time (`retro` lands in a
+later release) rather than kept alive behind a flag. Until then, you (the director, this top-level session) do the staffing
 and planning work directly, through `tk.mjs`/`queue.mjs`, rather than through an owner's proposal.
 
 - Spawn the **architect** as your teammate (Opus, cross-cutting, no node of its own;
@@ -128,6 +129,11 @@ and planning work directly, through `tk.mjs`/`queue.mjs`, rather than through an
 - Spawn a **worker** per ticket as your subagent (`brief.mjs worker NNN`), one ticket each. A
   worker that needs another round after `tk.mjs status NNN changes` is resumed the same way, or
   replaced one class up past `config.fixRounds`.
+- Spawn **legislate** as a one-shot per territory (`brief.mjs legislate <territory>`) after a wave
+  closes, or whenever a worker's ticket log flags a pattern nothing enforces. It reads what its own
+  territory's landings were refused for and writes the rule down, in its own branch, raising it on
+  evidence with `node.mjs promote`. Adding a rule needs nobody's permission; taking one away or making
+  it bite less is the chairman's alone, and the landing gate refuses a branch that tries.
 - Nobody merges by hand. `land.mjs <ticket>` is the last command of a ticket: nine checks, and on
   green it makes the merge commit itself, removes the branch and its worktree, and records the
   landed sha. On red it refuses, puts the ticket back on `changes` with the gate's own words, and
@@ -230,7 +236,8 @@ own text names the row — a promise made to the chairman does not quietly disap
   flows, invariants. Read once per session.
 - `reference/topology.md` — branches, worktrees, the `.horde/` tree, gates per level, liveness.
 - `reference/roles/*.md` — the briefs each role is spawned with (the `brief.mjs` tool renders them
-  with the charter, the node context and the ticket filled in).
+  with the charter, the node context and the ticket filled in). `legislate` is the one-shot that
+  writes one territory's law down: nobody needs permission to add a rule, only to take one away.
 - `reference/discipline/*.md` — the law each role is held to, written once and rendered into the
   briefs that carry it: tests that can fail, finding the cause before the fix, evidence before the
   claim, findings with a severity, framing before anything runs. `scripts/drill.mjs` drills four of

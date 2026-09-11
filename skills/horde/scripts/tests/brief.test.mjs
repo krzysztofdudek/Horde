@@ -2,10 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode,
 } from './helpers.mjs';
+
+const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 function writeRoster(dir, horde, entries) {
   const path = join(dir, '.horde', 'hordes', horde, 'roster.json');
@@ -272,4 +275,106 @@ test('brief.mjs worker: carries the worktree\'s absolute path, never a sentence 
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.json.brief.includes(absoluteWorktree), true);
   assert.doesNotMatch(r.json.brief, /enter the repository/i);
+});
+
+// ---- legislate: the fourth role, and the one that writes law -----------------------------------
+//
+// A pass over ONE territory. Everything in its brief is scoped to that territory: another area's
+// refusals would propose another area's rules, which is the law-written-by-somebody-who-does-not-
+// work-here this role exists to replace.
+
+function seedTerritories(dir, horde, territories) {
+  writeFileSync(join(dir, '.horde', 'hordes', horde, 'territories.json'), `${JSON.stringify(territories, null, 2)}\n`);
+}
+
+function seedLandResult(dir, horde, ticket, checks) {
+  const landDir = join(dir, '.horde', 'hordes', horde, 'land');
+  mkdirSync(landDir, { recursive: true });
+  writeFileSync(join(landDir, `${ticket}.json`), `${JSON.stringify({ ticket, checks }, null, 2)}\n`);
+}
+
+test('brief.mjs legislate: one territory\'s own law, and nothing from anyone else\'s', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
+  seedNode(dir, 'nodeB', ['src/b/**']);
+  seedTerritories(dir, 'mission1', {
+    heart: { nodes: ['nodeA'], class: 'sonnet', why: 'the middle of it' },
+    edge: { nodes: ['nodeB'], class: 'sonnet', why: 'the outside' },
+  });
+  seedTicket(dir, 'mission1', 'trunk', '001', { title: 'Inside the heart', node: 'nodeA', branch: 'mission1/t-001' });
+  seedTicket(dir, 'mission1', 'trunk', '002', { title: 'Out on the edge', node: 'nodeB', branch: 'mission1/t-002' });
+  seedLandResult(dir, 'mission1', '001', [
+    { name: 'graph', ok: false, note: 'no-marker refused src/a/one.mjs' },
+    { name: 'tests', ok: true, note: 'green' },
+  ]);
+  seedLandResult(dir, 'mission1', '002', [
+    { name: 'graph', ok: false, note: 'tidy-exports refused src/b/two.mjs' },
+  ]);
+
+  let brief;
+  await t.test('it renders, and never leaks an unfilled placeholder', () => {
+    const r = run('brief.mjs', ['legislate', 'heart', '--name', 'mission1-legislate-heart-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    brief = r.json.brief;
+    assert.doesNotMatch(brief, /\{\{/, 'a brief is never printed with a placeholder left in it');
+    assert.equal(r.json.territory, 'heart');
+    assert.deepEqual(r.json.nodes, ['nodeA']);
+    assert.deepEqual(r.json.tickets, ['001']);
+  });
+
+  await t.test('it carries this territory\'s gate refusals, and not the other\'s', () => {
+    assert.match(brief, /ticket 001 · graph — no-marker refused src\/a\/one\.mjs/);
+    assert.doesNotMatch(brief, /tidy-exports refused/, 'the edge territory\'s refusal is the edge territory\'s business');
+    assert.doesNotMatch(brief, /tests — green/, 'a check that passed is not a refusal');
+  });
+
+  await t.test('it carries no ticket outside its territory', () => {
+    assert.match(brief, /Inside the heart/);
+    assert.doesNotMatch(brief, /002/, 'a ticket on another territory\'s component is not this pass\'s evidence');
+    assert.doesNotMatch(brief, /Out on the edge/);
+  });
+
+  await t.test('it says which branch its edits land on, and that lowering is never its move', () => {
+    assert.match(brief, /mission1\/legislate-heart/);
+    assert.match(brief, /Taking a rule away, or making it\s+bite less, is the opposite direction and is never yours/);
+    assert.match(brief, /node\.mjs promote <rule> --by heart/);
+    assert.match(brief, /\*\*2\*\* closed waves reaching nothing/, 'config.law.retireAfterWaves, at its default');
+  });
+
+  await t.test('it carries the framing checklist under ## Law, like the architect', () => {
+    assert.match(brief, /## Law/);
+  });
+
+  await t.test('without a territory it refuses, and an unknown one names the cut', () => {
+    const none = run('brief.mjs', ['legislate', '--name', 'mission1-legislate-1'], dir);
+    assert.equal(none.code, 1);
+    assert.match(none.stderr, /legislate requires <territory>/);
+
+    const wrong = run('brief.mjs', ['legislate', 'nowhere', '--name', 'mission1-legislate-1'], dir);
+    assert.equal(wrong.code, 1);
+    assert.match(wrong.stderr, /no such territory: nowhere/);
+    assert.match(wrong.stderr, /edge, heart/);
+  });
+});
+
+test('brief.mjs: a role whose template has a key nothing fills refuses, naming that key', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
+  seedTerritories(dir, 'mission1', { heart: { nodes: ['nodeA'], class: 'sonnet', why: 'the middle' } });
+
+  // The real role file, with one placeholder nothing fills added to it — the refusal under test is
+  // renderRole's, and it has to name the key rather than print "{{…}}" into an agent's prompt.
+  const rolePath = join(SCRIPTS_DIR, '..', 'reference', 'roles', 'legislate.md');
+  const original = readFileSync(rolePath, 'utf8');
+  t.after(() => writeFileSync(rolePath, original));
+  writeFileSync(rolePath, `${original}\nSomething nobody fills: {{aKeyNothingFills}}\n`);
+
+  const r = run('brief.mjs', ['legislate', 'heart', '--name', 'mission1-legislate-heart-1'], dir);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /brief for "legislate" has unfilled placeholder\(s\): aKeyNothingFills/);
+  assert.doesNotMatch(r.stdout, /\{\{/);
 });

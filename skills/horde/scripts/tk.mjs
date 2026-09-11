@@ -3,7 +3,9 @@
 //
 // Tickets, over teams/<team>/issues/NNN-slug/{issue.md,log.md}. NNN is unique across the whole
 // horde (hordes/<horde>/counter.json), not per team, so a ticket keeps one identity across a
-// `move`.
+// `move` — and that counter is shared with everything else the horde numbers, so a ticket and a
+// graph proposal can never wear the same number. A ticket reads as `t-NNN`; NNN alone is the same
+// ticket, and stays the name of its folder and of the `id:` its issue.md carries.
 //
 // The combined "**Node:** … · **Class:** … · **Severity:** … · **Team:** …" line and the
 // "**Depends on:** … · **Branch:** …" line are parsed positionally by label, stopping at the
@@ -26,6 +28,7 @@ import { join } from 'node:path';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
+  allocateId,
 } from './_lib.mjs';
 import {
   ticketBoundary, pathInBoundary, portExists,
@@ -236,6 +239,8 @@ export function transitionStatus(ticket, status, note, roundInfo) {
 
 // --- id / lookup ---------------------------------------------------------
 
+// A ticket by any of the ways it gets written: "4", "004", "t-004". The prefix is how an id reads,
+// the number is what it IS, so everything below works from the number alone.
 export function padId(idInput) {
   const n = parseInt(String(idInput).replace(/\D/g, ''), 10);
   if (Number.isNaN(n)) throw new Error(`invalid ticket id: ${idInput}`);
@@ -489,9 +494,8 @@ export function createTicket(horde, spec) {
   checkFilesInBoundary(nodes, files);
   checkConsumesHaveProducers(horde, consumes, null);
 
-  const counterPath = hordePath(horde, 'counter.json');
-  const counter = readJSON(counterPath, { next: 1 });
-  const id = padId(counter.next);
+  const allocated = allocateId(horde, 'ticket');
+  const id = allocated.number;
   const dirName = `${id}-${slugify(slug)}`;
   const dir = teamPath(horde, team, 'issues', dirName);
   if (existsSync(dir)) fail(`issue folder already exists: ${dirName}`);
@@ -522,10 +526,10 @@ export function createTicket(horde, spec) {
   const issuePath = join(dir, 'issue.md');
   writeText(issuePath, text);
   writeText(join(dir, 'log.md'), '');
-  writeJSON(counterPath, { next: counter.next + 1 });
 
   return {
     id,
+    ref: allocated.id,
     dirName,
     dir,
     issuePath,
@@ -560,6 +564,7 @@ function cmdNew(horde, positional, flags) {
   });
   emit({
     id: created.id,
+    ref: created.ref,
     dirName: created.dirName,
     team: created.team,
     kind: created.kind,
@@ -568,7 +573,7 @@ function cmdNew(horde, positional, flags) {
     consumes: created.consumes,
     produces: created.produces,
     evidence: created.evidence,
-  }, flags, () => `${created.id} created — ${created.dirName} (team ${created.team})`);
+  }, flags, () => `${created.ref} created — ${created.dirName} (team ${created.team})`);
 }
 
 function cmdList(horde, positional, flags) {

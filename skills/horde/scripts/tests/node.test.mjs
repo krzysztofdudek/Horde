@@ -514,38 +514,18 @@ test('node.mjs propose/approve/apply: the horde records the decision, the archit
     assert.match(r.stderr, /requires --node/);
   });
 
-  await t.test('--by traces that name in the roster when it is one, for both kinds of ruling', () => {
-    // the deleted roster tool (the "spawn"/"list" commands used to build and read this fixture) is deleted —
-    // task 014 removed it outright. The tracing behaviour under test belongs to node.mjs, not to
-    // the deleted roster tool, so the fixture is now just a roster.json written and read by hand, in the same
-    // shape the deleted roster tool used to leave behind.
-    const architectName = 'mission1-architect-1';
+  // The roster is gone (task 014) and `--by` is no longer traced against one: it is the name of a
+  // territory, a ticket or whoever is answering, recorded verbatim and nothing more. The seat that
+  // used to be looked up here does not exist, so neither does the lookup.
+  await t.test('--by is recorded verbatim, and no roster file is read or written', () => {
     const rosterPath = join(dir, '.horde', 'hordes', 'mission1', 'roster.json');
-    writeFileSync(rosterPath, JSON.stringify({
-      entries: [{
-        name: architectName, role: 'architect', parent: null, lastTrace: new Date().toISOString(),
-      }],
-    }, null, 2));
-    const backdate = () => {
-      const roster = JSON.parse(readFileSync(rosterPath, 'utf8'));
-      const staleAt = new Date(Date.now() - 120 * 60000).toISOString();
-      roster.entries.find((e) => e.name === architectName).lastTrace = staleAt;
-      writeFileSync(rosterPath, JSON.stringify(roster, null, 2));
-      return staleAt;
-    };
-    const traceOf = (name) => JSON.parse(readFileSync(rosterPath, 'utf8')).entries.find((e) => e.name === name);
-
-    let staleAt = backdate();
-    const p = run('node.mjs', ['propose', 'rule', 'traced proposal', '--by', 'owner1'], dir);
-    assert.equal(run('node.mjs', ['approve', p.json.id, '--by', architectName], dir).code, 0);
-    let after = traceOf(architectName);
-    assert.notEqual(after.lastTrace, staleAt);
-
-    staleAt = backdate();
-    const c = run('node.mjs', ['contract', 'propose', 'core', 'render', 'traced port', '--as', 'tests/render.test.mjs', '--by', 'owner1'], dir);
-    assert.equal(run('node.mjs', ['contract', 'approve', c.json.id, '--by', architectName], dir).code, 0);
-    after = traceOf(architectName);
-    assert.notEqual(after.lastTrace, staleAt);
+    const p = run('node.mjs', ['propose', 'rule', 'an untraced proposal', '--by', 'the-checkout-territory'], dir);
+    assert.equal(p.code, 0, p.stderr);
+    assert.equal(p.json.by, 'the-checkout-territory');
+    const ruled = run('node.mjs', ['approve', p.json.id, '--by', 'the-checkout-territory'], dir);
+    assert.equal(ruled.code, 0, ruled.stderr);
+    assert.equal(ruled.json.rulingBy, 'the-checkout-territory');
+    assert.equal(existsSync(rosterPath), false, 'nothing in this tool set reads or writes a roster any more');
   });
 });
 
@@ -715,5 +695,128 @@ test('node.mjs bind: archiving a horde releases its leases', async (t) => {
     assert.equal(r.code, 0);
     assert.equal(r.json.status, 'claimed');
     assert.equal(r.json.freedFrom, null);
+  });
+});
+
+// ---- one counter, three prefixes ---------------------------------------------------------------
+//
+// Everything the horde numbers comes out of hordes/<h>/counter.json, and wears the prefix that says
+// what kind of thing it is. Before this, tickets, ports and proposals each ran their own sequence
+// from 1, so one mission could hold three different things all called "1" and an id on its own was
+// an ambiguous question.
+
+test('the horde numbers everything from one counter, with one prefix per kind', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'core', { mapping: ['src/core/**'] });
+
+  await t.test('a ticket, a graph item and a question to the client take consecutive numbers', async () => {
+    const ticket = run('tk.mjs', ['new', 'first', '--title', 'First', '--node', 'core', '--class', 'sonnet'], dir);
+    assert.equal(ticket.code, 0, ticket.stderr);
+    assert.equal(ticket.json.ref, 't-001');
+    assert.equal(ticket.json.id, '001', 'the number on its own is still what names the folder on disk');
+
+    const proposal = run('node.mjs', ['propose', 'rule', 'never bypass the validator', '--by', 'core'], dir);
+    assert.equal(proposal.code, 0, proposal.stderr);
+    assert.equal(proposal.json.id, 'g-002');
+
+    // The client channel is the third kind. Nothing files one yet, so this asks the allocator
+    // directly — the point under test is that all three come out of the same sequence.
+    const { allocateId } = await import('../_lib.mjs');
+    const prevCwd = process.cwd();
+    process.chdir(dir);
+    let ask;
+    try { ask = allocateId('mission1', 'ask'); } finally { process.chdir(prevCwd); }
+    assert.equal(ask.id, 'a-003');
+
+    const second = run('tk.mjs', ['new', 'second', '--title', 'Second', '--node', 'core', '--class', 'sonnet'], dir);
+    assert.equal(second.json.ref, 't-004', 'the ticket sequence never restarts beside the others');
+  });
+
+  await t.test('a contract proposal is a graph item like any other, with no letter of its own', () => {
+    const port = run('node.mjs', ['contract', 'propose', 'core', 'render', 'the render promise', '--as', 'tests/render.test.mjs', '--by', 'core'], dir);
+    assert.equal(port.code, 0, port.stderr);
+    assert.match(port.json.id, /^g-\d{3}$/);
+  });
+
+  await t.test('a port proposal always carries an aspects field, empty when none was named', () => {
+    const named = run('node.mjs', ['contract', 'propose', 'core', 'guard', 'the guard promise', '--as', 'tests/guard.test.mjs', '--aspects', 'no-marker, tidy', '--by', 'core'], dir);
+    assert.equal(named.code, 0, named.stderr);
+    assert.deepEqual(named.json.aspects, ['no-marker', 'tidy']);
+
+    const bare = run('node.mjs', ['contract', 'propose', 'core', 'shape', 'the shape promise', '--as', 'tests/shape.test.mjs', '--by', 'core'], dir);
+    assert.equal(bare.code, 0, bare.stderr);
+    assert.deepEqual(bare.json.aspects, [], 'the field is written whether or not one was named — a missing field is a record Yggdrasil cannot read');
+  });
+
+  await t.test('no identifier wears a letter the model no longer has', () => {
+    const graph = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'graph.json'), 'utf8'));
+    const ids = [...graph.proposals, ...graph.ports].map((x) => x.id);
+    assert.ok(ids.length > 0);
+    for (const id of ids) {
+      assert.doesNotMatch(id, /^e-/, 'escalation folded into the client channel and has no kind of its own');
+      assert.doesNotMatch(id, /^d-/, 'dissent folded into the client channel and has no kind of its own');
+    }
+    assert.equal(new Set(ids).size, ids.length, 'no two items in one file wear the same number');
+  });
+
+  await t.test('a bare number still resolves, and says so', () => {
+    const proposal = run('node.mjs', ['propose', 'rule', 'referenced the old way', '--by', 'core'], dir);
+    const n = proposal.json.id.replace(/^g-0*/, '');
+    const ruled = run('node.mjs', ['approve', n, '--by', 'core'], dir, { json: false });
+    assert.equal(ruled.code, 0, ruled.stderr);
+    assert.match(ruled.stdout, new RegExp(`proposal ${proposal.json.id} approved`));
+    assert.match(ruled.stdout, /was read as/);
+    assert.match(ruled.stdout, /accepted for one release/);
+  });
+});
+
+test('a graph.json from before the shared counter reads without collision, and never repeats a number', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'core', { mapping: ['src/core/**'] });
+
+  // The real migration case: two independent sequences, both starting at 1, so a port and a
+  // proposal in the same file both call themselves "1".
+  const hordeDir = join(dir, '.horde', 'hordes', 'mission1');
+  writeFileSync(join(hordeDir, 'graph.json'), `${JSON.stringify({
+    proposals: [
+      { id: '1', kind: 'rule', text: 'the old proposal', by: 'owner1', status: 'open', at: '2026-01-01T00:00:00.000Z' },
+      { id: '2', kind: 'rule', text: 'another old proposal', by: 'owner1', status: 'open', at: '2026-01-01T00:00:00.000Z' },
+    ],
+    ports: [
+      { id: '1', node: 'core', port: 'render', version: 1, test: 'tests/r.test.mjs', kind: 'add', from: null, text: 'the old port', status: 'proposed', by: 'owner1', at: '2026-01-01T00:00:00.000Z' },
+    ],
+    aspects: [],
+    advisories: [],
+  }, null, 2)}\n`);
+  writeFileSync(join(hordeDir, 'counter.json'), `${JSON.stringify({ next: 1 })}\n`);
+
+  await t.test('both old sequences are still readable, each item by its own id', () => {
+    const proposals = run('node.mjs', ['proposals', '--open'], dir);
+    assert.deepEqual(proposals.json.map((p) => p.id), ['1', '2']);
+    const ports = run('node.mjs', ['contracts', '--pending'], dir);
+    assert.equal(ports.code, 0, ports.stderr);
+  });
+
+  await t.test('a new item takes a number above the highest of BOTH old sequences', () => {
+    const fresh = run('node.mjs', ['propose', 'rule', 'the first one issued by the shared counter', '--by', 'core'], dir);
+    assert.equal(fresh.code, 0, fresh.stderr);
+    assert.equal(fresh.json.id, 'g-003', 'counter.json said 1; the file already held 1 and 2, so the next free number is 3');
+
+    const ticket = run('tk.mjs', ['new', 'after-migration', '--title', 'After', '--node', 'core', '--class', 'sonnet'], dir);
+    assert.equal(ticket.json.ref, 't-004');
+
+    // The old file's own two "1"s stay exactly as they were — nothing rewrites history. What must
+    // never happen is a THIRD one: every number the shared counter issues from here clears both.
+    const graph = JSON.parse(readFileSync(join(hordeDir, 'graph.json'), 'utf8'));
+    const oldNumbers = new Set(['1', '2']);
+    const issued = [...graph.proposals, ...graph.ports].map((x) => x.id).filter((id) => id.startsWith('g-'));
+    assert.deepEqual(issued, ['g-003']);
+    for (const id of issued) {
+      assert.equal(oldNumbers.has(id.replace(/^g-0*/, '')), false, 'the migration never hands out a number the file already carries');
+    }
   });
 });

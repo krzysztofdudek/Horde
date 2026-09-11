@@ -20,9 +20,10 @@ import {
   qualityPolicyIn, QUALITY_POLICIES, resolveTree,
 } from './_lib.mjs';
 import {
-  currentWaveNumber, parseEvidenceRows, mentionsEvidenceId, wave1Started,
+  currentWaveNumber, lastWaveNumber, parseEvidenceRows, mentionsEvidenceId, wave1Started,
   stampMissionEvidence,
 } from './wave.mjs';
+import { writeLawDiff } from './law.mjs';
 import { sumEntries, readCostLimit } from './cost.mjs';
 
 const DEFAULT_CLASSES = { haiku: 1, sonnet: 3, opus: 10, fable: 30 };
@@ -38,7 +39,7 @@ commands:
       repository's own code accepted with "yg adopt". Refuses outright, before anything is
       created, when there is no graph and no Yggdrasil CLI to make one. Then: .horde/ if missing,
       hordes/<name>/ with a charter rendered from the template, an
-      empty roster and journals, teams/trunk/, and the branch <name>/trunk off <branch> (not
+      empty journals, teams/trunk/, and the branch <name>/trunk off <branch> (not
       checked out). Reads the repository's build files for its gate command and the patterns its
       tests are named with, and says what it found — or what it could not work out, and how to
       tell it. --test-globs names those patterns outright. --yg and --grain say how to invoke those
@@ -254,6 +255,14 @@ function defaultConfig(root) {
     // about the area, not about who was sent to it, and the class a territory carries decides only
     // what it costs. Over this, the cut is refused and the architect cuts finer.
     territory: { maxBytes: 400000 },
+    // Law maintenance, which belongs to whoever owns the area rather than to a seat.
+    // `retireAfterWaves` is how many closed waves a rule may reach nothing at all before the
+    // territory's own legislate pass is told it can be removed — removing a rule that judges
+    // nothing weakens nothing, so it needs no signature. `qualityDropAsk` is how far the quality
+    // index may fall in one wave before the fall becomes a question for the client rather than a
+    // line in the wave's own report. Neither is ever a cost figure: a rule is retired for not
+    // being used, never for what it costs to run.
+    law: { retireAfterWaves: 2, qualityDropAsk: 0.1 },
   };
 }
 
@@ -453,7 +462,6 @@ function cmdInit(positional, flags) {
   mkdirSync(dest, { recursive: true });
   writeFileSync(join(dest, 'charter.md'), charter);
 
-  writeJSON(join(dest, 'roster.json'), { entries: [] });
   writeText(join(dest, 'decisions.md'), '# Decisions\n\n');
   writeText(join(dest, 'plan.md'), '# Plan\n\n');
   writeJSON(join(dest, 'escalations.json'), { items: [] });
@@ -860,6 +868,12 @@ function cmdDone(positional, flags) {
   const { runs, weighted } = sumEntries(runsArr, weights);
   const limit = readCostLimit(horde);
 
+  // The last word on what this mission did to the law, taken at the trunk it is handing over —
+  // which has usually moved since the last wave closed. Written at that wave's own path, because
+  // the document measures the same two trees the close measured and is the same answer, taken
+  // later: one document per mission-and-wave, never a second copy of one reading.
+  const law = writeLawDiff(horde, cfg, String(lastWaveNumber(readText(hordePath(horde, 'plan.md')) || '')));
+
   const rendered = renderTemplate('mission-close', {
     date: today(),
     green: coverage.length,
@@ -878,10 +892,13 @@ function cmdDone(positional, flags) {
     evidence: { green: coverage.length, total: coverage.length },
     gate: { level: 'trunk', sha: trunkSha, result: 'green' },
     cost: { runs, weighted, limit },
+    law: { path: law.path, added: law.doc.added.length, raised: law.doc.raised.length, attached: law.doc.attached.length },
   };
   emit(result, flags, () => [
     `mission "${horde}" is done — evidence ${coverage.length}/${coverage.length} green, trunk gate green at ${short(trunkSha)}, `
       + `cost ${runs} runs (weighted ${weighted}).`,
+    `What the law gained over this mission — ${law.doc.added.length} rule(s) added, ${law.doc.raised.length} raised, `
+      + `${law.doc.attached.length} newly attached: ${law.path}`,
     `Push when ready: git push <remote> ${trunkBranch} — and open the pull request. That decision is the chairman's, never this tool's.`,
   ].join('\n'));
 }

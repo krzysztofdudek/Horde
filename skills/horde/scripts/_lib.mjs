@@ -364,6 +364,60 @@ export function hordePath(horde, ...parts) {
   return join(hordeRoot(), 'hordes', horde, ...parts);
 }
 
+// ---- one counter, three prefixes ---------------------------------------------------------------
+//
+// Everything the horde numbers comes out of ONE sequence, `hordes/<h>/counter.json`, and wears the
+// prefix that says what kind of thing it is: `t-` a ticket, `g-` anything the architect rules on
+// (a graph change, a port proposal, a contract proposal, a rule proposal), `a-` a question put to
+// the client. Before this there were three independent sequences, so a ticket and a port proposal
+// could both be "1" in the same mission and `show 20` was an ambiguous question. There is no `e-`
+// or `d-`: escalation and dissent folded into the client channel and have no kind of their own.
+//
+// The number is the identity and the prefix is how it is read, so an id is rendered with its
+// prefix everywhere and accepted either way — a bare number still resolves, for one release, so a
+// mission started before this keeps working.
+export const ID_PREFIXES = { ticket: 't', graph: 'g', ask: 'a' };
+
+export function counterPath(horde) {
+  return hordePath(horde, 'counter.json');
+}
+
+// "4" → "004". Three digits, the width tickets have always been written at, so all three kinds
+// sort and read alike.
+export function padNumber(n) {
+  return String(n).padStart(3, '0');
+}
+
+// The number inside an identifier, however it was written: "g-004", "004", "4", 4. Null when there
+// is no number in it at all.
+export function idNumber(id) {
+  const m = /(\d+)\s*$/.exec(String(id ?? ''));
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// allocateId(horde, kind, {floor}) — the next number in the shared sequence, as {n, number, id}.
+// `floor` is the highest number a caller already knows about from its own file: a graph.json
+// written before this change carries ids from a sequence the counter never saw, and handing out a
+// number below them would collide on the very mission this exists to keep working.
+export function allocateId(horde, kind, { floor = 0 } = {}) {
+  const prefix = ID_PREFIXES[kind];
+  if (!prefix) throw new Error(`unknown id kind: ${kind} (kinds: ${Object.keys(ID_PREFIXES).join(', ')})`);
+  const path = counterPath(horde);
+  const doc = readJSON(path, { next: 1 });
+  const declared = Number(doc && doc.next);
+  const n = Math.max(Number.isFinite(declared) && declared >= 1 ? declared : 1, Number(floor) + 1);
+  writeJSON(path, { next: n + 1 });
+  return { n, number: padNumber(n), id: `${prefix}-${padNumber(n)}` };
+}
+
+// The note a command prints when it was handed a bare number instead of a prefixed id. Null when
+// the caller wrote the prefix, so the note only ever appears where it is actually earned.
+export function migrationNote(ref, resolvedId) {
+  if (String(ref) === String(resolvedId)) return null;
+  return `("${ref}" was read as ${resolvedId} — identifiers carry their kind now; a bare number is `
+    + 'accepted for one release so a mission started before this keeps working)';
+}
+
 // ---- the quality policy (ruling quality-always-authorised) ------------------------------------
 //
 // The charter's own answer to "may the horde improve what it was not asked to improve": the

@@ -24,6 +24,7 @@ import {
   hordePath, readJSON, writeJSON, readText, writeText, readConfig, nowIso,
   fail, parseArgs, asArray, emit, isMain, resolveHorde, claimLease, qualityPolicy,
   resolveTree, assertGraphWritable, provenanceLine, withProvenance,
+  allocateId, idNumber, migrationNote,
 } from './_lib.mjs';
 
 const USAGE = `usage: node.mjs <command> [options]
@@ -45,10 +46,12 @@ commands:
       costs), the ports it publishes with version and test, last log entries.
   log <node> "<reason>" [--run] [--horde h]
       prints the "yg log add --reason" command for the node's own log; runs it too with --run.
-  contract propose <node> <port> "<text>" --as <test-path> [--version <n>] --by <owner> [--horde h]
+  contract propose <node> <port> "<text>" --as <test-path> [--version <n>] [--aspects a,b]
+      --by <owner> [--horde h]
       port-is-contract: proposes adding a port to a node, or bumping the version of one it
       already publishes. --as names the test that IS the contract. --version defaults to the
-      next version above what the node publishes today.
+      next version above what the node publishes today. --aspects names the rules the port is to
+      be held to; the filed record always carries the field, empty when none was named.
   contract approve <id> ["why"] --by <name> [--horde h]
   contract veto <id> "why" --by <name> [--horde h]
       the architect rules on a port proposal; an approved one is filed by editing the node's
@@ -67,7 +70,12 @@ commands:
   approve <id> ["why"] --by <name> [--horde h]
   veto <id> "why" --by <name> [--horde h]
   apply <proposal-id> [--horde h]
-      closes an approved graph-change proposal and prints the filing steps for the architect.
+      closes an approved graph-change proposal and prints the filing steps for whoever works
+      that area, who makes them in their own branch.
+
+Every item the architect rules on — a graph change, a port proposal, a rule proposal — reads as
+"g-NNN", out of the same counter tickets ("t-NNN") and questions to the client ("a-NNN") come from,
+so no two of them ever wear the same number. A bare number still resolves, for one release.
   ladder [--horde h]
       every rule the graph declares with the rung it sits on, how many cases it is drilled
       against, what it refuses here, the baseline it was granted against and how many closed
@@ -555,6 +563,20 @@ export function ygAspectsDoc(root, cfg) {
 // what it printed and never from its exit code.
 export function ygCheckDoc(root, cfg) {
   return ygDoc(root, cfg, ['check', '--json'], 'yg-check/1');
+}
+
+// The same two documents, read softly: `null` when the CLI could not answer, whatever the reason.
+// For a reader that is describing a situation rather than gating on one — a brief says what it
+// could see and says so plainly when it could see nothing, and a brief that refused to render
+// because a CLI was momentarily unreadable would stop a pass that has other things to read.
+export function ygCheckJson(root, cfg) {
+  const res = ygJson(root, cfg, ['check', '--json'], 'yg-check/1');
+  return res.state === 'ok' ? res.doc : null;
+}
+
+export function ygAspectsJson(root, cfg) {
+  const res = ygJson(root, cfg, ['aspects', '--json'], 'yg-aspects/1');
+  return res.state === 'ok' ? res.doc : null;
 }
 
 // What one rule refuses on this repository right now, from that document: the pairs it holds a
@@ -1054,6 +1076,11 @@ function cmdDemote(horde, root, cfg, positional, flags, info) {
 
   const evidence = `Rule "${aspect}" lowered from ${status} to ${to} by the chairman: ${why}. The horde does not lower `
     + 'a rule on its own; this one was asked for.';
+  // The rule's own history first, for the same reason a raise writes there: where a rule stands and
+  // why is the rule's own record, and a lowering is the one move nobody in the horde may make — a
+  // successor reading the rule has to find the chairman's own words there, not only on the nodes it
+  // happened to reach.
+  logToAspect(root, cfg, aspect, evidence, { status: to, evidence: why, by: 'user' });
   const { logged, missed } = logToNodes(root, cfg, nodes, evidence);
 
   const graph = loadGraph(horde);
@@ -1448,10 +1475,38 @@ function saveGraph(horde, graph) {
   writeJSON(graphJsonPath(horde), graph);
 }
 
-function nextId(items) {
+// Every item the architect rules on — a graph change, a port proposal, a contract proposal, a rule
+// proposal — is one kind, `g-`, out of the horde's one shared counter. Before this, ports and
+// proposals each ran their own sequence from 1, so the same graph.json could hold two items called
+// "1"; and neither sequence knew about tickets, so `show 20` was an ambiguous question.
+//
+// `floor` is what keeps a mission started before this working: its graph.json carries ids the
+// shared counter never issued, so the next number has to clear the highest of them as well as the
+// counter's own.
+function graphFloor(graph) {
   let max = 0;
-  for (const it of items) { const n = Number(it.id); if (Number.isFinite(n)) max = Math.max(max, n); }
-  return String(max + 1);
+  for (const it of [...graph.ports, ...graph.proposals]) {
+    const n = idNumber(it && it.id);
+    if (Number.isFinite(n)) max = Math.max(max, n);
+  }
+  return max;
+}
+
+function nextGraphId(horde, graph) {
+  return allocateId(horde, 'graph', { floor: graphFloor(graph) }).id;
+}
+
+// An item by the id it was given, however it was written: "g-004", "004" or "4". Returns the item
+// and the note to print when the caller wrote a bare number — accepted for one release, so nothing
+// filed before this stops being reachable.
+function findGraphItem(items, ref) {
+  const exact = items.find((x) => String(x.id) === String(ref));
+  if (exact) return { item: exact, note: null };
+  const n = idNumber(ref);
+  if (n === null) return { item: null, note: null };
+  const byNumber = items.filter((x) => idNumber(x.id) === n);
+  if (byNumber.length !== 1) return { item: null, note: null };
+  return { item: byNumber[0], note: migrationNote(ref, byNumber[0].id) };
 }
 
 // ---- commands ---------------------------------------------------------------
@@ -1632,6 +1687,13 @@ function cmdLog(horde, root, cfg, positional, flags, info) {
 
 // ---- port proposals ---------------------------------------------------------
 
+// `--aspects a,b` — the rules a proposed port is to be held to. Always resolved to a list, never
+// left undefined: the filed record carries the field whether or not one was named.
+function parseAspectList(v) {
+  if (v === undefined || v === null || v === false) return [];
+  return String(v).split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 function cmdContractPropose(horde, root, cfg, positional, flags) {
   const [node, port, text] = positional;
   if (!node || !port || !text) fail('contract propose requires <node> <port> "<text>"');
@@ -1649,7 +1711,7 @@ function cmdContractPropose(horde, root, cfg, positional, flags) {
 
   const graph = loadGraph(horde);
   const entry = {
-    id: nextId(graph.ports),
+    id: nextGraphId(horde, graph),
     node,
     port,
     version,
@@ -1657,6 +1719,9 @@ function cmdContractPropose(horde, root, cfg, positional, flags) {
     kind: current === null ? 'add' : 'bump',
     from: current,
     text,
+    // The rules this port is to be held to. Always written, empty when none was named: Yggdrasil
+    // validates the field and a record that simply left it out is a record it cannot read.
+    aspects: parseAspectList(flags.aspects),
     status: 'proposed',
     by: flags.by,
     at: nowIso(),
@@ -1685,9 +1750,9 @@ function cmdContractRule(horde, root, cfg, positional, flags, verdict) {
   if (!id) fail(`contract ${verdict === 'approved' ? 'approve' : 'veto'} requires <id>`);
   if (!flags.by) fail('--by is required');
   const graph = loadGraph(horde);
-  const p = graph.ports.find((x) => x.id === id);
+  const { item: p, note } = findGraphItem(graph.ports, id);
   if (!p) fail(`no such port proposal: ${id}`);
-  if (p.status !== 'proposed') fail(`port proposal ${id} is already ${p.status}`);
+  if (p.status !== 'proposed') fail(`port proposal ${p.id} is already ${p.status}`);
   p.status = verdict;
   p.ruling = why || null;
   p.rulingBy = flags.by;
@@ -1695,7 +1760,8 @@ function cmdContractRule(horde, root, cfg, positional, flags, verdict) {
   saveGraph(horde, graph);
   const steps = verdict === 'approved' ? portFilingSteps(cfg, p) : [];
   emit({ ...p, filing: steps }, flags, () => [
-    `port proposal ${id} ${verdict} — ${p.node}/${p.port}@${p.version}`,
+    `port proposal ${p.id} ${verdict} — ${p.node}/${p.port}@${p.version}`,
+    ...(note ? [note] : []),
     ...(steps.length ? ['file it into the graph yourself:', ...steps.map((s) => `  ${s}`)] : []),
   ].join('\n'));
 }
@@ -1793,7 +1859,7 @@ function cmdPropose(horde, positional, flags) {
   }
   const graph = loadGraph(horde);
   const entry = {
-    id: nextId(graph.proposals),
+    id: nextGraphId(horde, graph),
     kind,
     text,
     by: flags.by,
@@ -1822,25 +1888,25 @@ function cmdProposalRule(horde, positional, flags, verdict) {
   if (!id) fail(`${verdict === 'approved' ? 'approve' : 'veto'} requires <id>`);
   if (!flags.by) fail('--by is required');
   const graph = loadGraph(horde);
-  const p = graph.proposals.find((x) => x.id === id);
+  const { item: p, note } = findGraphItem(graph.proposals, id);
   if (!p) fail(`no such proposal: ${id}`);
-  if (p.status !== 'open') fail(`proposal ${id} is already ${p.status}`);
+  if (p.status !== 'open') fail(`proposal ${p.id} is already ${p.status}`);
   p.status = verdict;
   p.ruling = why || null;
   p.rulingBy = flags.by;
   p.ruledAt = nowIso();
   saveGraph(horde, graph);
-  emit(p, flags, () => `proposal ${id} ${verdict}`);
+  emit(p, flags, () => [`proposal ${p.id} ${verdict}`, ...(note ? [note] : [])].join('\n'));
 }
 
 function cmdApply(horde, root, cfg, positional, flags) {
   const id = positional[0];
   if (!id) fail('apply requires <proposal-id>');
   const graph = loadGraph(horde);
-  const p = graph.proposals.find((x) => x.id === id);
+  const { item: p, note } = findGraphItem(graph.proposals, id);
   if (!p) fail(`no such proposal: ${id}`);
-  if (p.status !== 'approved') fail(`proposal ${id} is not approved (status: ${p.status})`);
-  if (p.appliedAt) fail(`proposal ${id} was already applied`);
+  if (p.status !== 'approved') fail(`proposal ${p.id} is not approved (status: ${p.status})`);
+  if (p.appliedAt) fail(`proposal ${p.id} was already applied`);
 
   p.appliedAt = nowIso();
   saveGraph(horde, graph);
@@ -1849,10 +1915,11 @@ function cmdApply(horde, root, cfg, positional, flags) {
     ? `set ${p.node}'s mapping: to ${p.boundary.join(', ')} in .yggdrasil/model/${p.node}/yg-node.yaml`
     : 'edit .yggdrasil/model/**/yg-node.yaml (and yg-architecture.yaml for a new, renamed or moved node)';
   emit(
-    { id, kind: p.kind, applied: true, step },
+    { id: p.id, kind: p.kind, applied: true, step },
     flags,
-    () => `proposal ${id} closed — file it into the graph yourself: ${step}; record the why with \`${yg.display} log add\`. `
-      + 'A change to yg-architecture.yaml needs the user\'s explicit confirmation.',
+    () => `proposal ${p.id} closed — the agent working that area files it, in its own branch: ${step}; record the why with \`${yg.display} log add\`. `
+      + 'A change to yg-architecture.yaml needs the user\'s explicit confirmation.'
+      + (note ? `\n${note}` : ''),
   );
 }
 

@@ -23,7 +23,9 @@ import {
   hordePath, teamPath, readJSON, readText, readConfig, fail, parseArgs, asArray, emit,
   isMain, resolveHorde, parentBranchOf, resolveTree,
 } from './_lib.mjs';
-import { nodeExists, readNodePortsText, ticketNodes } from './node.mjs';
+import {
+  nodeExists, readNodePortsText, ticketNodes, ygCheckJson, ygAspectsJson,
+} from './node.mjs';
 
 const ROLES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'roles');
 const DISCIPLINE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'discipline');
@@ -39,7 +41,7 @@ const PLUGIN_ROOT_TOKEN = /\$\{CLAUDE_PLUGIN_ROOT(?::-[^}]*)?\}/g;
 export function absolutizePluginRoot(text, root = SKILL_ROOT) {
   return text.replace(PLUGIN_ROOT_TOKEN, root);
 }
-const ROLES = ['worker', 'architect'];
+const ROLES = ['worker', 'architect', 'legislate'];
 
 // role → the disciplines its brief carries, in order. The texts live once, under
 // reference/discipline/; a role file names its disciplines and never repeats them. An entry may
@@ -48,6 +50,9 @@ const ROLES = ['worker', 'architect'];
 const ROLE_LAW = {
   worker: ['tdd', 'debugging'],
   architect: [{ discipline: 'framing', section: 'Checklist' }],
+  // A rule is a claim about this repository, and the one discipline that decides whether a claim
+  // is worth writing down is framing's own checklist — the same part the architect is held to.
+  legislate: [{ discipline: 'framing', section: 'Checklist' }],
 };
 
 const USAGE = `usage: brief.mjs <role> [args] --name <n> [--horde h] [--json]
@@ -58,10 +63,14 @@ roles:
       --takeover renders a takeover section — a prior worker attempted this ticket N times; the
       ticket is yours; here is its log — for the fresh, one-class-up worker tk.mjs status <ticket>
       changes hands a ticket to once its resume rounds are spent.
+  legislate <territory> --name <n>
+      one pass over one territory's law: what its gate refused this wave, what its own tickets
+      recorded, and which rules reach nothing any more. Writes rules in its own branch and raises
+      them on evidence; it never lowers one.
 
 Prints the rendered brief for the Agent tool's prompt, verbatim. Refuses — listing every unfilled
 placeholder — rather than print one with "{{…}}" left in it. A role held to a discipline gets it
-inline, under "## Law": worker (tdd, debugging), architect (framing's checklist).
+inline, under "## Law": worker (tdd, debugging), architect and legislate (framing's checklist).
 
 options: --json  --help`;
 
@@ -200,8 +209,11 @@ function reportsToFor(role, horde, { team, name } = {}) {
 
 // ---- tickets (found by walking every team, since a ticket's team isn't known up front) --------
 
+// A ticket reads as `t-004` and is the same ticket as `004` or `4` — the number is the identity,
+// the prefix only says what kind of thing it is, and the folder on disk is still named NNN.
 function normalizeTicketId(id) {
-  return /^\d+$/.test(id) && id.length < 3 ? id.padStart(3, '0') : id;
+  const m = /(\d+)\s*$/.exec(String(id));
+  return m ? m[1].padStart(3, '0') : id;
 }
 
 function walkTeams(horde, visit, teamDir = hordePath(horde, 'teams'), teamName = null) {
@@ -377,6 +389,120 @@ function cmdWorker(horde, cfg, positional, flags) {
 }
 
 
+// ---- legislate: one territory's own law -------------------------------------------------------
+//
+// Everything this brief carries is scoped to the territory named, and to nothing else. A pass that
+// saw another area's refusals would propose that area's rules, which is exactly the "law written by
+// somebody who does not work here" this role replaces.
+
+function loadTerritories(horde) {
+  const doc = readJSON(hordePath(horde, 'territories.json'), null);
+  return doc && typeof doc === 'object' && !Array.isArray(doc) ? doc : {};
+}
+
+// The tickets this territory owns, anywhere in the horde: a ticket belongs to a territory when a
+// component it names is one of the territory's own.
+function ticketsOfTerritory(horde, nodes) {
+  const owned = new Set(nodes);
+  const out = [];
+  walkTeams(horde, (teamName, teamDir) => {
+    const issuesDir = join(teamDir, 'issues');
+    if (!existsSync(issuesDir)) return;
+    for (const e of readdirSync(issuesDir, { withFileTypes: true })) {
+      if (!e.isDirectory()) continue;
+      const issueText = readText(join(issuesDir, e.name, 'issue.md')) || '';
+      if (!ticketNodes(issueText).some((n) => owned.has(n))) continue;
+      out.push({
+        id: e.name.split('-')[0],
+        team: teamName,
+        title: ticketTitle(issueText) || '(untitled)',
+        log: readText(join(issuesDir, e.name, 'log.md')) || '',
+      });
+    }
+  });
+  return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// What the landing gate refused, from the result files `land --result` leaves behind — one per
+// ticket, each carrying the checks that ran and the note each wrote. Only this territory's tickets,
+// and only the checks that said no.
+function gateRefusalsFor(horde, tickets) {
+  const lines = [];
+  for (const t of tickets) {
+    const doc = readJSON(hordePath(horde, 'land', `${t.id}.json`), null);
+    for (const c of asArray(doc && doc.checks)) {
+      if (!c || c.ok) continue;
+      lines.push(`- ticket ${t.id} · ${c.name} — ${c.note}`);
+    }
+  }
+  return lines.length ? lines.join('\n') : '(nothing this wave — the gate refused none of this territory\'s landings)';
+}
+
+// Rules that judge nothing here. Read from the gate's own per-pair report, which is the graph's
+// answer to "what does this rule reach" and costs one keyless call.
+function deadRulesFor(root, cfg) {
+  const doc = ygCheckJson(root, cfg);
+  if (!doc) return '(not measured — the Yggdrasil CLI could not be read from here)';
+  const reached = new Set(asArray(doc.pairs).map((p) => p && p.aspect).filter(Boolean));
+  const aspects = ygAspectsJson(root, cfg);
+  if (!aspects) return '(not measured — the Yggdrasil CLI could not be read from here)';
+  const dead = asArray(aspects.aspects).filter((a) => a && a.id && !reached.has(a.id));
+  if (dead.length === 0) return '(none — every rule the graph declares reaches something here)';
+  return dead.map((a) => `- **${a.id}** [${a.status}] — ${a.description || 'no description'}`).join('\n');
+}
+
+function ticketLogFor(tickets) {
+  if (tickets.length === 0) return '(this territory has no tickets yet)';
+  return tickets.map((t) => {
+    const body = t.log.trim() || '(no log)';
+    return [`- **${t.id} · ${t.title}**`, '', '  ```', ...body.split('\n').map((l) => `  ${l}`), '  ```'].join('\n');
+  }).join('\n\n');
+}
+
+function cmdLegislate(horde, cfg, positional, flags) {
+  const territory = positional[0];
+  if (!territory) fail('legislate requires <territory> — a pass over "the whole repository" is exactly the law nobody who works here wrote');
+  const name = requireName(flags);
+  const territories = loadTerritories(horde);
+  const known = Object.keys(territories).sort();
+  const entry = territories[territory];
+  if (!entry) {
+    fail(`no such territory: ${territory} (this mission's cut names: ${known.join(', ') || '(none — refine.mjs --step cut writes territories.json)'})`);
+  }
+  const nodes = asArray(entry.nodes).filter(Boolean);
+  if (nodes.length === 0) fail(`territory "${territory}" names no component, so there is no area to write law for`);
+
+  const info = resolveTree({ tree: flags.tree, horde });
+  const tickets = ticketsOfTerritory(horde, nodes);
+  const law = (cfg && cfg.law) || {};
+  const vars = {
+    repoRoot: info.path,
+    name,
+    horde,
+    territory,
+    nodes: nodes.join(', '),
+    branch: `${horde}/legislate-${territory}`,
+    charterPath: charterPath(info.path, horde),
+    reportsTo: reportsToFor('legislate', horde, { name }),
+    gateRefusals: gateRefusalsFor(horde, tickets),
+    ticketLog: ticketLogFor(tickets),
+    deadRules: deadRulesFor(info.path, cfg),
+    retireAfterWaves: law.retireAfterWaves === undefined ? 2 : law.retireAfterWaves,
+  };
+  const brief = renderRole('legislate', vars);
+  emit({
+    role: 'legislate',
+    territory,
+    nodes,
+    name,
+    tickets: tickets.map((t) => t.id),
+    brief,
+    tree: info.path,
+    branch: info.branch,
+    sha: info.sha,
+  }, flags, () => brief);
+}
+
 // ---- main -----------------------------------------------------------------------
 
 function main() {
@@ -393,6 +519,7 @@ function main() {
   switch (role) {
     case 'architect': return cmdArchitect(horde, cfg, flags);
     case 'worker': return cmdWorker(horde, cfg, positional, flags);
+    case 'legislate': return cmdLegislate(horde, cfg, positional, flags);
     default: fail(`unknown role: ${role}`);
   }
 }

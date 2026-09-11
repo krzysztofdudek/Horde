@@ -142,7 +142,13 @@ test('escalate.mjs recurring: the third ruling of a kind on one node is a rule p
     assert.match(human.stdout, /contract · node checkout — 3 rulings/);
     assert.match(human.stdout, /file it: file the rule \(\.yggdrasil\/aspects\/<id>\/yg-aspect\.yaml, attached to checkout\)/);
     assert.match(human.stdout, /node \.\/vendor\/yg\.mjs aspects log add --aspect <id> --reason/);
-    assert.match(human.stdout, /The architect does that filing — this tool proposes, it never files/);
+    // After 6.0.0 there is no seat that files law: the agent working that territory writes the
+    // rule in its own branch and raises it on evidence. Nobody is asked for permission to write a
+    // rule down; permission is only ever needed to take one away.
+    assert.match(human.stdout, /The agent that works that area does the filing, in its own branch/);
+    assert.match(human.stdout, /raises the rule on its own evidence with node\.mjs promote/);
+    assert.match(human.stdout, /nobody needs a signature to write a rule down — only to take one away/);
+    assert.doesNotMatch(human.stdout, /The architect does that filing/);
   });
 
   await t.test('a ruling of the same kind on another node is another question, not a fourth answer', () => {

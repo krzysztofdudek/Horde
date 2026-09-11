@@ -42,8 +42,8 @@ commands:
       <n> (default 3) or more is an answer this horde keeps giving by hand, so it prints the
       rule proposal: the rulings as evidence, one line of rule text, and — where the group has a
       node — the steps that file it: create the rule in the graph, then record why in its own
-      log. It prints those steps rather than running them — filing a rule is the architect's
-      move, not this tool's.
+      log. It prints those steps rather than running them — the agent that works that area files
+      the rule, in its own branch, and raises it on evidence with node.mjs promote.
 
 options: --json  --help`;
 
@@ -229,10 +229,10 @@ function nodeOfEscalation(horde, it) {
 // answer nobody should have to give a fourth time — and once it exists, its own reasoning belongs
 // in its own log (152/153), not the node's: the node only earns a line once the rule reaches a
 // rung that changes what its code is held to, which nothing here has granted yet. So the step is
-// two: the architect names and files the rule (an edit this tool does not make), then records why
-// in its own history — through config.ygCommand, so a checkout running a local build gets its own
-// binary named. A group with no node has nowhere in the graph to go, and the horde's own decision
-// record is the honest target.
+// two: whoever works that area names and files the rule in their own branch (an edit this tool
+// does not make), then records why in its own history — through config.ygCommand, so a checkout
+// running a local build gets its own binary named. A group with no node has nowhere in the graph
+// to go, and the horde's own decision record is the honest target.
 function fileItCommand(cfg, node, rule) {
   const quoted = rule.replace(/"/g, '\\"');
   if (node !== NO_NODE) {
@@ -291,7 +291,11 @@ function cmdRecurring(horde, positional, flags) {
       lines.push(`  file it: ${g.command}`);
       lines.push('');
     }
-    lines.push('The architect does that filing — this tool proposes, it never files.');
+    lines.push(
+      'The agent that works that area does the filing, in its own branch, and raises the rule on its own '
+      + 'evidence with node.mjs promote. This tool proposes; it never files, and nobody needs a signature '
+      + 'to write a rule down — only to take one away.',
+    );
     return lines.join('\n');
   });
 }

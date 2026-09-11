@@ -31,7 +31,7 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   created empty and the result says how to name a Grain command and what that would add.
   Then: creates `.horde/` if missing (with
   `.gitignore` = `*` and a default `config.json`), `hordes/<name>/` with `charter.md` from the template,
-  empty roster, journals, `teams/trunk/`, and the branch `<name>/trunk` off `<base>` (no checkout of the
+  empty journals, `teams/trunk/`, and the branch `<name>/trunk` off `<base>` (no checkout of the
   main tree). The result also says that
   `yg check` is now part of every merge check. It also reads the repository's build files for two
   things it must not invent — the command that proves the repository still works, and the patterns
@@ -126,7 +126,9 @@ narrow it. `--json`.
 ## tk.mjs — tickets
 
 Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (counter in
-`hordes/<horde>/counter.json`).
+`hordes/<horde>/counter.json` — the one counter EVERYTHING the horde numbers comes out of, see
+"Identifiers" below). A ticket reads as `t-NNN`; NNN alone is the same ticket, and stays the name of
+its folder and of the `id:` its issue.md carries.
 - `new <slug> --title "…" --node n --class haiku|sonnet|opus [--severity high|medium|low]
   [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
   [--produces <node>/<port>@<v>,…] [--evidence "…"]… [--revert-base <ref>]` — from
@@ -340,7 +342,7 @@ guesses at an answer.
 ## brief.mjs — rendered briefs
 
 `brief.mjs <role> [args]` prints the brief for a role, filled from `reference/roles/<role>.md`:
-`architect`, `worker NNN [--takeover]`. `worker --takeover` renders a takeover section — a prior
+`architect`, `worker NNN [--takeover]`, `legislate <territory>`. `worker --takeover` renders a takeover section — a prior
 worker attempted this ticket N times, the ticket is yours, here is its log — for the fresh,
 one-class-up worker `tk.mjs status NNN changes` hands a ticket to once its resume rounds
 (`config.fixRounds`) are spent; N and the log come from the ticket's own log, the same "round
@@ -352,9 +354,18 @@ component (`node.mjs`: the ports on its border with version, test and consumers 
 must not break), the ticket (`worktree` and `branch` from the queue item), and `reportsTo` — always
 "main", the director's own session name. Refuses to render with an unfilled placeholder. After the
 role's own text it appends a `## Law` section: the disciplines that role is held to, inlined from
-`reference/discipline/` — worker (tdd, debugging), architect (framing's checklist). The texts live
-there once, so an edit to a discipline reaches every brief that carries it. Records nothing. The
-caller copies the output into the Agent tool's prompt verbatim.
+`reference/discipline/` — worker (tdd, debugging), architect and legislate (framing's checklist). The
+texts live there once, so an edit to a discipline reaches every brief that carries it. Records
+nothing. The caller copies the output into the Agent tool's prompt verbatim.
+
+`legislate <territory>` is the one-shot that writes a territory's law down. Everything in its brief is
+scoped to that territory and to nothing else: the landing gate's refusals on ITS tickets (from
+`land`'s own result files under `hordes/<horde>/land/`), those tickets' own logs, and the rules the
+graph declares that reach nothing at all here. It writes rules in its own branch, attaches them to its
+own components, and raises them on evidence with `node.mjs promote`; it never lowers one, and the
+landing gate's law guard refuses a branch that tries. The territory comes from `territories.json`
+(`refine.mjs --step cut`); without one the command refuses rather than write law for an area nobody
+named.
 
 ## node.mjs — nodes and the graph
 
@@ -468,6 +479,55 @@ merge checklist then requires — one derivation, three users.
   running a command twice in one afternoon — and it marks each raise as shown to the chairman, so no
   raise is listed twice and none falls between one wave's close and the next one's start.
 
+## law.mjs — what the mission did to the law
+
+`law.mjs diff [--wave n]` writes one `horde-law/1` document to `hordes/<horde>/law/wave-<n>.json` and
+prints its path. `wave.mjs close` and `horde.mjs done` both call it; running it by hand only looks.
+
+The two trees it compares are the ones the mission's own config names: `config.base`, the branch the
+mission was cut from, and the tip of `<horde>/trunk`. So the document is cumulative — what the law has
+gained since this mission started, asked again at every close. What one wave did on its own is
+`wave-<n>.json` minus `wave-<n-1>.json`, which needs no second mechanism to say.
+
+```
+{ schema: "horde-law/1", horde, base, trunk, at,
+  added:    [ { aspect, description, status: {from, to}, nodes: [...], why } ],
+  raised:   [ … ],
+  attached: [ … ] }
+```
+
+`added` is a rule the base does not have at all; `raised` is a rule standing higher on the trunk than
+on the base; `attached` is a rule at the same rung reaching units here it did not reach there (compared
+only over units BOTH trees have, so a file the mission added is never mistaken for a rule that grew).
+`description` is the rule's own; `nodes` are the components the gate verifies it over, read from
+`yg check --json --full`'s pairs — one call per tree, the same reading the landing gate's law guard
+takes (`yg impact --aspect` has no `--json` in any released CLI); `why` is the last entry of the rule's
+own history (`yg aspects log read --json`), `null` for a rule nothing has been recorded about.
+
+A rule that reaches nothing is in the document with `nodes: []`, not left out. A wave that did nothing
+to the law leaves a document with three empty lists, not a missing file. A document that could only be
+read off one of the two trees is not written at all: half a comparison is not a smaller answer than
+none, so a missing base branch, a CLI too old for the documents, or an unwritable `law/` is a refusal
+naming what could not be read. Writing the same wave twice replaces the document; nothing is appended
+and nothing is written into the graph.
+
+## Identifiers
+
+One counter per horde (`hordes/<horde>/counter.json`), three prefixes, no exceptions:
+
+- `t-NNN` — a ticket
+- `g-NNN` — anything the architect rules on: a graph change, a port proposal, a contract proposal, a
+  rule proposal
+- `a-NNN` — a question put to the client
+
+There is no `e-` or `d-`: escalation and dissent folded into the client channel and have no kind of
+their own. Because all three share one sequence, a ticket and a graph item never wear the same number,
+so an id on its own is an unambiguous question. An id is rendered with its prefix and accepted either
+way; a bare number still resolves for one release and says so when it does, for a mission started
+before this. A `graph.json` from before the shared counter — where a port and a proposal can both call
+themselves "1" — is read exactly as it stands, and every number issued from then on clears the highest
+of both old sequences.
+
 ## escalate.mjs — the channel up
 
 `add "<why>" --kind charter|contract|claim|conflict|boundary|cost|unverifiable|rules|quality
@@ -505,7 +565,8 @@ Appends to `hordes/<horde>/plan.md` (team waves to `teams/<team>/plan.md`): `sta
 evidence catalogue and `cost`; `--gate` with `--sha` records the level's gate at that tip in
 `cache/last-gate.json`; `--evidence` fills catalogue rows the green wave gate itself proves),
 `evidence <id> --by "<who/what>"` (fills one row by hand, for rows no ticket verdict can fill),
-`current [--team t]`. Its one-team, one-wave judgement of "does a ticket prove this row" is also
+`current [--team t]`. Every close also writes the mission's `horde-law/1` document (see `law.mjs`) and
+prints its path. Its one-team, one-wave judgement of "does a ticket prove this row" is also
 exported (`evidenceCoverage`, `stampMissionEvidence`) stretched mission-wide — every team, every
 wave — for `status.mjs`'s five-state evidence digest and `horde.mjs done`'s gate, so the two never
 re-derive it independently.

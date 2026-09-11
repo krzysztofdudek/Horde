@@ -25,6 +25,7 @@ import { readCostLimit, sumEntries } from './cost.mjs';
 // the plan's own layers.
 import { buildPlan } from './queue.mjs';
 import { addEscalation } from './escalate.mjs';
+import { writeLawDiff } from './law.mjs';
 import {
   ygQualityIndex, observeAspects, pendingPromotions, markPromotionsReported,
 } from './node.mjs';
@@ -93,7 +94,7 @@ export function currentWaveNumber(text) {
   return current;
 }
 
-function lastWaveNumber(text) {
+export function lastWaveNumber(text) {
   if (!text) return 0;
   let max = 0;
   for (const line of text.split('\n')) {
@@ -794,6 +795,12 @@ function cmdClose(horde, positional, flags) {
   const qualityMerges = qualityMergesIn(horde, mergedTickets);
   const indexLine = qualityLine(quality, prevQuality);
 
+  // What this mission has done to the law, as a document: the graph on the branch the mission was
+  // cut from against the graph on the trunk it has built. Written every close, at the wave's own
+  // path, so a second close of the same wave replaces it rather than writing a second one. Whoever
+  // renders it into sentences the client can veto reads it from there; this never renders prose.
+  const law = writeLawDiff(horde, cfg, n);
+
   const vars = {
     n,
     date: today(),
@@ -851,6 +858,7 @@ function cmdClose(horde, positional, flags) {
     })),
     qualityMerged: qualityMerges,
     aspectsObserved: observed,
+    law: { path: law.path, added: law.doc.added.length, raised: law.doc.raised.length, attached: law.doc.attached.length },
   }, flags, () => {
     const lines = [`wave ${n} closed — gate ${gate}, ${green}/${total} evidence green`];
     for (const p of promotions) lines.push(`rule raised: ${p.aspect} ${p.from} → ${p.to}`);
@@ -858,6 +866,10 @@ function cmdClose(horde, positional, flags) {
     if (qualityEscalation) {
       lines.push(`the quality index fell (${declined.join('; ')}) — escalation ${qualityEscalation.id} opened`);
     }
+    lines.push(
+      `what this mission has done to the law so far — ${law.doc.added.length} rule(s) added, `
+      + `${law.doc.raised.length} raised, ${law.doc.attached.length} newly attached: ${law.path}`,
+    );
     return lines.join('\n');
   });
 }

@@ -141,8 +141,13 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
 
   let advisory;
   await t.test('draft → advisory: a clean corpus earns it, and the baseline is recorded with it', () => {
-    advisory = run('node.mjs', ['promote', 'no-marker'], dir);
+    // `--by` is the name of whoever is raising it — a territory, a ticket, an agent — recorded
+    // verbatim. There is no roster to look it up in and no seat it has to be: raising a rule is
+    // available to whoever is working the area, in their own branch.
+    advisory = run('node.mjs', ['promote', 'no-marker', '--by', 'the-feature-territory'], dir);
     assert.equal(advisory.code, 0, advisory.stderr);
+    assert.equal(advisory.json.by, 'the-feature-territory');
+    assert.equal(existsSync(join(dir, '.horde', 'hordes', 'mission1', 'roster.json')), false, 'raising a rule reads no roster, and nothing writes one');
     assert.equal(advisory.json.from, 'draft');
     assert.equal(advisory.json.to, 'advisory');
     assert.equal(advisory.json.drill.cases, 2);
@@ -323,7 +328,36 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
       readFileSync(nodeLogPath(dir, 'feature'), 'utf8'),
       /lowered from enforced to advisory by the chairman: the team needs one release/,
     );
+
+    // …and, first of all, in the rule's own history: where a rule stands and why is the rule's own
+    // record, and a lowering is the one move nobody in the horde may make on its own.
+    const doc = aspectLogRead(dir, yg, 'no-marker');
+    const [entry] = doc.entries;
+    assert.deepEqual(entry.status, { from: 'enforced', to: 'advisory' });
+    assert.match(entry.body, /lowered from enforced to advisory by the chairman: the team needs one release where this warns instead of blocking/);
   });
+});
+
+test('E17 — a rule whose own cases do not answer as written is never raised', async (t) => {
+  const yg = requireYg();
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  graphFixture(dir, yg);
+  // The corpus goes red: the case that MUST be refused no longer carries anything to refuse, so
+  // the rule passes a case it was written to fail. The rule still works on the repository — this
+  // is the drill, which says whether the rule means what its author meant it to mean.
+  writeFileSync(join(dir, '.yggdrasil', 'aspects', 'no-marker', 'drills', 'violates-marker', 'case.mjs'), 'export const x = 1;\n');
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'a case that no longer violates'], dir);
+  initHorde(dir);
+
+  const r = run('node.mjs', ['promote', 'no-marker', '--by', 'the-feature-territory'], dir);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /cannot be raised from draft to advisory yet/);
+  assert.match(r.stderr, /its case corpus does not run clean/);
+  assert.match(r.stderr, /A rung is granted on evidence, never on an opinion/);
+  assert.match(readFileSync(aspectPath(dir, 'no-marker'), 'utf8'), /^status: draft$/m, 'nothing moved');
 });
 
 test('E17 — the wave close lists what was raised, what it earned, and how the user undoes it', async (t) => {
