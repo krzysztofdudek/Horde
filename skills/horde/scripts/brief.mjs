@@ -26,6 +26,7 @@ import {
 import {
   nodeExists, readNodePortsText, ticketNodes, ygCheckJson, ygAspectsJson,
 } from './node.mjs';
+import { collectRetroInput, classesPath } from './retro.mjs';
 
 const ROLES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'roles');
 const DISCIPLINE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'discipline');
@@ -41,7 +42,7 @@ const PLUGIN_ROOT_TOKEN = /\$\{CLAUDE_PLUGIN_ROOT(?::-[^}]*)?\}/g;
 export function absolutizePluginRoot(text, root = SKILL_ROOT) {
   return text.replace(PLUGIN_ROOT_TOKEN, root);
 }
-const ROLES = ['worker', 'architect', 'legislate'];
+const ROLES = ['worker', 'architect', 'legislate', 'retro'];
 
 // role → the disciplines its brief carries, in order. The texts live once, under
 // reference/discipline/; a role file names its disciplines and never repeats them. An entry may
@@ -53,6 +54,10 @@ const ROLE_LAW = {
   // A rule is a claim about this repository, and the one discipline that decides whether a claim
   // is worth writing down is framing's own checklist — the same part the architect is held to.
   legislate: [{ discipline: 'framing', section: 'Checklist' }],
+  // Sorting a mission's findings into rule, taste and inexpressible is the review discipline's own
+  // weighing done one level up, so it gets the whole of that text rather than a section of it; and
+  // the second half of the run is a measurement, which is verification's subject.
+  retro: ['review', 'verification'],
 };
 
 const USAGE = `usage: brief.mjs <role> [args] --name <n> [--horde h] [--json]
@@ -67,10 +72,16 @@ roles:
       one pass over one territory's law: what its gate refused this wave, what its own tickets
       recorded, and which rules reach nothing any more. Writes rules in its own branch and raises
       them on evidence; it never lowers one.
+  retro --name <n>
+      one pass over the WHOLE mission, at its end: every gate refusal and every remark in a
+      ticket's log, sorted into the rules the law could have said, the taste that goes to a
+      component's own log, and what the law will not express at all. Writes one classification
+      file; retro.mjs turns it into the document.
 
 Prints the rendered brief for the Agent tool's prompt, verbatim. Refuses — listing every unfilled
 placeholder — rather than print one with "{{…}}" left in it. A role held to a discipline gets it
-inline, under "## Law": worker (tdd, debugging), architect and legislate (framing's checklist).
+inline, under "## Law": worker (tdd, debugging), architect and legislate (framing's checklist), retro
+(review, verification).
 
 options: --json  --help`;
 
@@ -503,6 +514,49 @@ function cmdLegislate(horde, cfg, positional, flags) {
   }, flags, () => brief);
 }
 
+// The retrospective one-shot's brief carries the mission's whole input inline — every gate refusal
+// and every remark, with the key each is answered against. Measured on a fixture at real-mission
+// scale (40 tickets over four waves) that input is around 70KB, well inside the size a single
+// territory is held to, which is why this is one pass over the mission rather than one per area:
+// the cross-area repetitions are the whole point, and nobody who sees one area can see them.
+function cmdRetro(horde, cfg, flags) {
+  const name = requireName(flags);
+  const info = resolveTree({ tree: flags.tree, horde });
+  const input = collectRetroInput(horde);
+  const listing = (items, empty) => (items.length
+    ? items.map((it) => `- \`${it.key}\` · ticket ${it.ticket} — ${it.text}`).join('\n')
+    : empty);
+
+  const vars = {
+    repoRoot: info.path,
+    name,
+    horde,
+    charterPath: charterPath(info.path, horde),
+    classesPath: classesPath(horde),
+    reportsTo: reportsToFor('retro', horde, { name }),
+    gateRefusals: listing(
+      input.items.filter((it) => it.source === 'gate'),
+      '(none — the gate refused nothing on this mission)',
+    ),
+    remarks: listing(
+      input.items.filter((it) => it.source === 'log'),
+      '(none — no ticket log carries a line that is not a state entry)',
+    ),
+  };
+  const brief = renderRole('retro', vars);
+  emit({
+    role: 'retro',
+    horde,
+    name,
+    items: input.items.length,
+    notes: input.notes,
+    brief,
+    tree: info.path,
+    branch: info.branch,
+    sha: info.sha,
+  }, flags, () => brief);
+}
+
 // ---- main -----------------------------------------------------------------------
 
 function main() {
@@ -520,6 +574,7 @@ function main() {
     case 'architect': return cmdArchitect(horde, cfg, flags);
     case 'worker': return cmdWorker(horde, cfg, positional, flags);
     case 'legislate': return cmdLegislate(horde, cfg, positional, flags);
+    case 'retro': return cmdRetro(horde, cfg, flags);
     default: fail(`unknown role: ${role}`);
   }
 }

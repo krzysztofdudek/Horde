@@ -25,6 +25,7 @@ import {
 } from './wave.mjs';
 import { writeLawDiff } from './law.mjs';
 import { sumEntries, readCostLimit } from './cost.mjs';
+import { RETRO_SCHEMA, collectRetroInput, missionState } from './retro.mjs';
 
 const DEFAULT_CLASSES = { haiku: 1, sonnet: 3, opus: 10, fable: 30 };
 
@@ -79,8 +80,9 @@ commands:
       moves hordes/<name> to hordes/_archive/<name>-<date>. Branches are untouched.
   done [--horde h]
       the mission's final gate. Refuses, listing every reason, when any evidence row is not
-      reproduced, the trunk gate (config.gates.trunk) is not green at the trunk tip, or no cost
-      has ever been recorded. Otherwise stamps the charter, appends the completion block to the
+      reproduced, the trunk gate (config.gates.trunk) is not green at the trunk tip, no cost
+      has ever been recorded, or the retrospective (retro.mjs) has not been run over the mission
+      as it now stands. Otherwise stamps the charter, appends the completion block to the
       mission journal, and prints what to do next (push — that decision is the chairman's, never
       this tool's).
 
@@ -264,6 +266,14 @@ function defaultConfig(root) {
     // line in the wave's own report. Neither is ever a cost figure: a rule is retired for not
     // being used, never for what it costs to run.
     law: { retireAfterWaves: 2, qualityDropAsk: 0.1 },
+    // The mission's retrospective (retro.mjs). `judgeSampleRate` is the fraction of landed
+    // tickets whose already-judged prose pairs are put to a second judge — 0, so nothing is
+    // re-judged and no reviewer is paid twice until somebody asks for the measurement;
+    // `judgeTier` names that second judge. `inexpressibleThreshold` is the share of a mission's
+    // refusals and remarks the law may turn out unable to express before the number becomes a
+    // question for whoever is asking for the work — set it BEFORE a mission runs, never after
+    // its number is known, or it measures nothing.
+    retro: { judgeSampleRate: 0, judgeTier: null, inexpressibleThreshold: null },
   };
 }
 
@@ -772,7 +782,8 @@ function cmdArchive(positional, flags) {
 // ---- done — the mission's final gate -----------------------------------------------
 //
 // evidence-is-the-plan: "done" is never "the queue is empty" — it is every promised proof
-// reproduced, the trunk gate green at the trunk tip, and a cost report on file. Refuses listing
+// reproduced, the trunk gate green at the trunk tip, a cost report on file, and the mission's
+// retrospective run over the mission as it now stands. Refuses listing
 // every reason at once (never one at a time, forcing a retry
 // loop); on success it stamps the charter (via stampMissionEvidence, already called for the
 // evidence check itself), appends the completion block to the mission journal, and prints what
@@ -863,6 +874,18 @@ function cmdDone(positional, flags) {
     reasons.push('no cost has ever been recorded for this mission — nothing has run, so there is nothing to report (cost.mjs report)');
   }
 
+  // 4. The retrospective run, and run over this mission as it stands. What the gate refused and
+  // what workers wrote to each other is read exactly once, at the end, by retro.mjs — a mission
+  // closed without it throws that away, and one closed on a retrospective taken before the last
+  // ticket landed has a document that never saw it.
+  const retro = readJSON(hordePath(horde, 'retro.json'), null);
+  const state = missionState(collectRetroInput(horde).landed);
+  if (!retro || retro.schema !== RETRO_SCHEMA) {
+    reasons.push(`no retrospective has been run on this mission — what the gate refused and what workers wrote in their ticket logs is read once, here, and then it is gone: retro.mjs --horde ${horde}`);
+  } else if (retro.state !== state) {
+    reasons.push(`the retrospective on file is out of date — it was taken over a different set of landed tickets than the mission now has, so it never saw what landed after it: run it again, retro.mjs --horde ${horde}`);
+  }
+
   if (reasons.length) {
     fail(`mission "${horde}" is not done — ${reasons.length} reason(s):\n- ${reasons.join('\n- ')}`);
   }
@@ -896,12 +919,15 @@ function cmdDone(positional, flags) {
     gate: { level: 'trunk', sha: trunkSha, result: 'green' },
     cost: { runs, weighted, limit },
     law: { path: law.path, added: law.doc.added.length, raised: law.doc.raised.length, attached: law.doc.attached.length },
+    retro: { path: hordePath(horde, 'retro.json'), law: retro.law.length, inexpressible: retro.inexpressible.length },
   };
   emit(result, flags, () => [
     `mission "${horde}" is done — evidence ${coverage.length}/${coverage.length} green, trunk gate green at ${short(trunkSha)}, `
       + `cost ${runs} runs (weighted ${weighted}).`,
     `What the law gained over this mission — ${law.doc.added.length} rule(s) added, ${law.doc.raised.length} raised, `
       + `${law.doc.attached.length} newly attached: ${law.path}`,
+    `What the law still cannot say — ${retro.inexpressible.length} item(s), beside ${retro.law.length} rule proposal(s) `
+      + `the retrospective raised: ${hordePath(horde, 'retro.json')}`,
     `Push when ready: git push <remote> ${trunkBranch} — and open the pull request. That decision is the chairman's, never this tool's.`,
   ].join('\n'));
 }

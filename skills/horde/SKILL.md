@@ -110,11 +110,11 @@ ceremony than a request of ten.
 
 ## Staffing and planning — for now, two seats
 
-Interim shape: **worker** and **architect** are the only two seats, plus two one-shots — the
-**consultant** `refine.mjs` briefs per territory, and **legislate**, one pass over one territory that
-writes down the rules that territory's own work has been following by hand. Steward, owner, verifier,
-auditor and counsel do not exist right now — they are being rebuilt one at a time (`retro` lands in a
-later release) rather than kept alive behind a flag. Until then, you (the director, this top-level session) do the staffing
+Interim shape: **worker** and **architect** are the only two seats, plus three one-shots — the
+**consultant** `refine.mjs` briefs per territory, **legislate**, one pass over one territory that
+writes down the rules that territory's own work has been following by hand, and **retro**, one pass over
+the whole mission at its end. Steward, owner, verifier and counsel do not exist right now, rather than
+being kept alive behind a flag. Until then, you (the director, this top-level session) do the staffing
 and planning work directly, through `tk.mjs`/`queue.mjs`, rather than through an owner's proposal.
 
 - Spawn the **architect** as your teammate (Opus, cross-cutting, no node of its own;
@@ -213,12 +213,40 @@ line is the user's, so ask for it in the same breath instead of a second round t
 ## Done
 
 A mission is done when every item in the evidence catalogue is green, the repo's full gate is green on
-the horde's trunk, the last wave's audit sample raised nothing, and the cost report is written. "The queue is
-empty" is never "done" — `status.mjs` shows every charter row's own coverage (no ticket / queued /
-running / merged / reproduced) so you see what still stands in the way before you ask. `horde.mjs done`
-is the gate itself: it refuses, listing every reason, until all four hold, then stamps the charter,
-appends the completion block to the mission journal, and tells you what to do next. Only then do you
-present it to the user with the branch name. The pull request and the push are theirs.
+the horde's trunk, the cost report is written, and the retrospective has been run over the mission as it
+now stands. "The queue is empty" is never "done" — `status.mjs` shows every charter row's own coverage
+(no ticket / queued / running / merged / reproduced) so you see what still stands in the way before you
+ask. `horde.mjs done` is the gate itself: it refuses, listing every reason, until all four hold, then
+stamps the charter, appends the completion block to the mission journal, and tells you what to do next.
+Only then do you present it to the user with the branch name. The pull request and the push are theirs.
+
+### The retrospective
+
+`retro.mjs` is the last run of a mission and the only one that reads what nobody read twice: every gate
+refusal from `.horde/hordes/<h>/land/<ticket>.json`, and every line in a ticket's `log.md` that is not a
+state entry. It runs twice.
+
+```
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/retro.mjs --horde <h>            # gather; prints the one-shot to spawn
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/brief.mjs retro --name <n>       # ONE one-shot, over the whole mission
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/retro.mjs --horde <h> --json     # the document, once it has answered
+```
+
+One one-shot for the whole mission, never one per area: the input is around 70KB on a forty-ticket
+mission, well inside what a single area is held to, and the repetitions across areas are the whole point
+of reading it in one place. The one-shot sorts every item into `rule` (a rule proposal, with the
+component and whether a script can decide it), `taste` (one line into that component's own log through
+`yg log add`, and nowhere else) or `inexpressible` (the law will not say it).
+
+What you hand the client is the `inexpressible` list beside the law document `done` writes — one says
+what the law gained, the other what it still cannot say. **The retrospective hands you facts, not
+sentences**: the ticket, the source and the words that were actually written. You write the sentence
+they read, the same way you do for `ask`.
+
+`config.retro.judgeSampleRate` (0 by default) puts a sample of landed tickets' already-judged prose
+pairs to a second judge and reports the disagreement with a Wilson interval. It is a measurement:
+nothing is ever refused over it. `config.retro.inexpressibleThreshold` is the bar the "will not say"
+pile is held against — set it before a mission runs, never after its number is known.
 
 A charter rewrite that drops an evidence row outright is free before the mission's wave 1 starts; after
 it, `horde.mjs charter edit` refuses the drop unless `--ask <id>` names an answered ask of kind `charter`

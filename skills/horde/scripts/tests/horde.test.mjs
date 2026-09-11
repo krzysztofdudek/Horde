@@ -394,9 +394,9 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
   writeFileSync(join(ticketDir, 'log.md'), '## Verdict · 001 · 2026-01-01 · by verifier-1 (sonnet)\n\n**Result:** reproduced\n');
 
   await t.test('refuses naming the missing cost report once evidence and gate are clear', () => {
-    // The audit condition (and the "no wave has ever been started" check that gated it) is gone
-    // entirely — done's gate is now just evidence, trunk gate, cost — so with evidence reproduced
-    // and the gate green, cost is the only reason left.
+    // The seat that used to sample this mission's own work is gone entirely — done's gate is now
+    // evidence, trunk gate, cost and the retrospective — so with evidence reproduced and the gate
+    // green, those last two are the reasons left.
     const r = run('horde.mjs', ['done'], dir);
     assert.equal(r.code, 1);
     assert.doesNotMatch(r.stderr, /evidence row\(s\) not reproduced/);
@@ -407,7 +407,37 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
     { name: 'mission1-worker-trunk-1', role: 'worker', class: 'sonnet', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
   ]);
 
+  const retroClasses = join(dir, '.horde', 'hordes', 'mission1', 'retro-classes.json');
+  const landResult = join(dir, '.horde', 'hordes', 'mission1', 'land', '001.json');
+
+  await t.test('refuses when the retrospective has never been run, and names the command that runs it', () => {
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no retrospective has been run on this mission/);
+    assert.match(r.stderr, /retro\.mjs --horde mission1/);
+  });
+
+  await t.test('refuses when the retrospective was taken before the last ticket landed', () => {
+    // This ticket's log carries no remark and nothing was refused, so the classification is empty
+    // and the retrospective is the one run, not the one-shot's answer.
+    writeFileSync(retroClasses, '{"items": {}}\n');
+    assert.equal(run('retro.mjs', ['--tree', dir, '--horde', 'mission1'], dir).code, 0);
+
+    // …and then something lands, which the document on file never saw.
+    mkdirSync(dirname(landResult), { recursive: true });
+    writeFileSync(landResult, `${JSON.stringify({
+      ticket: '001', branch: 'mission1/t-001', sha: 'a'.repeat(40), ok: true, checks: [],
+      pairs: [], brief: null, landed: { ticket: '001', sha: 'b'.repeat(40), at: new Date().toISOString() },
+    }, null, 2)}\n`);
+
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /retrospective on file is out of date/);
+    assert.match(r.stderr, /retro\.mjs --horde mission1/);
+  });
+
   await t.test('passes once every reason is met — stamps the charter and appends the completion block', () => {
+    assert.equal(run('retro.mjs', ['--tree', dir, '--horde', 'mission1'], dir).code, 0);
     const r = run('horde.mjs', ['done'], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.evidence.green, 1);
@@ -425,6 +455,9 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
 
     // The last word on what this mission did to the law, taken at the trunk it is handing over.
     assert.ok(r.json.law && r.json.law.path, 'done reports where the law document is');
+    assert.ok(r.json.retro && r.json.retro.path, 'done reports where the retrospective is');
+    assert.equal(r.json.retro.law, 0);
+    assert.equal(r.json.retro.inexpressible, 0);
     const law = JSON.parse(readFileSync(r.json.law.path, 'utf8'));
     assert.equal(law.schema, 'horde-law/1');
     assert.equal(law.horde, 'mission1');

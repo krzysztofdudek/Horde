@@ -824,10 +824,58 @@ the work was done.
 
 ## cost.mjs — runs × class
 
-`report [--wave n] [--ticket NNN] [--mission]` (runs and weighted sums from `cost.json`, a ledger
+`report [--wave n] [--ticket NNN]` (runs and weighted sums from `cost.json`, a ledger
 some other tool writes, shape `{runs: [{name, role, class, ticket|null, wave, at}]}`;
 against the charter's limit when set), `limit-reached` (exit 0 when reached, meant to be checked
-before dispatching).
+before dispatching). Mission scope is the default and has no flag of its own; `--wave` and `--ticket`
+narrow it. Reviewer calls are counted at mission scope only, since an event names a pair and not a
+ticket.
+
+## retro.mjs — what nobody read twice
+
+`retro [--horde h] [--tree p] [--json]`, and it runs twice.
+
+The first run gathers, and reads `.horde/` alone — no tree, no graph. Its input is everything the
+mission wrote that nobody read a second time: every `checks[]` entry with `ok: false` in
+`hordes/<h>/land/<ticket>.json`, and every line of a ticket's `log.md` that is NOT a state entry. The
+distinction is mechanical and is the shape of the line, never its words: `transitionStatus` writes
+`- <iso> status: <state>…` and `appendLog` writes everything else. Each item carries a key
+(`gate:<ticket>:<n>` or `log:<ticket>:<n>`) stable across runs. Nothing that cannot be read stops the
+run — an unparsable result file, a missing `log.md`, a ticket directory with no log at all — each
+becomes a note on the document instead.
+
+Between the two runs, one one-shot (`brief.mjs retro`) classifies every key into `rule`, `taste` or
+`inexpressible` and writes `hordes/<h>/retro-classes.json`. One one-shot for the whole mission, never
+one per territory: measured at real-mission scale (40 tickets, four waves) the input is ~70KB against
+the 400000 a single territory is held to, and the repetitions across territories are the reason to
+read it in one place.
+
+The second run validates that file — every key classified exactly once, a `rule` carrying its
+sentence, its component and `check`/`prose`, a `taste` carrying a component and no rule, an
+`inexpressible` carrying neither — and writes `hordes/<h>/retro.json` (`horde-retro/1`) with
+`retro.md` beside it: `{schema, horde, at, state, items, law, taste, inexpressible, logged, cost,
+judge, threshold, notes}`. A `taste` item leaves one line in its component's own log through
+`yg log add` and nowhere else; a key already on the previous document is never logged twice, and one
+retrospective runs at a time (`hordes/<h>/retro.lock`, taken over when the pid holding it is gone).
+Writing twice replaces the document; nothing is appended.
+
+`law` is the rule proposals, ready for whoever works that area to write. `inexpressible` is structured
+facts — ticket, source, the words that were written — and never a sentence for a client: the session
+writes that, the same way it does for `ask`. `threshold` compares the `inexpressible` share against
+`config.retro.inexpressibleThreshold` and prints both, so a bar set after the number is known is
+visible as one.
+
+`judge` is a measurement and never a gate. At `config.retro.judgeSampleRate` above 0 a sample of
+LANDED tickets has the verdicts already recorded on its own files and components re-packaged through
+`yg verdict package`, and a second judgement by `config.retro.judgeTier` is compared against the one
+on file; the disagreement comes back with `wilson(k, n)` at that sample size. At a rate of 0 no
+`yg verdict` command runs at all. A pair the CLI will not package is a skip with its reason, a pair
+with no second judgement yet is `pending` with the command that takes one, and neither refuses
+anything.
+
+`horde.mjs done` requires this document, and requires it to have been taken over the mission's landed
+tickets as they now stand — `state` is how it tells a current retrospective from one taken before the
+last thing landed.
 
 ## tick.mjs — the steward, as one run
 

@@ -114,7 +114,8 @@ test('brief.mjs: steward, owner, verifier, auditor and counsel are gone — unkn
       const r = run('brief.mjs', [role, 'x', '--name', 'someone'], dir);
       assert.equal(r.code, 1, `${role} should be refused`);
       assert.match(r.stderr, /unknown role: /);
-      assert.match(r.stderr, /roles: worker, architect/);
+      // The list is closed, and named in full: four roles and no fifth.
+      assert.match(r.stderr, /roles: worker, architect, legislate, retro\)/);
     }
   });
 });

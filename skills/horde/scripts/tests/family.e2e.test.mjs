@@ -543,12 +543,10 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     assert.match(charter, new RegExp(`\\| E2 \\|[^|]*\\|[^|]*\\| ${workerName} \\|`));
   });
 
-  // Formerly this refused for "no audit verdict recorded for wave 1" and was satisfied with
-  // wave.mjs audit — wave.mjs's `audit`/`audit-plan` commands are deleted outright, and
-  // horde.mjs's `done` no longer has an audit condition at all (renumbered to just: evidence
-  // reproduced, trunk gate green, cost recorded). Nothing writes cost.json any more either
-  // (the deleted roster tool was the only thing that ever billed a run, and that responsibility hasn't moved
-  // to another tool yet), so the refusal this test now hits first is the cost one.
+  // The seat that used to sample a wave's own work is gone outright, and `done` counts four things
+  // now: evidence reproduced, trunk gate green, cost recorded, and the retrospective run over the
+  // mission as it stands. Nothing writes cost.json in this walkthrough, so cost is the first
+  // refusal it meets and the retrospective is the second.
   await t.test('9. the mission gate refuses with no cost recorded, and passes once some is', () => {
     const refused = run('horde.mjs', ['done'], dir);
     assert.equal(refused.code, 1);
@@ -558,11 +556,32 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
       name: workerName, role: 'worker', class: 'sonnet', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString(),
     }]);
 
+    const withoutRetro = run('horde.mjs', ['done'], dir);
+    assert.equal(withoutRetro.code, 1);
+    assert.match(withoutRetro.stderr, /no retrospective has been run on this mission/);
+
+    // The retrospective, both runs: the gathering one prints what this mission wrote down, and the
+    // one-shot's answer is written here by hand — nothing about what a model would decide is under
+    // test, only that every item gets a class and the document comes out.
+    const gathered = run('retro.mjs', ['--tree', dir, '--horde', 'family'], dir);
+    assert.equal(gathered.code, 0, gathered.stderr);
+    assert.equal(gathered.json.state, 'input');
+    assert.ok(gathered.json.items.length > 0, 'a mission that landed a ticket wrote something down');
+    writeFileSync(
+      join(dir, '.horde', 'hordes', 'family', 'retro-classes.json'),
+      `${JSON.stringify({ items: Object.fromEntries(gathered.json.items.map((i) => [i.key, { class: 'inexpressible' }])) }, null, 2)}\n`,
+    );
+    const retro = run('retro.mjs', ['--tree', dir, '--horde', 'family'], dir);
+    assert.equal(retro.code, 0, retro.stderr);
+    assert.equal(retro.json.schema, 'horde-retro/1');
+    assert.equal(retro.json.inexpressible.length, gathered.json.items.length);
+
     const done = run('horde.mjs', ['done'], dir);
     assert.equal(done.code, 0, done.stderr);
     assert.equal(done.json.evidence.green, 2);
     assert.equal(done.json.evidence.total, 2);
     assert.equal(done.json.cost.runs, 1);
+    assert.equal(done.json.retro.inexpressible, gathered.json.items.length);
     assert.match(readFileSync(join(dir, '.horde', 'hordes', 'family', 'plan.md'), 'utf8'), /# Mission complete/);
   });
 

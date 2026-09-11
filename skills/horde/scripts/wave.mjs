@@ -471,20 +471,6 @@ function previousGreen(journalText) {
   return last ?? 0;
 }
 
-// The Wilson score interval for k refutations in n samples at 95% — the standard small-sample
-// interval for a proportion, chosen over the textbook normal one because it stays inside [0, 1]
-// and stays honest at k = 0, which is the case a clean horde is in most of the time. Unused here
-// since the audit sampling that called it is gone; kept exported for judge agreement math a later
-// task takes it for, rather than moving it twice.
-export function wilson(k, n, z = 1.96) {
-  if (!n) return null;
-  const p = k / n;
-  const d = 1 + (z * z) / n;
-  const centre = (p + (z * z) / (2 * n)) / d;
-  const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / d;
-  return { low: Math.max(0, centre - half), high: Math.min(1, centre + half) };
-}
-
 // ---- human decisions per merged ticket -------------------------------------------------------
 //
 // The learning KPI (ruling escalations-become-rules): how often a human had to answer a question
