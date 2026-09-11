@@ -234,9 +234,9 @@ line is the user's, so ask for it in the same breath instead of a second round t
   own log. Anything that lowers enforcement is the user's call: `node.mjs demote` refuses without
   `--by user`, there is no command here for a waiver or a review date, and the wave close lists
   every raise for the chairman to veto whether or not anyone asks.
-- **Contracts are ports, and a port is a test.** A promise between nodes is one object in the graph,
-  carrying its version and the test that proves it; breaking it is a red test in the neighbour's node,
-  which escalates by itself, and changing that test without raising the version is refused outright.
+- **Ports are the contracts.** A promise between nodes is one object in the graph, named and
+  described — there is no version, in the graph or in Horde. Changing one a node already depends
+  on is a proposal the architect rules on, not a silent edit.
 - **Nothing lives in an agent's head.** A worker or the architect is a lease on a node's context; a
   dead one is replaced from the node's log at the cost of one brief.
 - **Measure before deciding**; "not doing it, with numbers" is a full result.

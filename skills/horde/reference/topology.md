@@ -131,7 +131,7 @@ committed; and it is the graph a repository already has, never a copy of it:
 | node ids and boundaries | `.yggdrasil/model/**/yg-node.yaml`, read through `yg node <path> --json`; never edited by the horde |
 | the rules over a node | `yg context --node <path> --json` — the graph's own resolution, with the status word that says what a refusal costs |
 | who consumes a port | `yg impact --node <path> --json` |
-| contracts | ports on the node, each with a version and the test that is its promise |
+| contracts | ports on the node, each named and described — no version, in the graph or in Horde |
 | the node's charter | `charter.md` beside `yg-node.yaml`, committed |
 | the node's log | `yg log add --reason` (English) |
 | is the code still what the graph describes | the lock: every verdict is bound to the hash of what it judged, and `yg check` re-proves it |
@@ -162,7 +162,7 @@ role is approving a nondeterministic pair through `yg check --approve`, writing 
 touching a lock file by hand.
 
 Operational state never leaves `.horde/`; the only graph-shaped objects it holds are the horde's own
-proposals — a port to add or bump, a boundary to move — waiting on the architect.
+proposals — a port to add or change, a boundary to move — waiting on the architect.
 
 ## Gates per level
 

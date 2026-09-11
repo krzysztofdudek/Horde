@@ -87,14 +87,13 @@ commands:
       --out writes the plan (rendered, or JSON with --json) to a file instead of stdout, for a reader
       who must see it whole — the architect — rather than a summary relayed through a message
       derives the team's DAG from the tickets themselves and prints it; dispatches nothing.
-      Edges come from the ports the tickets declare (a ticket consuming <node>/<port>@<v> comes
-      after the one producing it), from the graph (a version bump comes before every ticket of a
-      node that consumes that port and still names the old version), and from the dependencies
-      written by hand — the three added together, never one overriding another. Prints the
-      layers, the critical path, the components, the tickets that claim the same file with no
-      order between them, the files three or more tickets claim, the approvals a version bump
-      owes the nodes that consume it, ports nothing produces, the charter's evidence rows no
-      ticket names, and what the whole thing costs in runs. Refuses, naming the circle, when the
+      Edges come from the ports the tickets declare (a ticket consuming <node>/<port> comes after
+      the one producing it) and from the dependencies written by hand — the two added together,
+      never one overriding another. Prints the layers, the critical path, the components, the
+      tickets that claim the same file with no order between them, the files three or more
+      tickets claim, the approvals a port change owes the nodes that consume it, ports nothing
+      produces, the charter's evidence rows no ticket names, and what the whole thing costs in
+      runs. Refuses, naming the circle, when the
       tickets depend on each other in one. --apply-order records the order it proposes for a
       file clash as an ordinary dependency, with a note.
   quality [--from <path>] [--class c] [--dry-run] [--team t] [--horde h]
@@ -986,41 +985,27 @@ export function buildPlan(horde, team, cfg, { tree } = {}) {
     }
   };
 
-  // (a) a consumed port depends on the ticket that produces that exact version — in this team or
+  // (a) a consumed port depends on the ticket that produces that exact port — in this team or
   // another one; a cross-team producer is an edge all the same, it just falls outside the layers.
+  // No version to compare any more: two tickets naming the same <node>/<port> name the same
+  // thing, so the port name alone is the match. (This also absorbs what used to be a second
+  // rule here — a ticket declaring a stale port version needed its own edge, derived from the
+  // graph's own consumersOf, because a version mismatch made it invisible to this match. With no
+  // version left to go stale, every case that second rule caught is one this rule already
+  // catches on its own; a separate graph-derived edge would only ever duplicate it.)
   const consumesWithoutProducer = [];
   for (const t of planned) {
     for (const c of ticketPorts(t.text, 'Consumes')) {
       const producers = everyTicket.filter((o) => o.id !== t.id
-        && ticketPorts(o.text, 'Produces').some((p) => p.node === c.node && p.port === c.port && p.version === c.version));
+        && ticketPorts(o.text, 'Produces').some((p) => p.node === c.node && p.port === c.port));
       for (const p of producers) addEdge(t.id, p.team === leafOf(team) ? p.id : `${p.team}:${p.id}`, `consumes ${c.ref}`);
-      if (producers.length === 0) {
-        const anyProducer = everyTicket.some((o) => o.id !== t.id
-          && ticketPorts(o.text, 'Produces').some((p) => p.node === c.node && p.port === c.port));
-        if (!anyProducer && !portExists(root, cfg, c.node, c.port)) {
-          consumesWithoutProducer.push({ ticket: t.id, port: c.ref });
-        }
+      if (producers.length === 0 && !portExists(root, cfg, c.node, c.port)) {
+        consumesWithoutProducer.push({ ticket: t.id, port: c.ref });
       }
     }
   }
 
-  // (b) the graph's own edge: a ticket that raises a port's version comes before every ticket of
-  // a node that consumes that port and still names the version being replaced.
-  for (const producer of planned) {
-    for (const p of ticketPorts(producer.text, 'Produces')) {
-      const consumerNodes = consumersOf(root, cfg, p.node, p.port);
-      if (consumerNodes.length === 0) continue;
-      for (const t of planned) {
-        if (t.id === producer.id) continue;
-        if (!nodesOf(t.text).some((n) => consumerNodes.includes(n))) continue;
-        const old = ticketPorts(t.text, 'Consumes')
-          .find((c) => c.node === p.node && c.port === p.port && c.version < p.version);
-        if (old) addEdge(t.id, producer.id, `${producer.id} raises ${p.node}/${p.port} to @${p.version}, this ticket consumes @${old.version}`);
-      }
-    }
-  }
-
-  // (c) what a steward or an owner wrote by hand, added to the derived edges, never replacing them.
+  // (b) what a steward or an owner wrote by hand, added to the derived edges, never replacing them.
   for (const t of planned) {
     for (const d of manualDeps(t.text, items.get(t.id))) addEdge(t.id, d, 'declared dependency');
   }

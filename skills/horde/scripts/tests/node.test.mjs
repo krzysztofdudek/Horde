@@ -203,89 +203,73 @@ test('node.mjs charter: "charter edit" is gone — refused as an unknown command
 
 // ---- ports are the contracts ---------------------------------------------------------------
 
-test('node.mjs contract: a contract is a port on a component, proposed at a version with its test', async (t) => {
+test('node.mjs contract: a contract is a port on a component, proposed by name — there is no version', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
   addNode(dir, 'auth', {
     mapping: ['src/auth/**'],
-    ports: { policy: { version: 1, test: 'tests/contracts/policy.test.mjs' } },
+    ports: { policy: { description: 'The policy promise.' } },
   });
   addNode(dir, 'api', {
     mapping: ['src/api/**'],
     relations: [{ target: 'auth', type: 'uses', consumes: ['policy'] }],
   });
 
-  await t.test('contracts lists the ports the graph declares, with version, test and consumers', () => {
+  await t.test('contracts lists the ports the graph declares, with description and consumers', () => {
     const r = run('node.mjs', ['contracts', '--node', 'auth'], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual(r.json.declared, [{
       node: 'auth',
       port: 'policy',
-      version: 1,
-      test: 'tests/contracts/policy.test.mjs',
       description: 'The policy promise.',
       consumers: ['api'],
     }]);
   });
 
-  let bump;
-  await t.test('proposing a bump defaults to one above what the graph publishes, and names the consumers', () => {
-    const r = run('node.mjs', ['contract', 'propose', 'auth', 'policy', 'the decision shape gains a reason', '--as', 'tests/contracts/policy.test.mjs', '--by', 'owner-auth'], dir);
+  let change;
+  await t.test('proposing a change to a published port names it and its consumers', () => {
+    const r = run('node.mjs', ['contract', 'propose', 'auth', 'policy', 'the decision shape gains a reason', '--by', 'owner-auth'], dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.version, 2);
-    assert.equal(r.json.kind, 'bump');
-    assert.equal(r.json.from, 1);
+    assert.equal(r.json.kind, 'change');
     assert.deepEqual(r.json.consumers, ['api']);
-    bump = r.json.id;
+    change = r.json.id;
   });
 
-  await t.test('a version that does not raise the published one is refused', () => {
-    const r = run('node.mjs', ['contract', 'propose', 'auth', 'policy', 'restating what is already there', '--as', 'tests/contracts/policy.test.mjs', '--version', '1', '--by', 'owner-auth'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /already publishes version 1/);
-  });
-
-  await t.test('a proposal with no test is refused — a port\'s promise IS a test', () => {
-    const r = run('node.mjs', ['contract', 'propose', 'auth', 'sessions', 'a new promise', '--by', 'owner-auth'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /--as <test-path>/);
-  });
-
-  await t.test('a new port on a component that publishes none starts at 1', () => {
-    const r = run('node.mjs', ['contract', 'propose', 'api', 'guard', 'the guard the web calls', '--as', 'tests/contracts/guard.test.mjs', '--by', 'owner-api'], dir);
+  await t.test('a new port on a component that publishes none is an add, with no consumers yet', () => {
+    const r = run('node.mjs', ['contract', 'propose', 'api', 'guard', 'the guard the web calls', '--by', 'owner-api'], dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.version, 1);
     assert.equal(r.json.kind, 'add');
+    assert.deepEqual(r.json.consumers, []);
   });
 
   await t.test('--pending shows what waits on the architect, and nothing else', () => {
     const r = run('node.mjs', ['contracts', '--pending'], dir);
     assert.equal(r.json.declared.length, 0);
-    assert.deepEqual(r.json.proposals.map((p) => `${p.node}/${p.port}@${p.version}`).sort(), ['api/guard@1', 'auth/policy@2']);
+    assert.deepEqual(r.json.proposals.map((p) => `${p.node}/${p.port}`).sort(), ['api/guard', 'auth/policy']);
   });
 
   await t.test('an approval prints the filing the architect makes by hand', () => {
-    const r = run('node.mjs', ['contract', 'approve', bump, 'the consumers can take it', '--by', 'architect'], dir, { json: false });
+    const r = run('node.mjs', ['contract', 'approve', change, 'the consumers can take it', '--by', 'architect'], dir, { json: false });
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /port proposal 1 approved — auth\/policy@2/);
+    assert.match(r.stdout, new RegExp(`port proposal ${change} approved — auth/policy`));
     assert.match(r.stdout, /\.yggdrasil\/model\/auth\/yg-node\.yaml/);
     assert.match(r.stdout, /log add --node auth/);
     assert.match(r.stdout, /--approve --only-deterministic/);
   });
 
   await t.test('a vetoed proposal leaves nothing pending, and neither can be ruled twice', () => {
-    const p = run('node.mjs', ['contract', 'propose', 'auth', 'policy', 'a second, disputed bump', '--as', 'tests/contracts/policy.test.mjs', '--version', '3', '--by', 'owner-auth'], dir);
+    const p = run('node.mjs', ['contract', 'propose', 'auth', 'policy', 'a second, disputed change', '--by', 'owner-auth'], dir);
     const vetoed = run('node.mjs', ['contract', 'veto', p.json.id, 'duplicates the one already approved', '--by', 'architect'], dir);
     assert.equal(vetoed.json.status, 'vetoed');
-    const again = run('node.mjs', ['contract', 'approve', bump, '--by', 'architect'], dir);
+    const again = run('node.mjs', ['contract', 'approve', change, '--by', 'architect'], dir);
     assert.equal(again.code, 1);
     assert.match(again.stderr, /already approved/);
   });
 
-  await t.test('the horde wrote nothing into the graph — the port is still at the version the graph declares', () => {
+  await t.test('the horde wrote nothing into the graph — the port still reads what the graph declares', () => {
     const doc = JSON.parse(yg(dir, ['node', 'auth', '--json']).out);
-    assert.equal(doc.ports.policy.version, 1);
+    assert.equal(doc.ports.policy.description, 'The policy promise.');
     assert.equal(existsSync(join(dir, '.yggdrasil', 'model', 'auth', 'contracts.md')), false);
   });
 });
@@ -452,7 +436,7 @@ test('queue.mjs plan: a ticket\'s approvals follow consumersOf\'s exact port mat
     if (r.code !== 0) throw new Error(`tk new failed: ${r.stderr}`);
     return r.json.id;
   };
-  const id = newTicket(['bump-p', '--title', 'bump p', '--node', 'shared', '--class', 'sonnet', '--files', 'src/shared/p.ts', '--produces', 'shared/p@1']);
+  const id = newTicket(['bump-p', '--title', 'bump p', '--node', 'shared', '--class', 'sonnet', '--files', 'src/shared/p.ts', '--produces', 'shared/p']);
   run('queue.mjs', ['add', id], dir);
 
   const r = run('queue.mjs', ['plan'], dir);
@@ -533,8 +517,8 @@ test('node.mjs map: the mission\'s components with owner, ports and open port pr
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  addNode(dir, 'core', { mapping: ['src/core/**'], ports: { render: { version: 2, test: 'tests/render.test.mjs' } } });
-  run('node.mjs', ['contract', 'propose', 'core', 'render', 'the render surface gains slots', '--as', 'tests/render.test.mjs', '--by', 'owner1'], dir);
+  addNode(dir, 'core', { mapping: ['src/core/**'], ports: { render: { description: 'The render promise.' } } });
+  run('node.mjs', ['contract', 'propose', 'core', 'render', 'the render surface gains slots', '--by', 'owner1'], dir);
 
   const rosterPath = join(dir, '.horde', 'hordes', 'mission1', 'roster.json');
   writeFileSync(rosterPath, JSON.stringify({
@@ -545,7 +529,7 @@ test('node.mjs map: the mission\'s components with owner, ports and open port pr
   assert.equal(m.code, 0, m.stderr);
   const row = m.json.find((r) => r.node === 'core');
   assert.equal(row.owner, 'mission1-owner-core-1');
-  assert.deepEqual(row.ports, ['render@2']);
+  assert.deepEqual(row.ports, ['render']);
   assert.equal(row.openPortProposals, 1);
   // stamps are retired: the lock says what is verified, and map does not keep a second answer
   assert.equal('stamp' in row, false);
@@ -735,17 +719,17 @@ test('the horde numbers everything from one counter, with one prefix per kind', 
   });
 
   await t.test('a contract proposal is a graph item like any other, with no letter of its own', () => {
-    const port = run('node.mjs', ['contract', 'propose', 'core', 'render', 'the render promise', '--as', 'tests/render.test.mjs', '--by', 'core'], dir);
+    const port = run('node.mjs', ['contract', 'propose', 'core', 'render', 'the render promise', '--by', 'core'], dir);
     assert.equal(port.code, 0, port.stderr);
     assert.match(port.json.id, /^g-\d{3}$/);
   });
 
   await t.test('a port proposal always carries an aspects field, empty when none was named', () => {
-    const named = run('node.mjs', ['contract', 'propose', 'core', 'guard', 'the guard promise', '--as', 'tests/guard.test.mjs', '--aspects', 'no-marker, tidy', '--by', 'core'], dir);
+    const named = run('node.mjs', ['contract', 'propose', 'core', 'guard', 'the guard promise', '--aspects', 'no-marker, tidy', '--by', 'core'], dir);
     assert.equal(named.code, 0, named.stderr);
     assert.deepEqual(named.json.aspects, ['no-marker', 'tidy']);
 
-    const bare = run('node.mjs', ['contract', 'propose', 'core', 'shape', 'the shape promise', '--as', 'tests/shape.test.mjs', '--by', 'core'], dir);
+    const bare = run('node.mjs', ['contract', 'propose', 'core', 'shape', 'the shape promise', '--by', 'core'], dir);
     assert.equal(bare.code, 0, bare.stderr);
     assert.deepEqual(bare.json.aspects, [], 'the field is written whether or not one was named — a missing field is a record Yggdrasil cannot read');
   });

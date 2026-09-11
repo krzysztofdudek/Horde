@@ -43,21 +43,20 @@ commands:
       ports they publish, and open port proposals.
   show <node> [--horde h]
       boundary, the rules in force on the node (with the status word that says what a refusal
-      costs), the ports it publishes with version and test, last log entries.
+      costs), the ports it publishes, last log entries.
   log <node> "<reason>" [--run] [--horde h]
       prints the "yg log add --reason" command for the node's own log; runs it too with --run.
-  contract propose <node> <port> "<text>" --as <test-path> [--version <n>] [--aspects a,b]
-      --by <owner> [--horde h]
-      port-is-contract: proposes adding a port to a node, or bumping the version of one it
-      already publishes. --as names the test that IS the contract. --version defaults to the
-      next version above what the node publishes today. --aspects names the rules the port is to
-      be held to; the filed record always carries the field, empty when none was named.
+  contract propose <node> <port> "<text>" --by <owner> [--aspects a,b] [--horde h]
+      port-is-contract: proposes adding a port to a node, or changing one it already publishes.
+      There is no version — a port is referenced by name alone, everywhere. --aspects names the
+      rules the port is to be held to; the filed record always carries the field, empty when
+      none was named.
   contract approve <id> ["why"] --by <name> [--horde h]
   contract veto <id> "why" --by <name> [--horde h]
       the architect rules on a port proposal; an approved one is filed by editing the node's
       yg-node.yaml and recording the why with "yg log add" — the command prints both.
   contracts [--pending] [--node n] [--horde h]
-      the ports of this mission's nodes as the graph declares them (name, version, test), plus
+      the ports of this mission's nodes as the graph declares them (name, description), plus
       every port proposal this horde has open.
   verdicts [--at <path>] [--by <name>] [--horde h]
       the prose rules still waiting on a judgement in a tree, each with the exact
@@ -1299,16 +1298,18 @@ export function ticketBoundary(root, cfg, nodes) {
 
 // ---- ports: the contracts ---------------------------------------------------------------
 //
-// port-is-contract. A port is one object in the graph, carrying the version a consumer names and
-// the test that IS the promise. The horde has no contract object of its own: what it has is a
-// PROPOSAL to add or bump one, which the architect files.
+// port-is-contract. A port is one object in the graph, named and described, that its neighbours
+// depend on. There is no version any more — the graph dropped it (6.0.0), and Horde does not
+// keep a parallel counter of its own; a port is referenced by name alone, everywhere. The horde
+// has no contract object of its own: what it has is a PROPOSAL to add or change one, which the
+// architect files.
 
 export function nodeRelations(root, cfg, node) {
   const doc = ygNode(root, cfg, node);
   return doc ? asArray(doc.relations) : [];
 }
 
-// The ports a node publishes, as {name: {description, version, test, aspects}}.
+// The ports a node publishes, as {name: {description, aspects}}.
 export function nodePorts(root, cfg, node) {
   const doc = ygNode(root, cfg, node);
   return doc && doc.ports && typeof doc.ports === 'object' ? doc.ports : {};
@@ -1319,8 +1320,8 @@ export function portExists(root, cfg, node, port) {
 }
 
 // consumersOf(node, port) — every node that consumes one node's port, from `yg impact`. The one
-// derivation of this, because three things depend on the same answer: which tickets a version
-// bump must come before, whose owner has to approve it, and what the merge checklist then
+// derivation of this, because three things depend on the same answer: which tickets a port
+// change must come before, whose owner has to approve it, and what the merge checklist then
 // requires. Yggdrasil normalizes a relation that names no port to portNames: ['default'], so an
 // empty `ports` list here means the relation named nothing at all — never a match for any port.
 export function consumersOf(root, cfg, node, port) {
@@ -1340,9 +1341,9 @@ export function consumersOf(root, cfg, node, port) {
   return [...out].sort();
 }
 
-// One node's ports rendered for a brief: what this node promises its neighbours, at which
-// version, proved by which test. The verifier reads this instead of a hand-kept contracts table,
-// so what it is held to is what the graph actually declares.
+// One node's ports rendered for a brief: what this node promises its neighbours. The verifier
+// reads this instead of a hand-kept contracts table, so what it is held to is what the graph
+// actually declares.
 export function renderNodePorts(root, cfg, node) {
   const ports = nodePorts(root, cfg, node);
   const names = Object.keys(ports).sort();
@@ -1351,10 +1352,10 @@ export function renderNodePorts(root, cfg, node) {
     lines.push('(this component publishes no port — it promises its neighbours nothing by name)');
     return lines.join('\n');
   }
-  lines.push('| port | version | the test that is the contract | promise |', '|---|---|---|---|');
+  lines.push('| port | promise |', '|---|---|');
   for (const name of names) {
     const p = ports[name] || {};
-    lines.push(`| ${name} | ${p.version ?? '(none declared)'} | ${p.test || '(none declared)'} | ${p.description || ''} |`);
+    lines.push(`| ${name} | ${p.description || ''} |`);
   }
   const consumers = names
     .map((n) => ({ port: n, by: consumersOf(root, cfg, node, n) }))
@@ -1614,8 +1615,7 @@ function ownerOf(horde, node) {
 
 function portSummary(root, cfg, node) {
   const ports = nodePorts(root, cfg, node);
-  const names = Object.keys(ports).sort();
-  return names.map((n) => `${n}@${ports[n] && ports[n].version != null ? ports[n].version : '-'}`);
+  return Object.keys(ports).sort();
 }
 
 function cmdMap(horde, root, cfg, flags) {
@@ -1697,27 +1697,18 @@ function parseAspectList(v) {
 function cmdContractPropose(horde, root, cfg, positional, flags) {
   const [node, port, text] = positional;
   if (!node || !port || !text) fail('contract propose requires <node> <port> "<text>"');
-  if (!flags.as) fail('contract propose requires --as <test-path> — a port\'s promise IS a test, and the graph records which one');
   if (!flags.by) fail('contract propose requires --by <owner>');
   if (!nodeExists(root, cfg, node)) fail(`no such node in the graph: ${node}`);
 
   const existing = nodePorts(root, cfg, node)[port];
-  const current = existing && existing.version != null ? Number(existing.version) : null;
-  const version = flags.version !== undefined ? Number(flags.version) : (current === null ? 1 : current + 1);
-  if (!Number.isFinite(version) || version < 1) fail(`--version must be a whole number of 1 or more, got: ${flags.version}`);
-  if (current !== null && version <= current) {
-    fail(`${node}/${port} already publishes version ${current} — a proposal must raise it, not restate it (--version ${current + 1})`);
-  }
+  const kind = existing ? 'change' : 'add';
 
   const graph = loadGraph(horde);
   const entry = {
     id: nextGraphId(horde, graph),
     node,
     port,
-    version,
-    test: flags.as,
-    kind: current === null ? 'add' : 'bump',
-    from: current,
+    kind,
     text,
     // The rules this port is to be held to. Always written, empty when none was named: Yggdrasil
     // validates the field and a record that simply left it out is a record it cannot read.
@@ -1728,9 +1719,9 @@ function cmdContractPropose(horde, root, cfg, positional, flags) {
   };
   graph.ports.push(entry);
   saveGraph(horde, graph);
-  const consumers = current === null ? [] : consumersOf(root, cfg, node, port);
-  emit({ ...entry, consumers }, flags, () => `port ${entry.kind === 'add' ? 'proposed' : 'bump proposed'}: [${entry.id}] ${node}/${port}@${version}`
-    + (consumers.length ? ` — ${consumers.length} consumer(s) read the old version: ${consumers.join(', ')}` : ''));
+  const consumers = kind === 'change' ? consumersOf(root, cfg, node, port) : [];
+  emit({ ...entry, consumers }, flags, () => `port ${kind === 'add' ? 'proposed' : 'change proposed'}: [${entry.id}] ${node}/${port}`
+    + (consumers.length ? ` — ${consumers.length} consumer(s): ${consumers.join(', ')}` : ''));
 }
 
 // The filing an approved port proposal asks the architect for: the edit to the node's own file,
@@ -1739,8 +1730,8 @@ function cmdContractPropose(horde, root, cfg, positional, flags) {
 function portFilingSteps(cfg, p) {
   const yg = ygCommand(cfg);
   return [
-    `edit .yggdrasil/model/${p.node}/yg-node.yaml — under ports:, set ${p.port}: { version: ${p.version}, test: ${p.test} }`,
-    `${yg.display} log add --node ${p.node} --reason "<why this port exists at version ${p.version}>"`,
+    `edit .yggdrasil/model/${p.node}/yg-node.yaml — under ports:, set ${p.port}: { description: "<the promise>" }`,
+    `${yg.display} log add --node ${p.node} --reason "<why this port ${p.kind === 'add' ? 'exists' : 'changed'}>"`,
     `${yg.display} check --approve --only-deterministic  (records the contract baseline — free, no key)`,
   ];
 }
@@ -1760,7 +1751,7 @@ function cmdContractRule(horde, root, cfg, positional, flags, verdict) {
   saveGraph(horde, graph);
   const steps = verdict === 'approved' ? portFilingSteps(cfg, p) : [];
   emit({ ...p, filing: steps }, flags, () => [
-    `port proposal ${p.id} ${verdict} — ${p.node}/${p.port}@${p.version}`,
+    `port proposal ${p.id} ${verdict} — ${p.node}/${p.port}`,
     ...(note ? [note] : []),
     ...(steps.length ? ['file it into the graph yourself:', ...steps.map((s) => `  ${s}`)] : []),
   ].join('\n'));
@@ -1779,8 +1770,6 @@ function cmdContracts(horde, root, cfg, flags) {
         declared.push({
           node,
           port: name,
-          version: p.version ?? null,
-          test: p.test || null,
           description: p.description || '',
           consumers: consumersOf(root, cfg, node, name),
         });
@@ -1796,13 +1785,13 @@ function cmdContracts(horde, root, cfg, flags) {
     if (!flags.pending) {
       lines.push('Declared in the graph:');
       lines.push(...(declared.length
-        ? declared.map((d) => `  ${d.node}/${d.port}@${d.version ?? '-'}  test=${d.test || '(none)'}  consumers=${d.consumers.join(',') || '-'}`)
+        ? declared.map((d) => `  ${d.node}/${d.port}  consumers=${d.consumers.join(',') || '-'}`)
         : ['  (none)']));
       lines.push('');
     }
     lines.push(flags.pending ? 'Proposals waiting on the architect:' : 'Proposals:');
     lines.push(...(proposals.length
-      ? proposals.map((p) => `  [${p.id}] ${p.node}/${p.port}@${p.version}  ${p.status}  test=${p.test}  by ${p.by}  ${p.text}`)
+      ? proposals.map((p) => `  [${p.id}] ${p.node}/${p.port}  ${p.status}  by ${p.by}  ${p.text}`)
       : ['  (none)']));
     return lines.join('\n');
   });

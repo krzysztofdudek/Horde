@@ -57,11 +57,11 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     // node.mjs's "charter edit" (task 014) is gone — node charters no longer exist at all, and
     // node.mjs contract propose/approve never read one, so the step drops straight to the port.
     //
-    // port-is-contract: the contract is a port on the component, proposed at a version and with
-    // the test that is its promise; the architect files it into the graph.
-    const port = run('node.mjs', ['contract', 'propose', 'model', 'hook-surface', 'the hook the ui reads', '--as', 'tests/contract.test.mjs', '--by', 'owner-model'], dir);
+    // port-is-contract: the contract is a port on the component, proposed by name — there is no
+    // version, in the graph or in Horde; the architect files it into the graph.
+    const port = run('node.mjs', ['contract', 'propose', 'model', 'hook-surface', 'the hook the ui reads', '--by', 'owner-model'], dir);
     assert.equal(port.code, 0, port.stderr);
-    assert.equal(port.json.version, 1);
+    assert.equal(port.json.kind, 'add');
     const approved = run('node.mjs', ['contract', 'approve', port.json.id, '--by', 'architect'], dir);
     assert.equal(approved.code, 0, approved.stderr);
     assert.equal(approved.json.status, 'approved');

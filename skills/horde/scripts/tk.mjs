@@ -14,9 +14,10 @@
 // Four more fields — **Files:**, **Consumes:**, **Produces:**, **Evidence:** — are what the plan
 // is computed from: the paths the ticket touches, the ports it needs and delivers, the charter
 // evidence rows it earns. They are validated where they are written (a file inside the node's
-// boundary, a port that reads <node>/<port>@<version> and that something actually produces, an
-// evidence id the charter carries), because a ticket that declares an impossible plan is cheapest
-// to refuse at the proposal.
+// boundary, a port that reads <node>/<port> and that something actually produces, an evidence id
+// the charter carries), because a ticket that declares an impossible plan is cheapest to refuse
+// at the proposal. A port carries no version — there is none, in the graph or in Horde; two
+// tickets naming the same port name the same thing.
 //
 // Exports findTicket, the field helpers and padId so queue.mjs — which also needs to read a
 // ticket's status — doesn't reimplement the parsing.
@@ -65,8 +66,8 @@ const USAGE = `usage: tk.mjs <command> [options]
 
 commands:
   new <slug> --title "<t>" --node <n> [--node <n2> …] --class <c> [--severity high|medium|low]
-      [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
-      [--produces <node>/<port>@<v>,…] [--evidence "<…>"]… [--revert-base <ref>]
+      [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
+      [--produces <node>/<port>,…] [--evidence "<…>"]… [--revert-base <ref>]
       [--team t] [--horde h]
       renders templates/ticket.md; status starts "proposed". --node is repeatable, up to two —
       three or more is refused, since nobody holds the whole of such a diff.
@@ -80,8 +81,8 @@ commands:
       branch's tip (for a test meant to already be green there, e.g. a contract test).
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
       the merge checklist refuses a diff that reaches past them). --consumes/--produces name the
-      ports the ticket needs and delivers, as <node>/<port>@<version>; a consumed port with no
-      producing ticket and no such port in the graph is refused. An --evidence value that is
+      ports the ticket needs and delivers, as <node>/<port>; a consumed port with no producing
+      ticket and no such port in the graph is refused. An --evidence value that is
       nothing but catalogue ids ("E2,E5") fills the Evidence field; any other value becomes its
       own "- [ ] …" line in the ticket's Acceptance — evidence checklist, and the ids cited in it
       fill the field too. A catalogue id (E1, E2, …) must already be a row in the horde's
@@ -146,11 +147,11 @@ export function ticketQuality(text) {
 // --- the four structural fields ----------------------------------------
 //
 // **Files:** the paths this ticket touches · **Consumes:**/**Produces:** the ports it needs and
-// delivers, `<node>/<port>@<version>` · **Evidence:** the catalogue rows it earns. Together they
-// are what the plan is computed from: the order between tickets, which of them collide over a
-// file, who has to approve a version bump, and which promised evidence nobody is building. Read
-// through these three functions everywhere, so a ticket written by hand in an old shape (an
-// empty field, the word "none") degrades to "not declared" rather than to a wrong answer.
+// delivers, `<node>/<port>` · **Evidence:** the catalogue rows it earns. Together they are what
+// the plan is computed from: the order between tickets, which of them collide over a file, who
+// has to approve a port change, and which promised evidence nobody is building. Read through
+// these three functions everywhere, so a ticket written by hand in an old shape (an empty field,
+// the word "none") degrades to "not declared" rather than to a wrong answer.
 
 function listField(text, label) {
   const raw = parseField(text || '', label);
@@ -162,14 +163,13 @@ export function ticketFiles(text) { return listField(text, 'Files'); }
 
 export function ticketEvidence(text) { return listField(text, 'Evidence'); }
 
-// `<node>/<port>@<version>`, where the node is a whole graph path ("orders/order-service") and
-// the port is its last segment before the "@" — null when the text is not that shape at all.
+// `<node>/<port>`, where the node is a whole graph path ("orders/order-service") and the port is
+// its last segment — null when the text is not that shape at all. No version: there is none, in
+// the graph or in Horde.
 export function parsePortRef(raw) {
-  const m = /^([A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)\/([A-Za-z0-9._-]+)@(\d+)$/.exec(String(raw).trim());
+  const m = /^([A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)\/([A-Za-z0-9._-]+)$/.exec(String(raw).trim());
   if (!m) return null;
-  return {
-    node: m[1], port: m[2], version: Number(m[3]), ref: `${m[1]}/${m[2]}@${m[3]}`,
-  };
+  return { node: m[1], port: m[2], ref: `${m[1]}/${m[2]}` };
 }
 
 // label is "Consumes" or "Produces". Unparseable entries are dropped here — `new`/`edit` refuse
@@ -403,8 +403,11 @@ function checkFilesInBoundary(nodes, files) {
 
 function parsePortList(raw, label) {
   return listFlag(raw).map((entry) => {
+    if (/@\d+$/.test(entry.trim())) {
+      fail(`--${label.toLowerCase()} takes <node>/<port> — the "@<version>" suffix was removed (there is no port version any more, in the graph or in Horde), got "${entry}"`);
+    }
     const ref = parsePortRef(entry);
-    if (!ref) fail(`--${label.toLowerCase()} takes <node>/<port>@<version> (e.g. auth/policy@2) — got "${entry}"`);
+    if (!ref) fail(`--${label.toLowerCase()} takes <node>/<port> (e.g. auth/policy) — got "${entry}"`);
     return ref;
   });
 }

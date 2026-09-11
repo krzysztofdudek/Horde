@@ -156,8 +156,6 @@ export function addNode(dir, path, spec = {}) {
       const p = ports[name] || {};
       lines.push(`  ${name}:`);
       lines.push(`    description: ${p.description || `The ${name} promise.`}`);
-      if (p.version !== undefined) lines.push(`    version: ${p.version}`);
-      if (p.test !== undefined) lines.push(`    test: ${p.test}`);
       lines.push('    aspects: []');
     }
   }

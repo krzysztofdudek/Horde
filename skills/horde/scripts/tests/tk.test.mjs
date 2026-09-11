@@ -363,12 +363,12 @@ test('tk.mjs: Files, Consumes, Produces and Evidence on the ticket', async (t) =
   await t.test('new writes the four fields into the header', () => {
     const r = run('tk.mjs', ['new', 'policy-engine', '--title', 'Policy engine', '--node', 'auth',
       '--class', 'sonnet', '--files', 'src/auth/policy.ts,src/auth/policy.test.ts',
-      '--produces', 'auth/policy@2', '--evidence', 'E1'], dir);
+      '--produces', 'auth/policy', '--evidence', 'E1'], dir);
     assert.equal(r.code, 0, r.stderr);
     producer = r.json.id;
     const text = run('tk.mjs', ['show', producer], dir).json.text;
     assert.match(text, /\*\*Files:\*\* src\/auth\/policy\.ts, src\/auth\/policy\.test\.ts/);
-    assert.match(text, /\*\*Consumes:\*\* none · \*\*Produces:\*\* auth\/policy@2/);
+    assert.match(text, /\*\*Consumes:\*\* none · \*\*Produces:\*\* auth\/policy/);
     assert.match(text, /\*\*Evidence:\*\* E1/);
   });
 
@@ -380,25 +380,32 @@ test('tk.mjs: Files, Consumes, Produces and Evidence on the ticket', async (t) =
     assert.match(r.stderr, /the boundary is src\/auth\/\*\*/);
   });
 
-  await t.test('a port that is not <node>/<port>@<version> is refused', () => {
+  await t.test('a port that is not <node>/<port> is refused', () => {
     const r = run('tk.mjs', ['new', 'bad-port', '--title', 'Bad port', '--node', 'api',
       '--class', 'sonnet', '--consumes', 'auth-policy-2'], dir);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /takes <node>\/<port>@<version>/);
+    assert.match(r.stderr, /takes <node>\/<port>/);
+  });
+
+  await t.test('the old "<node>/<port>@<version>" syntax is refused, naming the removal', () => {
+    const r = run('tk.mjs', ['new', 'old-syntax', '--title', 'Old syntax', '--node', 'api',
+      '--class', 'sonnet', '--consumes', 'auth/policy@2'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /"@<version>" suffix was removed/);
   });
 
   await t.test('a consumed port nothing produces and the graph does not have is refused by name', () => {
     const r = run('tk.mjs', ['new', 'no-producer', '--title', 'No producer', '--node', 'api',
-      '--class', 'sonnet', '--consumes', 'auth/sessions@1'], dir);
+      '--class', 'sonnet', '--consumes', 'auth/sessions'], dir);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /nothing produces auth\/sessions@1/);
+    assert.match(r.stderr, /nothing produces auth\/sessions/);
     assert.match(r.stderr, /File the producing ticket first/);
   });
 
   let consumer;
   await t.test('a consumed port another ticket produces is accepted', () => {
     const r = run('tk.mjs', ['new', 'api-guard', '--title', 'Guard', '--node', 'api', '--class', 'sonnet',
-      '--files', 'src/api/guard.ts', '--consumes', 'auth/policy@2', '--evidence', 'E2'], dir);
+      '--files', 'src/api/guard.ts', '--consumes', 'auth/policy', '--evidence', 'E2'], dir);
     assert.equal(r.code, 0, r.stderr);
     consumer = r.json.id;
   });
@@ -427,10 +434,10 @@ test('tk.mjs: Files, Consumes, Produces and Evidence on the ticket', async (t) =
   });
 
   await t.test('edit --consumes/--produces/--evidence change one field each, leaving the others', () => {
-    const r = run('tk.mjs', ['edit', consumer, '--by', 'owner-api', '--produces', 'api/guard@1', '--evidence', 'E2'], dir);
+    const r = run('tk.mjs', ['edit', consumer, '--by', 'owner-api', '--produces', 'api/guard', '--evidence', 'E2'], dir);
     assert.equal(r.code, 0, r.stderr);
     const text = run('tk.mjs', ['show', consumer], dir).json.text;
-    assert.match(text, /\*\*Consumes:\*\* auth\/policy@2 · \*\*Produces:\*\* api\/guard@1/);
+    assert.match(text, /\*\*Consumes:\*\* auth\/policy · \*\*Produces:\*\* api\/guard/);
     assert.match(text, /\*\*Evidence:\*\* E2/);
     assert.match(text, /\*\*Files:\*\* src\/api\/guard\.ts, src\/api\/guard\.test\.ts/);
   });

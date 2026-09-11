@@ -154,7 +154,8 @@ its folder and of the `id:` its issue.md carries.
   what `queue.mjs plan` computes the mission's order from, and they are validated where they are
   written: every path in `--files` must lie inside the boundary of a node the ticket names (the same
   boundary reading `land`'s scope item uses — one function, in `node.mjs`, imported by both);
-  `--consumes`/`--produces` must read `<node>/<port>@<version>`; and a consumed port must be
+  `--consumes`/`--produces` must read `<node>/<port>` — there is no version, in the graph or in
+  Horde; and a consumed port must be
   produced by some ticket of this horde (its own team or another's) or already exist on that node in
   the graph — refused by name otherwise. Port existence is read through `node.mjs`'s graph reading,
   in one place, so a later change of where the graph comes from changes one function.
@@ -216,17 +217,17 @@ the only thing that moves one to `queued`.
   ticket branch, then `queued` with a note; a clean worktree and no commit → `queued`, worktree
   removed. A `waiting` item is left untouched — it has nothing running to reconcile).
 - `plan [--team t] [--apply-order]` — the team's DAG, derived from the tickets and printed, never
-  dispatched. Three kinds of edge, added together and never overriding one another: a ticket that
-  `**Consumes:** <node>/<port>@<v>` comes after the ticket that `**Produces:**` that exact version
-  (in its own team or another's — a cross-team producer is reported as what the ticket waits on
-  outside the team); a ticket that raises a port's version comes before every ticket of a node that
-  consumes that port and still names the old version (who consumes it: `node.mjs`'s `consumersOf`);
-  and whatever was written by hand, on the ticket's `**Depends on:**` field and on its queue item.
-  It then reports: the layers (topological antichains), the critical path in tickets and in class
-  weight, the connected components with the tickets that hang loose on their own, tickets with no
-  order between them that claim the same file, files three or more tickets claim, the extra
-  approvals a version bump owes, consumed ports nothing produces, the charter evidence rows no
-  ticket names, the cost (Σ class weight × 2 runs per ticket) and the waves that many layers need at
+  dispatched. Two kinds of edge, added together and never overriding one another: a ticket that
+  `**Consumes:** <node>/<port>` comes after the ticket that `**Produces:**` that same port — no
+  version to compare, so the port name alone is the match (in its own team or another's — a
+  cross-team producer is reported as what the ticket waits on outside the team); and whatever was
+  written by hand, on the ticket's `**Depends on:**` field and on its queue item. It then reports:
+  the layers (topological antichains), the critical path in tickets and in class weight, the
+  connected components with the tickets that hang loose on their own, tickets with no order
+  between them that claim the same file, files three or more tickets claim, the extra approvals a
+  port change owes (who consumes it: `node.mjs`'s `consumersOf`), consumed ports nothing produces,
+  the charter evidence rows no ticket names, the cost (Σ class weight × 2 runs per ticket) and the
+  waves that many layers need at
   `config.parallelism`. Merged and dropped tickets are out of the plan — it is what remains to do.
   A circle of dependencies is a refusal, with the circle printed. `--json` is a `horde-plan/1`
   document carrying all of it. `--apply-order` records the order `plan` proposed for a file clash
@@ -350,7 +351,7 @@ N/cap" line `tk.mjs` itself wrote.
 
 Fills `{{…}}` from the charter, the config (`fastCheck` = `gates.commit`, `protectedPaths`), the
 cache (`fastCheckCount` from `cache/last-gate.json`, or "unknown — report the count you get"), the
-component (`node.mjs`: the ports on its border with version, test and consumers — what the worker
+component (`node.mjs`: the ports on its border with their consumers — what the worker
 must not break), the ticket (`worktree` and `branch` from the queue item), and `reportsTo` — always
 "main", the director's own session name. Refuses to render with an unfilled placeholder. After the
 role's own text it appends a `## Law` section: the disciplines that role is held to, inlined from
@@ -387,8 +388,8 @@ It is also where the other tools read the graph from, so there is one reading of
 the boundary of a ticket's nodes and the glob matching over it (`tk.mjs`'s file validation and
 `land`'s scope item), the ports a node publishes (`tk.mjs`'s refusal of a consumed port nothing
 produces), and `consumersOf(node, port)` — every node that consumes one node's port, from
-`yg impact`. `consumersOf` is what decides a version bump's order in the plan and whose approval the
-merge checklist then requires — one derivation, three users.
+`yg impact`. `consumersOf` is what decides whose approval a port change requires — one derivation,
+several users.
 
 - `bind` (no node) — verifies the graph is readable **through the CLI** (it asks the documents about
   a real node, so "readable" is not merely "a directory exists") and lists nodes.
@@ -404,7 +405,7 @@ merge checklist then requires — one derivation, three users.
   as to `leases.json`'s own append-only history; `logged` in the result says whether the node log
   write happened (it is skipped, never refused, when the node's own graph object doesn't exist yet
   to log against). `horde.mjs archive` is the only place a lease is released outright.
-- `map [--horde h]` — the mission's nodes with owner, the ports each publishes (`name@version`), and
+- `map [--horde h]` — the mission's nodes with owner, the ports each publishes (by name), and
   how many port proposals are open on it. There is no currency stamp: the lock binds every verdict
   to the hash of the code it judged, so `yg check` is the one answer to "is this current", and a
   second one kept here could only disagree.
@@ -415,12 +416,12 @@ merge checklist then requires — one derivation, three users.
   "Rules inherited from above" section, when it has one, is reproduced under them.
 - `charter edit <node>` (opens from template if missing; the caller writes the content via stdin),
   `log <node> "…" [--run]` (prints the `yg log add` command; `--run` runs it).
-- **Ports are the contracts** (port-is-contract). `contract propose <node> <port> "<why>" --as
-  <test-path> [--version <n>] --by <owner>` proposes adding a port or bumping the version of one the
-  node already publishes; `--version` defaults to one above what the graph declares today, and a
-  version that does not raise it is refused. The result names every node that consumes the old
-  version. `contracts [--pending] [--node n]` lists the ports the mission's nodes declare — name,
-  version, test, consumers — read from `yg-node/1`, plus this horde's own open proposals;
+- **Ports are the contracts** (port-is-contract). `contract propose <node> <port> "<why>" --by
+  <owner> [--aspects a,b]` proposes adding a port, or changing one the node already publishes —
+  there is no version, in the graph or in Horde, so a port is referenced by name alone. The result
+  names every node that already consumes it. `contracts [--pending] [--node n]` lists the ports
+  the mission's nodes declare — name, description, consumers — read from `yg-node/1`, plus this
+  horde's own open proposals;
   `--pending` shows only the proposals. `contract approve|veto <id> ["why"] --by architect` rules on
   one, and an approval prints the filing the architect makes by hand: the `yg-node.yaml` edit, the
   `yg log add`, and the free run that records the contract baseline.

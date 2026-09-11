@@ -31,9 +31,8 @@ that has:
 - a **charter**: why it exists, its constraints, the decisions in force;
 - an **owner**: a role leased while work touches the node;
 - a **log**: decisions and history — why things are as they are;
-- **ports**: what it promises its neighbours, each carrying a version and the test that IS the
-  promise — the port is the contract, one object in the graph, and changing that test without
-  raising the version is a refusal;
+- **ports**: what it promises its neighbours, named and described — the port is the contract, one
+  object in the graph; there is no version, in the graph or in Horde;
 - **evidence**: tests and scenarios that prove it does what it claims.
 
 Why a node and not a team: a team is people who must know each other; a node is context that can be
@@ -131,6 +130,6 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
 ## Hard places, named
 
 - Planning can loop: cap rounds, escalate.
-- A port version bump propagates: know who has a red test before it lands (`node.mjs contracts`).
+- A port change propagates: know who consumes it before it lands (`node.mjs contracts`).
 - Cost must be counted even roughly (runs × class), or "cheapest capable" is a wish.
 - The first cut of the graph is a judgement the director makes with the user, not alone.

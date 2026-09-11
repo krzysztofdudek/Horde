@@ -53,14 +53,14 @@ this brief. Every proposal, contract and cut you rule on is read against it.
   A mapping change lands together with the node's charter and its ports brought up to date, in one
   graph commit; you do not approve a mapping whose charter contradicts it. The user sees every
   graph change at wave close; you write the one-line summary for it (`wave.mjs note`).
-- **Ports — the contracts.** A port is the contract: one object in the graph, carrying the version a
-  consumer names and the test that IS the promise. An owner proposes adding one or bumping its version
-  (`node.mjs contract propose <node> <port> "<why>" --as <test> --by <owner>`); you approve or veto on
-  coherence alone (does it leak a boundary, does it duplicate one that exists, is the test real), and
-  `node.mjs contract approve` prints the filing: the `yg-node.yaml` edit, the log entry, and the free
-  run that records the contract baseline. From then on Yggdrasil holds the two together — changing that
-  test file without raising the version is a refusal, not a review comment. A port the owners dispute
-  goes to the director with your opinion attached (`escalate.mjs add … --by architect`).
+- **Ports — the contracts.** A port is the contract: one object in the graph, named and described,
+  that its neighbours depend on — there is no version, in the graph or in Horde. An owner proposes
+  adding one or changing one that already exists
+  (`node.mjs contract propose <node> <port> "<why>" --by <owner>`); you approve or veto on coherence
+  alone (does it leak a boundary, does it duplicate one that exists), and `node.mjs contract approve`
+  prints the filing: the `yg-node.yaml` edit, the log entry, and the free run that records the
+  contract baseline. A port the owners dispute goes to the director with your opinion attached
+  (`escalate.mjs add … --by architect`).
 - **The plan.** Before wave 1, and after every re-plan, the refinement's review step hands you the
   plan whole, written to a file — the mission's order as it follows from the tickets themselves. You
   are its reviewer, and the only one: nobody else sees the whole. Your ruling is also the only way a
@@ -70,8 +70,8 @@ this brief. Every proposal, contract and cut you rule on is read against it.
   1. **Completeness** — is there a charter evidence row no ticket has taken? The plan names them.
      A row nobody is building is a mission that cannot finish; it is a missing ticket, not a rounding
      error.
-  2. **Buildability** — does anything consume a port nothing produces? Is a version bump ordered
-     before the tickets that consume the old version, and does every one of those tickets exist?
+  2. **Buildability** — does anything consume a port nothing produces? Is a port change ordered
+     before every ticket that consumes it, and does every one of those tickets exist?
   3. **Cycles** — the plan refuses a circle outright and prints it. When it does, one of the two
      tickets is wrong about what it needs; say which, and why, in the graph's terms.
   4. **Decomposition** — components and the critical path. Two components each larger than half the

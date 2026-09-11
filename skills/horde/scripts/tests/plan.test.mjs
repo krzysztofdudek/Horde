@@ -53,18 +53,18 @@ function makeSixTicketFixture(dir) {
     { id: 'E4', text: 'the role tables are gone from the schema', node: 'auth' },
   ]);
   addNode(dir, 'auth', { mapping: ['src/auth/**'] });
-  addNode(dir, 'api', { mapping: ['src/api/**'], relations: [{ target: 'auth', type: 'uses' }] });
-  addNode(dir, 'web', { mapping: ['src/web/**'], relations: [{ target: 'auth', type: 'uses' }] });
-  addNode(dir, 'cli', { mapping: ['src/cli/**'], relations: [{ target: 'auth', type: 'uses' }] });
+  addNode(dir, 'api', { mapping: ['src/api/**'], relations: [{ target: 'auth', type: 'uses', consumes: ['policy'] }] });
+  addNode(dir, 'web', { mapping: ['src/web/**'], relations: [{ target: 'auth', type: 'uses', consumes: ['policy'] }] });
+  addNode(dir, 'cli', { mapping: ['src/cli/**'], relations: [{ target: 'auth', type: 'uses', consumes: ['policy'] }] });
 
   tk(dir, ['policy-engine', '--title', 'policy engine', '--node', 'auth', '--class', 'sonnet',
-    '--files', 'src/auth/policy.ts,src/auth/policy.test.ts', '--produces', 'auth/policy@2', '--evidence', 'E1']);
+    '--files', 'src/auth/policy.ts,src/auth/policy.test.ts', '--produces', 'auth/policy', '--evidence', 'E1']);
   tk(dir, ['api-guard', '--title', 'api guard on the engine', '--node', 'api', '--class', 'sonnet',
-    '--files', 'src/api/guard.ts,src/api/guard.test.ts', '--consumes', 'auth/policy@2', '--evidence', 'E2']);
+    '--files', 'src/api/guard.ts,src/api/guard.test.ts', '--consumes', 'auth/policy', '--evidence', 'E2']);
   tk(dir, ['web-session', '--title', 'web session on the engine', '--node', 'web', '--class', 'sonnet',
-    '--files', 'src/web/session.ts,src/web/session.test.ts', '--consumes', 'auth/policy@2']);
+    '--files', 'src/web/session.ts,src/web/session.test.ts', '--consumes', 'auth/policy']);
   tk(dir, ['cli-auth', '--title', 'cli on the engine', '--node', 'cli', '--class', 'sonnet',
-    '--files', 'src/cli/auth.ts,src/cli/auth.test.ts', '--consumes', 'auth/policy@2', '--evidence', 'E3']);
+    '--files', 'src/cli/auth.ts,src/cli/auth.test.ts', '--consumes', 'auth/policy', '--evidence', 'E3']);
   tk(dir, ['drop-roles', '--title', 'drop the role tables', '--node', 'auth', '--class', 'sonnet',
     '--files', 'src/auth/roles.ts,src/auth/roles.test.ts', '--depends', '102,103,104']);
   tk(dir, ['web-theme', '--title', 'web theme', '--node', 'web', '--class', 'sonnet',
@@ -117,7 +117,7 @@ test('queue.mjs plan: the six-ticket worked example — layers, critical path, o
     assert.deepEqual(plan.consumesWithoutProducer, []);
   });
 
-  await t.test('the version bump owes an approval to every node that consumes the port', () => {
+  await t.test('a port change owes an approval to every node that consumes the port', () => {
     const t101 = plan.tickets.find((x) => x.id === '101');
     assert.deepEqual(t101.approvals, ['auth', 'api', 'cli', 'web']);
     const t106 = plan.tickets.find((x) => x.id === '106');
@@ -229,9 +229,9 @@ test('queue.mjs plan: a consumed port nobody produces is named', async (t) => {
   run('node.mjs', ['new', 'api', '--boundary', 'src/api/'], dir);
   run('node.mjs', ['new', 'auth', '--boundary', 'src/auth/'], dir);
   const producer = tk(dir, ['engine', '--title', 'engine', '--node', 'auth', '--class', 'sonnet',
-    '--produces', 'auth/policy@2']);
+    '--produces', 'auth/policy']);
   const consumer = tk(dir, ['guard', '--title', 'guard', '--node', 'api', '--class', 'sonnet',
-    '--consumes', 'auth/policy@2']);
+    '--consumes', 'auth/policy']);
   run('queue.mjs', ['add', producer], dir);
   run('queue.mjs', ['add', consumer], dir);
 
@@ -239,24 +239,25 @@ test('queue.mjs plan: a consumed port nobody produces is named', async (t) => {
   // something nobody is building, and the plan says so instead of laying it out as ready.
   run('tk.mjs', ['status', producer, 'dropped'], dir);
   const plan = run('queue.mjs', ['plan'], dir).json;
-  assert.deepEqual(plan.consumesWithoutProducer, [{ ticket: consumer, port: 'auth/policy@2' }]);
+  assert.deepEqual(plan.consumesWithoutProducer, [{ ticket: consumer, port: 'auth/policy' }]);
   const human = run('queue.mjs', ['plan'], dir, { json: false });
-  assert.match(human.stdout, /consumes without a producer: \d+ needs auth\/policy@2/);
+  assert.match(human.stdout, /consumes without a producer: \d+ needs auth\/policy/);
 });
 
-// --- the graph's own edge, both ways of reading it ---------------------------------
+// --- the graph's own edge -----------------------------------------------------------
 //
 // "Who consumes this port" has exactly one authority — `yg impact --node <p> --json`, the
-// yg-impact/1 document — and no second reading to fall back to. Two consumers here, reached two
-// different ways by the graph itself: `api` names the port it consumes, `mobile` names only the
-// component, which consumes it whole. Both must land in the plan, and a CLI that cannot answer
-// must stop the plan rather than quietly produce a smaller one.
+// yg-impact/1 document — and no second reading to fall back to. A relation naming no port
+// resolves to 'default', never to every port the target publishes (Yggdrasil does not offer a
+// "consumes it whole" reading any more), so both consumers here name the port explicitly. Both
+// must land in the plan, and a CLI that cannot answer must stop the plan rather than quietly
+// produce a smaller one.
 function makeConsumerFixture(dir) {
   initHorde(dir);
   addNode(dir, 'auth', {
     type: 'module',
     mapping: ['src/auth/**'],
-    ports: { policy: { version: 1, test: 'tests/contracts/policy.test.mjs' } },
+    ports: { policy: { description: 'The policy promise.' } },
   });
   addNode(dir, 'api', {
     mapping: ['src/api/**'],
@@ -264,15 +265,15 @@ function makeConsumerFixture(dir) {
   });
   addNode(dir, 'mobile', {
     mapping: ['src/mobile/**'],
-    relations: [{ target: 'auth', type: 'uses' }],
+    relations: [{ target: 'auth', type: 'uses', consumes: ['policy'] }],
   });
 
   const producer = tk(dir, ['engine', '--title', 'policy engine', '--node', 'auth', '--class', 'sonnet',
-    '--files', 'src/auth/policy.ts', '--produces', 'auth/policy@2']);
+    '--files', 'src/auth/policy.ts', '--produces', 'auth/policy']);
   const apiTicket = tk(dir, ['guard', '--title', 'api guard', '--node', 'api', '--class', 'sonnet',
-    '--files', 'src/api/guard.ts', '--consumes', 'auth/policy@1']);
+    '--files', 'src/api/guard.ts', '--consumes', 'auth/policy']);
   const mobileTicket = tk(dir, ['app', '--title', 'mobile app', '--node', 'mobile', '--class', 'sonnet',
-    '--files', 'src/mobile/app.ts', '--consumes', 'auth/policy@1']);
+    '--files', 'src/mobile/app.ts', '--consumes', 'auth/policy']);
   for (const id of [producer, apiTicket, mobileTicket]) run('queue.mjs', ['add', id], dir);
   return { producer, apiTicket, mobileTicket };
 }
@@ -282,9 +283,9 @@ test('queue.mjs plan: the graph edge comes from yg-impact/1, and a CLI that cann
   t.after(() => rmRepo(dir));
   const { producer, apiTicket, mobileTicket } = makeConsumerFixture(dir);
 
-  await t.test('every consumer the document names is ordered after the version bump', () => {
+  await t.test('every consumer the document names is ordered after the port\'s producer', () => {
     const plan = run('queue.mjs', ['plan'], dir).json;
-    const edges = plan.edges.filter((e) => e.why.includes('raises')).map((e) => `${e.from}->${e.on}`).sort();
+    const edges = plan.edges.filter((e) => e.why.startsWith('consumes')).map((e) => `${e.from}->${e.on}`).sort();
     assert.deepEqual(edges, [`${apiTicket}->${producer}`, `${mobileTicket}->${producer}`]);
     assert.deepEqual(plan.tickets.find((x) => x.id === producer).approvals, ['auth', 'api', 'mobile']);
     assert.deepEqual(plan.layers, [[producer], [apiTicket, mobileTicket].sort()]);
