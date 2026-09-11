@@ -1,0 +1,71 @@
+# The `promises` package — an evidence layer for a repository that has none.
+#
+# A promise is one file saying, in the product's own words, one thing the software
+# does. Something that runs keeps it honest. These four rules ask for that shape
+# and nothing else: they never name a directory, a runner, a framework or a
+# fixture, because the repository that installs them decides all four by what it
+# maps the rules onto.
+#
+# `requires.yg` is `>=5.9.0` rather than `>=6.0.0` on purpose: 5.9.0 is the build
+# that first carries the package mechanism these rules are written against, and a
+# 6.x CLI satisfies the range too.
+schema: yg-package/1
+name: promises
+version: 0.1.0
+requires:
+  yg: ">=5.9.0"
+aspects:
+  - doc-shape
+  - product-language
+  - has-evidence
+  - evidence-matches-promise
+config:
+  doc-shape:
+    # The `## ` headings every promise must carry, in a comma-separated list. A
+    # heading outside this set is refused too: a promise with a section nobody
+    # asked for is a promise growing a second shape.
+    sections:
+      type: string
+      default: "What it checks, Why it matters, How to see it"
+  product-language:
+    # Words that look like code but are the product's own vocabulary, comma
+    # separated — `PostgreSQL`, `OAuth`, a brand name with an internal capital.
+    # Absent means no exceptions at all, never a crash.
+    vocabulary:
+      type: string
+      default: ""
+  has-evidence:
+    # Which way a promise is paired with the thing that keeps it: `auto` reads the
+    # pairing off each promise, or pin one of `mirror`, `named`, `self`,
+    # `artefact` for the whole repository.
+    evidence:
+      type: string
+      default: "auto"
+    # Under `mirror`: what the paired file's name adds to the promise's own.
+    spec_suffix:
+      type: string
+      default: ".test"
+    # Statuses that mean "nothing runs this yet, and that is fine", comma separated.
+    parked_markers:
+      type: string
+      default: "planned, disabled"
+  evidence-matches-promise:
+    evidence:
+      type: string
+      default: "auto"
+    spec_suffix:
+      type: string
+      default: ".test"
+    # How far the companion follows relative imports out of the paired file.
+    max_depth:
+      type: number
+      default: 3
+    # How many bytes of paired material the companion may hand the reader before
+    # it stops following imports. Measured, not guessed: a reviewer tier that
+    # names no limit of its own is gated at 50,000 characters, this rule's own
+    # text is about 2,450 of them, and a promise runs a few hundred more. 32,000
+    # leaves the rest as headroom for the prompt's own framing, so the fold stops
+    # on this budget rather than on a refusal from the transport.
+    max_bytes:
+      type: number
+      default: 32000

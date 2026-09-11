@@ -1,0 +1,11 @@
+name: EvidenceMatchesPromise
+description: The thing that keeps a promise covers every sentence of it, and does not centrally do more than the promise says.
+reviewer:
+  type: llm
+status: advisory
+# One reading per promise, and only over promises: the paired material arrives
+# through companion.mjs, so a test file must never become a subject of its own.
+scope:
+  per: file
+  files:
+    path: "**/*.md"

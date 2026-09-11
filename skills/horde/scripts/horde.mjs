@@ -269,9 +269,15 @@ export function detectEvidenceLayer(root, cfg = {}) {
 // nothing. It names the package and the command and stops there: offering a solution to a
 // repository that already has an evidence layer is exactly the behaviour this whole judgement
 // exists to prevent.
+//
+// The command is written the way the tool that runs it actually takes it: where to get the package
+// and which package to take, separated by a #. A bare name is refused — a source can publish
+// several packages, so the name alone does not say which. The left half stays a blank for the
+// reader to fill because this sentence is read inside somebody else's repository, where a path
+// written out here would be somebody else's machine.
 export const PROMISES_OFFER = 'If this repository wants an evidence layer of its own, the `promises` '
   + 'package adds one — a directory of promises with a status field, mirrored by the tests that keep '
-  + 'them: `yg pack add promises`.';
+  + "them: `yg pack add <this tool's repository>#promises`.";
 
 function quoteList(items) {
   return items.map((i) => `\`${i}\``).join(', ');

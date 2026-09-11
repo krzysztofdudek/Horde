@@ -1,0 +1,6 @@
+name: PromiseHasSomethingKeepingIt
+description: Every promise that claims to be kept is paired with exactly one thing that keeps it, and nothing keeps two promises at once.
+reviewer:
+  type: deterministic
+status: enforced
+errs: exact

@@ -1,0 +1,15 @@
+# This repository publishes Yggdrasil rules.
+#
+# A marketplace is an ordinary git repository with this file at its root. Nothing
+# registers anywhere: a consumer installs from the URL they type, so the same
+# package published from two forks is two different packages and neither can claim
+# the other's name.
+#
+# Horde publishes exactly one package, and never installs it itself. It is an
+# offer to a repository that has no evidence layer of its own — the last resort of
+# the judgement Horde makes when it can see nothing here to point at as proof.
+schema: yg-marketplace/1
+packages:
+  - name: promises
+    path: packages/promises
+    version: 0.1.0

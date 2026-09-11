@@ -134,7 +134,8 @@ Say **"no evidence layer found"** only when there is genuinely nothing: no suite
 file named like a test. A suite under a build system Horde does not recognise is *not* nothing — it
 is an evidence layer nobody has told the tool about, and the answer is `horde.mjs config set
 testGlobs "<glob>,<glob>"`, not an installation. Only on real emptiness is an offer made, and it is
-one sentence naming the `promises` package and `yg pack add promises`. Nothing beyond that sentence:
+one sentence naming the `promises` package and `yg pack add <this tool's repository>#promises`. Nothing
+beyond that sentence:
 Horde is as good at proof as the repository lets it be, and it says so once.
 
 ## Staffing and planning — for now, two seats

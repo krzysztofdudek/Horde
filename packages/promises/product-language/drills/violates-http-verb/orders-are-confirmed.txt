@@ -1,0 +1,15 @@
+---
+id: orders-are-confirmed
+status: implemented
+---
+
+# An order the customer placed comes back confirmed
+
+## What it checks
+A customer who places an order is told it is confirmed once the POST comes back.
+
+## Why it matters
+An order that vanishes without a word is the one complaint support cannot answer.
+
+## How to see it
+Place an order and watch for the confirmation.

@@ -30,6 +30,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: krzysztofdudek/Yggdrasil
+          # The branch is named because checkout takes the default branch when it is not, and
+          # Yggdrasil's default branch is the last published release. This suite needs the build
+          # Horde is written against, not the one the world currently has — without the ref every
+          # run here measures Horde against a CLI that predates half of what it calls.
+          ref: family-sync
           path: yggdrasil
       - name: build and link Yggdrasil's CLI
         working-directory: yggdrasil/source/cli
@@ -40,3 +45,35 @@ jobs:
       - name: run suite
         working-directory: skills/horde/scripts
         run: node --test tests/*.test.mjs
+
+  # This repository also publishes law: `packages/promises`, offered to a repository that has no
+  # evidence layer of its own. Publishing runs somebody else's code in somebody else's repository,
+  # so the pre-publish check runs here on every push — once, not per Node version, because it reads
+  # the package files and never executes a rule.
+  marketplace:
+    runs-on: ubuntu-latest
+    name: marketplace
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: checkout Yggdrasil
+        uses: actions/checkout@v4
+        with:
+          repository: krzysztofdudek/Yggdrasil
+          # The branch is named because checkout takes the default branch when it is not, and
+          # Yggdrasil's default branch is the last published release. This suite needs the build
+          # Horde is written against, not the one the world currently has — without the ref every
+          # run here measures Horde against a CLI that predates half of what it calls.
+          ref: family-sync
+          path: yggdrasil
+      - name: build and link Yggdrasil's CLI
+        working-directory: yggdrasil/source/cli
+        run: |
+          npm install
+          npm run build
+          npm link
+      - name: check what this repository publishes
+        run: yg marketplace check

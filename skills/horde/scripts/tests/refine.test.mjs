@@ -726,13 +726,13 @@ test('refine.mjs: a repository with nothing says so, and offers the package once
 
   const said = judgement(dir, 'm1');
   assert.match(said, /No evidence layer found/);
-  assert.match(said, /yg pack add promises/);
+  assert.match(said, /yg pack add <this tool's repository>#promises/);
 
   // Exactly one sentence of offer, and it reaches the client in the frame — the one place the
   // client reads. Said once there, not once per area and not once per evidence row.
   const frame = run('refine.mjs', ['--step', 'frame', '--horde', 'm1'], dir, { json: false });
   assert.equal(frame.code, 0, frame.stderr);
-  assert.equal(frame.stdout.split('yg pack add promises').length - 1, 1, 'said once, not twice');
+  assert.equal(frame.stdout.split("yg pack add <this tool's repository>#promises").length - 1, 1, 'said once, not twice');
   assert.match(frame.stdout, /`promises` package adds one/);
 });
 
@@ -771,7 +771,7 @@ test('refine.mjs: the judgement travels into every consultant brief', async (t) 
     assert.match(spawn.brief, /## Recognising the evidence layer/);
     assert.match(spawn.brief, /npm test suite/, 'the judgement itself, not only the instructions');
     assert.match(spawn.brief, /maintained by whoever works the ticket/);
-    assert.match(spawn.brief, /yg pack add promises/, 'the offer is quoted as the one sentence it may say');
+    assert.match(spawn.brief, /yg pack add <this tool's repository>#promises/, 'the offer is quoted as the one sentence it may say');
   }
 });
 
