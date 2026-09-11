@@ -168,9 +168,10 @@ test('status.mjs: the evidence block shows all five coverage states', async (t) 
     const dst = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${id}-slug`);
     mkdirSync(dst, { recursive: true });
     writeFileSync(join(dst, 'issue.md'), `# ${id} · slug\n\n**Status:** ${status}\n\n## Acceptance — evidence\n\n- [ ] covers ${evidenceId}\n`);
-    writeFileSync(join(dst, 'log.md'), status === 'merged'
-      ? `## Verdict · ${id} · 2026-01-01 · by verifier-1 (sonnet)\n\n**Result:** reproduced\n`
-      : '');
+    // The log's contents are not what the evidence block reads — a row's state comes from the
+    // ticket's own **Status:** and its acceptance checklist, and "reproduced" comes from the
+    // charter's own last column. The file exists here because a ticket directory has one.
+    writeFileSync(join(dst, 'log.md'), `- 2026-01-01 status: ${status}\n`);
   }
   ticket('002', 'proposed', 'E2');
   ticket('003', 'running', 'E3');

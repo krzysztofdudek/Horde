@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, writeCostRuns,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, writeCostRuns, MARKER_CHECK,
 } from './helpers.mjs';
 
 function git(args, cwd) {
@@ -47,10 +47,10 @@ function mergeBranch(dir, targetBranch, sourceBranch, message) {
 // merge sha. `write(worktreePath)` makes whatever change the caller wants inside the worker's
 // worktree before it's committed.
 //
-// This used to also carry a review-and-verify leg (tk.mjs key/review-request/review, the deleted verify tool
-// record) between landing and merging — task 014 deleted tk.mjs's review/key commands and
-// the deleted verify tool outright, and queue.mjs's own merge no longer checks any keys or approvals at all
-// (only dependency order and --sha), so that leg is gone rather than reworked.
+// This is the short way round, for scenarios whose subject is something else entirely (dependency
+// order, the queue's own bookkeeping). The full path a ticket really takes — the landing gate, and
+// the merge commit `land.mjs` makes itself — is walked in lifecycle.test.mjs and family.e2e; here
+// the merge is a fixture step, made by hand because what happens after it is the point.
 function landAndMerge(dir, {
   id, team, worker, intoBranch, write, horde,
 }) {
@@ -120,14 +120,8 @@ test('two hordes on one repository: independent state, shared refusal without --
 // ---------------------------------------------------------------------------------------------
 // 2. Cold boot with three tickets
 // ---------------------------------------------------------------------------------------------
-// (Formerly test 2 here was "sub-team merge-up: alfa off trunk" — task 014 removed sub-teams
-// entirely: the deleted roster tool (the only thing that ever spawned a steward for a non-trunk team, or
-// recorded its parent so _lib.mjs's teamPath() could resolve one) is deleted outright, so
-// `--team` now only ever resolves to "trunk"; anything else fails with "no such team" since
-// nothing can ever create one. land.mjs's own `--level team` is refused for the same reason,
-// and queue.mjs's `move` and `<team>:NNN` addressing are gone. There is no way left to construct
-// this scenario without inventing a sub-team mechanism the product no longer has, so the whole
-// test is removed rather than reworked.)
+// There is one team, and it is trunk. `--team` resolves to nothing else, because nothing in this
+// tool set can create another one — so a merge-up between teams is not a scenario that exists.
 
 test('cold boot: queue reconcile sorts three running tickets by their actual git state', async (t) => {
   const dir = makeRepo();
@@ -142,8 +136,7 @@ test('cold boot: queue reconcile sorts three running tickets by their actual git
     assert.equal(run('queue.mjs', ['add', t1.json.id], dir).code, 0);
   }
 
-  // A worker is no longer a roster entry — the deleted roster tool is deleted, and there is nothing left to
-  // "spawn": it is just a name string used for --agent/branch naming, same as any other worker.
+  // A worker is a name string used for --agent and branch naming, and nothing else.
   const workerName = 'w-cold-boot';
 
   const runningA = run('queue.mjs', ['set', ids['ticket-a'], 'running', '--agent', workerName], dir);
@@ -238,24 +231,11 @@ test('dependency discovered mid-flight: queue dep blocks and unblocks, and refus
 });
 
 // ---------------------------------------------------------------------------------------------
-// Removed: "contract ticket on two nodes" and "owner is the ticket's author"
-// ---------------------------------------------------------------------------------------------
-// Both tests lived entirely inside the node-approval-keys mechanism: tk.mjs's `key`/`review`
-// commands (multi-node approval, author/reviewer-cannot-be-the-same-person, architect approving
-// every named node at once) and the deleted verify tool's `record`. Task 014 deleted the deleted verify tool outright, tk.mjs
-// no longer has a `key` or `review` command at all, and queue.mjs's `set <ticket> merged` no
-// longer checks any keys or approvals — only dependency order and --sha. There is no remaining
-// product behavior that either test could exercise, so both are removed rather than reworked.
-
-// ---------------------------------------------------------------------------------------------
 // 3. Ask answer records a decision
 // ---------------------------------------------------------------------------------------------
 
-// Formerly this test also covered "a dissent against a ruling is answered exactly once" —
-// the deleted dissent tool is deleted outright, and the owner role that used to file a dissent doesn't exist
-// any more either, so that coverage (an owner formally disagreeing with a ruling) is genuinely
-// gone for now, not replaced with anything. Escalation is gone too (019) — the one channel to the
-// client is ask.mjs now.
+// ask.mjs is the one channel to the client: a question goes out, an answer comes back, and the
+// answer is recorded as a decision. There is no second, adversarial channel beside it.
 test('ask answer records a decision', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -293,9 +273,9 @@ test('cost limit: charter Limit line gates limit-reached and cost report', async
 
   await t.test('three opus runs (weighted 30) pass a Limit: 20 charter line', () => {
     setLimit('20');
-    // Nothing writes cost.json any more — the deleted roster tool (the only thing that ever spawned an agent
-    // and billed the run) is deleted, and that responsibility hasn't moved to another tool yet —
-    // so a test that needs cost data seeds the ledger directly, in the shape cost.mjs reads.
+    // A test that needs cost data seeds the ledger directly, in the shape cost.mjs reads, rather
+    // than running the tick that would bill it — the limit is what is under test here, not the
+    // billing.
     writeCostRuns(dir, 'mission1', [0, 1, 2].map((i) => ({
       name: `worker-${i}`, role: 'worker', class: 'opus', ticket: null, team: null, wave: null, at: new Date().toISOString(),
     })));
@@ -319,14 +299,6 @@ test('cost limit: charter Limit line gates limit-reached and cost report', async
 });
 
 // ---------------------------------------------------------------------------------------------
-// Removed: "owner reclaim"
-// ---------------------------------------------------------------------------------------------
-// This test was entirely about the deleted roster tool's own lease/reclaim bookkeeping for a spawned owner
-// (there is no owner role left to spawn, and the deleted roster tool — spawn, reclaim, list — is deleted
-// outright), plus a tk.mjs review call at the end (also deleted). Nothing here survives the
-// refactor to rework; removed rather than replaced.
-
-// ---------------------------------------------------------------------------------------------
 // 5. The graph, read through the CLI and never written by the horde
 // ---------------------------------------------------------------------------------------------
 
@@ -343,12 +315,10 @@ test('the graph: node.mjs reads it through the CLI and writes nothing into it', 
     assert.deepEqual(r.json.nodes.sort(), ['core', 'frontend']);
   });
 
-  // missionNodes() (what `map` lists) has always had two sources: a roster.json owner entry, or a
-  // ticket naming the node. The owner role and the deleted roster tool are both gone, so a ticket is now the
-  // only way a node shows up here at all — and its owner column has nothing left to ever populate
-  // it, so this checks the honest "nobody holds it" state rather than asserting on a role that no
-  // longer exists.
-  await t.test('map shows a component a ticket names, with no owner recorded (the owner role no longer exists)', () => {
+  // A ticket naming the node is the only way a component shows up on `map` at all. Nothing holds
+  // a component any more, so the column that used to say who does reads as the honest "nobody",
+  // which is what this checks — the field is still on the document, and still answered truthfully.
+  await t.test('map shows a component a ticket names, and nobody is recorded as holding it', () => {
     const ticket = run('tk.mjs', ['new', 'core-thing', '--title', 'Core thing', '--node', 'core', '--class', 'sonnet', '--evidence', 'it works'], dir);
     assert.equal(ticket.code, 0, ticket.stderr);
     const map = run('node.mjs', ['map'], dir);
@@ -377,15 +347,6 @@ test('the graph: node.mjs reads it through the CLI and writes nothing into it', 
     assert.equal(existsSync(join(dir, '.yggdrasil', 'model', 'core', 'log.md')), false);
   });
 });
-
-// ---------------------------------------------------------------------------------------------
-// Removed: "liveness verdicts"
-// ---------------------------------------------------------------------------------------------
-// This was entirely about the deleted roster tool's steward liveness verdict (branch tip / queue.json mtime /
-// lastTrace against config.liveness.stewardMinutes) across a parent team and a sub-team.
-// the deleted roster tool is deleted outright — there is no steward concept, no liveness verdict, and no
-// sub-team left to give one team a busy queue and another an empty one. Nothing here survives to
-// rework; removed rather than replaced.
 
 // ---------------------------------------------------------------------------------------------
 // 6. Protected path
@@ -419,15 +380,6 @@ test('protected path: land.mjs scope check fails a branch that touches config.pr
   assert.equal(scope.ok, false);
   assert.match(scope.note, /protected paths touched: package\.json/);
 });
-
-// ---------------------------------------------------------------------------------------------
-// Removed: "steward dies after landing but before the author key"
-// ---------------------------------------------------------------------------------------------
-// The unique thing this test proved — tk.mjs key --from-queue recovering an author key from the
-// queue item's recorded agent — no longer exists: tk.mjs's `key` command is deleted outright, and
-// there is no author key concept left at all. The other half (queue.mjs reconcile marking a
-// running ticket with a commit beyond the team tip as "landed") is not unique to this test — the
-// "cold boot" test above already covers exactly that case. Removed rather than reworked.
 
 // ---------------------------------------------------------------------------------------------
 // 7. Class overloaded — a queue item waits
@@ -501,4 +453,115 @@ test('two hordes, one with a waiting item and one without: status --json reports
   assert.equal(red.queue.byState.waiting, 1);
   assert.equal(blue.queue.byState.waiting, undefined);
   assert.equal(blue.queue.byState.queued, 1);
+});
+
+// ---------------------------------------------------------------------------------------------
+// 9. A landing let go of: the result file, and the process that wrote it
+// ---------------------------------------------------------------------------------------------
+//
+// `land.mjs --background` is the one command in this tool set that deliberately outlives its own
+// caller: it spawns itself detached, unrefs the child and returns the path of a file that does not
+// exist yet. Everything else about it is already measured in land.test.mjs — that the path comes
+// back at once, that the document eventually written has the run's shape.
+//
+// What nothing measured is the PROCESS. A caller that only ever polls for the file has no way to
+// tell a run that finished from a run that hung: both look identical from outside until the file
+// appears, and a hung one simply never writes it. The child is detached and unreffed, so nothing
+// waits on it and nothing reaps it; a run that wedges is reparented to init and stays there.
+// This pins the half of the contract a file cannot state — that a background landing has a bounded
+// life, and is gone by the time the thing it was asked for is on disk.
+//
+// The child is found by the branch name in its own argv, not by a before/after scan of every
+// `land.mjs` on the machine: this suite runs its files in parallel, and land.test.mjs is landing
+// its own tickets at the same moment. `t-777` belongs to this test and to nothing else.
+function pidsLanding(branch) {
+  try {
+    return execFileSync('pgrep', ['-f', `land\\.mjs ${branch}`], { encoding: 'utf8' })
+      .trim().split('\n').filter(Boolean).map(Number);
+  } catch {
+    // pgrep exits 1 with no output when nothing matches — that is an answer, not a failure.
+    return [];
+  }
+}
+
+function stillAlive(pids) {
+  return pids.filter((pid) => {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  });
+}
+
+test('land.mjs --background: the run is let go of, but not forgotten — the result file arrives and the process that wrote it is gone', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  const id = '777';
+  const branch = `mission1/t-${id}`;
+  initHorde(dir);
+  addAspect(dir, 'no-marker', { description: 'Source files must not carry an unfinished-work marker.', check: MARKER_CHECK });
+  addNode(dir, 'feature', { mapping: [`feature-${id}.mjs`, `feature-${id}.test.mjs`], aspects: ['no-marker'] });
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
+
+  // The graph rides on the branch, so it is committed before the ticket branches off it.
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  git(['add', '.yggdrasil'], dir);
+  git(['commit', '-qm', 'graph: the component this ticket touches'], dir);
+  git(['checkout', '-q', '-b', branch], dir);
+  writeFileSync(join(dir, `feature-${id}.mjs`), 'export function add(a, b) { return a + b; }\n');
+  writeFileSync(join(dir, `feature-${id}.test.mjs`), [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    `import { add } from './feature-${id}.mjs';`,
+    "test('add', () => { assert.equal(add(1, 2), 3); });",
+    '',
+  ].join('\n'));
+  git(['add', '--', `feature-${id}.mjs`, `feature-${id}.test.mjs`], dir);
+  git(['commit', '-qm', `ticket ${id}`], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+
+  const issueDirPath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${id}-sample-ticket`);
+  mkdirSync(issueDirPath, { recursive: true });
+  writeFileSync(join(issueDirPath, 'issue.md'), [
+    `# ${id} · Sample ticket`, '',
+    '**Status:** landed',
+    '**Node:** feature · **Class:** sonnet · **Severity:** medium · **Team:** trunk',
+    `**Depends on:** none · **Branch:** ${branch}`, '',
+    '## Acceptance — evidence', '', '- [ ] does the thing', '',
+  ].join('\n'));
+  writeFileSync(join(issueDirPath, 'log.md'), `- ${new Date().toISOString()} status: landed — ready to land\n`);
+
+  const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
+  const queueDoc = JSON.parse(readFileSync(queuePath, 'utf8'));
+  queueDoc.items.push({
+    ticket: id, state: 'landed', class: 'sonnet', branch, dependsOn: [], agent: 'worker1', sha: null, notes: [], worktree: null,
+  });
+  writeFileSync(queuePath, JSON.stringify(queueDoc, null, 2));
+
+  const started = run('land.mjs', [branch, '--background'], dir);
+  assert.equal(started.code, 0, started.stderr);
+  assert.equal(started.json.ticket, id);
+  assert.equal(existsSync(started.json.resultFile), false, 'the caller is handed a path, not a result');
+
+  const children = pidsLanding(branch);
+  assert.equal(children.length > 0, true, 'the detached landing is a real process this test can watch');
+
+  let doc = null;
+  const fileDeadline = Date.now() + 120000;
+  while (Date.now() < fileDeadline) {
+    try { doc = JSON.parse(readFileSync(started.json.resultFile, 'utf8')); break; } catch { /* not yet, or half-written */ }
+    execFileSync('sleep', ['0.1']);
+  }
+  assert.ok(doc, 'the background run wrote its result');
+  assert.equal(doc.ticket, id);
+
+  // The write and the exit are not the same instant — the run still has to flush and unwind — so
+  // the contract is "shortly after", not "already". Ten seconds is far longer than the unwinding
+  // takes and far shorter than a hang: a run still here after it has published its own answer is
+  // not finishing, it is stuck.
+  const exitDeadline = Date.now() + 10000;
+  while (Date.now() < exitDeadline && stillAlive(children).length) execFileSync('sleep', ['0.25']);
+  assert.deepEqual(
+    stillAlive(children), [],
+    'a background landing outlived the result file it was started to write — nothing waits on it, so it stays until the machine is rebooted',
+  );
 });

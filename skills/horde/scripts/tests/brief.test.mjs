@@ -246,11 +246,9 @@ test('brief.mjs: a stacked ticket\'s brief names the branch it was started from,
   });
 });
 
-// the deleted roster tool (spawn/list) is deleted, and with it every way this used to build a multi-level
-// lineage (a director spawning a sub-team's steward, that steward spawning a worker or lending
-// out an owner). Sub-teams, stewards and owners are all gone along with it, so the only surviving,
-// reconstructable piece of what this test covered is the architect's own fallback: it always
-// reports to the director "main", with no roster at all involved.
+// There is no lineage to build any more: one team, one director, and nobody between them. What is
+// left of what this used to cover is the architect's own fallback — it reports to the director
+// "main", read from nothing on disk at all.
 test('brief.mjs: reportsTo — the architect always reports to the director "main"', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
