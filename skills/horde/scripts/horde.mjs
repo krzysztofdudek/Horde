@@ -56,7 +56,7 @@ commands:
       hordes on this repository: trunk, base, wave, open tickets, leased nodes, last activity.
   config get <key>
   config set <key> <value>
-      dotted paths into .horde/config.json, e.g. "gates.trunk", "liveness.stewardMinutes",
+      dotted paths into .horde/config.json, e.g. "gates.trunk", "territory.maxBytes",
       "fixRounds.resume". A list-valued key takes a comma-separated list or a JSON array.
       "keyContext" (default 3) is how much surrounding code a review's key is bound to: an
       owner's approval and a verifier's verdict survive a branch catching up with the team as
@@ -376,7 +376,6 @@ function defaultConfig(root) {
     // How many lines of surrounding code a review's key is bound to (see _lib.mjs patchIdOf).
     keyContext: 3,
     protectedPaths: [],
-    liveness: { stewardMinutes: 60, ownerMinutes: 45 },
     classes: { ...DEFAULT_CLASSES },
     parallelism: 6,
     // The fix-loop breaker (tk.mjs status <ticket> changes): rounds 1..resume ask the steward to

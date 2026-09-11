@@ -39,13 +39,13 @@ test('horde.mjs: init, list, config, archive', async (t) => {
   });
 
   await t.test('config get/set round-trips through dotted paths with type coercion', () => {
-    const before = run('horde.mjs', ['config', 'get', 'liveness.stewardMinutes'], dir);
-    assert.equal(before.json.value, 60);
+    const before = run('horde.mjs', ['config', 'get', 'territory.maxBytes'], dir);
+    assert.equal(before.json.value, 400000);
 
-    const setResult = run('horde.mjs', ['config', 'set', 'liveness.stewardMinutes', '90'], dir);
+    const setResult = run('horde.mjs', ['config', 'set', 'territory.maxBytes', '500000'], dir);
     assert.equal(setResult.code, 0);
-    const after = run('horde.mjs', ['config', 'get', 'liveness.stewardMinutes'], dir);
-    assert.equal(after.json.value, 90);
+    const after = run('horde.mjs', ['config', 'get', 'territory.maxBytes'], dir);
+    assert.equal(after.json.value, 500000);
 
     run('horde.mjs', ['config', 'set', 'protectedPaths', 'a/b,c/d'], dir);
     const paths = run('horde.mjs', ['config', 'get', 'protectedPaths'], dir);
