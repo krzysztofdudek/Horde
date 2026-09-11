@@ -42,8 +42,19 @@ jobs:
           npm install
           npm run build
           npm link
+      - name: checkout RatatoskrSkill
+        uses: actions/checkout@v4
+        with:
+          repository: krzysztofdudek/RatatoskrSkill
+          # Unlike Yggdrasil above, RatatoskrSkill is not part of this release's family-sync
+          # workflow, so no ref is named here — checkout takes its default branch. The drift test
+          # (tests/ratatoskr-product-language-drift.test.mjs) only reads two text files off this
+          # checkout; no build or install step is needed.
+          path: ratatoskr
       - name: run suite
         working-directory: skills/horde/scripts
+        env:
+          HORDE_TEST_RATATOSKR_DIR: ${{ github.workspace }}/ratatoskr
         run: node --test tests/*.test.mjs
 
   # This repository also publishes law: `packages/promises`, offered to a repository that has no
