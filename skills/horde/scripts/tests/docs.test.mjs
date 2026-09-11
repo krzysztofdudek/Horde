@@ -72,7 +72,53 @@ test('reference/topology.md no longer exists, and reference/model.md carries Mec
   assert.match(model, /^## Runner$/m);
 });
 
-// ---- Agent Teams is optional, not a requirement --------------------------------------------
+// ---- no file names Agent Teams, and no file says "teammate" ---------------------------------
+
+// The skill runs on plain subagents and nothing else: there is no runner built on Claude Code's
+// Agent Teams, and the word "teammate" means exactly one thing in Claude Code — an agent of that
+// feature — so leaving it in the prose would keep the concept alive under a new label. The ban is
+// scoped to what a person or an agent actually reads to learn how this works, plus the adopter
+// register's unreleased section. Two exclusions, both deliberate: tests/** (this file names the
+// banned strings, and tests/drills/ is a fixture corpus of old prose, the same idiom the
+// retired-role scan above uses), and every released CHANGELOG section — history is not rewritten.
+const AGENT_TEAMS_RES = [
+  /Agent Teams/,
+  /agent-teams/i,
+  /\bteammates?\b/i,
+  /CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS/,
+];
+
+function unreleasedSection(changelog) {
+  const start = changelog.indexOf('## [Unreleased]');
+  assert.notEqual(start, -1, 'CHANGELOG has no "## [Unreleased]" heading');
+  const rest = changelog.slice(start + '## [Unreleased]'.length);
+  const next = rest.search(/^## \[/m);
+  return next === -1 ? rest : rest.slice(0, next);
+}
+
+test('nothing the skill, the repo docs or the unreleased changelog says names Agent Teams or a teammate', () => {
+  const scanned = [
+    [join(REPO_ROOT, 'CLAUDE.md'), readRaw(join(REPO_ROOT, 'CLAUDE.md'))],
+    [join(REPO_ROOT, 'README.md'), readRaw(join(REPO_ROOT, 'README.md'))],
+    [join(SKILL_DIR, 'SKILL.md'), readRaw(join(SKILL_DIR, 'SKILL.md'))],
+    ...walk(join(SKILL_DIR, 'reference')).map((f) => [f, readRaw(f)]),
+    ...walk(join(SKILL_DIR, 'templates')).map((f) => [f, readRaw(f)]),
+    ...readdirSync(SCRIPTS_DIR).filter((f) => f.endsWith('.mjs'))
+      .map((f) => [join(SCRIPTS_DIR, f), readRaw(join(SCRIPTS_DIR, f))]),
+    [join(SCRIPTS_DIR, 'README.md'), readRaw(join(SCRIPTS_DIR, 'README.md'))],
+    ['CHANGELOG.md [Unreleased]', unreleasedSection(readRaw(join(REPO_ROOT, 'CHANGELOG.md')))],
+  ];
+  assert.ok(scanned.length > 20, `expected the whole skill tree, scanned ${scanned.length} file(s)`);
+
+  const offenders = [];
+  for (const [label, text] of scanned) {
+    for (const re of AGENT_TEAMS_RES) {
+      const m = re.exec(text);
+      if (m) offenders.push(`${label}: names "${m[0]}"`);
+    }
+  }
+  assert.deepEqual(offenders, [], `Agent Teams are gone from Horde; still named in:\n${offenders.join('\n')}`);
+});
 
 function section(text, heading, nextHeadingRe = /^## /m) {
   const start = text.indexOf(heading);
@@ -97,12 +143,10 @@ test('README carries the "two keys" sentence only in the family table, nowhere e
   assert.doesNotMatch(before, /two keys/i);
 });
 
-test('CLAUDE.md never states Agent Teams as a requirement', () => {
+test('CLAUDE.md points at the model page for the runner, and states no runner as a requirement', () => {
   const claude = readText(join(REPO_ROOT, 'CLAUDE.md'));
-  assert.match(claude, /Agent Teams/, 'CLAUDE.md should still explain the runner, just not require it');
+  assert.match(claude, /reference\/model\.md`?, \*\*Runner\*\* section/, 'CLAUDE.md should still point at the canonical runner statement');
   assert.doesNotMatch(claude, /mechanics depend on/i);
-  assert.doesNotMatch(claude, /Agent Teams[^.]*\b(is required|must be (on|enabled|turned on))\b/i);
-  assert.match(claude, /optional/i);
 });
 
 // ---- SKILL.md's commands and scripts/ agree, in both directions ---------------------------

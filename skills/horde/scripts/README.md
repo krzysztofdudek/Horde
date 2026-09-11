@@ -988,9 +988,9 @@ last thing landed.
 
 ## tick.mjs — the loop, as one run
 
-`tick [--runner session|teammate|external] [--watch] [--stack] [--tree p] [--horde h]`. Four things
-in order, then it exits — nothing lives between runs, so there is no roster, no liveness threshold
-and no minute count anywhere in it.
+`tick [--runner session|external] [--watch] [--stack] [--tree p] [--horde h]`. Four things in order,
+then it exits — nothing lives between runs, so there is no roster, no liveness threshold and no
+minute count anywhere in it.
 
 1. **Reconcile.** Every `running` item whose call has come back without landing a sha, settled from
    its branch: a commit beyond the parent goes to `landed`; a dirty worktree is committed as
@@ -1018,9 +1018,9 @@ and no minute count anywhere in it.
 
 **Tick never spawns.** The caller spawns. `--runner` only names who the caller is, and only
 `external` changes what this script does: with nobody in front of it, it starts each worker itself
-through `config.runner.spawn` (`<class>` and `<brief>` filled in). Under `session` (the default) and
-`teammate` it starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds
-until the queue empties or a signal arrives; a signal exits cleanly, holding no lock.
+through `config.runner.spawn` (`<class>` and `<brief>` filled in). Under `session` (the default) it
+starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds until the
+queue empties or a signal arrives; a signal exits cleanly, holding no lock.
 
 It holds the landing gate's own lock — `.horde/gate.lock`, not a second one — so two ticks on one
 repository cannot bill one worker twice or cut one ticket's branch twice. Each list entry books one

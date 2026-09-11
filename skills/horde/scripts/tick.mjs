@@ -14,13 +14,12 @@
 // whole point — the two mission reports this closes are closed by removing the mechanism that
 // needed tuning, not by tuning it.
 //
-// **Tick never spawns.** Whoever calls it spawns. Without teammates the caller is the session
-// itself: it runs tick, issues the calls on the dispatch list in one turn, and runs tick again once
-// they come back. With teammates the caller is one runner that spins that loop itself while the
-// session talks to the client. With `--runner external` the caller is a process outside any agent
-// at all, starting workers through the host's own headless CLI (`config.runner.spawn`) so the loop
-// survives a closed session. That is the entire difference the three runners make: WHERE the loop
-// lives, not whether the work can happen. Everything below is the same either way.
+// **Tick never spawns.** Whoever calls it spawns. Under the default runner the caller is the
+// session itself: it runs tick, issues the calls on the dispatch list in one turn, and runs tick
+// again once they come back. With `--runner external` the caller is a process outside any agent at
+// all, starting workers through the host's own headless CLI (`config.runner.spawn`) so the loop
+// survives a closed session. That is the entire difference the two runners make: WHO starts what
+// this hands out, not whether the work can happen. Everything below is the same either way.
 //
 // What tick does write: the queue (reconcile's settlements, the gate's verdicts, and the state of
 // what it just handed out), the fix-round counter on a ticket that came back red, `asks.json` when
@@ -50,9 +49,9 @@ const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 // Sub-teams are gone, so there is one queue and it is the trunk's. Nothing here takes --team: a
 // second value would only be a way of pointing this at a queue that no longer exists.
 const TEAM = 'trunk';
-const RUNNERS = ['session', 'teammate', 'external'];
+const RUNNERS = ['session', 'external'];
 
-const USAGE = `usage: tick.mjs [--runner session|teammate|external] [--watch] [--stack]
+const USAGE = `usage: tick.mjs [--runner session|external] [--watch] [--stack]
                 [--tree <path>] [--horde h] [--json]
 
 One run: reconcile what a returned call left behind, put every ready branch through the gate, print
@@ -69,8 +68,8 @@ started from one of those tips. Such an entry carries the line "STACKED, parent 
 nobody reads it as ready.
 
 --runner names who is spinning the loop, and only "external" changes what this script does: it
-starts each worker itself through config.runner.spawn. "session" (the default) and "teammate" start
-nothing — the caller does.
+starts each worker itself through config.runner.spawn. "session" (the default) starts nothing — the
+caller does.
 
 --watch repeats the run every config.tick.interval seconds until the queue empties or a signal
 arrives. A signal exits cleanly: no lock left held, nothing half-written.

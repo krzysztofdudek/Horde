@@ -148,17 +148,19 @@ Horde is as good at proof as the repository lets it be, and it says so once.
 
 ## Running the mission — two seats, three one-shots
 
-**worker** and **architect** are the only two standing seats. Three one-shots do everything else:
-the **consultant** `refine.mjs` briefs per territory during refining, **legislate**, one pass over
-one territory that writes down the rules that territory's own work has been following by hand, and
-**retro**, one pass over the whole mission at its end. Nothing is filed by hand any more — refining
-files every ticket, through its consultants — so what is left for you to spawn is the agents that
-carry the plan out:
+**worker** and **architect** are the only two seats that recur through a mission. Three one-shots do
+everything else: the **consultant** `refine.mjs` briefs per territory during refining, **legislate**,
+one pass over one territory that writes down the rules that territory's own work has been following
+by hand, and **retro**, one pass over the whole mission at its end. Nothing is filed by hand any
+more — refining files every ticket, through its consultants — so what is left for you to spawn is
+the agents that carry the plan out:
 
-- Spawn the **architect** as your teammate (Opus, cross-cutting, no node of its own;
-  `brief.mjs architect`), once, at the start of refining. The architect approves or vetoes every
-  change to the graph — new nodes, moved boundaries, new or changed ports — rules the whole plan
-  once before wave 1, and files graph changes into the graph. The user sees them at wave close.
+- Spawn the **architect** as your subagent (Opus, cross-cutting, no node of its own;
+  `brief.mjs architect`), a fresh one for each graph ruling, starting at refining — it rebuilds its
+  context from the files every time, so there is nothing to keep alive between rulings. The
+  architect approves or vetoes every change to the graph — new nodes, moved boundaries, new or
+  changed ports — rules the whole plan once before wave 1, and files graph changes into the graph.
+  The user sees them at wave close.
 - Spawn a **worker** per ticket as your subagent (`brief.mjs worker NNN`), one ticket each —
   `tick.mjs`'s own dispatch list says which, in what order, and to which class. A
   worker that needs another round after `tk.mjs status NNN changes` is resumed the same way, or
@@ -180,11 +182,11 @@ carry the plan out:
   rule refuses. The first goes through only on the **client's** recorded answer — put it to them,
   never rule on it yourself.
 
-**Who holds the Agent tool.** You create the architect, your only teammate; every worker is your
-own subagent, one per ticket; every one-shot — a consultant, legislate, retro — is also your own
-subagent, spoken to once and never resumed. A subagent is reachable and reclaimable by the agent
-that spawned it and by nobody else — that is you, for all of them. A teammate is yours to replace;
-the fresh one rebuilds its context from the files.
+**Who holds the Agent tool.** Everything in the cast is your own subagent, and you spawn all of it
+yourself: the architect, one per graph ruling; a worker, one per ticket; every one-shot — a
+consultant, legislate, retro — spoken to once and never resumed. A subagent is reachable and
+reclaimable by the agent that spawned it and by nobody else — that is you, for all of them. An
+architect is never resumed, only replaced; the fresh one rebuilds its context from the files.
 
 ## Ticking — the one loop
 
@@ -195,9 +197,9 @@ ready (calling `land.mjs` itself where a fresh check is needed), print the dispa
 the wave. Nothing lives between runs, because nothing has to: a run that starts cold reads the same
 state a run that never stopped would have. If the harness gives you a wake-up mechanism (a loop with
 `ScheduleWakeup`, or a scheduled run), use it at 20–30 minute intervals to call `tick.mjs` again;
-without one, the loop advances while the user is present, and you say so. Under Agent Teams, the same
-loop may instead be driven by one long-lived Sonnet teammate — see `reference/model.md`'s **Runner**
-section for the whole of that difference.
+without one, the loop advances while the user is present, and you say so. `reference/model.md`'s
+**Runner** section has the whole of who drives that loop and what changes when it runs outside a
+session altogether.
 
 You do: read what `tick.mjs` prints, spawn the workers it lists, relay open asks to the client and
 record their answers (`ask.mjs answer <id> "…"`), and close waves (`wave.mjs close`) when it says the
@@ -301,8 +303,7 @@ whose own text names the row — a promise made to the chairman does not quietly
 - `reference/model.md` — the mental model in full: three planes, the node, roles as functions of the
   graph, flows, invariants, and — since `reference/topology.md` no longer exists as its own file —
   the mechanics (branches, worktrees, the `.horde/` tree, node leases, gates per level, the gate
-  lock) and the runner (where the `tick.mjs` loop lives, and why that is the only thing Agent Teams
-  changes). Read once per session.
+  lock) and the runner (who calls `tick.mjs` and who spawns what it lists). Read once per session.
 - `reference/roles/*.md` — the briefs each role is spawned with (`brief.mjs` renders them with the
   charter, the node context and the ticket filled in): `worker`, `architect`, `legislate`, `retro` —
   a closed list of four. `legislate` is the one-shot that

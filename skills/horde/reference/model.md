@@ -53,24 +53,25 @@ architect's own, proposed when a ticket cannot be placed or a node has outgrown 
 
 ## Roles as functions of the graph
 
-Two standing roles and three one-shots. Nothing else exists: the five-seat cast this release started
-with — a per-branch coordinator, a per-node reviewer, a fresh-context reproducer, a periodic
-re-checker and an on-demand opinion-only seat — was removed outright, rather than kept alive behind a
-flag.
+Two roles that recur through a mission and three one-shots. Nothing else exists: the five-seat cast
+this release started with — a per-branch coordinator, a per-node reviewer, a fresh-context
+reproducer, a periodic re-checker and an on-demand opinion-only seat — was removed outright, rather
+than kept alive behind a flag.
 
 | role | model | kind | holds | decides | never |
 |---|---|---|---|---|---|
 | director | Fable or Opus (the user's session) | the top-level session | intent: charter, decision rights, boundary | what to ask the client; the charter; build decisions between tickets | reads worker output; merges; dispatches tickets by hand |
-| architect | Opus, cross-cutting, no node | the director's one teammate | coherence of the whole graph | approves or vetoes graph changes; rules the whole plan once, before wave 1 | implementation |
+| architect | Opus, cross-cutting, no node | the director's subagent, one-shot, a fresh one per graph ruling | coherence of the whole graph | approves or vetoes graph changes; rules the whole plan once, before wave 1 | implementation |
 | worker | cheapest capable (Haiku with a checker, Sonnet with a spec) | the director's subagent, one per ticket | one ticket, one worktree, one branch | implementation detail | contracts, decisions, other branches |
 | consultant | the territory's own class | one-shot, one per territory, spawned by `refine.mjs` | one territory's own tickets and law proposals | what changes inside its territory | the boundary between territories |
 | legislate | the territory's own class | one-shot, one per territory, after a wave closes | that territory's own rules | which pattern the code has already earned as law | lowering a rule |
 | retro | Opus, once per mission | one-shot, at the very end | the whole mission's unread gate refusals and log remarks | rule / taste / inexpressible, for every one of them | writing the sentence the client reads |
 
-Only the top-level session creates a teammate — the architect, and nobody else — and a teammate may
-spawn subagents but never a second teammate. Depth does not exist below that: a worker is a subagent
-of the director directly, one per ticket, and a one-shot answers to whoever spawned it and to nobody
-else.
+Every agent in that cast is a subagent, and the top-level session spawns all of them directly: the
+architect, a fresh one per graph ruling; a worker, one per ticket; and each one-shot. A subagent is
+reachable and resumable by the agent that spawned it and by nobody else — that is the director, for
+all of them. Depth is not used below that: nothing here raises anything of its own, and a one-shot
+answers to whoever spawned it and to nobody else.
 
 ## Context is the currency
 
@@ -272,11 +273,11 @@ way.
 
 ## Runner
 
-`tick.mjs` is a script; something drives it. Under the default runner, that is the session itself —
-your own turn calls `tick.mjs`, reads its dispatch list, and spawns the workers on it. When Claude
-Code's Agent Teams are turned on, the very same loop may instead be driven by one long-lived Sonnet
-teammate, freed to call `tick.mjs` on its own schedule rather than waiting on your next turn; nothing
-about `tick.mjs`'s own four steps changes either way. `--runner external` drives the loop outside any
-agent altogether — a cron job, a script, whatever starts one worker at a time from `config.runner.spawn`.
-That is the whole of the difference these three make: **where the loop lives**, never whether a
-mission can run at all. Agent Teams are an optional accelerant, not a requirement.
+`tick.mjs` is a script; something drives it. There are two runners, and the loop's own four steps are
+the same under both. Under the default runner the driver is the session itself — your own turn calls
+`tick.mjs`, reads its dispatch list, and spawns each worker on it as a subagent of yours.
+`--runner external` drives the loop outside any agent altogether — a cron job, a script, whatever
+starts one worker at a time from `config.runner.spawn` — so the loop survives a closed session, at
+the cost of nobody being there to answer an ask. That is the whole of the difference the two make:
+**who starts what the loop hands out**, never whether a mission can run at all. `tick.mjs` itself
+spawns nothing under either.

@@ -704,6 +704,36 @@ test('tick.mjs runners: nothing but git and the configured CLI is ever started, 
     await new Promise((resolve) => { setTimeout(resolve, 1500); });
     assert.ok(existsSync(marker), 'the configured CLI is what starts a worker when nobody else can');
   });
+
+  // There are two runners, not three: the one built on Claude Code's Agent Teams is gone, and gone
+  // means refused by name rather than quietly read as "session" — a flag or a config key that names
+  // it is describing a topology this no longer has, and reading it as the default would hide that.
+  await t.test('--runner teammate is refused by name, and the refusal names the two that exist', () => {
+    const r = tick(dir, ['--runner', 'teammate']);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /unknown runner: teammate/);
+    assert.match(r.stderr, /session, external/);
+  });
+});
+
+test('tick.mjs runners: a config seeded with the retired runner refuses rather than falling back to the session', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const id = mkTicket(dir, 'stale-runner', { files: 'src/stale.ts' });
+  run('queue.mjs', ['add', id], dir);
+
+  // Written straight into the file, the way an older `config set` or a hand edit would have left it.
+  const configPath = join(dir, '.horde', 'config.json');
+  const cfg = JSON.parse(readFileSync(configPath, 'utf8'));
+  cfg.runner = { ...(cfg.runner || {}), kind: 'teammate' };
+  writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`);
+
+  const r = tick(dir);
+  assert.equal(r.code, 1, 'a broken config is a refusal, not a silent default');
+  assert.match(r.stderr, /unknown runner: teammate/);
+  assert.match(r.stderr, /session, external/);
+  assert.equal(r.json, null, 'and nothing was handed out under the fallback');
 });
 
 test('tick.mjs --watch: a signal ends the loop without leaving the gate lock held', async (t) => {
