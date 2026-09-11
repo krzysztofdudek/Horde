@@ -16,7 +16,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, readLeases,
+  hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, leaseHolderForNode,
   resolveTree, provisionTree, provenanceLine, withProvenance,
 } from './_lib.mjs';
 import {
@@ -205,8 +205,10 @@ function cmdAdd(horde, positional, flags) {
 }
 
 // The shape of a queued item, in one place, so a ticket the quality pass files enters the queue as
-// the same object an owner's ticket does.
-function newQueueItem(ticket, dependsOn = [], state = 'queued') {
+// the same object an owner's ticket does. Exported for the same reason: the law audit at a wave
+// close files tickets too, and a second derivation of "what a queued item is" is exactly the drift
+// this one function exists to prevent.
+export function newQueueItem(ticket, dependsOn = [], state = 'queued') {
   return {
     ticket: ticket.id,
     state,
@@ -355,10 +357,13 @@ function adviceTicketBody(item, source) {
   ].join('\n');
 }
 
+// Which mission this component belongs to. Read through the shared resolver rather than off
+// `leases[node]`, because a mission that has been cut leases its TERRITORIES and not the nodes
+// inside them: the direct lookup answered "leased by no horde" about every component of every cut
+// mission, and every advisory about them was skipped as outside the mission it is squarely inside.
 function leasedBy(node) {
-  const { leases } = readLeases();
-  const lease = leases[node];
-  return lease && lease.horde ? lease.horde : null;
+  const holder = leaseHolderForNode(node);
+  return holder ? holder.horde : null;
 }
 function cmdQuality(horde, positional, flags) {
   const team = flags.team || 'trunk';

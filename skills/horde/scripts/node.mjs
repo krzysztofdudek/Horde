@@ -1226,6 +1226,26 @@ export function recordAdvisory(horde, entry) {
   saveGraph(horde, graph);
 }
 
+// ---- what the law audit has already raised ----------------------------------------------------
+//
+// The same record, for the sweep a wave close runs over the law itself: keyed by what the finding
+// IS (`review-by:<rule>`, or the attention item's own stable id), never by where it sat in a list
+// recomputed every close. A rule stays overdue until somebody answers the ticket, and an attention
+// item stays in the feed until somebody decides on it — so without this the close would file the
+// same ticket again every wave, which is how a horde teaches its chairman to stop reading it.
+
+export function readAuditLedger(horde) {
+  const doc = loadGraph(horde);
+  return Array.isArray(doc.audits) ? doc.audits : [];
+}
+
+export function recordAudit(horde, entry) {
+  const graph = loadGraph(horde);
+  if (!Array.isArray(graph.audits)) graph.audits = [];
+  graph.audits.push({ ...entry, at: nowIso() });
+  saveGraph(horde, graph);
+}
+
 // ---- where a node's own files live -----------------------------------------------------------
 
 export function nodeDir(root, node) {
@@ -1472,6 +1492,11 @@ export function loadGraph(horde) {
     // are lists like the two above, and both are carried through every write of this file.
     aspects: doc && Array.isArray(doc.aspects) ? doc.aspects : [],
     advisories: doc && Array.isArray(doc.advisories) ? doc.advisories : [],
+    // What the law audit at a wave close has already filed a ticket for — an overdue review date,
+    // an attention item off `yg advise`. Same shape and same purpose as `advisories`: the sweep
+    // runs at every close, and without a record of what it has already raised it would file the
+    // same ticket once a wave for as long as the rule stays overdue.
+    audits: doc && Array.isArray(doc.audits) ? doc.audits : [],
   };
 }
 

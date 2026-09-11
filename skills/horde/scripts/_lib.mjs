@@ -667,6 +667,68 @@ export function claimLease(horde, subject, { take = false, ask = null, kind = 'n
   return { status: 'claimed', node, horde, freedFrom };
 }
 
+// ---- which horde a COMPONENT belongs to -------------------------------------------------------
+//
+// A lease is held on a SUBJECT, and a subject is a node id or a territory name (see the block
+// above). Both live in the one flat map, which is right for the question a lease answers ("is
+// another live horde already working this") and wrong for the question every sweep over the graph
+// actually asks: given a component, whose mission is it?
+//
+// Since the cut (refine.mjs --step cut) a mission leases TERRITORIES, not the nodes inside them —
+// so a repository whose hordes were cut has `leases` full of territory names and not one node id,
+// and reading `leases[node]` there answers "leased by no horde" about every component in the
+// mission. This resolves both ways round: the node's own lease first (the direct bind that
+// `horde.mjs init --nodes` and `node.mjs bind` take), then the territory holding it, read from the
+// territories.json of whichever live horde leases that territory.
+//
+// `via` says which of the two answered, because the two mean different things to a reader: a node
+// bound by name was named by somebody, a node inside a territory was cut into one.
+
+export function territoriesPathFor(horde) {
+  return hordePath(horde, 'territories.json');
+}
+
+// One horde's cut, as {territory: {nodes, …}}. Missing is an ordinary answer (a mission that was
+// never cut); unparseable is a refusal naming the file, for the same reason readLeases refuses —
+// a half-written document read as an empty one silently loses everything the cut decided.
+export function readTerritories(horde) {
+  const path = territoriesPathFor(horde);
+  if (!existsSync(path)) return {};
+  let doc;
+  try {
+    doc = readJSON(path, null);
+  } catch (e) {
+    fail(
+      `${path} will not parse as JSON, so this mission's cut cannot be read: ${e.message}\n`
+      + 'A cut half-written by an interrupted run is not an absent one — reading it as empty would put every '
+      + 'component of this mission outside it.\n'
+      + 'Repair the file, or delete it if this mission has no cut.',
+    );
+  }
+  return doc && typeof doc === 'object' && !Array.isArray(doc) ? doc : {};
+}
+
+// leaseHolderForNode(node) — {horde, via} for whichever live horde holds this component, or null
+// when none does. `via` is 'node' for a direct bind and 'territory:<name>' for a component inside
+// a leased territory.
+export function leaseHolderForNode(node) {
+  const { leases } = readLeases();
+  const live = listHordes();
+  const direct = leases[node];
+  if (direct && direct.horde && live.includes(direct.horde)) {
+    return { horde: direct.horde, via: 'node', since: direct.since };
+  }
+  for (const [subject, lease] of Object.entries(leases)) {
+    if (!lease || !lease.horde || !live.includes(lease.horde)) continue;
+    const territories = readTerritories(lease.horde);
+    const spec = territories[subject];
+    if (!spec) continue;
+    if (!asArray(spec.nodes).includes(node)) continue;
+    return { horde: lease.horde, via: `territory:${subject}`, since: lease.since };
+  }
+  return null;
+}
+
 // ---- a horde's own last activity (most recent mtime under its directory) ---------------------
 // Shared by horde.mjs list (a horde reporting its own last activity) and node.mjs bind (naming
 // the last activity of whichever horde currently holds a lease being contested), so a refusal

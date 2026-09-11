@@ -539,6 +539,58 @@ none, so a missing base branch, a CLI too old for the documents, or an unwritabl
 naming what could not be read. Writing the same wave twice replaces the document; nothing is appended
 and nothing is written into the graph.
 
+## audit.mjs — the law audit at a close
+
+Not a command. Imported by `wave.mjs close`, which is the only thing that runs it: nobody in this
+family guards the law from a seat of its own, and a close is the one moment already given over to
+reading where things stand.
+
+Three sweeps and one line.
+
+- **Review dates.** Every rule the trunk declares whose `review_by` has passed gets a `t-` ticket on
+  the territory of a component it reaches — "renew or retire", with what the rule's own history last
+  recorded. The ticket's acceptance is a `g-` proposal carrying the reason, and an explicit refusal to
+  touch the date: moving a review date is the same move as lowering a rule or waiving one, and all
+  three are the client's alone. A rule reaching no component this mission holds is reported as such,
+  never filed on somebody who cannot answer it.
+- **The attention feed.** Every item in `yg advise --json` this horde has neither queued nor been told
+  to leave alone gets a `t-` ticket carrying Yggdrasil's own what/why/next verbatim. An item a
+  recorded decision hides comes back in the document's own `suppressed` list and is counted, never
+  re-raised — a dismissal takes a human-signed `--reason`, which is what makes it a decision. Two
+  classes are skipped by name: an overdue review date (the first sweep files it, with the rule's
+  history beside it) and an `imported:` proposal (`queue.mjs quality` files those, from the
+  producer's own document, against its own ledger).
+- **What the repository says about itself.** `grain advise --json` from the trunk, down the same path
+  `queue.mjs quality` walks — same command, same `grain-advice/1` schema, same lease filter. It
+  **reports and files nothing**: one filer, one ledger. The close says how many advisories stand on
+  this mission's own territories and names the command that files them.
+
+Then the line the three are for: **rules nothing has hit** — a rule the horde has watched across
+`QUIET_WAVES` (2) closed waves with nothing new against it, and, when `yg aspects --health` can be
+read, Yggdrasil's own reading of that same silence. That reading is deliberately not "this rule is
+useless": a rule that is never violated may be deterring the very violations it would catch. Horde
+never coins a word for it — it prints Yggdrasil's `signal` cell and the plain-words line under the
+table verbatim, or it prints nothing. (`--health` is refused alongside `--json` by Yggdrasil on
+purpose, so there is no machine form to ask for; the alternative to parsing that table is inventing a
+label, which is the one thing this line exists not to do.)
+
+Both ledgers live in the horde's own `graph.json`, under `audits`, keyed by what the finding IS
+(`review-by:<rule>`, or the attention item's own stable id) — a rule stays overdue until somebody
+answers, so without the record the close would file the same ticket every wave.
+
+**Every read it cannot make becomes a note, never a refusal.** A close is the wave's only record, and
+a wave that cannot be closed has no record at all; holding that hostage to a courtesy sweep trades
+something irreplaceable for something true again next wave. So a feed that refuses, a Grain CLI that
+will not run, a health table that is not a health table — each is named in the report and in the
+close's JSON, and the close goes on. The one thing never softened is a document that is not the
+document: a wrong or missing schema is a failed read naming what was seen, never parsed leniently.
+Two things sit outside this: `yg aspects --json` is read once, by the law diff the close runs first
+(which hands its readings over, so there is one reading of one commit), and a CLI that cannot answer
+it has already stopped the close there; and a repository with no Grain CLI configured is not a failed
+read at all, it is a repository that does not use Grain.
+
+Under a charter set to `only-the-work` none of it runs and the block says so.
+
 ## Identifiers
 
 One counter per horde (`hordes/<horde>/counter.json`), three prefixes, no exceptions:
@@ -619,7 +671,8 @@ evidence catalogue and `cost`; `--gate` with `--sha` records the level's gate at
 `cache/last-gate.json`; `--evidence` fills catalogue rows the green wave gate itself proves),
 `evidence <id> --by "<who/what>"` (fills one row by hand, for rows no ticket verdict can fill),
 `current [--team t]`. Every close also writes the mission's `horde-law/1` document (see `law.mjs`) and
-prints its path. Its one-team, one-wave judgement of "does a ticket prove this row" is also
+prints its path, and runs the law audit off that same reading (see `audit.mjs`). Its one-team,
+one-wave judgement of "does a ticket prove this row" is also
 exported (`evidenceCoverage`, `stampMissionEvidence`) stretched mission-wide — every team, every
 wave — for `status.mjs`'s five-state evidence digest and `horde.mjs done`'s gate, so the two never
 re-derive it independently.

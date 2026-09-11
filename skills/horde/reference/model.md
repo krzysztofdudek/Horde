@@ -124,7 +124,10 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
 4. **Landing** — `land.mjs`, the nine-item checklist that merges a ticket branch itself the moment
    every item is green, or refuses naming the one that is not.
 5. **Closing** — `wave.mjs close`: the evidence catalogue's coverage, the quality index and its
-   trend, the raises the chairman may still veto, and the mission's own `horde-law/1` document.
+   trend, the raises the chairman may still veto, and the mission's own `horde-law/1` document. It
+   is also where the law gets audited, because nobody here holds that as a seat: rules past their
+   review date, attention items nobody has answered, what the repository says about its own
+   territories, and the rules nothing has hit.
 6. **The retrospective** — `retro.mjs`, the mission's last run: every gate refusal and every ticket
    log line nobody read twice, sorted into what the law could have said, what is worth one line in a
    component's own log, and what no rule will ever capture.

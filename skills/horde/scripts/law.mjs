@@ -206,7 +206,16 @@ export function lawDiff(horde, cfg, { baseTree, trunkTree, base, trunk }) {
   }
 
   return {
-    schema: LAW_SCHEMA, horde, base, trunk, at: nowIso(), added, raised, attached,
+    doc: {
+      schema: LAW_SCHEMA, horde, base, trunk, at: nowIso(), added, raised, attached,
+    },
+    // The two trunk-side readings, handed back rather than dropped. The law audit a wave close
+    // runs needs exactly these — every rule the trunk declares (with its review date) and the
+    // components each one reaches — and they have just been read off the trunk through the CLI.
+    // Reading them a second time would be a second answer to a question already asked on the same
+    // tree in the same command, which is the one thing the machine documents exist to stop.
+    trunkAspects,
+    trunkReach,
   };
 }
 
@@ -217,6 +226,11 @@ export function lawPath(horde, wave) {
 // writeLawDiff(horde, cfg, wave) — the document for this mission, on disk, at the path this
 // returns. Writing the same wave twice overwrites: the document is a reading of two trees, not a
 // journal, so a second close of the same wave replaces it rather than doubling it.
+//
+// Also hands back `trunk` — the tree it read, its sha, and the two readings it took there (every
+// rule with its review date, and what each rule reaches). The wave close's law audit is built on
+// those, so the close asks the graph once and both answers come out of the same reading of the
+// same commit rather than two reads that could disagree.
 export function writeLawDiff(horde, cfg, wave) {
   const baseBranch = cfg && cfg.base;
   if (!baseBranch) {
@@ -234,11 +248,16 @@ export function writeLawDiff(horde, cfg, wave) {
 
   const baseInfo = resolveTree({ scratch: baseSha });
   let doc;
+  let trunk = null;
   try {
     const trunkInfo = resolveTree({ horde });
-    doc = lawDiff(horde, cfg, {
+    const read = lawDiff(horde, cfg, {
       baseTree: baseInfo.path, trunkTree: trunkInfo.path, base: baseSha, trunk: trunkSha,
     });
+    doc = read.doc;
+    trunk = {
+      tree: trunkInfo.path, sha: trunkSha, aspects: read.trunkAspects, reach: read.trunkReach,
+    };
   } finally {
     baseInfo.cleanup();
   }
@@ -254,7 +273,7 @@ export function writeLawDiff(horde, cfg, wave) {
   } catch (e) {
     fail(`the law diff could not be written to ${path}: ${e.message}`);
   }
-  return { path, doc };
+  return { path, doc, trunk };
 }
 
 function cmdDiff(horde, flags) {

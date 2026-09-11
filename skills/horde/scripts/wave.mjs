@@ -26,6 +26,7 @@ import { readCostLimit, sumEntries } from './cost.mjs';
 import { buildPlan } from './queue.mjs';
 import { loadAsks } from './ask.mjs';
 import { writeLawDiff } from './law.mjs';
+import { auditLaw, auditBlock } from './audit.mjs';
 import {
   ygQualityIndex, observeAspects, pendingPromotions, markPromotionsReported,
 } from './node.mjs';
@@ -63,6 +64,12 @@ commands:
       every rule the horde raised this wave with the evidence that earned it, every improvement
       of its own it finished, and the sentence telling the chairman that undoing any of it is
       theirs to ask for. Under a charter set to only-the-work the block says none of it ran.
+      And it audits the law, because nobody here does that from a seat of their own: a ticket per
+      rule whose review date has passed ("renew or retire", ending in a proposal and never in an
+      edit to the date), a ticket per item in "yg advise" nobody has queued or decided on, what
+      Grain says about this mission's own territories, and the rules nothing has hit — that last
+      one in Yggdrasil's own words from "yg aspects --health", or not at all. Every read it
+      cannot make is a note in the report; none of them stops the close.
   evidence <id> --by "<who/what>" [--horde h]
       fills one catalogue row's "reproduced by" cell by hand — for a row no ticket verdict can
       fill, such as the mission gate; the director's call. A row in the charter's evidence
@@ -850,6 +857,12 @@ function cmdClose(horde, positional, flags) {
   // renders it into sentences the client can veto reads it from there; this never renders prose.
   const law = writeLawDiff(horde, cfg, n);
 
+  // The law audit: nobody in this family guards the law from a seat of its own, so closing a wave
+  // does it. It reads the trunk readings the law diff has just taken (one reading of one commit,
+  // not two), files what nobody has answered, and degrades every read it cannot make to a note
+  // rather than holding the wave's whole record hostage to a sweep — see audit.mjs's own header.
+  const audit = auditLaw(horde, cfg, { team, trunk: law.trunk });
+
   const vars = {
     n,
     date: today(),
@@ -869,6 +882,7 @@ function cmdClose(horde, positional, flags) {
     qualityBlock: qualityBlock({
       policy, promotions, qualityMerges, indexLine, observed, declined,
     }),
+    auditBlock: auditBlock(audit),
     runs: waveSums.runs,
     weighted: waveSums.weighted,
     cumulative: missionSums.weighted,
@@ -907,6 +921,7 @@ function cmdClose(horde, positional, flags) {
     qualityMerged: qualityMerges,
     aspectsObserved: observed,
     law: { path: law.path, added: law.doc.added.length, raised: law.doc.raised.length, attached: law.doc.attached.length },
+    audit,
   }, flags, () => {
     const lines = [`wave ${n} closed — gate ${gate}, ${green}/${total} evidence green`];
     for (const p of promotions) lines.push(`rule raised: ${p.aspect} ${p.from} → ${p.to}`);
@@ -918,6 +933,13 @@ function cmdClose(horde, positional, flags) {
       `what this mission has done to the law so far — ${law.doc.added.length} rule(s) added, `
       + `${law.doc.raised.length} raised, ${law.doc.attached.length} newly attached: ${law.path}`,
     );
+    const audited = [...audit.reviewDates.filed, ...audit.advise.filed];
+    if (audited.length) {
+      lines.push(`the law audit filed ${audited.length} ticket(s): ${audited.map((f) => f.ticket).join(', ')}`);
+    }
+    for (const q of audit.quiet) {
+      lines.push(`nothing has hit ${q.aspect}: ${q.reading || q.signal || `nothing new against it in ${q.quietWaves} closed wave(s)`}`);
+    }
     return lines.join('\n');
   });
 }

@@ -12,6 +12,10 @@
 
 {{qualityBlock}}
 
+## Law audit — what nobody was asked to check
+
+{{auditBlock}}
+
 ## Graph changes (architect)
 
 One line each: what changed in the graph and why. The chairman reads this list.
