@@ -7,58 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-09-12
+
+Needs Yggdrasil 6.x — the same major, refused otherwise.
+
 ### Added
-- A change now lands itself. When every check passes, the merge happens then and there — no waiting for anyone's signature, and nobody left holding a green checklist wondering who acts on it. When a check fails, the change is refused and sent back with the reason in its own words. The checks run on a fresh copy of the change, so nothing anyone is still editing can move underneath them.
-- Weakening a rule now needs the client's word. Deleting a rule, lowering it, moving its review date, shrinking what it covers, unhooking it from a component, or switching it off for a file all stop the change, name the rule, and say what was done to it. It goes through only once the client has answered the question in writing — for that one landing, or for the rest of the mission, as they choose. A rule that covers nothing at all can still be tidied away.
-- Changing a rule and the code that rule refuses, in one change, is now stopped. Whichever way the rule ends up reading, it reads that way because this code needed it to. The refusal names the rule, the file, and the way forward: one change for the code, one for the rule.
-- Only one change lands at a time in a repository. Two at once used to run each other's tests over each other's results, which looked like flaky tests and was not. A landing interrupted by a crash no longer blocks the next one.
-- A landing can run in the background. It hands back where its result will be written and returns immediately, instead of holding the terminal for the length of a test suite.
-- Setup now works out who reviews the written rules for this repository — its own configured reviewer, or nobody, in which case the rules are handed out one at a time to be answered. If the repository's commit hook asks for something it has no reviewer to do, setup says so and how to fix the hook, rather than teaching anyone to skip it.
-- A command now works on the tree you named — a worker's own worktree, a specific worktree by path, or the mission's shared trunk — and refuses rather than guess when none was named and the working copy it would otherwise touch is not the right one. `worktree.copy` is a new setting: files copied into every new worktree the moment it is made, for whatever a worker's tools need that git itself does not check out.
-- A plan can be written to a file. `queue plan --out <file>` puts the whole plan where the architect reads it, instead of a summary passed on in a message. A real mission lost its critical path in that summary.
-- The cost report counts reviewer calls. A worker who runs the architecture reviewer while landing a change bills a model per rule it judges, and the roster never saw that. The report now reads those calls from the repository's own record and prints them beside the agent runs, for the whole mission.
-- A merge is refused when a file the branch added belongs to no node. The mapping and the first file land in the same commit, or the branch waits.
-- A merge is refused when a node's charter, a node's log or a commit that changes the graph carries the language of a plan: a wave, a ticket number, a mission, a horde, an evidence id, a scratch path. The graph says what a node is and what must stay true; which mission touched it stays with the mission.
-- Every change now runs the full test suite automatically, against a real Yggdrasil build. A regression used to only surface if someone ran the suite by hand.
-- A request is now cut into areas before anything is built. Each area speaks for itself: one agent looks at that area alone, says what has to change in it, and writes the work down. Nobody works on half a piece of the codebase, and no two of them end up in the same files. An area too big for anyone to hold is refused, with the size counted, so it gets cut finer instead.
-- Nothing anybody proposes can start until the whole plan has been looked at once, by someone who sees all of it. Work that passes becomes work; work that does not keeps the reason why, and can be rewritten. Work nobody looked at never starts.
-- You get a frame before anything runs: what will change and where, what it will prove, and what the place gains in standing rules. You say "go" once, at the start. A small request says so plainly and needs no more of your time than that; a large one shows you its areas. There is no separate path for small work.
-- Nothing has to stay alive between turns any more. One run reads where the mission stands, picks up whatever the last round of work left behind, puts every finished branch through the checks, says what to start next and what to start it with — and then it ends. Close the session and come back a week later: the next run reads the same state and carries on from there. There is nobody to keep awake, no heartbeat to miss, and nothing that goes stale because a session was closed.
-- Work that has been sent back too many times now stops instead of going round again. It is set aside, and you are asked one question about it — what the checks said the last time, and where to read the rest — rather than being shown another round that was never going to be different. Your answer sends it back to the queue with what it was missing, or closes it as not done.
-- The loop can now run outside a session altogether. Point it at how your own tools start an agent, and it will keep reading the state, starting work and checking it in, with nobody sitting there to keep it going. Running it from your session still works exactly as before — the only thing that changes is who starts the workers.
-- Anyone working in an area can add a rule there. Only whoever is asking for the work can take one away or make it bite less. And after every wave you get a list of what the rules gained: which ones are new, which now bite harder, which cover more of the code than they did, and why in each case.
-- There is a pass that writes an area's rules down. It reads what that area's own work was refused for and what its work notes say, and turns what people have been doing by hand into a rule the place enforces for itself. It only ever adds; a rule it wants gone still goes to you. A rule that covers nothing at all it can tidy away, and cost never comes into it.
-- At the end of a piece of work you now get everything nobody read twice, sorted. What was sent back and why, and the notes people left each other along the way, come back as three lists: the things that could be written down as a standing rule here (each with the rule, where it belongs, and whether the place can check it for itself), the things worth saying once in the right spot and nowhere else, and the things no rule will ever capture — which is the list worth your time, because it is what the place cannot learn on its own. The cost of the whole thing comes with it. Nothing is finished until that pass has run over the work as it actually stands.
-- The tool now works out what counts as proof in your repository, says it once at the start of a piece of work, and uses it. It reads what is actually there — the test suites and what your tests are named, a directory of written promises with a mirror in the tests, a scenario runner — writes that down in the mission card where you can correct it, and every proof it promises you afterwards refers back to it. It does not propose anything of its own while it can see something to use. Only when there is genuinely nothing — no suite, no promises, not one file named like a test — does it say so and name, in one sentence, a package that would add one. A test suite built with something it does not recognise is not "nothing": it says so, and asks for the file patterns, rather than pretending the repository has no tests.
-- Every merge now records, in the commit itself, which piece of work it landed, what that work proves, and what it did to the rules. That outlives the working directory it came from: a year later, "who changed this line and why" is answered from the repository's own history in one step, without anything the mission left behind still being on disk.
-- A finished mission now files itself away. When the final check passes, the mission's own working directory is marked with the date and the commit it handed over, and moved aside — automatically, inside the repository's ignored working area, so nothing of it was ever in front of git and nothing has to be remembered or cleaned up by hand.
-- This repository now offers an evidence layer to a repository that has none. When the tool looks at your repository and can see nothing at all to point at as proof — no suite, no promises, not one file named like a test — the one sentence it says names a ready-made layer you can take: a directory of promises, each written in the product's own words with a status saying whether anything runs it yet, and something that keeps each one. Four rules come with it, and they never name a directory, a test framework or a file, because the repository that takes them decides all three. Three of them answer for themselves, for free, and ship the cases that show what they refuse and what they let through; the fourth asks a reader whether the thing that keeps a promise really says what the promise says, and it advises rather than blocks. Nothing here installs it, ever — it is offered once, and only when there was nothing else to offer.
-- Closing a wave now checks the rules themselves. Nobody in a mission is given that job, so the close does it. Every rule past the date somebody set to look at it again becomes one piece of work on the queue: renew it or retire it, ending in a proposal with a reason for you to answer. The date is never moved without you, and the work says so in as many words. The same pass picks up anything the architecture check has raised about this repository that nobody has queued or already decided on, reports what the repository's own history says about the areas this mission holds, and names the rules nothing has hit in two waves running. That last one is put in the careful words the architecture check itself uses: a rule nothing catches may be the reason nothing happens, which is not the same as a rule worth deleting. Nothing is filed twice, and none of it can stop a wave from closing — a reading that could not be taken is named in the report, and the close carries on.
-- There is one path to you now, and only four things travel down it: a worker stopped because it ran out of instructions, a piece of work that has been sent back too many times, a request to weaken a rule, and a change to the mission card itself. Answering one is recorded in the mission's own decision log, in your own words. Agreeing to weaken a rule defaults to covering just the one change in front of you — it stands for the rest of the mission only if you say so.
+
+- Landing is automatic: a change that passes every check merges immediately; a failing one is refused with the reason. Only one change lands at a time; a crash mid-landing no longer blocks the next.
+- `land --background` returns immediately and writes its result to a file. `worker.copy`/`worktree.copy` copies files into every new worktree.
+- Weakening a rule (deleting, lowering, moving its review date, narrowing scope, unhooking, disabling for a file) requires the client's written approval — once per landing or for the whole mission.
+- A change cannot both alter a rule and alter the code that rule judges in one landing; both are refused together.
+- Every landing runs the full test suite against a real Yggdrasil build; the architecture check runs on the branch itself and must be fully green.
+- `queue plan --out <file>` writes the whole plan to a file for the architect.
+- The cost report now counts reviewer calls spent during landing, not just agent runs.
+- A merge is refused when a file belongs to no component, or when a component's log or a graph-changing commit names a wave, ticket, mission or horde instead of describing the component itself.
+- A request is split into components before anything is built; one agent per component, no two write the same files; a component too large is refused, with its size named.
+- Nothing starts until the whole plan is reviewed once by someone who sees all of it.
+- The mission is stateless between runs: `tick` reads the mission's state, advances what it can, and exits. `tick --runner external` runs it from any external scheduler, not only a live session.
+- Work sent back past a set number of rounds stops and asks you one question instead of looping.
+- `legislate` writes a component's own rules from what its work has been refused for.
+- `retro` closes a piece of work with three lists: what belongs in a standing rule, what's worth saying once, and what no rule will ever capture — plus its cost.
+- Evidence detection: the mission works out what counts as proof in your repository (test suites, a promises directory, a scenario runner) at the start and uses it; a repository with nothing at all is offered a ready-made `promises` package (four rules, three self-proving for free, the fourth advisory).
+- Every merge commit records what it landed, what it proved, and what it did to the rules.
+- A finished mission archives its own working directory automatically.
+- `wave close` audits the rules: overdue `review_by` rules become renew-or-retire tickets, unhandled `yg advise`/`grain advise` items are picked up, and rules nothing has hit in two waves are named.
+- One channel reaches you: a stalled worker, work sent back too many times, a request to weaken a rule, or a change to the mission card. Each answer is recorded in the mission's decision log.
 
 ### Changed
-- No check accepts a result someone recorded earlier. The tests are run, the rules are read, and whether a new test really fails without the change is worked out by running it — nothing is taken on anyone's word, including the tool's own from a previous run. A test command that hangs is stopped and the time limit is named, rather than left running behind a check that never finishes.
-- Nothing a change runs on its way in waits forever any more. Reading the rules had no time limit at all, and a change let go of to finish on its own has nobody waiting on it — so a reading that wedged, on a working copy deleted underneath it or a slow disk, left something running with no parent, no limit and nobody watching, until the machine was rebooted. They accumulate: a machine that had been running these checks all night was holding dozens. Every step now stops at a limit and says so. This changes what you see: where a change used to sit there apparently still working, it now comes back refused, naming what was stopped, how long it was given, and the setting that raises it. A refusal is the honest answer — something that never returns was never going to become a yes — but it is a refusal where there used to be silence, and a repository whose rules genuinely take longer than the limit should raise it rather than read the refusal as a verdict on the change.
-- A port-change approval is now required only from the neighbours who actually named that port, not from every neighbour of the shared component. A relation that named no port used to be treated as depending on every one of that component's ports; it is now read for what it says, and only counts toward the port it actually named.
-- A brief handed to a spawned agent names the skill's own scripts by their absolute path. The agent no longer depends on an environment variable it may not have been given, and the director no longer has to add that path to every brief by hand.
-- A ticket with no acceptance line cannot be queued. Nothing a verifier could reproduce means nothing could ever prove it done; the refusal names the line to add.
-- Quality advisories file tickets only for the nodes this horde leases. An advisory on another node stays in the feed for whichever horde takes that node; `--all` files them anyway.
-- A steward's turn starts by reading the rulings, then the queue. A ruling recorded while the steward was mid-turn used to sit unread until the next message woke it, and the steward's report called it "no ruling".
-- Everything a mission numbers now comes out of one sequence, and each number says what kind of thing it is: work, a decision for the architect, or a question for you. Two different things could both be called "1" before, so asking about a number was an ambiguous question. A number written the old way still works.
+
+- No check accepts a recorded result; tests and rules are re-run, never taken on trust. Every step now stops at a time limit and refuses (naming what was stopped and the setting that raises it) instead of running forever — closing a leak that left dozens of orphaned processes on a machine running these checks all night.
+- A port-change approval is required only from neighbours who actually named that port, not every neighbour of the shared component.
+- A ticket with no acceptance line cannot be queued.
+- Quality advisories file tickets only for nodes this horde leases; `--all` overrides.
+- Mission-wide numbering (work, architect decisions, questions for you) now comes from one sequence instead of three, so a bare number is never ambiguous.
 
 ### Removed
-- A port has no version any more, in the graph or in Horde. `<node>/<port>@<version>` in a ticket's Produces/Consumes is now just `<node>/<port>` — the old syntax is refused outright, naming the removal. `contract propose` no longer takes `--version`/`--as`, no longer auto-increments, and no longer refuses "already publishes version X": it proposes adding a port or changing one that already exists, by name alone. The plan's port-derived edges are unaffected — a consumed port already depended on the ticket producing that same port, and a version to compare added nothing a second rule needed.
-- There is no cast any more. A mission runs on two roles, a worker per ticket and one architect — no steward, no owner, no verifier, no auditor, no counsel, no sub-teams. The director now dispatches workers directly, and questions for you go through the one channel described below.
-- There are no signatures on a ticket any more. Merging no longer needs an author key, a verifier key, or a per-node approval; a ticket merges once its dependencies are in and its branch is named.
-- There is no document at a node any more. A node's rules, ports and log still show through `node show`; the separate charter file beside it is gone.
-- There is no audit sample any more. A wave close and the mission's own "done" check no longer ask for one.
-- There is no escalation and no dissent any more. One path leads to whoever's asking, and only four things travel down it.
-- Claude Code's experimental team feature is gone from this skill. Every agent it raises is an ordinary one, started by whoever needs it and answering to that one alone. If an earlier version had you switch that feature on to run this, switch it back off — nothing here needs it.
-- A mission still running the previous release keeps working: its old tickets, its old logs, and its old roster, dissent and escalation records are read as history, never as something new to act on.
+
+- Ports carry no version. `<node>/<port>@<version>` is refused; `contract propose` no longer takes `--version`/`--as`.
+- No standing cast: a mission runs on two roles, a worker per ticket and one architect — no steward, owner, verifier, auditor, counsel, or sub-teams.
+- No signatures on a ticket: merging needs no author/verifier key or per-node approval.
+- No charter file at a node; its rules, ports and log show through `node show`.
+- No audit sample.
+- No escalation/dissent mechanism — superseded by the one channel above.
+- Claude Code's experimental Agent Teams feature is not used anywhere in this skill.
 
 ### Migrating a mission already in flight
 
-If you started a mission on an earlier release and it's still running, don't try to carry it across as-is. Close the wave you're on and finish the mission the old way — it still reads its own old state and files itself away. Then start fresh on the same repository, from the same mission card. The new run reads the same evidence the old one left behind and rebuilds its work from it, at the cost of one conversation per area of the codebase the mission touches. What you lose is continuity of a wave already in flight; what you keep is everything the old mission proved and everything it decided.
+Finish a mission started on an earlier release the old way — it still reads its own state and files itself away. Start fresh from the same mission card afterward; the new run rebuilds its work from the evidence the old one left, at the cost of one conversation per component touched.
 
 ## [0.4.0] - 2026-09-08
 
@@ -133,7 +128,8 @@ Experimental. This version needs a Yggdrasil newer than 5.8.0 — the first one 
 ### Added
 - First version. A prototype, expect rough edges.
 
-[Unreleased]: https://github.com/krzysztofdudek/Horde/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/krzysztofdudek/Horde/compare/v6.0.0...HEAD
+[6.0.0]: https://github.com/krzysztofdudek/Horde/compare/v0.4.0...v6.0.0
 [0.4.0]: https://github.com/krzysztofdudek/Horde/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/krzysztofdudek/Horde/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/krzysztofdudek/Horde/compare/v0.1.0...v0.2.0

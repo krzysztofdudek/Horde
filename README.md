@@ -23,13 +23,13 @@ Two things, and only two.
 
 **Node.js on your `PATH`** (any recent version). The skill's tools are plain ES modules with zero dependencies.
 
-**Yggdrasil**, the same 6.x line as this release of Horde. Horde works on an architecture graph: the map it cuts the work by, the rules every ticket is held to, and the verdict that says a change is safe to merge all come from it. Install it once:
+**Yggdrasil** 6.0.0 or newer. Horde works on an architecture graph: the map it cuts the work by, the rules every ticket is held to, and the verdict that says a change is safe to merge all come from it. Install it once:
 
 ```
 npm i -g @chrisdudek/yg
 ```
 
-An older Yggdrasil — one that predates the versioned documents Horde reads the graph through — is refused with the release to install, never read around.
+Horde reads the graph only through Yggdrasil's versioned documents (`yg-node/1`, `yg-context/1`, `yg-impact/1`, and others). A release that doesn't answer with the exact document Horde expects — too old, or one that has since changed shape — is refused by name, naming what it saw and which release to install, never read around.
 
 If your repository already has a graph, Horde reads it. If it doesn't, `horde init` makes one for you before anything else happens. With [Grain](https://github.com/krzysztofdudek/Grain) installed as well, the graph it makes is read out of your own code — the components you actually have and the rules you already follow — and it tells you up front how much of the code you have today those rules would refuse. Without Yggdrasil, Horde stops and says so.
 
