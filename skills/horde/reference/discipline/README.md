@@ -7,10 +7,10 @@ them.
 | discipline | rendered into | held by |
 |---|---|---|
 | `tdd.md` | worker | the merge checklist's revert test — new tests are run on the base and must fail there |
-| `debugging.md` | worker | three failed fixes are a dissent, not a fourth fix |
-| `verification.md` | verifier | a verdict is refused without one recorded row per acceptance line, and a gate result tied to a sha |
-| `review.md` | verifier, owner | findings carry a severity; a Minor finding goes to the ticket log, not back to the worker |
-| `framing.md` | architect (its checklist), and the director's own section of `SKILL.md` | the charter's evidence catalogue; the ticket's files are its scope |
+| `debugging.md` | worker | three failed fixes are a report, not a fourth fix |
+| `framing.md` | architect (its checklist), the consultant (its checklist, spliced in by `refine.mjs` directly), and the director's own section of `SKILL.md` | the charter's evidence catalogue; the ticket's files are its scope |
+| `review.md` | legislate (whole), retro (whole) | a refusal that happened three times is a rule, one that happened once is an accident — the same severity call, one level up |
+| `verification.md` | retro (whole) | a claim is not reproduced without the command that ran and what it printed — read at the end of a mission, over everything nobody checked twice |
 
 Four of them carry a drill — an assertion about real `.horde/` state and real branches, not about
 what an agent said. `scripts/drill.mjs` runs them; `scripts/tests/drills/` is the corpus.
@@ -49,8 +49,8 @@ Three of its rules about how such a text is written are followed here:
   against `SKILL.md`. Here they are role law: the brief is the channel, the merge checklist is the
   enforcement, and there is no hook.
 - **`executing-plans` and `subagent-driven-development`.** They assume one controller in one session.
-  The steward and the roles replace them.
-- **`dispatching-parallel-agents`.** That is the queue.
+  The director and `tick.mjs` replace them.
+- **`dispatching-parallel-agents`.** That is the queue, read by `tick.mjs`.
 - **`using-git-worktrees`.** The horde makes its own worktrees.
 - **`finishing-a-development-branch`.** It offers to push. The horde never pushes; the user does.
 - **The visual companion, and the `SessionStart` hook.**

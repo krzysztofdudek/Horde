@@ -1,0 +1,90 @@
+# The gate: the full Horde test suite (skills/horde/scripts/tests/*.test.mjs), on every push and
+# PR, against a real Yggdrasil build linked onto PATH. Horde requires Yggdrasil at runtime, and the
+# suite refuses to fake it: requireYg() in tests/helpers.mjs throws rather than skip when it can't
+# find one.
+name: ci
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    name: tests (node ${{ matrix.node }})
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: git identity for test fixtures
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@invalid
+          git config --global init.defaultBranch main
+      - name: checkout Yggdrasil
+        uses: actions/checkout@v4
+        with:
+          repository: krzysztofdudek/Yggdrasil
+          # The branch is named because checkout takes the default branch when it is not, and
+          # Yggdrasil's default branch is the last published release. This suite needs the build
+          # Horde is written against, not the one the world currently has — without the ref every
+          # run here measures Horde against a CLI that predates half of what it calls.
+          ref: family-sync
+          path: yggdrasil
+      - name: build and link Yggdrasil's CLI
+        working-directory: yggdrasil/source/cli
+        run: |
+          npm install
+          npm run build
+          npm link
+      - name: checkout RatatoskrSkill
+        uses: actions/checkout@v4
+        with:
+          repository: krzysztofdudek/RatatoskrSkill
+          # Unlike Yggdrasil above, RatatoskrSkill is not part of this release's family-sync
+          # workflow, so no ref is named here — checkout takes its default branch. The drift test
+          # (tests/ratatoskr-product-language-drift.test.mjs) only reads two text files off this
+          # checkout; no build or install step is needed.
+          path: ratatoskr
+      - name: run suite
+        working-directory: skills/horde/scripts
+        env:
+          HORDE_TEST_RATATOSKR_DIR: ${{ github.workspace }}/ratatoskr
+        run: node --test tests/*.test.mjs
+
+  # This repository also publishes law: `packages/promises`, offered to a repository that has no
+  # evidence layer of its own. Publishing runs somebody else's code in somebody else's repository,
+  # so the pre-publish check runs here on every push — once, not per Node version, because it reads
+  # the package files and never executes a rule.
+  marketplace:
+    runs-on: ubuntu-latest
+    name: marketplace
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: checkout Yggdrasil
+        uses: actions/checkout@v4
+        with:
+          repository: krzysztofdudek/Yggdrasil
+          # The branch is named because checkout takes the default branch when it is not, and
+          # Yggdrasil's default branch is the last published release. This suite needs the build
+          # Horde is written against, not the one the world currently has — without the ref every
+          # run here measures Horde against a CLI that predates half of what it calls.
+          ref: family-sync
+          path: yggdrasil
+      - name: build and link Yggdrasil's CLI
+        working-directory: yggdrasil/source/cli
+        run: |
+          npm install
+          npm run build
+          npm link
+      - name: check what this repository publishes
+        run: yg marketplace check

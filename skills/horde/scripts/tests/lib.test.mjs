@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  existsSync, readFileSync, writeFileSync, mkdirSync,
+  existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { makeRepo, rmRepo } from './helpers.mjs';
@@ -175,5 +175,154 @@ test('_lib.mjs patchIdOf: a landing outside the change\'s own context leaves its
   await t.test('nothing to identify: an unknown ref, or a branch with no diff of its own', () => {
     assert.equal(patchIdOf('no-such-branch', 'base', { cwd: dir }), null);
     assert.equal(patchIdOf('base', 'base', { cwd: dir }), null);
+  });
+});
+
+// resolveTree's resolving paths only — every refusal is a CLI-level test in tree.test.mjs, for the
+// same reason teamPath's refusals are above: fail() calls process.exit() and would kill this whole
+// in-process run.
+test('_lib.mjs resolveTree: narrowest scope wins, cwd and trunk defaults, scratch cleanup', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const realDir = realpathSync(dir);
+  const g = (args, cwd = dir) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+
+  const origCwd = process.cwd();
+  process.chdir(dir);
+  try {
+    const { resolveTree, hordeRoot: hordeRootFn } = await import('../_lib.mjs');
+    hordeRootFn({ create: true });
+    g(['branch', 'h1/trunk']);
+    const ticketBranch = 'h1/t-001';
+    g(['branch', ticketBranch]);
+    const ticketPath = join(hordeRootFn(), 'worktrees', 'h1', 't-001');
+    g(['worktree', 'add', ticketPath, ticketBranch]);
+
+    await t.test('--tree beats --ticket beats --horde', () => {
+      const viaTree = resolveTree({ tree: ticketPath, ticket: '001', horde: 'h1' });
+      assert.equal(viaTree.kind, 'tree');
+      assert.equal(viaTree.path, ticketPath);
+      assert.equal(viaTree.branch, ticketBranch);
+
+      const viaTicket = resolveTree({ ticket: '001', horde: 'h1' });
+      assert.equal(viaTicket.kind, 'ticket');
+      assert.equal(viaTicket.path, ticketPath);
+      assert.equal(viaTicket.branch, ticketBranch);
+    });
+
+    await t.test('--horde alone gives the trunk tip, kind "trunk", cleanup is a no-op', () => {
+      const viaHorde = resolveTree({ horde: 'h1' });
+      assert.equal(viaHorde.kind, 'trunk');
+      assert.equal(viaHorde.branch, 'h1/trunk');
+      assert.equal(viaHorde.path, join(hordeRootFn(), 'worktrees', 'h1', 'trunk'));
+      assert.equal(viaHorde.sha, g(['rev-parse', 'h1/trunk']));
+      assert.equal(typeof viaHorde.cleanup, 'function');
+      viaHorde.cleanup();
+      assert.equal(existsSync(viaHorde.path), true); // still there — cleanup does nothing for trunk
+    });
+
+    await t.test('no flags at all: cwd, kind "cwd"', () => {
+      const viaCwd = resolveTree({});
+      assert.equal(viaCwd.kind, 'cwd');
+      assert.equal(viaCwd.path, realDir);
+      assert.equal(viaCwd.sha, g(['rev-parse', 'HEAD']));
+    });
+
+    await t.test('--scratch creates a detached worktree at the given sha, and cleanup() removes it', () => {
+      const sha = g(['rev-parse', 'HEAD']);
+      const viaScratch = resolveTree({ scratch: sha });
+      assert.equal(viaScratch.kind, 'scratch');
+      assert.equal(viaScratch.branch, null);
+      assert.equal(viaScratch.sha, sha);
+      assert.equal(existsSync(viaScratch.path), true);
+      viaScratch.cleanup();
+      assert.equal(existsSync(viaScratch.path), false);
+      const known = g(['worktree', 'list', '--porcelain']);
+      assert.equal(known.includes(viaScratch.path), false);
+    });
+  } finally {
+    process.chdir(origCwd);
+  }
+});
+
+// The lease file is keyed by a SUBJECT, not by a node: a node when `node.mjs bind` claims one, a
+// territory when a refinement's cut does. Only the claiming paths are exercised in-process here —
+// every refusal goes through fail() -> process.exit(), which would take this whole run with it, so
+// those are CLI-level tests in refine.test.mjs (same reason as teamPath's above).
+test('_lib.mjs leases: one mechanism, keyed by whatever is being held — a node or a territory', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const origCwd = process.cwd();
+  process.chdir(realpathSync(dir));
+  try {
+    const {
+      hordeRoot: hordeRootFn, claimLease, readLeases, releaseLeasesForHorde, leaseConflict,
+    } = await import('../_lib.mjs');
+    hordeRootFn({ create: true });
+    mkdirSync(join(hordeRootFn(), 'hordes', 'h1'), { recursive: true });
+
+    await t.test('a territory is claimed and then held, by the same call that claims a node', () => {
+      const first = claimLease('h1', 'the front door', { kind: 'territory' });
+      assert.equal(first.status, 'claimed');
+      assert.equal(first.node, 'the front door');
+      const again = claimLease('h1', 'the front door', { kind: 'territory' });
+      assert.equal(again.status, 'held');
+      assert.equal(again.since, readLeases().leases['the front door'].since, 'holding it again does not re-date it');
+    });
+
+    await t.test('two territories of one horde sit side by side, and so does a node', () => {
+      claimLease('h1', 'numbers', { kind: 'territory' });
+      claimLease('h1', 'auth');
+      assert.deepEqual(Object.keys(readLeases().leases).sort(), ['auth', 'numbers', 'the front door']);
+    });
+
+    await t.test('the on-disk shape is unchanged — history keeps its "node" field, carrying the subject', () => {
+      const { history } = readLeases();
+      const entry = history.find((h) => h.node === 'the front door');
+      assert.deepEqual(Object.keys(entry).sort(), ['at', 'ask', 'event', 'from', 'horde', 'node'].sort());
+      assert.equal(entry.event, 'bind');
+      assert.equal(entry.horde, 'h1');
+    });
+
+    await t.test('the holder is only a conflict while it is live — an unknown horde blocks nobody', () => {
+      // "h1" has a directory under hordes/, so it is live; "ghost" never did.
+      assert.equal(leaseConflict('h2', 'the front door').horde, 'h1');
+      claimLease('ghost-holder-check', 'orphan');
+      assert.equal(leaseConflict('h2', 'orphan'), null);
+    });
+
+    await t.test('archiving releases every subject at once, nodes and territories alike', () => {
+      const released = releaseLeasesForHorde('h1');
+      assert.deepEqual(released.sort(), ['auth', 'numbers', 'the front door']);
+      assert.deepEqual(Object.keys(readLeases().leases), ['orphan']);
+      assert.equal(readLeases().history.filter((h) => h.event === 'release').length, 3);
+    });
+  } finally {
+    process.chdir(origCwd);
+  }
+});
+
+// Cost-class names are host-neutral, never a Claude model name, and the generic
+// fallback (config.classes' own first key, DEFAULT_CLASSES' first key with no config yet) never
+// falls back to a literal "sonnet".
+test('_lib.mjs: DEFAULT_CLASSES and firstClass are host-neutral', async (t) => {
+  const { DEFAULT_CLASSES, firstClass } = await import('../_lib.mjs');
+  const CLAUDE_MODEL_NAMES = ['haiku', 'sonnet', 'opus', 'fable'];
+
+  await t.test('DEFAULT_CLASSES carries none of the four Claude model names as a key', () => {
+    for (const name of CLAUDE_MODEL_NAMES) {
+      assert.equal(Object.prototype.hasOwnProperty.call(DEFAULT_CLASSES, name), false, `DEFAULT_CLASSES should not key on "${name}"`);
+    }
+  });
+
+  await t.test('firstClass(cfg) returns the mission\'s own first configured class', () => {
+    assert.equal(firstClass({ classes: { heavy: 10, light: 1 } }), 'heavy');
+  });
+
+  await t.test('firstClass(cfg) falls back to DEFAULT_CLASSES\' first key with no config yet, never "sonnet"', () => {
+    assert.equal(firstClass(null), Object.keys(DEFAULT_CLASSES)[0]);
+    assert.equal(firstClass({}), Object.keys(DEFAULT_CLASSES)[0]);
+    assert.equal(firstClass({ classes: {} }), Object.keys(DEFAULT_CLASSES)[0]);
+    assert.notEqual(firstClass(null), 'sonnet');
   });
 });

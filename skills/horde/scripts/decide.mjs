@@ -9,10 +9,13 @@
 //   ## <YYYY-MM-DD> · <slug> [· ticket NNN] [· node n]
 //   <ruling text, may be multi-line>
 //
-// Exports `appendDecision` so escalate.mjs and dissent.mjs can record a ruling/answer in the
-// same format without shelling out to this file.
+// Exports `appendDecision` so ask.mjs can record the client's answer in the same format, under
+// slug `ask-<id>`, without shelling out to this file.
 
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import {
+  mkdirSync, writeFileSync, rmSync,
+} from 'node:fs';
 import {
   hordePath, readConfig, readText, appendText, today, fail, parseArgs, emit, isMain, resolveHorde,
 } from './_lib.mjs';
@@ -59,6 +62,35 @@ export function parseEntries(text) {
   return entries;
 }
 
+// A duplicate-slug check that reads, then a write some time later, is a race between two
+// processes — two `ask answer` calls landing on the same item, say — that a check alone cannot
+// close: both can read "no such slug" before either has written. `withDecisionsLock` closes it
+// with the same exclusive-create trick land.mjs's gate lock uses (`wx` refuses when the file
+// already exists), scoped to this one horde's decisions.md and held only for the check-and-append
+// itself, never across a caller's own work.
+function decisionsLockPath(horde) { return decisionsPath(horde) + '.lock'; }
+
+function withDecisionsLock(horde, fn) {
+  const path = decisionsLockPath(horde);
+  const deadline = Date.now() + 10000;
+  for (;;) {
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, String(process.pid), { flag: 'wx' });
+      break;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      if (Date.now() > deadline) throw new Error(`decisions.md is locked by another process — timed out waiting for ${path}`);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    try { rmSync(path, { force: true }); } catch { /* already gone */ }
+  }
+}
+
 function formatHeading(entry) {
   let h = `## ${entry.date} · ${entry.slug}`;
   if (entry.ticket) h += ` · ticket ${entry.ticket}`;
@@ -68,15 +100,11 @@ function formatHeading(entry) {
 
 // appendDecision(horde, {slug, ruling, ticket, node}) — throws on a missing field, a duplicate
 // slug, or (when node is given) on the graph-redirect case; the caller decides how to report that
-// (decide.mjs's own CLI turns it into a fail(), while a caller like escalate.mjs never passes
+// (decide.mjs's own CLI turns it into a fail(), while a caller like ask.mjs never passes
 // node and so never sees it).
 export function appendDecision(horde, { slug, ruling, ticket, node } = {}) {
   if (!slug) throw new Error('slug required');
   if (!ruling) throw new Error('ruling required');
-  const path = decisionsPath(horde);
-  const existing = readText(path) || '';
-  const entries = parseEntries(existing);
-  if (entries.some((e) => e.slug === slug)) throw new Error(`duplicate slug: ${slug}`);
 
   if (node) {
     const cfg = readConfig() || {};
@@ -88,11 +116,18 @@ export function appendDecision(horde, { slug, ruling, ticket, node } = {}) {
     throw err;
   }
 
-  const entry = { date: today(), slug, ticket: ticket ? String(ticket) : null, node: node || null };
-  const block = `${formatHeading(entry)}\n${ruling}\n`;
-  const sep = existing.length > 0 && !existing.endsWith('\n\n') ? (existing.endsWith('\n') ? '\n' : '\n\n') : '';
-  appendText(path, sep + block);
-  return { ...entry, body: ruling };
+  return withDecisionsLock(horde, () => {
+    const path = decisionsPath(horde);
+    const existing = readText(path) || '';
+    const entries = parseEntries(existing);
+    if (entries.some((e) => e.slug === slug)) throw new Error(`duplicate slug: ${slug}`);
+
+    const entry = { date: today(), slug, ticket: ticket ? String(ticket) : null, node: node || null };
+    const block = `${formatHeading(entry)}\n${ruling}\n`;
+    const sep = existing.length > 0 && !existing.endsWith('\n\n') ? (existing.endsWith('\n') ? '\n' : '\n\n') : '';
+    appendText(path, sep + block);
+    return { ...entry, body: ruling };
+  });
 }
 
 function cmdAdd(horde, positional, flags) {

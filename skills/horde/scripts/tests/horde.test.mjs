@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -39,17 +39,29 @@ test('horde.mjs: init, list, config, archive', async (t) => {
   });
 
   await t.test('config get/set round-trips through dotted paths with type coercion', () => {
-    const before = run('horde.mjs', ['config', 'get', 'liveness.stewardMinutes'], dir);
-    assert.equal(before.json.value, 60);
+    const before = run('horde.mjs', ['config', 'get', 'territory.maxBytes'], dir);
+    assert.equal(before.json.value, 400000);
 
-    const setResult = run('horde.mjs', ['config', 'set', 'liveness.stewardMinutes', '90'], dir);
+    const setResult = run('horde.mjs', ['config', 'set', 'territory.maxBytes', '500000'], dir);
     assert.equal(setResult.code, 0);
-    const after = run('horde.mjs', ['config', 'get', 'liveness.stewardMinutes'], dir);
-    assert.equal(after.json.value, 90);
+    const after = run('horde.mjs', ['config', 'get', 'territory.maxBytes'], dir);
+    assert.equal(after.json.value, 500000);
 
     run('horde.mjs', ['config', 'set', 'protectedPaths', 'a/b,c/d'], dir);
     const paths = run('horde.mjs', ['config', 'get', 'protectedPaths'], dir);
     assert.deepEqual(paths.json.value, ['a/b', 'c/d']);
+  });
+
+  // A fresh mission's default cost classes are host-neutral (Horde installs the same
+  // way on Claude Code, Codex, Cursor…), never named after a Claude model.
+  await t.test('a fresh mission\'s default classes carry no Claude model name', () => {
+    const classes = run('horde.mjs', ['config', 'get', 'classes'], dir).json.value;
+    assert.deepEqual(classes, {
+      light: 1, standard: 3, heavy: 10, max: 30,
+    });
+    for (const name of ['haiku', 'sonnet', 'opus', 'fable']) {
+      assert.equal(Object.prototype.hasOwnProperty.call(classes, name), false, `classes should not key on "${name}"`);
+    }
   });
 
   await t.test('list shows the horde with trunk sha, base and open ticket count', () => {
@@ -170,6 +182,49 @@ test('horde.mjs config set: a list-valued key takes a list, in either notation',
   assert.match(broken.stderr, /not a readable list/);
 });
 
+// DEFAULT_CLASSES only changes what a FRESH mission's config.json starts with. A
+// mission whose config.json was already on disk before this change, still keyed by the old
+// Claude model names, reads exactly what is written there (config.classes is a plain map, read
+// with no knowledge of any particular name) and keeps working unchanged.
+test('horde.mjs: a mission with an old on-disk config.classes (Claude model names) keeps working unchanged', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir, 'mission1');
+
+  const cfgPath = join(dir, '.horde', 'config.json');
+  const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+  cfg.classes = {
+    haiku: 1, sonnet: 3, opus: 10, fable: 30,
+  };
+  writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+
+  await t.test('a ticket still takes the old class name', () => {
+    const created = run('tk.mjs', [
+      'new', 'old-scheme', '--title', 'Old scheme', '--node', 'core', '--class', 'sonnet', '--evidence', 'it works',
+    ], dir);
+    assert.equal(created.code, 0, created.stderr);
+    const shown = run('tk.mjs', ['show', created.json.id], dir);
+    assert.match(shown.json.text, /\*\*Class:\*\* sonnet\b/);
+  });
+
+  await t.test('a class this old config never had (a new-scheme name) is still refused, listing the old names', () => {
+    const refused = run('tk.mjs', [
+      'new', 'new-scheme', '--title', 'New scheme', '--node', 'core', '--class', 'light', '--evidence', 'it works',
+    ], dir);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /haiku, sonnet, opus, fable/);
+  });
+
+  await t.test('cost weighting still reads the old weight for the old name (sonnet = 3)', () => {
+    writeCostRuns(dir, 'mission1', [
+      { name: 'w-1', role: 'worker', class: 'sonnet', ticket: null, team: 'trunk', wave: '1', at: new Date().toISOString() },
+    ]);
+    const report = run('cost.mjs', ['report'], dir);
+    assert.equal(report.code, 0, report.stderr);
+    assert.equal(report.json.weighted, 3, 'the old config\'s own "sonnet": 3 weight, unchanged by DEFAULT_CLASSES');
+  });
+});
+
 test('horde.mjs charter: show prints it, edit replaces it from stdin', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -278,9 +333,9 @@ test('horde.mjs charter edit: a rewrite that drops a recorded verifier says so',
   assert.deepEqual(dropped.droppedEvidence, [{ id: 'E1', was: 'verifier1' }]);
 });
 
-// E13 — dropping a row outright is free before the mission's wave 1 starts, and needs a ruled
-// escalation naming it afterwards.
-test('horde.mjs charter edit: dropping a row is free before wave 1, refused after without a ruled escalation naming it', async (t) => {
+// E13 — dropping a row outright is free before the mission's wave 1 starts, and needs an answered
+// ask of kind "charter" naming it afterwards.
+test('horde.mjs charter edit: dropping a row is free before wave 1, refused after without an answered ask naming it', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -319,34 +374,45 @@ test('horde.mjs charter edit: dropping a row is free before wave 1, refused afte
 
   run('wave.mjs', ['start'], dir);
 
-  await t.test('after wave 1, dropping E2 without --escalation is refused', () => {
+  await t.test('after wave 1, dropping E2 without --ask is refused', () => {
     const r = charterEditRaw(withOne);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /drops evidence row\(s\) E2/);
-    assert.match(r.stderr, /escalate\.mjs add/);
+    assert.match(r.stderr, /ask\.mjs add/);
   });
 
-  await t.test('an --escalation that is not yet ruled is refused', () => {
-    const esc = run('escalate.mjs', ['add', 'field is unreachable', '--kind', 'charter', '--by', 'steward'], dir);
-    const r = charterEditRaw(withOne, ['--escalation', esc.json.id]);
+  await t.test('an --ask that is not yet answered is refused', () => {
+    const opened = run('ask.mjs', ['add', 'field is unreachable', '--kind', 'charter'], dir);
+    const r = charterEditRaw(withOne, ['--ask', opened.json.id]);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /not ruled yet/);
+    assert.match(r.stderr, /not answered yet/);
   });
 
-  await t.test('a ruled escalation whose text never names the dropped row is refused', () => {
-    const esc = run('escalate.mjs', ['add', 'field is unreachable', '--kind', 'charter', '--by', 'steward'], dir);
-    run('escalate.mjs', ['rule', esc.json.id, 'agreed, dropping a row', '--by', 'director'], dir);
-    const r = charterEditRaw(withOne, ['--escalation', esc.json.id]);
+  await t.test('an --ask of a kind other than "charter" is refused', () => {
+    const opened = run('ask.mjs', ['add', 'field is unreachable', '--kind', 'stop'], dir);
+    run('ask.mjs', ['answer', opened.json.id, 'agreed, dropping E2'], dir);
+    const r = charterEditRaw(withOne, ['--ask', opened.json.id]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /is kind "stop", not "charter"/);
+  });
+
+  await t.test('an answered ask whose text never names the dropped row is refused', () => {
+    const opened = run('ask.mjs', ['add', 'field is unreachable', '--kind', 'charter'], dir);
+    run('ask.mjs', ['answer', opened.json.id, 'agreed, dropping a row'], dir);
+    const r = charterEditRaw(withOne, ['--ask', opened.json.id]);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /does not mention dropped row\(s\): E2/);
   });
 
-  await t.test('a ruled escalation naming the row lets the drop through', () => {
-    const esc = run('escalate.mjs', ['add', 'E2 cannot be reproduced in this environment', '--kind', 'charter', '--by', 'steward'], dir);
-    run('escalate.mjs', ['rule', esc.json.id, 'agreed, E2 is dropped', '--by', 'director'], dir);
-    const r = charterEditRaw(withOne, ['--escalation', esc.json.id]);
+  await t.test('an answered ask naming the row lets the drop through, and the decision is cited in the charter', () => {
+    const opened = run('ask.mjs', ['add', 'E2 cannot be reproduced in this environment', '--kind', 'charter'], dir);
+    run('ask.mjs', ['answer', opened.json.id, 'agreed, E2 is dropped'], dir);
+    const r = charterEditRaw(`${withOne}\n_E2 dropped per ask-${opened.json.id}._\n`, ['--ask', opened.json.id]);
     assert.equal(r.code, 0);
     assert.equal(r.json.evidenceRows, 1);
+    const decision = run('decide.mjs', ['show', `ask-${opened.json.id}`], dir);
+    assert.equal(decision.code, 0, decision.stderr);
+    assert.match(decision.json.body, /E2 is dropped/);
   });
 });
 
@@ -361,7 +427,6 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
     const r = run('horde.mjs', ['done'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /evidence catalogue is empty/);
-    assert.match(r.stderr, /no wave has ever been started/);
     assert.match(r.stderr, /no cost has ever been recorded/);
   });
 
@@ -381,60 +446,170 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
   const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-slug');
   mkdirSync(ticketDir, { recursive: true });
   writeFileSync(join(ticketDir, 'issue.md'), '# 001 · slug\n\n**Status:** merged\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
-  writeFileSync(join(ticketDir, 'log.md'), '## Verdict · 001 · 2026-01-01 · by verifier-1 (sonnet)\n\n**Result:** reproduced\n');
+  writeFileSync(join(ticketDir, 'log.md'), '## Verdict · 001 · 2026-01-01 · by verifier-1 (standard)\n\n**Result:** reproduced\n');
 
-  await t.test('refuses naming the missing audit and cost once evidence and gate are clear', () => {
+  await t.test('refuses naming the missing cost report once evidence and gate are clear', () => {
+    // The seat that used to sample this mission's own work is gone entirely — done's gate is now
+    // evidence, trunk gate, cost and the retrospective — so with evidence reproduced and the gate
+    // green, those last two are the reasons left.
     const r = run('horde.mjs', ['done'], dir);
     assert.equal(r.code, 1);
     assert.doesNotMatch(r.stderr, /evidence row\(s\) not reproduced/);
-    assert.match(r.stderr, /no wave has ever been started/);
-  });
-
-  run('wave.mjs', ['start'], dir);
-
-  await t.test('refuses naming the missing audit specifically, once a wave is open', () => {
-    const r = run('horde.mjs', ['done'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /no audit verdict recorded for wave 1/);
-    assert.match(r.stderr, /no cost has ever been recorded/);
-  });
-
-  run('wave.mjs', ['audit', '001', 'clean', 'reproduced evidence'], dir);
-
-  await t.test('refuses naming the missing cost report last', () => {
-    const r = run('horde.mjs', ['done'], dir);
-    assert.equal(r.code, 1);
     assert.match(r.stderr, /no cost has ever been recorded/);
   });
 
   writeCostRuns(dir, 'mission1', [
-    { name: 'mission1-worker-trunk-1', role: 'worker', class: 'sonnet', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
+    { name: 'mission1-worker-trunk-1', role: 'worker', class: 'standard', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
   ]);
 
+  const retroClasses = join(dir, '.horde', 'hordes', 'mission1', 'retro-classes.json');
+  const landResult = join(dir, '.horde', 'hordes', 'mission1', 'land', '001.json');
+
+  await t.test('refuses when the retrospective has never been run, and names the command that runs it', () => {
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no retrospective has been run on this mission/);
+    assert.match(r.stderr, /retro\.mjs --horde mission1/);
+  });
+
+  // Read here rather than after "done": the stamp is made by every "done" run, refusal or not
+  // (stampMissionEvidence is what the evidence check itself reads), and once the mission is done
+  // its horde is archived — a live-horde reader has nothing left to be asked about.
+  await t.test('status.mjs shows the row as reproduced, stamped by the checks done already ran', () => {
+    const r = run('status.mjs', ['--horde', 'mission1'], dir);
+    assert.equal(r.json.hordes[0].evidence.rows[0].state, 'reproduced');
+    assert.equal(r.json.hordes[0].evidence.rows[0].reproducedBy, 'verifier-1');
+  });
+
+  await t.test('refuses when the retrospective was taken before the last ticket landed', () => {
+    // This ticket's log carries no remark and nothing was refused, so the classification is empty
+    // and the retrospective is the one run, not the one-shot's answer.
+    writeFileSync(retroClasses, '{"items": {}}\n');
+    assert.equal(run('retro.mjs', ['--tree', dir, '--horde', 'mission1'], dir).code, 0);
+
+    // …and then something lands, which the document on file never saw.
+    mkdirSync(dirname(landResult), { recursive: true });
+    writeFileSync(landResult, `${JSON.stringify({
+      ticket: '001', branch: 'mission1/t-001', sha: 'a'.repeat(40), ok: true, checks: [],
+      pairs: [], brief: null, landed: { ticket: '001', sha: 'b'.repeat(40), at: new Date().toISOString() },
+    }, null, 2)}\n`);
+
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /retrospective on file is out of date/);
+    assert.match(r.stderr, /retro\.mjs --horde mission1/);
+  });
+
   await t.test('passes once every reason is met — stamps the charter and appends the completion block', () => {
+    assert.equal(run('retro.mjs', ['--tree', dir, '--horde', 'mission1'], dir).code, 0);
     const r = run('horde.mjs', ['done'], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.evidence.green, 1);
     assert.equal(r.json.evidence.total, 1);
     assert.equal(r.json.gate.result, 'green');
-    assert.equal(r.json.audit.wave, '1');
-    assert.equal(r.json.audit.verdict, 'clean');
     assert.equal(r.json.cost.runs, 1);
 
-    const stamped = readFileSync(charterPath, 'utf8');
+    // The mission is over, so the horde is archived by "done" itself — everything it wrote is read
+    // back from where it now stands, and nothing is left live for a later run to pick up.
+    assert.ok(r.json.archived && r.json.archived.to, 'done reports where the horde was archived to');
+    assert.equal(existsSync(join(dir, '.horde', 'hordes', 'mission1')), false, 'the live horde directory is gone');
+    const archivedDir = r.json.archived.to;
+
+    const marker = readFileSync(join(archivedDir, 'archived'), 'utf8');
+    assert.equal(marker.trim().split('\n').length, 1, 'the marker is one line, not a log');
+    const [markedDate, markedSha] = marker.trim().split(' ');
+    assert.equal(markedDate, r.json.archived.date);
+    assert.equal(markedSha, r.json.gate.sha, 'the marker carries the trunk sha the mission handed over at');
+
+    const stamped = readFileSync(join(archivedDir, 'charter.md'), 'utf8');
     assert.match(stamped, /\| E1 \| the suite is green \| api \| verifier-1 \|/);
 
-    const plan = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
+    const plan = readFileSync(join(archivedDir, 'plan.md'), 'utf8');
     assert.match(plan, /# Mission complete/);
     assert.match(plan, /Evidence catalogue:\*\* 1\/1 green/);
     assert.match(plan, /Ready to push: `mission1\/trunk`/);
-  });
 
-  await t.test('status.mjs now shows the row as reproduced', () => {
-    const r = run('status.mjs', ['--horde', 'mission1'], dir);
-    assert.equal(r.json.hordes[0].evidence.rows[0].state, 'reproduced');
-    assert.equal(r.json.hordes[0].evidence.rows[0].reproducedBy, 'verifier-1');
+    // Nothing of .horde/ has ever been a candidate for the index, and "done" is the run most
+    // likely to have slipped something in — it writes a charter, a journal and a marker. (The
+    // fixture's own untracked files are Yggdrasil's, written by `yg init`, and not this tool's
+    // business either way.)
+    const porcelain = execFileSync('git', ['status', '--porcelain'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(porcelain.split('\n').filter((l) => l.includes('.horde')).join('\n'), '', 'done puts nothing of .horde/ in front of git');
+    assert.match(readFileSync(join(dir, '.horde', '.gitignore'), 'utf8'), /^\*$/m);
+
+    // The last word on what this mission did to the law, taken at the trunk it is handing over.
+    assert.ok(r.json.law && r.json.law.path, 'done reports where the law document is');
+    assert.ok(r.json.retro && r.json.retro.path, 'done reports where the retrospective is');
+    assert.equal(r.json.retro.law, 0);
+    assert.equal(r.json.retro.inexpressible, 0);
+    // The reported paths are where the documents now are, not where they were written.
+    assert.ok(r.json.law.path.startsWith(archivedDir), 'the law document is reported at its archived path');
+    assert.ok(r.json.retro.path.startsWith(archivedDir), 'the retrospective is reported at its archived path');
+    const law = JSON.parse(readFileSync(r.json.law.path, 'utf8'));
+    assert.equal(law.schema, 'horde-law/1');
+    assert.equal(law.horde, 'mission1');
+    for (const section of ['added', 'raised', 'attached']) {
+      assert.ok(Array.isArray(law[section]), `${section} is a list, empty or not`);
+    }
   });
+});
+
+// ---- the archived marker ----------------------------------------------------------------------
+//
+// "Archived" has to be readable off the directory itself, not inferred from where it sits: a
+// mission read back a year later needs the date it ended and the commit it handed over. The move
+// to hordes/_archive/<name>-<date> is unchanged — blame.mjs stands on it — and the marker is what
+// is new.
+
+test('horde.mjs archive: the moved directory carries an "archived" marker with the date and the sha', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const trunkSha = execFileSync('git', ['rev-parse', 'mission1/trunk'], { cwd: dir, encoding: 'utf8' }).trim();
+  const r = run('horde.mjs', ['archive', 'mission1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+
+  const marker = readFileSync(join(r.json.to, 'archived'), 'utf8');
+  assert.equal(marker.trim(), `${r.json.date} ${trunkSha}`);
+  assert.equal(existsSync(join(dir, '.horde', 'hordes', 'mission1')), false);
+});
+
+test('horde.mjs archive: an "archived" file already there is overwritten, never doubled', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  // A mission that was marked once already — by a run that got as far as the marker and no
+  // further, or by a hand. The second pass replaces the line; it does not write a second one.
+  writeFileSync(join(dir, '.horde', 'hordes', 'mission1', 'archived'), '1999-01-01 deadbeef\n');
+
+  const r = run('horde.mjs', ['archive', 'mission1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const marker = readFileSync(join(r.json.to, 'archived'), 'utf8');
+  assert.equal(marker.trim().split('\n').length, 1);
+  assert.doesNotMatch(marker, /1999-01-01/);
+  assert.match(marker, new RegExp(`^${r.json.date} `));
+});
+
+test('horde.mjs archive: a horde directory that cannot be written refuses, naming the path', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const hordeDir = join(dir, '.horde', 'hordes', 'mission1');
+  chmodSync(hordeDir, 0o500);
+
+  const r = run('horde.mjs', ['archive', 'mission1'], dir);
+  // Put it back before asserting: a thrown assertion would otherwise leave a directory the
+  // fixture's own cleanup cannot remove.
+  chmodSync(hordeDir, 0o700);
+
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /archived/);
+  assert.ok(r.stderr.includes(hordeDir), `the refusal names the path it could not write: ${r.stderr}`);
+  // Nothing moved: a refusal at the marker leaves the mission exactly where it was.
+  assert.equal(existsSync(join(hordeDir, 'charter.md')), true);
 });
 
 // ---- E10: the graph is Yggdrasil's, and init makes one where there is none -------------------

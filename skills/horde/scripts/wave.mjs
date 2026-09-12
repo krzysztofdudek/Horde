@@ -1,36 +1,32 @@
 #!/usr/bin/env node
 // horde skill — wave.mjs
 //
-// The wave journal: an append-only log of starts, notes, merges, audits, key transfers and
-// closes. The mission's own wave cadence lives at hordes/<horde>/plan.md; a sub-team running its
-// own waves gets teams/<team>/plan.md instead — "trunk" is not a sub-team here, it IS the
-// mission, so `--team trunk` (or omitting --team) both mean the mission-level file, matching the
-// tree in reference/topology.md, which lists plan.md once, at the horde root, not under
-// teams/<team>/.
+// The wave journal: an append-only log of starts, notes, merges, key transfers and closes. The
+// mission's own wave cadence lives at hordes/<horde>/plan.md — matching the tree in
+// reference/model.md, which lists plan.md once, at the horde root.
 //
 // The close is where the journal stops being a record and becomes a report: it reads its own
-// bullets back — what the wave planned, what it merged and when, whose keys travelled, what the
-// auditor found — and states the five figures a chairman judges a horde by. Everything it prints
-// is derived from state some other tool wrote while doing its job; nothing here is entered by
-// hand, which is the point: a KPI somebody types in is a KPI somebody can flatter.
-//
-// The one state file of its own is hordes/<horde>/audit.json — the audit samples and the rate
-// they ask for (ruling audit-is-spc).
+// bullets back — what the wave planned, what it merged and when, whose keys travelled — and
+// states the figures a chairman judges a horde by. Everything it prints is derived from state
+// some other tool wrote while doing its job; nothing here is entered by hand, which is the point:
+// a KPI somebody types in is a KPI somebody can flatter.
 
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   hordePath, teamPath, readText, writeText, appendText, readJSON, writeJSON, readConfig, today,
-  nowIso, repoRoot, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy,
+  nowIso, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy, resolveTree,
 } from './_lib.mjs';
 import { readCostLimit, sumEntries } from './cost.mjs';
 // queue.mjs imports this file too (noteMerged, parseEvidenceRows). The cycle is deliberate and
 // safe — every binding on both sides is a hoisted function declaration and neither module calls
-// the other while it is still being evaluated — and it is the same shape tk.mjs and roster.mjs
-// already stand in. The alternative, a second derivation of the DAG here, is the thing worth
-// avoiding: the parallelism a wave close reports as "planned" has to be the plan's own layers.
+// the other while it is still being evaluated. The alternative, a second derivation of the DAG
+// here, is the thing worth avoiding: the parallelism a wave close reports as "planned" has to be
+// the plan's own layers.
 import { buildPlan } from './queue.mjs';
-import { addEscalation } from './escalate.mjs';
+import { loadAsks } from './ask.mjs';
+import { writeLawDiff } from './law.mjs';
+import { auditLaw, auditBlock } from './audit.mjs';
 import {
   ygQualityIndex, observeAspects, pendingPromotions, markPromotionsReported,
 } from './node.mjs';
@@ -51,12 +47,6 @@ commands:
   merged <ticket> <sha> [--team t] [--horde h]
       appends a dated "merged: <ticket> <sha>" bullet. "queue.mjs set <ticket> merged --sha" does
       this itself, so this is only for a merge the queue never saw; it never records one twice.
-  audit <ticket> clean|findings "<text>" [--team t] [--horde h]
-      appends a dated "audit: <ticket> <verdict> — <text>" bullet. The close turns this wave's
-      bullets into audit samples and adapts the sampling rate from them.
-  audit-plan [--team t] [--seed <n>] [--horde h]
-      how many of the last wave's merged tickets to audit next, and which ones — drawn at
-      random from that wave's merges. --seed makes the draw reproducible.
   close [--gate green|red] [--sha <sha>] [--evidence E5[,E6]] [--team t] [--horde h]
       renders templates/wave-close.md — counts from the team's queue.json, cost from cost.json —
       and appends it. --gate with --sha records that gate for the team's level (trunk for the
@@ -64,23 +54,30 @@ commands:
       --evidence names catalogue rows the wave gate itself proves (a green gate on the trunk is
       the usual one); they are filled with "wave <n> gate on <sha>" — refused when the gate is red.
       Also states, from the wave's own record: planned against achieved parallelism, the keys
-      that carried over without a second reading, the audit's refutation rate with a Wilson 95%
-      interval and the sampling rate the samples ask for next, human decisions per merged ticket
-      with its trend, and — where the nodes come from a graph — the quality index with its delta
-      since the last wave. A quality index that fell opens a "quality" escalation.
+      that carried over without a second reading, human decisions per merged ticket with its
+      trend, and — where the nodes come from a graph — the quality index with its delta since
+      the last wave. A quality index that fell is a line in this report naming what fell; it does
+      not open anything of its own — provisional, pending the same "quality" ask-kind question
+      019 left open.
       It also closes the loop on the quality ruling: it takes each watched rule's reading for
       this wave (what the two-wave test for enforcement counts), and prints one block naming
       every rule the horde raised this wave with the evidence that earned it, every improvement
       of its own it finished, and the sentence telling the chairman that undoing any of it is
       theirs to ask for. Under a charter set to only-the-work the block says none of it ran.
+      And it audits the law, because nobody here does that from a seat of their own: a ticket per
+      rule whose review date has passed ("renew or retire", ending in a proposal and never in an
+      edit to the date), a ticket per item in "yg advise" nobody has queued or decided on, what
+      Grain says about this mission's own territories, and the rules nothing has hit — that last
+      one in Yggdrasil's own words from "yg aspects --health", or not at all. Every read it
+      cannot make is a note in the report; none of them stops the close.
   evidence <id> --by "<who/what>" [--horde h]
       fills one catalogue row's "reproduced by" cell by hand — for a row no ticket verdict can
-      fill, such as the mission gate; the director's call. A row in the charter's evidence catalogue counts green when its "reproduced
-      by" cell is filled, or when a ticket merged this wave names the row's id in its own
-      acceptance checklist and carries a "reproduced" verify verdict — in which case that
-      verifier's name is written into the charter's cell (the one charter edit any tool here
-      makes). The audit line shows the latest audit bullet for a ticket merged this wave, or
-      "pending". Refuses when no wave is open.
+      fill, such as the mission gate; the director's call. A row in the charter's evidence
+      catalogue counts green when its "reproduced by" cell is filled, or (on a ticket logged
+      before this migration) when a ticket merged this wave names the row's id in its own
+      acceptance checklist and carries a "reproduced" verdict — in which case that verifier's
+      name is written into the charter's cell (the one charter edit any tool here makes). Refuses
+      when no wave is open.
   current [--team t] [--horde h]
       prints the open wave number, or "none".
 
@@ -106,7 +103,7 @@ export function currentWaveNumber(text) {
   return current;
 }
 
-function lastWaveNumber(text) {
+export function lastWaveNumber(text) {
   if (!text) return 0;
   let max = 0;
   for (const line of text.split('\n')) {
@@ -181,23 +178,9 @@ export function noteMerged(horde, team, ticket, sha) {
   return { path, bullet, appended: true };
 }
 
-// The journal bullet that says a ticket's keys travelled: the branch tip moved after the review
-// (a catch-up with a landing elsewhere) and the diff the keys were given for is still the diff
-// the branch carries, so nobody had to read the change again. premerge.mjs appends it the moment
-// it finds that, because premerge is the only thing that knows — and the wave close counts these
-// bullets to report how much review the horde saved. Idempotent on ticket AND diff, so re-running
-// premerge records the same transfer once while a later transfer at a different diff records
-// again. Never rewrites, like every other journal write here.
-export function noteKeysTransferred(horde, team, ticket, count, patchId) {
-  const path = journalPath(horde, team);
-  const bullet = `keys transferred: ${ticket} ${count} at diff ${patchId}`;
-  const existing = readText(path) || '';
-  if (existing.includes(bullet)) return { path, bullet, appended: false };
-  append(path, `- ${today()} ${bullet}\n`);
-  return { path, bullet, appended: true };
-}
-
-// The keys this wave carried over without a second reading — summed from the bullets above.
+// The keys this wave carried over without a second reading — summed from the bullets a
+// pre-migration checklist left in the journal. Nothing writes a new one any more; kept for a
+// wave whose journal still carries them from before this migration.
 function waveKeysTransferred(spanText) {
   let total = 0;
   for (const line of spanText.split('\n')) {
@@ -214,14 +197,6 @@ function cmdMerged(horde, positional, flags) {
   emit({ ticket, sha, appended }, flags, () => (appended
     ? `merged noted: ${ticket} ${sha}`
     : `merged already noted: ${ticket} ${sha} — the queue records it when the ticket is set merged`));
-}
-
-function cmdAudit(horde, positional, flags) {
-  const [ticket, verdict, text] = positional;
-  if (!ticket || !verdict || !text) fail('audit requires <ticket> clean|findings "<text>"');
-  if (verdict !== 'clean' && verdict !== 'findings') fail('verdict must be "clean" or "findings"');
-  append(journalPath(horde, flags.team), `- ${today()} audit: ${ticket} ${verdict} — ${text}\n`);
-  emit({ ticket, verdict, text }, flags, () => `audit noted: ${ticket} ${verdict}`);
 }
 
 function cmdCurrent(horde, positional, flags) {
@@ -252,10 +227,6 @@ function waveMerges(spanText) {
     if (m) out.push({ date: m[1], ticket: m[2] });
   }
   return out;
-}
-
-function waveMergedTickets(journalText, waveStartN) {
-  return new Set(waveMerges(waveSpan(journalText, waveStartN)).map((m) => m.ticket));
 }
 
 // Achieved parallelism, read off the merge timeline the journal actually holds: the most
@@ -309,33 +280,7 @@ export function wave1Started(journalText) {
   });
 }
 
-// The highest-numbered wave's own span: its start marker to the end of the journal, close marker
-// and everything written after it included. Nothing has started since — it is the last wave — so
-// a bullet added after the close still belongs to it, and the audit is exactly such a bullet:
-// `audit-plan` draws its sample from the wave that just closed, so the verdict is recorded after
-// the close by design, and the mission's final gate has to see it. Null when no wave was ever
-// started at all.
-export function lastWaveSpan(journalText) {
-  if (!journalText) return null;
-  const n = lastWaveNumber(journalText);
-  if (!n) return null;
-  const lines = [];
-  let capturing = false;
-  for (const line of journalText.split('\n')) {
-    const sm = START_RE.exec(line);
-    if (sm) { capturing = sm[1] === String(n); if (capturing) lines.push(line); continue; }
-    if (capturing) lines.push(line);
-  }
-  return { n, text: lines.join('\n') };
-}
-
-// An "audit: <ticket> clean|findings — …" bullet anywhere in the given span — wave.mjs audit's
-// own bullet shape, read back rather than re-derived.
-export function hasAuditIn(text) {
-  return /^- \S+ audit: \S+ (clean|findings) — /m.test(text || '');
-}
-
-// The latest verify.mjs verdict block in a ticket's log.md (verdict.md's rendered heading, in
+// The latest pre-migration verdict block in a ticket's log.md (verdict.md's rendered heading, in
 // order — log.md is append-only, so the last match is the most recent verdict).
 function latestVerdict(logText) {
   if (!logText) return null;
@@ -370,6 +315,72 @@ export function parseEvidenceRows(charterText) {
     .map((l) => l.split('|').slice(1, -1).map((c) => c.trim()))
     .filter((cells) => cells.some((c) => c.length > 0))
     .map(([id, evidence, node, reproducedBy]) => ({ id, evidence, node, reproducedBy: reproducedBy || '' }));
+}
+
+// ---- the charter's own shape, where a tool writes into it -------------------------------------
+//
+// The section naming what counts as evidence in THIS repository — refine writes it once per
+// mission, a person reads it, and every catalogue row above is reproduced through what it names.
+// It lives here, beside the catalogue's own reader, because the one thing that must never happen
+// to it is standing INSIDE the catalogue's section: parseEvidenceRows (and tk.mjs's own copy of
+// that read) slices "## Acceptance" up to the next "## " heading, so a heading dropped into the
+// middle of that table makes every row below it stop existing for both readers, silently and with
+// nothing wrong to see in the file.
+
+export const EVIDENCE_SECTION = 'Evidence in this repository';
+
+const CATALOGUE_HEADER = ['id', 'evidence', 'node', 'reproduced by'];
+
+// Every line anywhere in the charter that looks like a catalogue row — four cells, at least one
+// filled, and neither the header nor its separator. The same filters parseEvidenceRows applies
+// inside the section, applied to the whole document.
+function catalogueRowsAnywhere(charterText) {
+  return String(charterText || '').split('\n')
+    .filter((l) => l.trim().startsWith('|'))
+    .map((l) => l.split('|').slice(1, -1).map((c) => c.trim()))
+    .filter((cells) => cells.length === 4)
+    .filter((cells) => !cells.every((c, i) => c.toLowerCase() === CATALOGUE_HEADER[i]))
+    .filter((cells) => !cells.every((c) => c === '' || /^-+$/.test(c)))
+    .filter((cells) => cells.some((c) => c.length > 0));
+}
+
+// Null when the charter's catalogue is whole; otherwise how many rows the document holds, how many
+// the readers actually see, and the heading that cut it. A direct measure of the damage rather
+// than a guess at which heading is allowed where: any heading standing in the catalogue's table
+// hides the rows below it, whatever the heading is called.
+export function catalogueCut(charterText) {
+  const text = String(charterText || '');
+  const acceptance = text.indexOf('## Acceptance');
+  if (acceptance === -1) return null;
+  const read = parseEvidenceRows(text).length;
+  const present = catalogueRowsAnywhere(text).length;
+  if (present <= read) return null;
+  const rest = text.slice(acceptance);
+  const next = rest.indexOf('\n## ', 1);
+  const m = next === -1 ? null : /^## (.+)$/m.exec(rest.slice(next + 1));
+  return {
+    heading: m ? m[1].trim() : '(unknown)', read, present, lost: present - read,
+  };
+}
+
+// Replaces one "## <heading>" section's body, or adds the whole section when the charter has
+// none — a mission started before the section existed gains it rather than being refused. `before`
+// names the heading text the new section is placed above; without it (or when that anchor is
+// missing) the section goes at the end, which is always outside every machine-read section.
+export function upsertCharterSection(charterText, heading, body, { before = null } = {}) {
+  const text = String(charterText || '');
+  const block = `## ${heading}\n\n${String(body).trim()}\n`;
+  const at = text.search(new RegExp(`^##\\s+${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm'));
+  if (at !== -1) {
+    const rest = text.slice(at);
+    const end = rest.indexOf('\n## ', 1);
+    return end === -1 ? `${text.slice(0, at)}${block}` : `${text.slice(0, at)}${block}\n${rest.slice(end + 1)}`;
+  }
+  if (before) {
+    const anchor = text.indexOf(before);
+    if (anchor !== -1) return `${text.slice(0, anchor)}${block}\n${text.slice(anchor)}`;
+  }
+  return `${text.replace(/\s+$/, '')}\n\n${block}`;
 }
 
 // Writes a name into a row's "reproduced by" cell, matched by its id — the one edit any tool in
@@ -429,47 +440,22 @@ function computeEvidence(horde, team, mergedTickets) {
 // instead — this section is that shared reading, so neither reimplements "does a ticket's
 // acceptance checklist name this row, and did its verifier reproduce it".
 
-// Every team directory of the horde, at every depth (sub-teams nest under teams/<team>/teams/…) —
-// mirrors tk.mjs's own allTeamPaths()/status.mjs's listTeamNames(), kept local rather than
-// imported to avoid a three-way import cycle through roster.mjs (tk.mjs <-> roster.mjs already
-// cross-import, and roster.mjs imports this file for currentWaveNumber).
-function allTeamNames(horde) {
-  const out = [];
-  const walk = (rel) => {
-    out.push(rel);
-    const subDir = teamPath(horde, rel, 'teams');
-    if (existsSync(subDir)) {
-      for (const d of readdirSync(subDir, { withFileTypes: true })) {
-        if (d.isDirectory()) walk(`${rel}/${d.name}`);
-      }
-    }
-  };
-  const root = hordePath(horde, 'teams');
-  if (existsSync(root)) {
-    for (const d of readdirSync(root, { withFileTypes: true })) {
-      if (d.isDirectory()) walk(d.name);
-    }
-  }
-  return out;
-}
-
-// Every non-dropped ticket across every team of the horde, whatever its state — {id, team, text,
-// status, logText}.
+// Every non-dropped ticket of the horde, whatever its state — {id, team, text, status, logText}.
+// Only "trunk" exists.
 function allHordeTickets(horde) {
   const out = [];
-  for (const team of allTeamNames(horde)) {
-    const issuesDir = teamPath(horde, team, 'issues');
-    if (!existsSync(issuesDir)) continue;
-    for (const d of readdirSync(issuesDir, { withFileTypes: true })) {
-      if (!d.isDirectory()) continue;
-      const dir = join(issuesDir, d.name);
-      const text = readText(join(dir, 'issue.md')) || '';
-      const status = (/^\*\*Status:\*\*\s*(\S+)/m.exec(text) || [])[1] || '';
-      if (status === 'dropped') continue;
-      out.push({
-        id: d.name.slice(0, 3), team, text, status, logText: readText(join(dir, 'log.md')) || '',
-      });
-    }
+  const team = 'trunk';
+  const issuesDir = teamPath(horde, team, 'issues');
+  if (!existsSync(issuesDir)) return out;
+  for (const d of readdirSync(issuesDir, { withFileTypes: true })) {
+    if (!d.isDirectory()) continue;
+    const dir = join(issuesDir, d.name);
+    const text = readText(join(dir, 'issue.md')) || '';
+    const status = (/^\*\*Status:\*\*\s*(\S+)/m.exec(text) || [])[1] || '';
+    if (status === 'dropped') continue;
+    out.push({
+      id: d.name.slice(0, 3), team, text, status, logText: readText(join(dir, 'log.md')) || '',
+    });
   }
   return out;
 }
@@ -558,121 +544,13 @@ function previousGreen(journalText) {
   return last ?? 0;
 }
 
-// Every audit bullet of this wave for a ticket this wave actually merged, latest verdict per
-// ticket — an audit left over from re-running `wave.mjs audit` on something else is not this
-// wave's own sample. In journal order, so the last entry is the latest audit.
-function waveAudits(spanText, mergedTickets) {
-  const byTicket = new Map();
-  for (const line of spanText.split('\n')) {
-    const m = /^- (\S+) audit: (\S+) (clean|findings) — (.*)$/.exec(line);
-    if (!m || !mergedTickets.has(m[2])) continue;
-    byTicket.delete(m[2]);
-    byTicket.set(m[2], {
-      ticket: m[2], verdict: m[3], text: m[4], date: m[1],
-    });
-  }
-  return [...byTicket.values()];
-}
-
-// ---- audit as sampling, not ritual (ruling audit-is-spc) -------------------------------------
-//
-// hordes/<horde>/audit.json is the sample record: every audited ticket with its verdict, plus the
-// rate — how many of a wave's merged tickets get audited. The rate is not a setting anybody
-// tunes; it answers the samples. A refutation among the last five doubles it, up to auditing
-// every merged ticket, because a process that has just been caught wrong is not one to sample
-// more thinly. Fifty clean samples in a row halve it, never below one per wave, because a
-// process that has been right fifty times running has earned a lighter hand — and one per wave
-// is the floor, so the sampling never stops altogether.
-//
-// The published number is the refutation rate with a Wilson 95% interval. The interval is the
-// point: "0 of 3 refuted" and "0 of 300 refuted" are the same percentage and nothing like the
-// same evidence, and an interval says which of the two the horde is standing on.
-
-const AUDIT_ALARM_WINDOW = 5;
-const AUDIT_CALM_RUN = 50;
-
-function auditPath(horde) { return hordePath(horde, 'audit.json'); }
-
-function renderAudit(doc) {
-  const lines = ['# Audit samples', '', `Rate: ${doc.rate} per wave`, '', '| wave | ticket | verdict | at |', '|---|---|---|---|'];
-  if (doc.samples.length === 0) lines.push('| | | | |');
-  for (const s of doc.samples) lines.push(`| ${s.wave} | ${s.ticket} | ${s.verdict} | ${s.at} |`);
-  return lines.join('\n') + '\n';
-}
-
-// Exported so status.mjs and a director's own brief can read the sampling state without
-// re-deriving what a sample is. A missing file is one-per-wave and no samples yet, not an error.
-export function readAudit(horde) {
-  const doc = readJSON(auditPath(horde), null);
-  const rate = Math.trunc(Number(doc && doc.rate));
-  return {
-    rate: Number.isFinite(rate) && rate >= 1 ? rate : 1,
-    samples: doc && Array.isArray(doc.samples) ? doc.samples : [],
-  };
-}
-
-// The Wilson score interval for k refutations in n samples at 95% — the standard small-sample
-// interval for a proportion, chosen over the textbook normal one because it stays inside [0, 1]
-// and stays honest at k = 0, which is the case a clean horde is in most of the time.
-export function wilson(k, n, z = 1.96) {
-  if (!n) return null;
-  const p = k / n;
-  const d = 1 + (z * z) / n;
-  const centre = (p + (z * z) / (2 * n)) / d;
-  const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / d;
-  return { low: Math.max(0, centre - half), high: Math.min(1, centre + half) };
-}
-
-// The rate the samples ask for. `ceiling` is "every merged ticket" — the most a wave could
-// audit — and a doubling is never allowed to read as a cut: a wave that merged less than the
-// current rate keeps the rate it earned rather than having it clipped by an accident of size.
-export function adaptAuditRate(rate, samples, ceiling) {
-  const cap = Math.max(1, Math.trunc(ceiling) || 1, rate);
-  const recent = samples.slice(-AUDIT_ALARM_WINDOW);
-  if (recent.some((s) => s.verdict === 'findings')) return Math.min(cap, rate * 2);
-  const calm = samples.slice(-AUDIT_CALM_RUN);
-  if (calm.length === AUDIT_CALM_RUN && calm.every((s) => s.verdict === 'clean')) {
-    return Math.max(1, Math.floor(rate / 2));
-  }
-  return rate;
-}
-
-function pct(x) { return `${(x * 100).toFixed(1)}%`; }
-
-// Records this wave's verdicts as samples (once per wave and ticket, so a re-run of close does
-// not double-count), then lets those samples set the next wave's rate. Returns what to print.
-function recordAudit(horde, waveN, audits, mergedCount) {
-  const doc = readAudit(horde);
-  const seen = new Set(doc.samples.map((s) => `${s.wave} ${s.ticket}`));
-  for (const a of audits) {
-    const key = `${waveN} ${a.ticket}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    doc.samples.push({
-      wave: String(waveN), ticket: a.ticket, verdict: a.verdict, at: nowIso(),
-    });
-  }
-  doc.rate = adaptAuditRate(doc.rate, doc.samples, mergedCount);
-  writeJSON(auditPath(horde), doc, { render: renderAudit });
-
-  const refutations = doc.samples.filter((s) => s.verdict === 'findings').length;
-  const n = doc.samples.length;
-  const ci = wilson(refutations, n);
-  const line = n === 0
-    ? `0/0 refuted — no samples yet · sampling ${doc.rate} per wave`
-    : `${refutations}/${n} refuted — ${pct(refutations / n)} (95% CI ${pct(ci.low)}–${pct(ci.high)}) · sampling ${doc.rate} per wave`;
-  return {
-    line, refutations, samples: n, rate: doc.rate, interval: ci,
-  };
-}
-
 // ---- human decisions per merged ticket -------------------------------------------------------
 //
 // The learning KPI (ruling escalations-become-rules): how often a human had to answer a question
 // for each ticket that landed. It is supposed to fall from wave to wave — a horde that needs the
-// same number of rulings per ticket in wave six as in wave one has learned nothing.
+// same number of answers per ticket in wave six as in wave one has learned nothing.
 //
-// A wave's rulings are the escalations ruled since the wave opened, which is why the start bullet
+// A wave's decisions are the asks answered since the wave opened, which is why the start bullet
 // stamps the instant. A journal written before that stamp existed falls back to subtracting what
 // earlier closes already counted — the answer that is at worst coarse, never double-counted.
 
@@ -688,16 +566,15 @@ function previousDecisions(journalText) {
   return out;
 }
 
-function ruledEscalations(horde) {
-  const doc = readJSON(hordePath(horde, 'escalations.json'), { items: [] });
-  return (Array.isArray(doc.items) ? doc.items : []).filter((it) => it.state === 'ruled');
+function answeredAsks(horde) {
+  return loadAsks(horde).items.filter((it) => it.state === 'answered');
 }
 
 function decisionsKpi(horde, journalText, openedAt, mergedThisWave) {
-  const ruled = ruledEscalations(horde);
+  const ruled = answeredAsks(horde);
   const earlier = previousDecisions(journalText);
   const thisWave = openedAt
-    ? ruled.filter((it) => String(it.ruledAt || it.at || '') >= openedAt).length
+    ? ruled.filter((it) => String(it.answeredAt || it.at || '') >= openedAt).length
     : Math.max(0, ruled.length - earlier.reduce((sum, e) => sum + e.ruled, 0));
   const ratio = mergedThisWave > 0 ? (thisWave / mergedThisWave).toFixed(2) : '—';
   const series = [...earlier.map((e) => e.ratio), ratio];
@@ -746,8 +623,7 @@ function coverageRatio(q) {
 }
 
 function measureQuality(cfg) {
-  let cwd;
-  try { cwd = repoRoot(); } catch { return { measured: false, why: 'no repository to measure' }; }
+  const cwd = resolveTree({}).path;
   const idx = ygQualityIndex(cfg, cwd);
   if (!idx.available) {
     return { measured: false, why: `${idx.why} — install it, or point config.ygCommand at it` };
@@ -839,14 +715,18 @@ function qualityMergesIn(horde, mergedTickets) {
 }
 
 function qualityBlock({
-  policy, promotions, qualityMerges, indexLine, observed,
+  policy, promotions, qualityMerges, indexLine, observed, declined = [],
 }) {
+  const declineLine = declined.length
+    ? `\n\nThe quality index fell this wave: ${declined.join('; ')} — nobody asked for this, and it is not the horde's `
+      + 'to accept lower. If it should stand, that is your call to make, not this report\'s.'
+    : '';
   if (policy === 'only-the-work') {
     return [
       'This mission is set to only-the-work: the horde raised no rule and filed no improvement of its own this',
       'wave, and it will not until the charter says otherwise.',
       '',
-      `Quality index: ${indexLine}`,
+      `Quality index: ${indexLine}${declineLine}`,
     ].join('\n');
   }
   const lines = [];
@@ -868,7 +748,7 @@ function qualityBlock({
     lines.push('Improvements finished this wave (filed by the horde, worked after everything the mission asked for):');
     for (const q of qualityMerges) lines.push(`- ${q.ticket} · ${q.node} — ${q.title}`);
   }
-  lines.push('', `Quality index: ${indexLine}`);
+  lines.push('', `Quality index: ${indexLine}${declineLine}`);
   lines.push(
     '',
     'Nothing above was asked for and nothing above was made weaker — a rule only ever moved up. If you want any',
@@ -930,8 +810,6 @@ function cmdClose(horde, positional, flags) {
   const openedAt = planned ? planned[3] : null;
   const keysTransferred = waveKeysTransferred(span);
 
-  const audits = waveAudits(span, mergedTickets);
-  const auditReport = recordAudit(horde, n, audits, mergedTickets.size);
   const decisions = decisionsKpi(horde, journalText, openedAt, mergedTickets.size);
 
   const cfg = readConfig() || {};
@@ -943,7 +821,7 @@ function cmdClose(horde, positional, flags) {
   const policy = qualityPolicy(horde);
   let observed = [];
   try {
-    observed = observeAspects(horde, repoRoot(), cfg, n).observed;
+    observed = observeAspects(horde, resolveTree({}).path, cfg, n).observed;
   } catch {
     // A graph that cannot be read right now still gets its close; the rules simply gain no
     // observation from a wave nobody could measure.
@@ -953,35 +831,37 @@ function cmdClose(horde, positional, flags) {
 
   const quality = measureQuality(cfg);
   const prevQuality = previousQuality(journalText);
+  // A fallen quality index used to open a "quality" escalation; escalations are gone (019), and
+  // "quality" is not one of ask.mjs's four kinds — inventing a fifth was explicitly out of scope,
+  // so this is a rendering line only (see the delta already carried in qualityLine below and
+  // named again here) until a later task decides whether it needs an ask kind of its own.
+  // Provisional — flagged, not a settled design.
   const declined = withoutPromotionEffects(qualityDecline(quality, prevQuality), promotions, quality, prevQuality);
-  let qualityEscalation = null;
-  if (declined.length) {
-    try {
-      qualityEscalation = addEscalation(horde, {
-        kind: 'quality',
-        by: 'director',
-        why: `wave ${n} left the graph weaker than wave ${Number(n) - 1}: ${declined.join('; ')}. `
-          + 'Raising enforcement is the horde\'s own call; lowering it is not — this needs a ruling.',
-      });
-    } catch (e) {
-      fail(`the quality index fell but the escalation could not be opened: ${e.message}`);
-    }
-  }
 
   const cost = readJSON(hordePath(horde, 'cost.json'), { runs: [] });
   const costRuns = Array.isArray(cost.runs) ? cost.runs : [];
   const weights = cfg.classes || {};
-  // cost.json's runs each carry their own wave number (roster.mjs's job to stamp), so a wave's
-  // cost is a direct filter — no need to cross-reference which tickets this wave merged.
+  // cost.json's runs each carry their own wave number, so a wave's cost is a direct filter — no
+  // need to cross-reference which tickets this wave merged.
   const waveRuns = costRuns.filter((r) => String(r.wave) === String(n));
   const waveSums = sumEntries(waveRuns, weights);
   const missionSums = sumEntries(costRuns, weights);
   const limit = readCostLimit(horde);
 
-  const audit = audits.length ? audits[audits.length - 1] : null;
-
   const qualityMerges = qualityMergesIn(horde, mergedTickets);
   const indexLine = qualityLine(quality, prevQuality);
+
+  // What this mission has done to the law, as a document: the graph on the branch the mission was
+  // cut from against the graph on the trunk it has built. Written every close, at the wave's own
+  // path, so a second close of the same wave replaces it rather than writing a second one. Whoever
+  // renders it into sentences the client can veto reads it from there; this never renders prose.
+  const law = writeLawDiff(horde, cfg, n);
+
+  // The law audit: nobody in this family guards the law from a seat of its own, so closing a wave
+  // does it. It reads the trunk readings the law diff has just taken (one reading of one commit,
+  // not two), files what nobody has answered, and degrades every read it cannot make to a note
+  // rather than holding the wave's whole record hostage to a sweep — see audit.mjs's own header.
+  const audit = auditLaw(horde, cfg, { team, trunk: law.trunk });
 
   const vars = {
     n,
@@ -997,18 +877,16 @@ function cmdClose(horde, positional, flags) {
     plannedParallelism,
     achievedParallelism: achievedParallelism(merges),
     keysTransferred,
-    auditLine: auditReport.line,
     decisionsLine: decisions.line,
     qualityLine: indexLine,
     qualityBlock: qualityBlock({
-      policy, promotions, qualityMerges, indexLine, observed,
+      policy, promotions, qualityMerges, indexLine, observed, declined,
     }),
+    auditBlock: auditBlock(audit),
     runs: waveSums.runs,
     weighted: waveSums.weighted,
     cumulative: missionSums.weighted,
     'of limit': limit === null ? '' : ` of ${limit}`,
-    auditTicket: audit ? audit.ticket : 'pending',
-    clean: audit ? audit.verdict : 'pending',
   };
 
   let rendered;
@@ -1033,28 +911,34 @@ function cmdClose(horde, positional, flags) {
     plannedParallelism,
     achievedParallelism: vars.achievedParallelism,
     keysTransferred,
-    audit: {
-      refutations: auditReport.refutations,
-      samples: auditReport.samples,
-      rate: auditReport.rate,
-      interval: auditReport.interval,
-    },
     decisions: { ruled: decisions.ruled, merged: decisions.merged, perMergedTicket: decisions.ratio },
     quality,
     qualityDeclined: declined,
-    qualityEscalation: qualityEscalation ? qualityEscalation.id : null,
     qualityPolicy: policy,
     promoted: promotions.map((p) => ({
       aspect: p.aspect, from: p.from, to: p.to, at: p.at, evidence: p.evidence,
     })),
     qualityMerged: qualityMerges,
     aspectsObserved: observed,
+    law: { path: law.path, added: law.doc.added.length, raised: law.doc.raised.length, attached: law.doc.attached.length },
+    audit,
   }, flags, () => {
     const lines = [`wave ${n} closed — gate ${gate}, ${green}/${total} evidence green`];
     for (const p of promotions) lines.push(`rule raised: ${p.aspect} ${p.from} → ${p.to}`);
     if (qualityMerges.length) lines.push(`improvements finished: ${qualityMerges.map((q) => q.ticket).join(', ')}`);
-    if (qualityEscalation) {
-      lines.push(`the quality index fell (${declined.join('; ')}) — escalation ${qualityEscalation.id} opened`);
+    if (declined.length) {
+      lines.push(`the quality index fell: ${declined.join('; ')} — nobody asked for this; it is the client's call, not the horde's, to let it stand`);
+    }
+    lines.push(
+      `what this mission has done to the law so far — ${law.doc.added.length} rule(s) added, `
+      + `${law.doc.raised.length} raised, ${law.doc.attached.length} newly attached: ${law.path}`,
+    );
+    const audited = [...audit.reviewDates.filed, ...audit.advise.filed];
+    if (audited.length) {
+      lines.push(`the law audit filed ${audited.length} ticket(s): ${audited.map((f) => f.ticket).join(', ')}`);
+    }
+    for (const q of audit.quiet) {
+      lines.push(`nothing has hit ${q.aspect}: ${q.reading || q.signal || `nothing new against it in ${q.quietWaves} closed wave(s)`}`);
     }
     return lines.join('\n');
   });
@@ -1063,41 +947,6 @@ function cmdClose(horde, positional, flags) {
 // mulberry32 — a tiny, self-contained PRNG so a draw can be reproduced from a seed. Only ever
 // used to pick which tickets to audit; without --seed the draw is Math.random's, as a sample
 // should be.
-function seededRandom(seed) {
-  let a = (Number(seed) >>> 0) + 0x6d2b79f5;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function drawSample(pool, count, seed) {
-  const rand = seed === undefined ? Math.random : seededRandom(seed);
-  const rest = [...pool];
-  const picked = [];
-  while (picked.length < count && rest.length) {
-    picked.push(...rest.splice(Math.floor(rand() * rest.length), 1));
-  }
-  return picked;
-}
-
-function cmdAuditPlan(horde, positional, flags) {
-  const journalText = readText(journalPath(horde, flags.team)) || '';
-  const span = lastWaveSpan(journalText);
-  if (!span) fail('no wave has been started yet — there is nothing merged to sample');
-  const merged = [...waveMergedTickets(journalText, span.n)];
-  const { rate, samples } = readAudit(horde);
-  const count = Math.min(rate, merged.length);
-  const pick = drawSample(merged, count, flags.seed);
-  emit({
-    wave: span.n, rate, merged, pick, samples: samples.length,
-  }, flags, () => (merged.length === 0
-    ? `wave ${span.n} merged nothing — no audit to plan (sampling ${rate} per wave)`
-    : `audit ${count} of wave ${span.n}'s ${merged.length} merged tickets (sampling ${rate} per wave): ${pick.join(', ')}`));
-}
-
 function main() {
   const { positional: allPositional, flags } = parseArgs(process.argv.slice(2));
   const [cmd, ...positional] = allPositional;
@@ -1111,8 +960,6 @@ function main() {
     case 'start': return cmdStart(horde, positional, flags);
     case 'note': return cmdNote(horde, positional, flags);
     case 'merged': return cmdMerged(horde, positional, flags);
-    case 'audit': return cmdAudit(horde, positional, flags);
-    case 'audit-plan': return cmdAuditPlan(horde, positional, flags);
     case 'close': return cmdClose(horde, positional, flags);
     case 'evidence': return cmdEvidence(horde, positional, flags);
     case 'current': return cmdCurrent(horde, positional, flags);

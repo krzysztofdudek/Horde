@@ -59,7 +59,7 @@ function missionRepo(t, { files } = {}) {
   git(['commit', '-qm', 'graph: the core component and its boundary'], dir);
 
   const created = run('tk.mjs', ['new', 'retry', '--title', 'Retry a failed call three times',
-    '--node', 'core', '--class', 'sonnet',
+    '--node', 'core', '--class', 'standard',
     ...(files ? ['--files', files] : []),
     '--evidence', 'node --test src/retry.test.mjs prints 1 pass'], dir);
   assert.equal(created.code, 0, created.stderr);
@@ -81,7 +81,50 @@ function commit(worktree, message, files) {
 
 function land(dir, worktree) {
   run('tk.mjs', ['log', '001', `landed ${git(['rev-parse', '--short', 'HEAD'], worktree)} — retry implemented`], dir);
-  assert.equal(run('tk.mjs', ['key', '001', 'author', '--by', 'worker1'], dir).code, 0);
+  // tk.mjs key no longer exists; the author key it used to set here is not read by anything
+  // drill.mjs checks — it was incidental plumbing, so the step is simply dropped.
+}
+
+// The verify tool no longer exists, and with it the only thing that ever wrote a "## Verdict" block
+// to a ticket's log. drill.mjs's "verification" discipline still reads that block straight out of
+// the log text, so these fixtures write the block by hand, in exactly the
+// shape the verify tool used to render (templates/verdict.md, also deleted), instead of calling a
+// tool that no longer exists.
+function recordVerdict(dir, ticketId, {
+  by, result = 'reproduced', rows, revert = 'failed', gateSha, node = 'core',
+} = {}) {
+  const revertLine = revert === 'failed' ? 'failed as expected'
+    : revert === 'passed' ? 'passed (proves nothing)'
+      : revert === 'no-new-tests' ? 'none — this change adds no test; its evidence is the items above'
+        : 'not run';
+  const rowsText = rows.map(([item, command, saw]) => `| ${item} | ${command} | ${saw} |`).join('\n');
+  const gateLine = gateSha ? `green at sha ${gateSha}` : 'not run';
+  const block = [
+    `## Verdict · ${ticketId} · 2026-01-01 · by ${by} (standard)`,
+    '',
+    `**Result:** ${result}`,
+    '',
+    '**Flake:** not flaky',
+    '',
+    '**Base check:** rooted at `mission1/trunk` tip — yes',
+    '',
+    '**Evidence reproduced:**',
+    '',
+    '| item | command | saw |',
+    '|---|---|---|',
+    rowsText,
+    '',
+    `**Revert test:** new tests on the base — ${revertLine}`,
+    '',
+    `**Gate:** \`node --test\` — ${gateLine}`,
+    '',
+    '**Diff:** not recorded — this verdict is bound to its sha alone',
+    '',
+    `**Scope:** diff inside ${node} — yes · protected paths — untouched`,
+    '',
+    '**What failed, if anything** (what, not what to do):',
+  ].join('\n');
+  assert.equal(run('tk.mjs', ['log', ticketId, block], dir).code, 0);
 }
 
 // test first, then the code that makes it pass
@@ -154,10 +197,11 @@ test('drill.mjs check tdd: red when the branch adds no test at all', async (t) =
 test('drill.mjs check verification: the verdict carries what was run, what was seen, and the tip', async (t) => {
   const m = testFirstBranch(t);
   const tip = git(['rev-parse', 'HEAD'], m.worktree);
-  const recorded = run('verify.mjs', ['record', '001', '--verdict', 'reproduced', '--by', 'verifier1',
-    '--item', '1|node --test src/retry.test.mjs|1 pass, 0 fail',
-    '--gate', 'green', '--sha', tip, '--revert', 'failed'], m.dir);
-  assert.equal(recorded.code, 0, recorded.stderr);
+  recordVerdict(m.dir, '001', {
+    by: 'verifier1',
+    gateSha: tip,
+    rows: [['node --test src/retry.test.mjs prints 1 pass', 'node --test src/retry.test.mjs', '1 pass, 0 fail']],
+  });
 
   const r = run('drill.mjs', ['check', 'verification', '--repo', m.dir, '--ticket', '001'], m.dir);
   assert.equal(r.code, 0, r.stdout + r.stderr);
@@ -167,9 +211,11 @@ test('drill.mjs check verification: the verdict carries what was run, what was s
 test('drill.mjs check verification: red when a row names a command and nothing seen', async (t) => {
   const m = testFirstBranch(t);
   const tip = git(['rev-parse', 'HEAD'], m.worktree);
-  assert.equal(run('verify.mjs', ['record', '001', '--verdict', 'reproduced', '--by', 'verifier1',
-    '--item', '1|node --test src/retry.test.mjs|',
-    '--gate', 'green', '--sha', tip, '--revert', 'failed'], m.dir).code, 0);
+  recordVerdict(m.dir, '001', {
+    by: 'verifier1',
+    gateSha: tip,
+    rows: [['node --test src/retry.test.mjs prints 1 pass', 'node --test src/retry.test.mjs', '']],
+  });
 
   const r = run('drill.mjs', ['check', 'verification', '--repo', m.dir, '--ticket', '001'], m.dir);
   assert.equal(r.code, 1);
@@ -181,9 +227,11 @@ test('drill.mjs check verification: red when a row names a command and nothing s
 test('drill.mjs check verification: red when a commit landed after the gate was run', async (t) => {
   const m = testFirstBranch(t);
   const tip = git(['rev-parse', 'HEAD'], m.worktree);
-  assert.equal(run('verify.mjs', ['record', '001', '--verdict', 'reproduced', '--by', 'verifier1',
-    '--item', '1|node --test src/retry.test.mjs|1 pass, 0 fail',
-    '--gate', 'green', '--sha', tip, '--revert', 'failed'], m.dir).code, 0);
+  recordVerdict(m.dir, '001', {
+    by: 'verifier1',
+    gateSha: tip,
+    rows: [['node --test src/retry.test.mjs prints 1 pass', 'node --test src/retry.test.mjs', '1 pass, 0 fail']],
+  });
   commit(m.worktree, 'one more thing after the verdict', { 'src/extra.mjs': 'export const extra = 1;\n' });
 
   const r = run('drill.mjs', ['check', 'verification', '--repo', m.dir, '--ticket', '001'], m.dir);
@@ -191,11 +239,16 @@ test('drill.mjs check verification: red when a commit landed after the gate was 
   assert.match(r.json.checks.find((c) => c.name === 'gate at the tip').note, /the branch moved after the run/);
 });
 
+// tk.mjs review no longer exists — it used to append one "review: <node> approve|changes by
+// <who>[…tail…][ — <why>]" log line per reviewed node. checkReview's own reviewLines() parses
+// exactly that shape straight out of the log text, so these fixtures write
+// the line by hand with tk.mjs log (still a live command) instead of calling a tool that no
+// longer exists.
 test('drill.mjs check review: green when findings are ranked and Minor stayed in the log', async (t) => {
   const m = testFirstBranch(t);
   assert.equal(run('tk.mjs', ['review-request', '001'], m.dir).code, 0);
-  assert.equal(run('tk.mjs', ['review', '001', 'changes',
-    'Important: a permanent failure still costs three calls', '--by', 'owner-core'], m.dir).code, 0);
+  assert.equal(run('tk.mjs', ['log', '001',
+    'review: core changes by owner-core — Important: a permanent failure still costs three calls'], m.dir).code, 0);
   assert.equal(run('tk.mjs', ['log', '001', 'Minor: "last" would read better as "lastError"'], m.dir).code, 0);
 
   const r = run('drill.mjs', ['check', 'review', '--repo', m.dir, '--ticket', '001'], m.dir);
@@ -206,8 +259,8 @@ test('drill.mjs check review: green when findings are ranked and Minor stayed in
 test('drill.mjs check review: red when a Minor finding sent the ticket back', async (t) => {
   const m = testFirstBranch(t);
   assert.equal(run('tk.mjs', ['review-request', '001'], m.dir).code, 0);
-  assert.equal(run('tk.mjs', ['review', '001', 'changes',
-    'Minor: "last" would read better as "lastError"', '--by', 'owner-core'], m.dir).code, 0);
+  assert.equal(run('tk.mjs', ['log', '001',
+    'review: core changes by owner-core — Minor: "last" would read better as "lastError"'], m.dir).code, 0);
 
   const r = run('drill.mjs', ['check', 'review', '--repo', m.dir, '--ticket', '001'], m.dir);
   assert.equal(r.code, 1);
@@ -216,7 +269,7 @@ test('drill.mjs check review: red when a Minor finding sent the ticket back', as
 
 test('drill.mjs check review: red when a change request names no severity at all', async (t) => {
   const m = testFirstBranch(t);
-  assert.equal(run('tk.mjs', ['review', '001', 'changes', 'please rework the loop', '--by', 'owner-core'], m.dir).code, 0);
+  assert.equal(run('tk.mjs', ['log', '001', 'review: core changes by owner-core — please rework the loop'], m.dir).code, 0);
 
   const r = run('drill.mjs', ['check', 'review', '--repo', m.dir, '--ticket', '001'], m.dir);
   assert.equal(r.code, 1);
@@ -228,11 +281,10 @@ test('drill.mjs check review: red when a change request names no severity at all
 test('drill.mjs check review: a review key carrying its sha and diff notes is still read', async (t) => {
   const m = testFirstBranch(t);
   assert.equal(run('tk.mjs', ['review-request', '001'], m.dir).code, 0);
-  assert.equal(run('tk.mjs', ['review', '001', 'approve', '--by', 'owner-core'], m.dir).code, 0);
-
-  const logged = readFileSync(join(m.dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk',
-    'issues', '001-retry', 'log.md'), 'utf8');
-  assert.match(logged, /review: core approve by owner-core at \w+ \(diff \w+\)/);
+  // tk.mjs review used to bind an approval to the sha and diff it was read at, appending a tail
+  // like "at <sha> (diff <id>)" right after "by <who>" — written by hand here since that command
+  // no longer exists, to prove checkReview still reads past whatever tail note rides there.
+  assert.equal(run('tk.mjs', ['log', '001', 'review: core approve by owner-core at abc1234 (diff def5678)'], m.dir).code, 0);
 
   const r = run('drill.mjs', ['check', 'review', '--repo', m.dir, '--ticket', '001'], m.dir);
   assert.equal(r.code, 0, r.stdout + r.stderr);

@@ -1,95 +1,117 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
+import {
+  makeRepo, rmRepo, run, initHorde,
+} from './helpers.mjs';
 
-test('handoff.mjs: --by decides the file, not --team', async (t) => {
+function mkTicket(dir, slug) {
+  const r = run('tk.mjs', ['new', slug, '--title', slug, '--node', 'core', '--class', 'standard', '--evidence', 'it works'], dir);
+  if (r.code !== 0) throw new Error(`tk new (${slug}) failed: ${r.stderr}`);
+  return r.json.id;
+}
+
+test('handoff.mjs: --by and --team no longer exist — refused on every command', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  // teamPath() resolves a --team leaf through roster.json's own steward entries, so any team
-  // this test addresses has to actually exist there first — "orcs" deliberately gets no writes
-  // of its own, to prove reading an untouched (but real) team still comes back empty.
-  run('roster.mjs', ['spawn', 'steward', '--team', 'goblins', '--parent', 'trunk', '--class', 'sonnet'], dir);
-  run('roster.mjs', ['spawn', 'steward', '--team', 'orcs', '--parent', 'trunk', '--class', 'sonnet'], dir);
 
-  await t.test('read says fresh start when nothing has been written, with or without --by', () => {
-    assert.match(run('handoff.mjs', ['read'], dir, { json: false }).stdout, /fresh start/);
-    assert.match(run('handoff.mjs', ['read', '--by', 'director'], dir, { json: false }).stdout, /fresh start/);
-    assert.match(run('handoff.mjs', ['read', '--by', 'steward'], dir, { json: false }).stdout, /fresh start/);
+  await t.test('write refuses --by and --team', () => {
+    const byResult = run('handoff.mjs', ['write', '--summary', 'x', '--by', 'steward'], dir);
+    assert.equal(byResult.code, 1);
+    assert.match(byResult.stderr, /--by no longer exists/);
+
+    const teamResult = run('handoff.mjs', ['write', '--summary', 'x', '--team', 'x'], dir);
+    assert.equal(teamResult.code, 1);
+    assert.match(teamResult.stderr, /unknown flag: --team/);
   });
 
-  await t.test('write requires --summary, and refuses a bad --by', () => {
+  await t.test('read refuses --by and --team', () => {
+    const byResult = run('handoff.mjs', ['read', '--by', 'steward'], dir);
+    assert.equal(byResult.code, 1);
+    assert.match(byResult.stderr, /--by no longer exists/);
+
+    const teamResult = run('handoff.mjs', ['read', '--team', 'x'], dir);
+    assert.equal(teamResult.code, 1);
+    assert.match(teamResult.stderr, /unknown flag: --team/);
+  });
+
+  await t.test('add-waiting refuses --by and --team', () => {
+    const byResult = run('handoff.mjs', ['add-waiting', 'chairman', 'approve', '--by', 'steward'], dir);
+    assert.equal(byResult.code, 1);
+    assert.match(byResult.stderr, /--by no longer exists/);
+
+    const teamResult = run('handoff.mjs', ['add-waiting', 'chairman', 'approve', '--team', 'x'], dir);
+    assert.equal(teamResult.code, 1);
+    assert.match(teamResult.stderr, /unknown flag: --team/);
+  });
+
+  await t.test('rm-waiting refuses --by and --team', () => {
+    const byResult = run('handoff.mjs', ['rm-waiting', 'chairman', '--by', 'steward'], dir);
+    assert.equal(byResult.code, 1);
+    assert.match(byResult.stderr, /--by no longer exists/);
+
+    const teamResult = run('handoff.mjs', ['rm-waiting', 'chairman', '--team', 'x'], dir);
+    assert.equal(teamResult.code, 1);
+    assert.match(teamResult.stderr, /unknown flag: --team/);
+  });
+});
+
+test('handoff.mjs: one file per horde', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  await t.test('read says fresh start when nothing has been written yet', () => {
+    assert.match(run('handoff.mjs', ['read'], dir, { json: false }).stdout, /fresh start — no handoff recorded/);
+  });
+
+  await t.test('write requires --summary', () => {
     assert.equal(run('handoff.mjs', ['write'], dir).code, 1);
-    assert.equal(run('handoff.mjs', ['write', '--summary', 'x', '--by', 'chairman'], dir).code, 1);
   });
 
-  await t.test('write --by director (the default) writes the mission-level file regardless of --team', () => {
-    const w = run('handoff.mjs', ['write', '--summary', 'kicked off', '--next', 'spawn steward'], dir);
+  await t.test('write --summary records head, summary and next; read reflects it', () => {
+    const w = run('handoff.mjs', ['write', '--summary', 'kicked off', '--next', 'spawn worker'], dir);
     assert.equal(w.code, 0);
     assert.equal(w.json.summary, 'kicked off');
-    assert.deepEqual(w.json.next, ['spawn steward']);
+    assert.deepEqual(w.json.next, ['spawn worker']);
     assert.match(w.json.head, /@/);
+    assert.deepEqual(w.json.inFlight, []);
 
-    const r = run('handoff.mjs', ['read', '--by', 'director'], dir);
+    const r = run('handoff.mjs', ['read'], dir);
     assert.equal(r.json.summary, 'kicked off');
-
-    // The exact bug this fixes: --by director with a --team present must NOT touch that team's file.
-    const withStrayTeam = run('handoff.mjs', ['write', '--summary', 'still mission', '--team', 'goblins'], dir);
-    assert.equal(withStrayTeam.code, 0);
-    const missionAfter = run('handoff.mjs', ['read', '--by', 'director'], dir);
-    assert.equal(missionAfter.json.summary, 'still mission');
-    const goblinsStillFresh = run('handoff.mjs', ['read', '--by', 'steward', '--team', 'goblins'], dir, { json: false });
-    assert.match(goblinsStillFresh.stdout, /fresh start/);
+    assert.deepEqual(r.json.next, ['spawn worker']);
   });
 
-  await t.test('write --by steward --team t writes that team\'s own file, separate from the mission\'s', () => {
-    const w = run('handoff.mjs', ['write', '--summary', 'steward state', '--by', 'steward', '--team', 'goblins'], dir);
+  await t.test('inFlight is drawn from the trunk queue\'s running items, with no team field', () => {
+    const id = mkTicket(dir, 'first');
+    run('queue.mjs', ['add', id], dir);
+    const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir);
+    assert.equal(running.code, 0);
+
+    const w = run('handoff.mjs', ['write', '--summary', 'work in progress'], dir);
     assert.equal(w.code, 0);
-    assert.equal(w.json.summary, 'steward state');
-
-    const teamRead = run('handoff.mjs', ['read', '--by', 'steward', '--team', 'goblins'], dir);
-    assert.equal(teamRead.json.summary, 'steward state');
-
-    const missionRead = run('handoff.mjs', ['read', '--by', 'director'], dir);
-    assert.equal(missionRead.json.summary, 'still mission');
+    assert.equal(w.json.inFlight.length, 1);
+    assert.equal(w.json.inFlight[0].ticket, id);
+    assert.equal(w.json.inFlight[0].agent, 'worker1');
+    assert.ok(w.json.inFlight[0].branch);
+    assert.ok(!('team' in w.json.inFlight[0]), 'inFlight entries no longer carry a team field');
   });
 
-  await t.test('read without --by prints both, mission first, when both exist', () => {
-    const r = run('handoff.mjs', ['read', '--team', 'goblins'], dir);
-    assert.equal(r.json.mission.summary, 'still mission');
-    assert.equal(r.json.team.summary, 'steward state');
-
-    const human = run('handoff.mjs', ['read', '--team', 'goblins'], dir, { json: false });
-    const directorIdx = human.stdout.indexOf('Director (mission)');
-    const stewardIdx = human.stdout.indexOf('Steward (goblins)');
-    assert.ok(directorIdx >= 0 && stewardIdx >= 0 && directorIdx < stewardIdx);
-  });
-
-  await t.test('read without --by prints only what exists for an untouched team', () => {
-    const r = run('handoff.mjs', ['read', '--team', 'orcs'], dir);
-    assert.equal(r.json.mission.summary, 'still mission');
-    assert.equal(r.json.team, null);
-  });
-
-  await t.test('add-waiting and rm-waiting respect --by/--team the same way', () => {
+  await t.test('add-waiting and rm-waiting', () => {
     run('handoff.mjs', ['add-waiting', 'chairman', 'approve node cut'], dir);
-    const missionWait = run('handoff.mjs', ['read', '--by', 'director'], dir);
-    assert.equal(missionWait.json.waitingOn.length, 1);
-    assert.equal(missionWait.json.waitingOn[0].who, 'chairman');
+    const r = run('handoff.mjs', ['read'], dir);
+    assert.equal(r.json.waitingOn.length, 1);
+    assert.equal(r.json.waitingOn[0].who, 'chairman');
+    assert.equal(r.json.waitingOn[0].what, 'approve node cut');
 
-    const stewardWait = run('handoff.mjs', ['read', '--by', 'steward', '--team', 'goblins'], dir);
-    assert.equal(stewardWait.json.waitingOn.length, 0);
-
-    run('handoff.mjs', ['add-waiting', 'owner-auth', 'review the boundary', '--by', 'steward', '--team', 'goblins'], dir);
-    const stewardWaitAfter = run('handoff.mjs', ['read', '--by', 'steward', '--team', 'goblins'], dir);
-    assert.equal(stewardWaitAfter.json.waitingOn.length, 1);
+    const missing = run('handoff.mjs', ['add-waiting', 'chairman'], dir);
+    assert.equal(missing.code, 1);
 
     const removed = run('handoff.mjs', ['rm-waiting', 'chairman'], dir);
+    assert.equal(removed.code, 0);
     assert.equal(removed.json.removed, 1);
-    const missionAfter = run('handoff.mjs', ['read', '--by', 'director'], dir);
-    assert.equal(missionAfter.json.waitingOn.length, 0);
-    // the team's own waiting-on entry is untouched by a mission-scoped rm-waiting
-    const stewardStill = run('handoff.mjs', ['read', '--by', 'steward', '--team', 'goblins'], dir);
-    assert.equal(stewardStill.json.waitingOn.length, 1);
+
+    const after = run('handoff.mjs', ['read'], dir);
+    assert.equal(after.json.waitingOn.length, 0);
   });
 });

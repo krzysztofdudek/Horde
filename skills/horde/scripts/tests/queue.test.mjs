@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync, readFileSync, writeFileSync, existsSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import {
   makeRepo, rmRepo, run, initHorde,
@@ -13,7 +15,7 @@ function git(args, cwd) {
 
 function readyTicket(dir, slug, { severity, node = 'core' } = {}) {
   const extra = severity ? ['--severity', severity] : [];
-  const r = run('tk.mjs', ['new', slug, '--title', slug, '--node', node, '--class', 'sonnet', ...extra, '--evidence', 'it works'], dir);
+  const r = run('tk.mjs', ['new', slug, '--title', slug, '--node', node, '--class', 'standard', ...extra, '--evidence', 'it works'], dir);
   return r.json.id;
 }
 
@@ -22,7 +24,7 @@ function readyTicket(dir, slug, { severity, node = 'core' } = {}) {
 // and the Kind a quality ticket is told apart by.
 function mkTicket(dir, slug, opts = {}) {
   const {
-    node = 'core', class: cls = 'sonnet', severity, files, depends, kind,
+    node = 'core', class: cls = 'standard', severity, files, depends, kind,
   } = opts;
   const flags = ['--node', node, '--class', cls];
   if (severity) flags.push('--severity', severity);
@@ -34,7 +36,7 @@ function mkTicket(dir, slug, opts = {}) {
   return r.json.id;
 }
 
-test('queue.mjs: add, set (running/merged with real branches+worktrees), next, rm, move, reconcile', async (t) => {
+test('queue.mjs: add, set (running/merged with real branches+worktrees), next, rm, reconcile', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -51,7 +53,7 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
   await t.test('add queues both, pulling class from the ticket', () => {
     const r1 = run('queue.mjs', ['add', id1], dir);
     assert.equal(r1.code, 0);
-    assert.equal(r1.json.class, 'sonnet');
+    assert.equal(r1.json.class, 'standard');
     run('queue.mjs', ['add', id2], dir);
     const list = run('queue.mjs', ['list'], dir);
     assert.equal(list.json.length, 2);
@@ -89,46 +91,21 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
     assert.match(worktrees, new RegExp(`t-${id1}`));
   });
 
-  await t.test('set merged refuses without an author key', () => {
-    const r = run('queue.mjs', ['set', id1, 'merged', '--sha', 'abc123'], dir);
+  await t.test('set merged refuses without --sha — no approval/keys gate exists any more', () => {
+    const r = run('queue.mjs', ['set', id1, 'merged'], dir);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /no author key/);
+    assert.match(r.stderr, /requires --sha/);
   });
 
-  await t.test('set merged refuses without a verifier key', () => {
-    run('tk.mjs', ['key', id1, 'author', '--by', 'worker1'], dir);
-    const r = run('queue.mjs', ['set', id1, 'merged', '--sha', 'abc123'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /no verifier key/);
-  });
-
-  await t.test('set merged refuses without a node approval', () => {
-    const tip = git(['rev-parse', '--short', `mission1/t-${id1}`], dir);
-    run('verify.mjs', ['record', id1, '--verdict', 'reproduced', '--revert', 'failed', '--by', 'verifier1', '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', tip, '--item', '1|npm test|green'], dir);
-    const r = run('queue.mjs', ['set', id1, 'merged', '--sha', 'abc123'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /missing an approval/);
-  });
-
-  await t.test('set merged succeeds once all keys are present, removing the worktree then the branch', () => {
-    run('tk.mjs', ['review', id1, 'approve', '--by', 'owner1'], dir);
+  await t.test('set merged succeeds with just --sha once dependencies are satisfied, removing the worktree then the branch', () => {
     const sha = git(['rev-parse', '--short', `mission1/t-${id1}`], dir);
     const r = run('queue.mjs', ['set', id1, 'merged', '--sha', sha], dir);
-    assert.equal(r.code, 0);
+    assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.worktree, null);
     const branches = git(['branch', '--list', `mission1/t-${id1}`], dir);
     assert.equal(branches, '');
     const worktrees = git(['worktree', 'list'], dir);
     assert.doesNotMatch(worktrees, new RegExp(`t-${id1}(?!\\d)`));
-  });
-
-  await t.test('move relocates the item to another team\'s queue', () => {
-    run('roster.mjs', ['spawn', 'steward', '--team', 'allies', '--parent', 'trunk', '--class', 'sonnet'], dir);
-    const third = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket !== id1 && !i.ticket.startsWith('team:'));
-    const r = run('queue.mjs', ['move', third.ticket, '--team', 'trunk/allies'], dir);
-    assert.equal(r.code, 0);
-    const destList = run('queue.mjs', ['list', '--team', 'trunk/allies'], dir);
-    assert.equal(destList.json.some((i) => i.ticket === third.ticket), true);
   });
 
   await t.test('dep adds a dependency; a running item that gains one goes back to queued, keeping its worktree', () => {
@@ -167,60 +144,19 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
     assert.match(cycle.stderr, /cycle/);
   });
 
-  await t.test('cross-team dependencies: <team>:NNN and <team>:team:<name> are satisfied only once merged in their own team\'s queue.json', () => {
-    run('roster.mjs', ['spawn', 'steward', '--team', 'crows', '--parent', 'trunk', '--class', 'sonnet'], dir);
-    run('roster.mjs', ['spawn', 'steward', '--team', 'ravens', '--parent', 'trunk', '--class', 'sonnet'], dir);
-
-    const crowsTicket = run('tk.mjs', ['new', 'crows-thing', '--title', 'Crows thing', '--node', 'x', '--class', 'sonnet', '--team', 'crows', '--evidence', 'it works'], dir).json.id;
-    run('queue.mjs', ['add', crowsTicket, '--team', 'crows'], dir);
-
-    const ravensTicket = run('tk.mjs', ['new', 'ravens-thing', '--title', 'Ravens thing', '--node', 'x', '--class', 'sonnet', '--team', 'ravens', '--evidence', 'it works'], dir).json.id;
-    const added = run('queue.mjs', ['add', ravensTicket, '--depends', `crows:${crowsTicket}`, '--team', 'ravens'], dir);
-    assert.equal(added.code, 0, added.stderr);
-    assert.deepEqual(added.json.dependsOn, [`crows:${crowsTicket}`]);
-
-    const alsoOnMergeUp = run('queue.mjs', ['dep', ravensTicket, '--on', 'trunk:team:crows', '--team', 'ravens'], dir);
-    assert.equal(alsoOnMergeUp.code, 0, alsoOnMergeUp.stderr);
-
-    // neither dependency is merged yet — ravens' ticket is not ready
-    const notReady = run('queue.mjs', ['next', '--team', 'ravens'], dir);
-    assert.equal(notReady.json, null);
-
-    // merge the crows ticket itself — still not ready, because trunk:team:crows isn't merged
-    const running = run('queue.mjs', ['set', crowsTicket, 'running', '--agent', 'w', '--team', 'crows'], dir);
-    git(['-C', running.json.worktree, 'commit', '--allow-empty', '-qm', 'work']);
-    const tip = git(['rev-parse', '--short', running.json.branch], dir);
-    run('tk.mjs', ['key', crowsTicket, 'author', '--by', 'w', '--team', 'crows'], dir);
-    run('tk.mjs', ['review', crowsTicket, 'approve', '--by', 'architect', '--team', 'crows'], dir);
-    run('verify.mjs', ['record', crowsTicket, '--verdict', 'reproduced', '--revert', 'failed', '--by', 'v', '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', tip, '--team', 'crows', '--item', '1|npm test|green'], dir);
-    const merged = run('queue.mjs', ['set', crowsTicket, 'merged', '--sha', tip, '--team', 'crows'], dir);
-    assert.equal(merged.code, 0, merged.stderr);
-    const stillNotReady = run('queue.mjs', ['next', '--team', 'ravens'], dir);
-    assert.equal(stillNotReady.json, null);
-
-    // merge crows' own team: item into trunk — now both dependencies are satisfied
-    const teamMerged = run('queue.mjs', ['set', 'team:crows', 'merged', '--sha', 'def456', '--team', 'trunk'], dir);
-    assert.equal(teamMerged.code, 0, teamMerged.stderr);
-    const ready = run('queue.mjs', ['next', '--team', 'ravens'], dir);
-    assert.equal(ready.json.ticket, ravensTicket);
+  await t.test('add --depends refuses a colon-bearing dependency — team-scoped dependencies no longer exist', () => {
+    const freshTicket = readyTicket(dir, 'fresh-for-add-refusal', { severity: 'medium' });
+    const r = run('queue.mjs', ['add', freshTicket, '--depends', 'sometat:007'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /team-scoped dependencies no longer exist/);
   });
 
-  await t.test('dep and add refuse a cross-team dependency naming an unknown team or an unknown item in it', () => {
+  await t.test('dep --on refuses a colon-bearing dependency — team-scoped dependencies no longer exist', () => {
     const own = readyTicket(dir, 'own-tick', { severity: 'medium' });
     run('queue.mjs', ['add', own], dir);
-
-    const unknownTeam = run('queue.mjs', ['dep', own, '--on', 'nosuchteam:001'], dir);
-    assert.equal(unknownTeam.code, 1);
-    assert.match(unknownTeam.stderr, /no such team/);
-
-    const unknownItem = run('queue.mjs', ['dep', own, '--on', 'trunk:team:nosuchteam'], dir);
-    assert.equal(unknownItem.code, 1);
-    assert.match(unknownItem.stderr, /no such dependency/);
-
-    const freshTicket = readyTicket(dir, 'fresh-for-add-refusal', { severity: 'medium' });
-    const addRefused = run('queue.mjs', ['add', freshTicket, '--depends', 'trunk:team:nosuchteam'], dir);
-    assert.equal(addRefused.code, 1);
-    assert.match(addRefused.stderr, /no such dependency/);
+    const r = run('queue.mjs', ['dep', own, '--on', 'someteam:team:x'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /team-scoped dependencies no longer exist/);
   });
 
   await t.test('reconcile: a running item with a commit beyond the tip lands; a clean one without a commit goes back to queued and loses its worktree; a dirty one is committed as wip and goes back to queued keeping its worktree', async () => {
@@ -267,14 +203,14 @@ function writeMergeableTicket(dir, ticket, { evidenceId = 'E1', verifier = 'veri
   writeFileSync(join(ticketDir, 'issue.md'), [
     `# ${ticket} · slug`, '',
     '**Status:** landed',
-    '**Node:** auth · **Class:** sonnet · **Severity:** medium · **Team:** trunk',
+    '**Node:** auth · **Class:** standard · **Severity:** medium · **Team:** trunk',
     `**Depends on:** none · **Branch:** mission1/t-${ticket}`,
     `**Keys:** author worker-1 · verifier ${verifier} · auth owner-1`, '',
     '## Acceptance — evidence', '', `- [x] covers ${evidenceId}`, '',
   ].join('\n'));
   writeFileSync(
     join(ticketDir, 'log.md'),
-    `## Verdict · ${ticket} · 2026-01-01 · by ${verifier} (sonnet)\n\n**Result:** reproduced\n`,
+    `## Verdict · ${ticket} · 2026-01-01 · by ${verifier} (standard)\n\n**Result:** reproduced\n`,
   );
 }
 
@@ -289,7 +225,7 @@ test('queue.mjs set merged: the merge is recorded in the wave journal by the sam
   const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
   const doc = JSON.parse(readFileSync(queuePath, 'utf8'));
   doc.items.push({
-    ticket: '001', state: 'landed', class: 'sonnet', branch: null, worktree: null, dependsOn: [], agent: 'worker-1', sha: null, notes: [],
+    ticket: '001', state: 'landed', class: 'standard', branch: null, worktree: null, dependsOn: [], agent: 'worker-1', sha: null, notes: [],
   });
   writeFileSync(queuePath, JSON.stringify(doc, null, 2));
 
@@ -329,27 +265,27 @@ test('queue.mjs next: a running ticket\'s Files lock any ready ticket that share
     run('queue.mjs', ['add', clear], dir);
     run('queue.mjs', ['set', runner, 'running', '--agent', 'w'], dir);
 
-    const r = run('queue.mjs', ['next', '--class', 'sonnet'], dir);
+    const r = run('queue.mjs', ['next', '--class', 'standard'], dir);
     assert.equal(r.code, 0);
     // victim shares src/core/shared.ts with the running runner and is skipped despite the higher
-    // severity; clear names a disjoint file and is the only sonnet ticket actually ready.
+    // severity; clear names a disjoint file and is the only standard ticket actually ready.
     assert.equal(r.json.ticket, clear);
   });
 
   await t.test('a ticket with no declared Files locks its whole node — nothing else on it can go next', () => {
     const wideRunner = mkTicket(dir, 'wide-runner', {
-      node: 'wide', severity: 'medium', class: 'haiku',
+      node: 'wide', severity: 'medium', class: 'light',
     });
     const wideVictim = mkTicket(dir, 'wide-victim', {
-      node: 'wide', severity: 'high', class: 'haiku', files: 'src/wide/anything.ts',
+      node: 'wide', severity: 'high', class: 'light', files: 'src/wide/anything.ts',
     });
     run('queue.mjs', ['add', wideRunner], dir);
     run('queue.mjs', ['add', wideVictim], dir);
     run('queue.mjs', ['set', wideRunner, 'running', '--agent', 'w'], dir);
 
     // wideRunner declares no Files, so it locks every file of node "wide" — wideVictim collides
-    // even though the two name no file in common, and no haiku ticket is left ready.
-    const r = run('queue.mjs', ['next', '--class', 'haiku'], dir);
+    // even though the two name no file in common, and no light ticket is left ready.
+    const r = run('queue.mjs', ['next', '--class', 'light'], dir);
     assert.equal(r.code, 0);
     assert.equal(r.json, null);
   });
@@ -360,7 +296,7 @@ test('queue.mjs next: at equal severity, the ticket with the longer remaining cr
   t.after(() => rmRepo(dir));
   initHorde(dir);
 
-  // A chain of three (weight 3 each, sonnet): completing the root unblocks two more tickets'
+  // A chain of three (weight 3 each, standard): completing the root unblocks two more tickets'
   // worth of weighted work behind it — queue.mjs plan's own DAG, read in-process, says its
   // remaining critical path is 9. Neither chain-2 nor chain-3 is ever queued; they exist only to
   // give chain-1 that downstream weight. "solo" has nothing behind it, so its remaining path is
@@ -426,10 +362,10 @@ test('queue.mjs next --why: every queued ticket prints its rank, or the reason i
   const wrongClass = mkTicket(dir, 'wrong-class', { node: 'core', severity: 'low' });
   run('queue.mjs', ['add', wrongClass], dir);
 
-  const chosen = mkTicket(dir, 'chosen', { node: 'core', severity: 'low', class: 'haiku' });
+  const chosen = mkTicket(dir, 'chosen', { node: 'core', severity: 'low', class: 'light' });
   run('queue.mjs', ['add', chosen], dir);
 
-  const r = run('queue.mjs', ['next', '--class', 'haiku', '--why'], dir);
+  const r = run('queue.mjs', ['next', '--class', 'light', '--why'], dir);
   assert.equal(r.code, 0);
   assert.equal(r.json.chosen, chosen);
 
@@ -444,7 +380,7 @@ test('queue.mjs next --why: every queued ticket prints its rank, or the reason i
 
   const classRow = rows.find((e) => e.ticket === wrongClass);
   assert.equal(classRow.eligible, false);
-  assert.match(classRow.reason, /excluded by --class haiku \(this ticket is sonnet\)/);
+  assert.match(classRow.reason, /excluded by --class light \(this ticket is standard\)/);
 
   // "runner" is "running", not "queued" — --why never lists it at all.
   assert.equal(rows.find((e) => e.ticket === runner), undefined);
@@ -454,8 +390,8 @@ test('queue.mjs next --why: every queued ticket prints its rank, or the reason i
   assert.equal(chosenRow.rank, 1);
 
   const human = run('queue.mjs', ['next', '--why'], dir, { json: false });
-  assert.match(human.stdout, new RegExp(`${blocked} \\(sonnet\\) — skipped: waiting on dependency ${dep}`));
-  assert.match(human.stdout, new RegExp(`${locked} \\(sonnet\\) — skipped: locked`));
+  assert.match(human.stdout, new RegExp(`${blocked} \\(standard\\) — skipped: waiting on dependency ${dep}`));
+  assert.match(human.stdout, new RegExp(`${locked} \\(standard\\) — skipped: locked`));
   assert.match(human.stdout, /rank 1 \(chosen\)/);
 });
 
@@ -465,13 +401,6 @@ test('queue.mjs next --why: every queued ticket prints its rank, or the reason i
 // before it to be merged before it could even be cut. Started from the dependency's own tip
 // instead, the second is written and reviewed while the first is still in flight, and only the
 // merge order still waits.
-
-function keysFor(dir, ticket, { author = 'worker1', owner = 'owner1', verifier = 'verifier1', branch }) {
-  run('tk.mjs', ['key', ticket, 'author', '--by', author], dir);
-  const tip = git(['rev-parse', '--short', branch], dir);
-  run('verify.mjs', ['record', ticket, '--verdict', 'reproduced', '--revert', 'no-new-tests', '--by', verifier, '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', tip, '--item', '1|npm test|green'], dir);
-  run('tk.mjs', ['review', ticket, 'approve', '--by', owner], dir);
-}
 
 test('queue.mjs: a ticket started from an unmerged dependency (a stack)', async (t) => {
   const dir = makeRepo();
@@ -514,13 +443,10 @@ test('queue.mjs: a ticket started from an unmerged dependency (a stack)', async 
     assert.match(printed.stdout, new RegExp(`stack-ready on ${first}`));
   });
 
-  await t.test('--on refuses a ticket in another team, and one this ticket does not depend on', () => {
-    run('roster.mjs', ['spawn', 'steward', '--team', 'allies', '--parent', 'trunk', '--class', 'sonnet'], dir);
-    const away = run('tk.mjs', ['new', 'away-ticket', '--title', 'Away', '--node', 'core', '--class', 'sonnet', '--team', 'allies', '--evidence', 'it works'], dir).json.id;
-    run('queue.mjs', ['add', away, '--team', 'allies'], dir);
-    const otherTeam = run('queue.mjs', ['set', second, 'running', '--on', `allies:${away}`], dir);
-    assert.equal(otherTeam.code, 1);
-    assert.match(otherTeam.stderr, /belongs to team allies, not trunk/);
+  await t.test('--on refuses a colon-bearing (team-scoped) dependency, and a ticket this one does not depend on', () => {
+    const colonRef = run('queue.mjs', ['set', second, 'running', '--on', 'allies:999'], dir);
+    assert.equal(colonRef.code, 1);
+    assert.match(colonRef.stderr, /team-scoped dependencies no longer exist/);
 
     const notADep = run('queue.mjs', ['set', loose, 'running', '--on', first], dir);
     assert.equal(notADep.code, 1);
@@ -549,15 +475,13 @@ test('queue.mjs: a ticket started from an unmerged dependency (a stack)', async 
     assert.match(md, new RegExp(`stacked on ${first}`));
   });
 
-  await t.test('merged is refused while the dependency has not merged, keys or no keys', () => {
-    keysFor(dir, second, { author: 'w2', branch: child.branch });
+  await t.test('merged is refused while the dependency has not merged', () => {
     const r = run('queue.mjs', ['set', second, 'merged', '--sha', 'abc1234'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, new RegExp(`${second} depends on ${first}, still unmerged`));
   });
 
   await t.test('the dependency merging clears the stack, by the same write', () => {
-    keysFor(dir, first, { author: 'w1', branch: parent.json.branch });
     git(['checkout', 'mission1/trunk'], dir);
     git(['merge', '--no-ff', parent.json.branch, '-m', `merge ${first}`], dir);
     const sha = git(['rev-parse', '--short', 'mission1/trunk'], dir);
@@ -667,5 +591,114 @@ test('queue.mjs next --stack: stack-ready tickets rank below every ready one, an
     const row = why.json.entries.find((e) => e.ticket === clearHigh);
     assert.equal(row.eligible, false);
     assert.match(row.reason, new RegExp(`waiting on dependency ${running} — could be started on top of ${running} \\(--stack\\)`));
+  });
+});
+
+// provisionTree (_lib.mjs), through the one CLI path that calls it today: "set <ticket> running"
+// cutting a ticket's own worktree. config.worktree.copy names repository-root-relative paths
+// copied into that worktree the moment it is made.
+test('queue.mjs set running: provisionTree copies config.worktree.copy into the new worktree', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  await t.test('an untracked file named in worktree.copy is copied into the new worktree', () => {
+    writeFileSync(join(dir, 'env.local'), 'secret=1\n');
+    run('horde.mjs', ['config', 'set', 'worktree.copy', 'env.local'], dir);
+    const id = readyTicket(dir, 'copies-env');
+    run('queue.mjs', ['add', id], dir);
+    const set = run('queue.mjs', ['set', id, 'running'], dir);
+    assert.equal(set.code, 0, set.stderr);
+    assert.equal(readFileSync(join(set.json.worktree, 'env.local'), 'utf8'), 'secret=1\n');
+  });
+
+  await t.test('a worktree.copy entry git already tracks is refused before the tree is created', () => {
+    run('horde.mjs', ['config', 'set', 'worktree.copy', 'README.md'], dir);
+    const id = readyTicket(dir, 'tracked-copy');
+    run('queue.mjs', ['add', id], dir);
+    const set = run('queue.mjs', ['set', id, 'running'], dir);
+    assert.equal(set.code, 1);
+    assert.match(set.stderr, /README\.md/);
+    assert.match(set.stderr, /already tracks/);
+    assert.equal(existsSync(join(dir, '.horde', 'worktrees', 'mission1', `t-${id}`)), false);
+  });
+
+  await t.test('a worktree.copy entry that does not exist is refused, naming the path — not a silent skip', () => {
+    run('horde.mjs', ['config', 'set', 'worktree.copy', 'never-written.txt'], dir);
+    const id = readyTicket(dir, 'missing-copy');
+    run('queue.mjs', ['add', id], dir);
+    const set = run('queue.mjs', ['set', id, 'running'], dir);
+    assert.equal(set.code, 1);
+    assert.match(set.stderr, /never-written\.txt/);
+  });
+
+  await t.test('two "set running" calls at the same ticket: the second is a no-op, never a crash, never a second copy', () => {
+    writeFileSync(join(dir, 'once.txt'), 'v1\n');
+    run('horde.mjs', ['config', 'set', 'worktree.copy', 'once.txt'], dir);
+    const id = readyTicket(dir, 'idempotent-copy');
+    run('queue.mjs', ['add', id], dir);
+    const first = run('queue.mjs', ['set', id, 'running'], dir);
+    assert.equal(first.code, 0, first.stderr);
+    const copiedPath = join(first.json.worktree, 'once.txt');
+    assert.equal(readFileSync(copiedPath, 'utf8'), 'v1\n');
+
+    // Changing the source after the tree exists must not leak into it on a second call — the
+    // worktree, once made, is the worker's own; a repeated "set running" does not reach back in.
+    writeFileSync(join(dir, 'once.txt'), 'v2\n');
+    const second = run('queue.mjs', ['set', id, 'running'], dir);
+    assert.equal(second.code, 0, second.stderr);
+    assert.equal(readFileSync(copiedPath, 'utf8'), 'v1\n');
+  });
+});
+
+test('queue.mjs: "proposed" — in the queue, counted, and never a candidate', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const proposal = readyTicket(dir, 'a-proposal');
+  const work = readyTicket(dir, 'ordinary-work');
+
+  await t.test('the state list carries it, first, and says so when something else is asked for', () => {
+    const r = run('queue.mjs', ['set', proposal, 'nonsense'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /allowed: proposed, queued, waiting, running, landed, blocked, merged, escalated, dropped/);
+  });
+
+  await t.test('"add --proposed" files it as a proposal; "add" on its own still files work', () => {
+    const asProposal = run('queue.mjs', ['add', proposal, '--proposed'], dir);
+    assert.equal(asProposal.code, 0, asProposal.stderr);
+    assert.equal(asProposal.json.state, 'proposed');
+    const asWork = run('queue.mjs', ['add', work], dir);
+    assert.equal(asWork.code, 0, asWork.stderr);
+    assert.equal(asWork.json.state, 'queued');
+  });
+
+  await t.test('it is listed and counted like anything else', () => {
+    const all = run('queue.mjs', ['list'], dir).json;
+    assert.deepEqual(all.map((i) => [i.ticket, i.state]).sort(), [[proposal, 'proposed'], [work, 'queued']].sort());
+    assert.deepEqual(run('queue.mjs', ['list', '--state', 'proposed'], dir).json.map((i) => i.ticket), [proposal]);
+    const rendered = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.md'), 'utf8');
+    assert.match(rendered, /## proposed \(1\)/);
+  });
+
+  await t.test('"next" never offers it — not ranked below the work, absent', () => {
+    assert.equal(run('queue.mjs', ['next'], dir).json.ticket, work);
+    const why = run('queue.mjs', ['next', '--why'], dir).json;
+    assert.deepEqual(why.entries.map((r) => r.ticket), [work], 'a proposal is not even a row in --why');
+  });
+
+  await t.test('and not even with nothing else left waiting', () => {
+    assert.equal(run('queue.mjs', ['rm', work], dir).code, 0);
+    const r = run('queue.mjs', ['next'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json, null);
+  });
+
+  await t.test('set moves it out of the proposal state when somebody rules on it', () => {
+    const r = run('queue.mjs', ['set', proposal, 'queued'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.state, 'queued');
+    assert.equal(run('queue.mjs', ['next'], dir).json.ticket, proposal);
   });
 });

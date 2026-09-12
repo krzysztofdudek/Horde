@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // horde skill — cost.mjs
 //
-// Runs × class, read-only from this tool's side: `cost.json` is written exclusively by
-// `roster.mjs spawn`, one entry per spawned agent — `report` and `limit-reached` only sum it.
-// A missing file means zero runs, not an error (nothing has spawned yet is a normal state, not
-// a broken one). The charter's own "Limit:" line is the only place a cost limit is recorded —
-// this tool reads it as plain text, deliberately: charter.md has no JSON twin to read instead.
+// Runs × class, read-only from this tool's side: `cost.json` is a ledger some other tool writes
+// to, one entry per spawned agent — `report` and `limit-reached` only sum it. A missing file
+// means zero runs, not an error (nothing has spawned yet is a normal state, not a broken one).
+// The charter's own "Limit:" line is the only place a cost limit is recorded — this tool reads
+// it as plain text, deliberately: charter.md has no JSON twin to read instead.
 //
 // State: hordes/<horde>/cost.json — `{ runs: [{name, role, class, ticket|null, team|null, wave,
 // at}] }`, no rendered sibling (it's a ledger, not a document meant to be read as prose).
@@ -22,7 +22,7 @@ commands:
       (--mission, also the default with no filter) — against the charter's limit when it has one.
   limit-reached [--horde h]
       exits 0 when the mission's weighted cost has reached the charter's limit, 1 otherwise
-      (including when no limit is set). Meant for a steward to check before dispatching.
+      (including when no limit is set). Meant to be checked before dispatching.
 
 options: --json  --help`;
 

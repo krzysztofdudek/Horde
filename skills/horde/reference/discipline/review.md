@@ -3,7 +3,7 @@
 **The law: every finding carries a severity, and a Minor finding never sends the ticket back.**
 
 A review with no severities is a list somebody has to re-judge. A review that returns a ticket over a
-variable name costs a full round trip — a fresh worker, a fresh verifier, a fresh gate — for
+variable name costs a full round trip — a fresh worker, a fresh gate — for
 something a later ticket would have swept up for free.
 
 ## The three words
@@ -56,7 +56,7 @@ otherwise.
 |---|---|
 | "Everything here matters, I'll mark it all Critical." | Then nothing is Critical and the next reader ranks it for you, badly. |
 | "It's a small thing but it will bother me later." | That is the definition of Minor. It goes in the log. |
-| "While the ticket is open anyway, they may as well fix it." | The ticket is not open. Sending it back re-runs the worker, the verifier and the gate. |
+| "While the ticket is open anyway, they may as well fix it." | The ticket is not open. Sending it back re-runs the worker and the gate. |
 | "The diff is long; I'll trust the tests." | The tests were written by the author, against their own understanding. |
 | "The reviewer is more senior, I'll just do it." | You hold the context they lack. Check it first; then do it or say why not. |
 | "I'll implement the clear items now and ask about the rest." | Partial understanding produces a wrong partial fix and a second review. |

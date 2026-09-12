@@ -4,12 +4,14 @@
 
 **A mission is too big for one agent's context, so you either watch it lose track of its own earlier decisions, or you split it up yourself and babysit every piece.** Horde does the splitting for you: it turns your coding agent into a director, and the director raises a horde.
 
+[![ci](https://github.com/krzysztofdudek/Horde/actions/workflows/ci.yml/badge.svg)](https://github.com/krzysztofdudek/Horde/actions/workflows/ci.yml)
+
 ```
 /plugin marketplace add krzysztofdudek/Horde
 /plugin install horde@horde-marketplace
 ```
 
-Run both, then `/reload-plugins` to activate it in this session (or restart Claude Code). Requires Node.js on your `PATH` (any recent version), since the skill's tools are plain ES modules with zero dependencies. It also needs Yggdrasil, and Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams) turned on, an experimental feature that is off by default; see [Requirements](#requirements) below before you invoke it. Invoke it by handing over a mission: `/horde <mission>`, or your own words for it ("let's run this as a horde").
+Run both, then `/reload-plugins` to activate it in this session (or restart Claude Code). Requires Node.js on your `PATH` (any recent version), since the skill's tools are plain ES modules with zero dependencies, and Yggdrasil; see [Requirements](#requirements) below before you invoke it. Invoke it by handing over a mission: `/horde <mission>`, or your own words for it ("let's run this as a horde").
 
 > MIT licensed · Node scripts, zero dependencies · needs [Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil), and creates the graph if your repository has none · part of the [Yggdrasil family](#the-yggdrasil-family) · [full skill body](skills/horde/SKILL.md)
 
@@ -17,29 +19,21 @@ Run both, then `/reload-plugins` to activate it in this session (or restart Clau
 
 ## Requirements
 
-**Yggdrasil.** Horde works on an architecture graph: the map it cuts the work by, the rules every ticket is held to, and the verdict that says a change is safe to merge all come from it. Install it once:
+Two things, and only two.
+
+**Node.js on your `PATH`** (any recent version). The skill's tools are plain ES modules with zero dependencies.
+
+**Yggdrasil** 6.0.0 or newer. Horde works on an architecture graph: the map it cuts the work by, the rules every ticket is held to, and the verdict that says a change is safe to merge all come from it. Install it once:
 
 ```
 npm i -g @chrisdudek/yg
 ```
 
-Horde needs Yggdrasil 5.9.0 or newer, the first release that answers with the documents Horde reads the graph through. An older Yggdrasil is refused with the release to install, never read around.
+Horde reads the graph only through Yggdrasil's versioned documents (`yg-node/1`, `yg-context/1`, `yg-impact/1`, and others). A release that doesn't answer with the exact document Horde expects — too old, or one that has since changed shape — is refused by name, naming what it saw and which release to install, never read around.
 
 If your repository already has a graph, Horde reads it. If it doesn't, `horde init` makes one for you before anything else happens. With [Grain](https://github.com/krzysztofdudek/Grain) installed as well, the graph it makes is read out of your own code — the components you actually have and the rules you already follow — and it tells you up front how much of the code you have today those rules would refuse. Without Yggdrasil, Horde stops and says so.
 
-**Claude Code's [Agent Teams](https://code.claude.com/docs/en/agent-teams)**, turned on before you hand over a mission. It's off by default and still experimental. Add this to your `settings.json`:
-
-```json
-{
-  "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  }
-}
-```
-
-Without it, Claude Code never raises a steward that stays alive and addressable for the length of a mission, so the skill has nothing to direct. It also needs an interactive session; headless mode (`-p`) won't spawn a team at all.
-
-Your own session is what raises the long-lived agents — a steward per team and the architect — and everything else runs underneath them as their own helpers, so the number of agents alive alongside you stays small and every one of them is yours to replace.
+That's it.
 
 ---
 
@@ -47,13 +41,13 @@ Your own session is what raises the long-lived agents — a steward per team and
 
 **The mission: migrate the app's permission system from roles to a policy engine, twelve modules touched.** Alone, an agent either tries to hold all twelve modules in its head and drifts by module nine, or works through them one at a time and forgets what it agreed with itself three files back.
 
-You and Horde write the charter together first: the goal, what's out of scope, and the evidence that proves it's done (tests, scenarios, nothing vaguer than that). Then it cuts the mission into nodes with you, once, and spawns a **steward** and an **architect** who can veto changes to the graph. The steward spawns an **owner** per node. Owners read their node and propose tickets; the steward assembles the proposals into a dependency graph and starts a wave.
+You and Horde write the charter together first: the goal, what's out of scope, and the evidence that proves it's done (tests, scenarios, nothing vaguer than that). Then it cuts the mission into territories — sets of whole components, sized so one agent can hold one and still have room to work — and spawns one **consultant** per territory, all at once. Each reads its own area and nothing else, and writes the tickets and the law it thinks the work has earned. Nothing any of them writes is dispatched yet: an **architect** rules the whole plan once, before anything starts — what's missing, what's buildable, what's circular, what's grown too big to be one piece.
 
-Workers pick up tickets, each in its own worktree, each against a locked spec. A **verifier who never verifies its own work** reproduces the evidence before anything merges. Nothing lands without two keys and one approval: the worker's key, the verifier's key, and the owner's review of every node the ticket touches. Once a wave closes, an Opus **auditor** redoes merged tickets from scratch, because a report is a hypothesis until someone who didn't write it reproduces it. How many is a sample size, not a habit: it doubles when an audit catches something, thins out after a long clean run, and never drops to nothing — and every wave close publishes what share of audited work didn't survive the second look, with how confident that share is.
+Workers pick up tickets, each in its own worktree, each against a locked spec. Nothing merges by hand: a nine-item checklist runs fresh on the branch itself, and the moment every item is green it makes the merge commit and moves on — new tests proven to fail without the change, the architecture rules read and satisfied, the diff kept inside what the ticket declared. After a wave, a **legislate** pass reads what that area's own work was refused for and writes the pattern down as a rule, so the next ticket in that area gets it enforced rather than repeated by hand.
 
-You never read a diff. What comes to you: a contract two owners can't agree on, a claim that something is a boundary and shouldn't be touched, a cost limit reached, anything genuinely unsure. Everything else, the horde rules on itself and writes down why, so the next session picks it up cold from the files, not from your memory of the conversation.
+You never read a diff. What comes to you: a worker that ran out of spec and stopped rather than guess, a request to weaken a rule, a cost limit reached, a change to the mission card itself. Everything else, the horde rules on itself and writes down why, so the next session picks it up cold from the files, not from your memory of the conversation. At the very end, a **retrospective** reads everything nobody read twice — every refusal, every note a worker left the next one — and sorts it into what the law could have said, what's worth one line in a component's own history, and what no rule will ever capture; that last list is yours to read, because it's the one thing the horde cannot learn on its own.
 
-Every line the horde ever merged has a custody chain: point at a file and a line and it tells you the commit that introduced it, the ticket that commit belongs to, who wrote it and who reviewed and verified it, what evidence that ticket was supposed to prove and whether it did, and what the graph currently says about the rules standing over that code. A closed mission is searched too; a line from before the horde ever touched the repository is reported as exactly that.
+Every line the horde ever merged has a custody chain: point at a file and a line and it tells you the commit that introduced it, the ticket that commit belongs to, who wrote it and what the merge checklist proved before it was let through, what evidence that ticket was supposed to prove and whether it did, and what the graph currently says about the rules standing over that code. A closed mission is searched too; a line from before the horde ever touched the repository is reported as exactly that.
 
 ---
 
@@ -70,24 +64,24 @@ Say `/horde <mission>`, or hand it over in your own words. A session that resume
 Three planes, two loops:
 
 ```
-INTENT   charter, rulings, evidence catalogue        you and the director
-META     the graph: nodes, charters, contracts       owners, the architect
-CODE     worktrees, branches, tests, scenarios        workers, verifiers
+INTENT   charter, evidence catalogue, asks           you and the director
+META     the graph: nodes, ports, contracts, rules   the architect, consultants, legislate
+CODE     worktrees, branches, tests, scenarios       workers
 ```
 
-Roles, and what each one is not allowed to do:
+Three functions carry the work, plus a one-shot review of the whole plan and the one client in the
+loop:
 
-| Role | Model | Decides | Never |
+| Function | Model | Decides | Never |
 |---|---|---|---|
-| Director | your own session | the escalation list, the charter, who audits | reads worker output, merges, dispatches tickets |
-| Steward | Sonnet, long-lived | scheduling, dispatch, merging on its branch | judgement, it escalates instead |
-| Owner | Sonnet, Opus for a hard node | the inside of its node, proposes tickets | contracts alone, reviewing its own ticket |
-| Architect | Opus, no node of its own | approves or vetoes graph changes | implementation |
-| Worker | the cheapest model that will pass verification | implementation detail | contracts, decisions, other branches |
-| Verifier | never the author, fresh context | reproducible or not | fixing what it finds |
-| Auditor | Opus, on a sample per wave | a process verdict on one merged ticket | nothing named |
+| Director | your own session | what to ask the client, the charter, build decisions between tickets | reads worker output, merges, dispatches tickets by hand |
+| Consultation | the territory's own class, one per territory | what a territory's own tickets and law should be | the boundary between territories |
+| Work | the cheapest model that will pass the merge checklist | implementation detail, one ticket at a time | contracts, decisions, other branches |
+| Legislation | the territory's own class, once per territory per wave | which pattern the code has already earned as a rule | lowering a rule |
+| Architect (one-shot) | Opus, no node of its own | approves or vetoes graph changes, rules the whole plan once | implementation |
+| Client | you | the mission, every answered ask, whether it ships | reviewing every diff |
 
-Every change belongs to exactly one ticket. Liveness is judged by files and branches, never by silence: a steward gone quiet for too long gets reclaimed and respawned from the same charter, not waited for. And it never pushes: starting a mission is your consent to local commits on the horde's own branches, nothing more. The pull request, and the push, stay yours.
+Every change belongs to exactly one ticket. Liveness is judged by files and branches, never by silence. And it never pushes: starting a mission is your consent to local commits on the horde's own branches, nothing more. The pull request, and the push, stay yours.
 
 ---
 
@@ -102,7 +96,7 @@ Two slash commands. The first registers this repo as a marketplace; the second i
 /plugin install horde@horde-marketplace
 ```
 
-Then run `/reload-plugins` to activate it in the current session (or restart Claude Code). Requires Node.js on `PATH` and Claude Code's Agent Teams turned on, see [Requirements](#requirements). No API key.
+Then run `/reload-plugins` to activate it in the current session (or restart Claude Code). Requires Node.js on `PATH` and Yggdrasil, see [Requirements](#requirements). No API key.
 
 To upgrade later, refresh the marketplace and reinstall:
 
@@ -168,9 +162,9 @@ that quietly reads worse than the repository deserves.
 
 It's not free. Every spawned agent is a real run on your account, at whatever cost class its ticket carries (Haiku, Sonnet, or Opus for the hard nodes and the rulings). The horde reports cost every wave rather than hiding it, and a charter can carry a cost limit that stops it after the running tickets land.
 
-The multi-agent mechanics run on Claude Code's own Agent Teams, see [Requirements](#requirements). The skill installs the same way on Codex, Cursor, and Copilot, and the discipline travels with it (evidence over reports, escalate rather than guess, nothing merges without two keys), but whether those hosts have anything equivalent to Agent Teams hasn't been checked at all. Try it there and watch whether the spawning holds before trusting it with something you can't easily undo.
+The default runner is your own session: your turn calls the loop, reads what it says to dispatch, and spawns the workers. The loop can also be driven from outside any agent — a cron job or a script of your own, pointed at how your tools start an agent — and then that is what starts each worker instead; nothing about the loop itself changes either way, only who starts what it hands out. The skill installs the same way on Codex, Cursor, and Copilot, and the discipline travels with it (evidence over reports, ask rather than guess, nothing merges without a green checklist), but whether those hosts spawn agents the way this one leans on hasn't been checked at all. Try it there and watch whether the spawning holds before trusting it with something you can't easily undo.
 
-It's not a substitute for reading the result. You get the final branch, the evidence catalogue, and the cost report; whether the mission actually did what you meant is still your call, not the auditor's.
+It's not a substitute for reading the result. You get the final branch, the evidence catalogue, and the cost report; whether the mission actually did what you meant is still your call.
 
 ---
 
@@ -191,7 +185,7 @@ Yes, and you don't have to set it up first. Horde works on an architecture graph
 <details>
 <summary><b>What if I'd rather just have one agent do the whole thing?</b></summary>
 
-Then don't reach for this. Horde exists for the case where one agent's context is the actual bottleneck, a mission whose charter, contracts and code genuinely don't fit in one session with room to work. For anything smaller, a single agent with Urd's ask-don't-guess discipline is the right tool, not this one.
+Then don't reach for this — but you don't need a separate tool to make that call. Horde is the one door: hand it any mission and it runs the same charter-first loop whether that mission turns out to need one worker or twelve. A mission whose charter, contracts and code fit in one session with room to work moves through Horde as a single ticket, no ceremony beyond the charter itself.
 </details>
 
 <details>
@@ -204,21 +198,21 @@ Not a Norse name, unlike Ratatoskr and Urd. It says what it does: raise many che
 
 ## The Yggdrasil family
 
-Three tools, one core: **Yggdrasil** holds the architecture a repository declares and the rails that keep its code to it; **[Grain](https://github.com/krzysztofdudek/Grain)** plants that graph for a repository that has none, mined from its own code and history with the evidence for every rule; **Horde** works the graph when a mission outgrows one agent, holding every agent it raises to the same rules. Each layer runs without the ones above it, and adoption goes bottom-up: Yggdrasil first, Grain when there is no graph yet, Horde when one agent is no longer enough.
+**Three jobs, one core, in layers.** **[Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil)** is the law: the architecture graph and the rails that hold every change to it. **[Grain](https://github.com/krzysztofdudek/Grain)** surveys the terrain: it mines that graph from a repository's own code and history, so there is a rule-backed map before anyone writes a rule by hand. **Horde** is the software house that builds on the law: zero standing roles, a worker per ticket and a one-shot architect who rules the whole plan once, each ticket refined onto the graph and given a tick. Adoption runs Grain first — install it day zero for a soft, draft-only law that never blocks — then Yggdrasil as the core you keep long term, hard law with proof and CI; Horde is the one door for any mission too big for one agent, not a second path that only opens once a lone agent runs out of room. From 6.0.0 the core ships as one version; the add-ons keep their own. In the family, law is raised by whichever agent does the work in its own territory, and only the client — the one person the whole system answers to — lowers or vetoes it. The three repositories' shared machine contracts are registered on [one page](https://krzysztofdudek.github.io/Yggdrasil/family-contracts).
 
 | Core | What it holds |
 |---|---|
-| **[Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil)** | The graph and the rails. Every change satisfies the rules that govern it, checked before the agent moves on, re-proved in CI without a key. |
-| **[Grain](https://github.com/krzysztofdudek/Grain)** | The first graph, from evidence. Point it at a repository nobody annotated and it writes the components, the dependencies and the rules the code already keeps, each with the count of places that break it today; Yggdrasil accepts it with one command. |
-| **Horde** (this one) | The loop past one agent's context. A steward, an owner per node, an architect with veto, workers and verifiers who never verify their own work, all held to the graph; nothing merges without two keys and an approval. |
+| **[Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil)** | The law. The architecture graph and the rails that hold every change to it, checked before the agent moves on, re-proved in CI without a key. |
+| **[Grain](https://github.com/krzysztofdudek/Grain)** | The terrain survey. Mines a repository's own code and history into a first graph — components, dependencies, and the rules the code already keeps, each with the count of places that break it today; Yggdrasil accepts it with one command. |
+| **Horde** (this one) | The software house on the law. Zero standing roles: a worker per ticket in its own worktree, refined onto the graph and given a tick by a nine-item merge checklist; a one-shot architect rules the whole plan once; the client orders the mission and is the only one who can lower or veto a rule. |
 
-Three add-ons attach to the agent rather than to the graph, and each works alone:
+Three add-ons attach to the agent rather than to the graph, and each works alone. Horde doesn't assume any of them is installed — it carries its own minimum discipline in each role's law — but uses them when they are, one sentence per row below.
 
-| Add-on | Stage | What it makes the agent prove |
-|---|---|---|
-| **[Ratatoskr](https://github.com/krzysztofdudek/RatatoskrSkill)** | request → intent | Keeps the agent talking to you in plain words, not code, so you can follow what it's doing. |
-| **[Urd](https://github.com/krzysztofdudek/UrdSkill)** | intent → code | When the spec is ambiguous, it consults the source of truth and asks, it doesn't guess. |
-| **[Researcher](https://github.com/krzysztofdudek/ResearcherSkill)** | code → measured result | Point it at a metric and it runs experiments, hypotheses kept and discarded. |
+| Add-on | Stage | What it makes the agent prove | In Horde's loop |
+|---|---|---|---|
+| **[Ratatoskr](https://github.com/krzysztofdudek/RatatoskrSkill)** | request → intent | Keeps the agent talking to you in plain words, not code, so you can follow what it's doing. | Keeps the client's plain-language registry open at both ends of a mission. |
+| **[Urd](https://github.com/krzysztofdudek/UrdSkill)** | intent → code | When the spec is ambiguous, it consults the source of truth and asks, it doesn't guess. | The stop a worker hits before it guesses. |
+| **[Researcher](https://github.com/krzysztofdudek/ResearcherSkill)** | code → measured result | Point it at a metric and it runs experiments, hypotheses kept and discarded. | Runs the retrospective's measurement. |
 
 ## Acknowledgements
 

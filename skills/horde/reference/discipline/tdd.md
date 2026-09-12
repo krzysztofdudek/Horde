@@ -53,7 +53,7 @@ otherwise.
 |---|---|
 | "I'll add the test after." | A test written after the change passes the first time it runs. It never showed it could fail, so it shows nothing. The checklist drops it on the base and refuses it. |
 | "Too simple to break." | Simple code breaks. The test costs seconds; the refused merge costs a round trip. |
-| "I already checked it by hand." | Nobody can re-run what you did by hand. The verifier will not take your word for it, and is told not to. |
+| "I already checked it by hand." | Nobody can re-run what you did by hand, and nothing here takes your word for it either. |
 | "Deleting hours of work is wasteful." | The hours are spent either way. What is left to choose is code you can trust or code you cannot. |
 | "I'll keep it as a reference and write the tests around it." | Tests written around existing code record what it does, not what it should do. |
 | "The gate is green." | Green with your change proves nothing. Red without it is the proof. |

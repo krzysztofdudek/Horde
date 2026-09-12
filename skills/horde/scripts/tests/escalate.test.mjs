@@ -1,231 +1,96 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
 
-test('escalate.mjs: add, list, rule (direct and via --to-user), show, refusals', async (t) => {
+// escalate.mjs is down to one command after ask.mjs (019) folded escalation and dissent into the
+// one channel to the client: recurring, the second legislation trigger. Its input is now the
+// ANSWERED asks (kind, territory) — not a ruled escalation, and grouped by territory, not by a
+// node derived from the ticket.
+
+test('escalate.mjs recurring: the third answer of a kind on one territory is a rule proposal', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  initHorde(dir);
-
-  await t.test('add refuses an unknown kind', () => {
-    const r = run('escalate.mjs', ['add', 'why', '--kind', 'bogus'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /--kind is required/);
-  });
-
-  let id;
-  await t.test('add opens an escalation, listed under --open', () => {
-    const r = run('escalate.mjs', ['add', 'scope question', '--kind', 'charter', '--by', 'steward', '--ticket', '3'], dir);
-    assert.equal(r.code, 0);
-    id = r.json.id;
-    assert.equal(r.json.state, 'open');
-    const open = run('escalate.mjs', ['list', '--open'], dir);
-    assert.equal(open.json.length, 1);
-  });
-
-  await t.test('rule closes it directly and records a decision esc-<id>', () => {
-    const r = run('escalate.mjs', ['rule', id, 'ruling text'], dir);
-    assert.equal(r.code, 0);
-    assert.equal(r.json.state, 'ruled');
-    const open = run('escalate.mjs', ['list', '--open'], dir);
-    assert.equal(open.json.length, 0);
-    const decision = run('decide.mjs', ['show', `esc-${id}`], dir);
-    assert.equal(decision.code, 0);
-    assert.equal(decision.json.body, 'ruling text');
-  });
-
-  await t.test('rule refuses an already-ruled escalation', () => {
-    const r = run('escalate.mjs', ['rule', id, 'again'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /already ruled/);
-  });
-
-  let forwardedId;
-  await t.test('rule --to-user forwards without closing; a second rule call finalizes it', () => {
-    const opened = run('escalate.mjs', ['add', 'cost question', '--kind', 'cost', '--by', 'steward'], dir);
-    forwardedId = opened.json.id;
-    const forwarded = run('escalate.mjs', ['rule', forwardedId, 'forwarding this', '--to-user'], dir);
-    assert.equal(forwarded.code, 0);
-    assert.equal(forwarded.json.state, 'forwarded');
-    const stillOpen = run('escalate.mjs', ['list', '--open'], dir);
-    assert.equal(stillOpen.json.some((i) => i.id === forwardedId), true);
-    const noDecisionYet = run('decide.mjs', ['show', `esc-${forwardedId}`], dir);
-    assert.equal(noDecisionYet.code, 1);
-
-    const finalized = run('escalate.mjs', ['rule', forwardedId, 'chairman says proceed'], dir);
-    assert.equal(finalized.code, 0);
-    assert.equal(finalized.json.state, 'ruled');
-    const decision = run('decide.mjs', ['show', `esc-${forwardedId}`], dir);
-    assert.equal(decision.code, 0);
-    assert.equal(decision.json.body, 'chairman says proceed');
-  });
-
-  await t.test('rule refuses an unknown escalation id', () => {
-    const r = run('escalate.mjs', ['rule', '9999', 'x'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /no such escalation/);
-  });
-
-  await t.test('add accepts kind "adjudicate" — the fix-loop breaker\'s own next step past its cap', () => {
-    const r = run('escalate.mjs', ['add', 'ticket stuck past the fix-loop cap', '--kind', 'adjudicate', '--ticket', '7'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.kind, 'adjudicate');
-    assert.equal(r.json.ticket, '7');
-  });
-
-  await t.test('rule --by traces that name in the roster when it is one', () => {
-    const architect = run('roster.mjs', ['spawn', 'architect', '--class', 'opus'], dir);
-    assert.equal(architect.code, 0, architect.stderr);
-    const architectName = architect.json.name;
-
-    const rosterPath = join(dir, '.horde', 'hordes', 'mission1', 'roster.json');
-    const roster = JSON.parse(readFileSync(rosterPath, 'utf8'));
-    const staleAt = new Date(Date.now() - 120 * 60000).toISOString();
-    roster.entries.find((e) => e.name === architectName).lastTrace = staleAt;
-    writeFileSync(rosterPath, JSON.stringify(roster, null, 2));
-
-    const opened = run('escalate.mjs', ['add', 'traced ruling', '--kind', 'rules'], dir);
-    const ruled = run('escalate.mjs', ['rule', opened.json.id, 'ruling text', '--by', architectName], dir);
-    assert.equal(ruled.code, 0, ruled.stderr);
-
-    const after = run('roster.mjs', ['list'], dir).json.find((e) => e.name === architectName);
-    assert.notEqual(after.lastTrace, staleAt);
-  });
-});
-
-test('escalate.mjs recurring: the third ruling of a kind on one node is a rule proposal', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-
-  // A repository whose nodes come from the graph, so the proposal names the graph's own log.
-  mkdirSync(join(dir, '.yggdrasil', 'model', 'checkout'), { recursive: true });
-  writeFileSync(join(dir, '.yggdrasil', 'model', 'checkout', 'yg-node.yaml'), 'name: Checkout\ntype: module\ndescription: d\nmapping:\n  - src/\nrelations: []\n');
-  mkdirSync(join(dir, '.yggdrasil', 'model', 'billing'), { recursive: true });
-  writeFileSync(join(dir, '.yggdrasil', 'model', 'billing', 'yg-node.yaml'), 'name: Billing\ntype: module\ndescription: d\nmapping:\n  - billing/\nrelations: []\n');
   initHorde(dir);
   run('horde.mjs', ['config', 'set', 'ygCommand', 'node ./vendor/yg.mjs'], dir);
 
   const onCheckout = [];
   for (let i = 0; i < 3; i++) {
-    const created = run('tk.mjs', ['new', `checkout-${i}`, '--title', `Checkout question ${i}`, '--node', 'checkout', '--class', 'sonnet', '--evidence', 'it works'], dir);
+    const created = run('tk.mjs', ['new', `checkout-${i}`, '--title', `Checkout question ${i}`, '--node', 'checkout', '--class', 'standard', '--evidence', 'it works'], dir);
     assert.equal(created.code, 0, created.stderr);
     onCheckout.push(created.json.id);
   }
-  const onBilling = run('tk.mjs', ['new', 'billing-0', '--title', 'Billing question', '--node', 'billing', '--class', 'sonnet', '--evidence', 'it works'], dir).json.id;
+  const onBilling = run('tk.mjs', ['new', 'billing-0', '--title', 'Billing question', '--node', 'billing', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
 
   await t.test('nothing to propose while no answer has been given three times', () => {
     for (const [i, ticket] of onCheckout.slice(0, 2).entries()) {
-      const opened = run('escalate.mjs', ['add', `contract question ${i}`, '--kind', 'contract', '--ticket', ticket], dir);
-      run('escalate.mjs', ['rule', opened.json.id, `the producing node decides, round ${i}`], dir);
+      const opened = run('ask.mjs', ['add', `checkout question ${i}`, '--kind', 'stop', '--ticket', ticket, '--territory', 'checkout'], dir);
+      run('ask.mjs', ['answer', opened.json.id, `the producing node decides, round ${i}`], dir);
     }
     const r = run('escalate.mjs', ['recurring'], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual(r.json.groups, []);
     const human = run('escalate.mjs', ['recurring'], dir, { json: false });
-    assert.match(human.stdout, /no ruling has recurred 3 times yet/);
+    assert.match(human.stdout, /no answer has recurred 3 times yet/);
   });
 
-  await t.test('the third one proposes the rule, with the rulings as its evidence', () => {
-    const opened = run('escalate.mjs', ['add', 'contract question 2', '--kind', 'contract', '--ticket', onCheckout[2]], dir);
-    run('escalate.mjs', ['rule', opened.json.id, 'the producing node decides, round 2'], dir);
+  await t.test('the third one proposes the rule, with the answers as its evidence', () => {
+    const opened = run('ask.mjs', ['add', 'checkout question 2', '--kind', 'stop', '--ticket', onCheckout[2], '--territory', 'checkout'], dir);
+    run('ask.mjs', ['answer', opened.json.id, 'the producing node decides, round 2'], dir);
 
     const r = run('escalate.mjs', ['recurring'], dir);
     assert.equal(r.json.groups.length, 1);
     const [group] = r.json.groups;
-    assert.equal(group.kind, 'contract');
-    assert.equal(group.node, 'checkout');
+    assert.equal(group.kind, 'stop');
+    assert.equal(group.territory, 'checkout');
     assert.equal(group.count, 3);
-    assert.deepEqual(group.escalations.map((e) => e.ticket), onCheckout);
-    assert.match(group.rule, /contract on checkout: answered the same way 3 times/);
+    assert.deepEqual(group.asks.map((e) => e.ticket), onCheckout);
+    assert.match(group.rule, /stop on checkout: answered the same way 3 times/);
     assert.equal(
       group.command,
-      'file the rule (.yggdrasil/aspects/<id>/yg-aspect.yaml, attached to checkout), then '
+      'file the rule (.yggdrasil/aspects/<id>/yg-aspect.yaml, attached to checkout\'s node), then '
       + 'node ./vendor/yg.mjs aspects log add --aspect <id> --reason "' + group.rule + '"'
       + ' — its own log is where the reasoning belongs, not the node\'s',
     );
 
     const human = run('escalate.mjs', ['recurring'], dir, { json: false });
-    assert.match(human.stdout, /contract · node checkout — 3 rulings/);
-    assert.match(human.stdout, /file it: file the rule \(\.yggdrasil\/aspects\/<id>\/yg-aspect\.yaml, attached to checkout\)/);
+    assert.match(human.stdout, /stop · territory checkout — 3 answers/);
+    assert.match(human.stdout, /file it: file the rule \(\.yggdrasil\/aspects\/<id>\/yg-aspect\.yaml, attached to checkout's node\)/);
     assert.match(human.stdout, /node \.\/vendor\/yg\.mjs aspects log add --aspect <id> --reason/);
-    assert.match(human.stdout, /The architect does that filing — this tool proposes, it never files/);
+    // After 6.0.0 there is no seat that files law: the agent working that territory writes the
+    // rule in its own branch and raises it on evidence. Nobody is asked for permission to write a
+    // rule down; permission is only ever needed to take one away.
+    assert.match(human.stdout, /The agent that works that territory does the filing, in its own branch/);
+    assert.match(human.stdout, /raises the rule on its own evidence with node\.mjs promote/);
+    assert.match(human.stdout, /nobody needs a signature to write a rule down — only to take one away/);
+    assert.doesNotMatch(human.stdout, /The architect does that filing/);
   });
 
-  await t.test('a ruling of the same kind on another node is another question, not a fourth answer', () => {
-    const opened = run('escalate.mjs', ['add', 'contract question on billing', '--kind', 'contract', '--ticket', onBilling], dir);
-    run('escalate.mjs', ['rule', opened.json.id, 'billing decides its own'], dir);
+  await t.test('an answer of the same kind on another territory is another question, not a fourth answer', () => {
+    const opened = run('ask.mjs', ['add', 'billing question', '--kind', 'stop', '--ticket', onBilling, '--territory', 'billing'], dir);
+    run('ask.mjs', ['answer', opened.json.id, 'billing decides its own'], dir);
     const r = run('escalate.mjs', ['recurring'], dir);
     assert.equal(r.json.groups.length, 1);
-    assert.equal(r.json.groups[0].node, 'checkout');
+    assert.equal(r.json.groups[0].territory, 'checkout');
   });
 
-  await t.test('--min lowers the bar, and an open escalation is never evidence', () => {
-    run('escalate.mjs', ['add', 'not answered yet', '--kind', 'contract', '--ticket', onBilling], dir);
+  await t.test('--min lowers the bar, and an open ask is never evidence', () => {
+    run('ask.mjs', ['add', 'not answered yet', '--kind', 'stop', '--ticket', onBilling, '--territory', 'billing'], dir);
     const r = run('escalate.mjs', ['recurring', '--min', '2'], dir);
-    const billing = r.json.groups.find((g) => g.node === 'billing');
-    assert.equal(billing, undefined, 'one ruling plus one open question is one ruling');
+    const billing = r.json.groups.find((g) => g.territory === 'billing');
+    assert.equal(billing, undefined, 'one answer plus one open question is one answer');
     const bad = run('escalate.mjs', ['recurring', '--min', '1'], dir);
     assert.equal(bad.code, 1);
     assert.match(bad.stderr, /--min must be a whole number of at least 2/);
   });
-});
 
-test('escalate.mjs: "quality" is a kind, so a fallen quality index has a channel up', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-  const r = run('escalate.mjs', ['add', 'the graph got weaker over this wave', '--kind', 'quality'], dir);
-  assert.equal(r.code, 0, r.stderr);
-  assert.equal(r.json.kind, 'quality');
-});
-
-
-test('escalate.mjs: a sub-team proposal carries the commands only the director can run', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-
-  let id;
-  await t.test('add --kind structure --team --parent records the spawn, the brief and the handover', () => {
-    const r = run('escalate.mjs', ['add', 'sub-team falcon for nodes billing, ledger', '--kind', 'structure', '--team', 'falcon', '--parent', 'trunk', '--by', 'steward'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    id = r.json.id;
-    assert.equal(r.json.team, 'falcon');
-    assert.equal(r.json.parent, 'trunk');
-    assert.deepEqual(r.json.next, [
-      'roster.mjs spawn steward --team falcon --parent trunk --class sonnet',
-      'brief.mjs steward falcon --name <the name that printed>',
-      'spawn it with the Agent tool as a teammate, prompt = that brief',
-      'queue.mjs move <each ticket this escalation names> --team falcon',
-    ]);
-  });
-
-  await t.test('the rendered channel and show both print them for the director', () => {
-    const rendered = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'escalations.md'), 'utf8');
-    assert.match(rendered, /the director raises it with:/);
-    assert.match(rendered, /roster\.mjs spawn steward --team falcon --parent trunk --class sonnet/);
-
-    const shown = run('escalate.mjs', ['show', id], dir, { json: false });
-    assert.equal(shown.code, 0, shown.stderr);
-    assert.match(shown.stdout, /roster\.mjs spawn steward --team falcon --parent trunk/);
-  });
-
-  await t.test('--parent defaults to trunk', () => {
-    const r = run('escalate.mjs', ['add', 'sub-team kite for the reporting nodes', '--kind', 'structure', '--team', 'kite'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.parent, 'trunk');
-    assert.match(r.json.next[0], /--team kite --parent trunk/);
-  });
-
-  await t.test('--team is refused on any other kind, and a structure escalation without one carries no commands', () => {
-    const wrong = run('escalate.mjs', ['add', 'the budget is spent', '--kind', 'cost', '--team', 'falcon'], dir);
-    assert.equal(wrong.code, 1);
-    assert.match(wrong.stderr, /has no meaning for kind "cost"/);
-
-    const lease = run('escalate.mjs', ['add', 'the ledger owner should hold its lease for the mission', '--kind', 'structure'], dir);
-    assert.equal(lease.code, 0, lease.stderr);
-    assert.equal(lease.json.next, undefined);
+  await t.test('an ask with no territory groups under "(no territory)", and still has somewhere to be filed', () => {
+    for (let i = 0; i < 3; i++) {
+      const opened = run('ask.mjs', ['add', `stray question ${i}`, '--kind', 'charter'], dir);
+      run('ask.mjs', ['answer', opened.json.id, `agreed, round ${i}`], dir);
+    }
+    const r = run('escalate.mjs', ['recurring'], dir);
+    const stray = r.json.groups.find((g) => g.kind === 'charter');
+    assert.equal(stray.territory, '(no territory)');
+    assert.match(stray.command, /^decide\.mjs add <slug> "/);
   });
 });

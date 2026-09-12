@@ -141,8 +141,13 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
 
   let advisory;
   await t.test('draft → advisory: a clean corpus earns it, and the baseline is recorded with it', () => {
-    advisory = run('node.mjs', ['promote', 'no-marker'], dir);
+    // `--by` is the name of whoever is raising it — a territory, a ticket, an agent — recorded
+    // verbatim. There is no roster to look it up in and no seat it has to be: raising a rule is
+    // available to whoever is working the area, in their own branch.
+    advisory = run('node.mjs', ['promote', 'no-marker', '--by', 'the-feature-territory'], dir);
     assert.equal(advisory.code, 0, advisory.stderr);
+    assert.equal(advisory.json.by, 'the-feature-territory');
+    assert.equal(existsSync(join(dir, '.horde', 'hordes', 'mission1', 'roster.json')), false, 'raising a rule reads no roster, and nothing writes one');
     assert.equal(advisory.json.from, 'draft');
     assert.equal(advisory.json.to, 'advisory');
     assert.equal(advisory.json.drill.cases, 2);
@@ -323,7 +328,36 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
       readFileSync(nodeLogPath(dir, 'feature'), 'utf8'),
       /lowered from enforced to advisory by the chairman: the team needs one release/,
     );
+
+    // …and, first of all, in the rule's own history: where a rule stands and why is the rule's own
+    // record, and a lowering is the one move nobody in the horde may make on its own.
+    const doc = aspectLogRead(dir, yg, 'no-marker');
+    const [entry] = doc.entries;
+    assert.deepEqual(entry.status, { from: 'enforced', to: 'advisory' });
+    assert.match(entry.body, /lowered from enforced to advisory by the chairman: the team needs one release where this warns instead of blocking/);
   });
+});
+
+test('E17 — a rule whose own cases do not answer as written is never raised', async (t) => {
+  const yg = requireYg();
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  graphFixture(dir, yg);
+  // The corpus goes red: the case that MUST be refused no longer carries anything to refuse, so
+  // the rule passes a case it was written to fail. The rule still works on the repository — this
+  // is the drill, which says whether the rule means what its author meant it to mean.
+  writeFileSync(join(dir, '.yggdrasil', 'aspects', 'no-marker', 'drills', 'violates-marker', 'case.mjs'), 'export const x = 1;\n');
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'a case that no longer violates'], dir);
+  initHorde(dir);
+
+  const r = run('node.mjs', ['promote', 'no-marker', '--by', 'the-feature-territory'], dir);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /cannot be raised from draft to advisory yet/);
+  assert.match(r.stderr, /its case corpus does not run clean/);
+  assert.match(r.stderr, /A rung is granted on evidence, never on an opinion/);
+  assert.match(readFileSync(aspectPath(dir, 'no-marker'), 'utf8'), /^status: draft$/m, 'nothing moved');
 });
 
 test('E17 — the wave close lists what was raised, what it earned, and how the user undoes it', async (t) => {
@@ -342,7 +376,7 @@ test('E17 — the wave close lists what was raised, what it earned, and how the 
   assert.equal(closed.code, 0, closed.stderr);
   assert.equal(closed.json.qualityPolicy, 'autonomous');
   assert.deepEqual(closed.json.promoted.map((p) => [p.aspect, p.from, p.to]), [['no-marker', 'draft', 'advisory']]);
-  assert.equal(closed.json.qualityEscalation, null, 'raising a rule is not a fall to escalate');
+  assert.deepEqual(closed.json.qualityDeclined, [], 'raising a rule is not a fall to report');
 
   const plan = readFileSync(planPath(dir), 'utf8');
   const block = plan.slice(plan.indexOf('## Quality — what the horde raised on its own')).split('\n## Graph changes')[0].trim();
@@ -372,8 +406,8 @@ test('E17 — a quality ticket is filed and queued from a grain-advice/1 documen
   const stub = join(dir, 'grain-advise-stub.mjs');
   writeFileSync(stub, GRAIN_ADVISE_STUB);
   run('horde.mjs', ['config', 'set', 'grainCommand', `node ${stub}`], dir);
-  run('roster.mjs', ['spawn', 'owner', '--node', 'feature', '--class', 'sonnet'], dir);
-  const owner = run('roster.mjs', ['list'], dir).json.find((e) => e.role === 'owner').name;
+  // No owner role exists any more — a quality ticket's "owner" is just the node's own name now.
+  const owner = 'feature';
 
   let filed;
   await t.test('the pass reads the real document and files one ticket per improvement', () => {
@@ -402,10 +436,20 @@ test('E17 — a quality ticket is filed and queued from a grain-advice/1 documen
     assert.match(ticket.json.text, /\*\*Severity:\*\* low/);
   });
 
-  await t.test('it is queued, and no escalation was opened to get it there', () => {
+  // `queue.mjs quality` was called above with no --class: the ticket it filed should
+  // carry the mission's own first configured class ("light", DEFAULT_CLASSES' first key on a
+  // freshly-init'd mission), never the old hardcoded literal "sonnet".
+  await t.test('with no --class, the filed ticket gets the mission\'s first configured class, never a literal "sonnet"', () => {
+    const classes = run('horde.mjs', ['config', 'get', 'classes'], dir).json.value;
+    const ticket = run('tk.mjs', ['show', filed.json.filed[0].ticket], dir);
+    assert.match(ticket.json.text, new RegExp(`\\*\\*Class:\\*\\* ${Object.keys(classes)[0]}\\b`));
+    assert.doesNotMatch(ticket.json.text, /\*\*Class:\*\* sonnet\b/);
+  });
+
+  await t.test('it is queued, and no ask was opened to get it there', () => {
     const queued = run('queue.mjs', ['list'], dir).json;
     assert.deepEqual(queued.map((i) => [i.ticket, i.state]), [[filed.json.filed[0].ticket, 'queued']]);
-    assert.deepEqual(run('escalate.mjs', ['list'], dir).json, [], 'nothing was escalated to get it queued');
+    assert.deepEqual(run('ask.mjs', ['list'], dir).json, [], 'nothing was asked to get it queued');
   });
 
   await t.test('a second pass over the same document files nothing twice', () => {
@@ -416,7 +460,7 @@ test('E17 — a quality ticket is filed and queued from a grain-advice/1 documen
   });
 
   await t.test('the mission\'s own work still goes first', () => {
-    const work = run('tk.mjs', ['new', 'the-work', '--title', 'What the mission asked for', '--node', 'feature', '--class', 'sonnet', '--severity', 'low', '--evidence', 'it works'], dir);
+    const work = run('tk.mjs', ['new', 'the-work', '--title', 'What the mission asked for', '--node', 'feature', '--class', 'standard', '--severity', 'low', '--evidence', 'it works'], dir);
     run('queue.mjs', ['add', work.json.id], dir);
     assert.equal(run('queue.mjs', ['next'], dir).json.ticket, work.json.id);
   });

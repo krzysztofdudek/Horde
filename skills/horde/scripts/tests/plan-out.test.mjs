@@ -13,7 +13,7 @@ test('queue.mjs plan --out: writes the plan to a file and says so on stdout', as
   t.after(() => rmRepo(dir));
   initHorde(dir);
   addNode(dir, 'nodeA', { mapping: ['src/nodeA/**'] });
-  const created = run('tk.mjs', ['new', 'thing', '--title', 'A thing', '--node', 'nodeA', '--class', 'sonnet', '--evidence', 'it works'], dir);
+  const created = run('tk.mjs', ['new', 'thing', '--title', 'A thing', '--node', 'nodeA', '--class', 'standard', '--evidence', 'it works'], dir);
   assert.equal(run('queue.mjs', ['add', created.json.id], dir).code, 0);
   const out = join(dir, 'plan.json');
   const r = run('queue.mjs', ['plan', '--out', out], dir);

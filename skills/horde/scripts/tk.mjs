@@ -3,44 +3,50 @@
 //
 // Tickets, over teams/<team>/issues/NNN-slug/{issue.md,log.md}. NNN is unique across the whole
 // horde (hordes/<horde>/counter.json), not per team, so a ticket keeps one identity across a
-// `move`. The **Keys:** line on issue.md is the single place the two-signature rule (an author,
-// a verifier) and per-node review approvals live, because that is what queue.mjs's merge refusal
-// and premerge.mjs's mechanical checklist both need to read without talking to anyone.
+// `move` — and that counter is shared with everything else the horde numbers, so a ticket and a
+// graph proposal can never wear the same number. A ticket reads as `t-NNN`; NNN alone is the same
+// ticket, and stays the name of its folder and of the `id:` its issue.md carries.
 //
 // The combined "**Node:** … · **Class:** … · **Severity:** … · **Team:** …" line and the
 // "**Depends on:** … · **Branch:** …" line are parsed positionally by label, stopping at the
-// next `**Label:**` or end of line — none of those values contain a literal "·". The **Keys:**
-// line is different: its own segments are separated by "·", so it gets its own whole-line
-// regex and is split on "·" directly. Every node the ticket names gets one Keys segment, in the
-// order the **Node:** field lists them, so approvals can be tracked per node even though the
-// field itself has no per-node structure otherwise; a node that only consumes a port the ticket
-// produces gets one appended after those, found by name rather than by position.
+// next `**Label:**` or end of line — none of those values contain a literal "·".
 //
 // Four more fields — **Files:**, **Consumes:**, **Produces:**, **Evidence:** — are what the plan
 // is computed from: the paths the ticket touches, the ports it needs and delivers, the charter
 // evidence rows it earns. They are validated where they are written (a file inside the node's
-// boundary, a port that reads <node>/<port>@<version> and that something actually produces, an
-// evidence id the charter carries), because a ticket that declares an impossible plan is cheapest
-// to refuse at the proposal.
+// boundary, a port that reads <node>/<port> and that something actually produces, an evidence id
+// the charter carries), because a ticket that declares an impossible plan is cheapest to refuse
+// at the proposal. A port carries no version — there is none, in the graph or in Horde; two
+// tickets naming the same port name the same thing.
 //
-// Exports findTicket, the field/keys helpers and padId so queue.mjs and verify.mjs — which also
-// need to read and update a ticket's Keys line and status — don't reimplement the parsing.
+// Exports findTicket, the field helpers and padId so queue.mjs — which also needs to read a
+// ticket's status — doesn't reimplement the parsing.
 
 import {
   existsSync, mkdirSync, readdirSync, renameSync, readFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import {
-  hordePath, teamPath, repoRoot, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
-  parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, git, patchIdOf,
-  parentBranchOf,
+  hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
+  parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
+  allocateId,
 } from './_lib.mjs';
-import { trace as traceRoster, ownerNameForNode, architectIsLive } from './roster.mjs';
 import {
-  ticketBoundary, pathInBoundary, portExists, consumersOf,
+  ticketBoundary, pathInBoundary, portExists,
 } from './node.mjs';
+// `queue.mjs` imports this file in turn. The cycle is the one this tool set already runs on (see
+// wave.mjs's own note): every binding on both sides is a hoisted function declaration and neither
+// module calls the other while it is still being evaluated. The alternative — a second writer of
+// dependencies here — is exactly the thing worth avoiding, because a cycle is only caught once the
+// whole DAG is built, and that lives there.
+import { addDependency } from './queue.mjs';
 
-const STATUSES = ['proposed', 'queued', 'running', 'landed', 'changes', 'verified', 'merged', 'escalated', 'dropped'];
+// "blocked" is where a ticket stops rather than pretends: its fix rounds are spent, so another
+// round would be a state dressed up as progress. Nothing in this tool set moves it out again —
+// only the client's own answer to the "stuck" ask filed against it does, and that answer is a
+// product decision, which is why there is no escalation kind for it and no command here that
+// rules on one.
+const STATUSES = ['proposed', 'queued', 'running', 'landed', 'changes', 'blocked', 'verified', 'merged', 'escalated', 'dropped'];
 const SEVERITIES = ['high', 'medium', 'low'];
 // A ticket is "work" (the mission's own scope) unless it names itself "quality" — a self-filed
 // improvement outside a wave's assigned scope (better graph, normalization, tidy-up) that
@@ -60,24 +66,27 @@ const USAGE = `usage: tk.mjs <command> [options]
 
 commands:
   new <slug> --title "<t>" --node <n> [--node <n2> …] --class <c> [--severity high|medium|low]
-      [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
-      [--produces <node>/<port>@<v>,…] [--evidence "<…>"]… [--revert-base <ref>]
+      [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
+      [--produces <node>/<port>,…] [--evidence "<…>"]… [--revert-base <ref>] [--mutate "<command>"]
       [--team t] [--horde h]
       renders templates/ticket.md; status starts "proposed". --node is repeatable, up to two —
-      two nodes mark a contract ticket, and both get their own approval slot in the Keys line;
-      three or more is refused, since no owner holds the whole of such a diff.
+      three or more is refused, since nobody holds the whole of such a diff.
       --kind defaults to "work"; "quality" marks a self-filed improvement outside a wave's
       assigned scope (better graph, normalization, tidy-up) — queue.mjs next always ranks it
       after every work ticket, whatever its severity.
       --no-quality walls this one ticket off from the mission's quality policy: the work it names
       and nothing beside it, whatever the charter says. It never permits the opposite — nothing
       here can make a rule weaker at any setting.
-      --revert-base names the ref premerge.mjs's revert test should use instead of the parent
+      --revert-base names the ref land.mjs's revert test should use instead of the parent
       branch's tip (for a test meant to already be green there, e.g. a contract test).
+      --mutate names a shell command land.mjs's revert test runs instead, against a scratch copy
+      of this branch's own tip: it must break the implementation the ticket's new tests exist to
+      catch, and every new test must go red once it has run. Chosen from the ticket, never a
+      land.mjs flag — refused together with --revert-base, since only one variant runs.
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
       the merge checklist refuses a diff that reaches past them). --consumes/--produces name the
-      ports the ticket needs and delivers, as <node>/<port>@<version>; a consumed port with no
-      producing ticket and no such port in the graph is refused. An --evidence value that is
+      ports the ticket needs and delivers, as <node>/<port>; a consumed port with no producing
+      ticket and no such port in the graph is refused. An --evidence value that is
       nothing but catalogue ids ("E2,E5") fills the Evidence field; any other value becomes its
       own "- [ ] …" line in the ticket's Acceptance — evidence checklist, and the ids cited in it
       fill the field too. A catalogue id (E1, E2, …) must already be a row in the horde's
@@ -88,43 +97,24 @@ commands:
       "changes" counts the round and prints it: rounds 1..config.fixRounds.resume (default 3) —
       resume the same worker; the next config.fixRounds.fresh (default 2) rounds — "fresh worker,
       class up", one class heavier, briefed with "brief.mjs worker NNN --takeover"; beyond that it
-      refuses and prints the next step (escalate.mjs add … --kind adjudicate --ticket NNN, then
-      queue.mjs set NNN escalated).
+      refuses.
   log <ticket> "<text>" [--horde h]
   grep <regex> [--horde h]
-  key <ticket> author --by <name> | --from-queue [--horde h]
-      sets the author key. --from-queue reads it from the ticket's own queue item's recorded
-      "agent" instead — for a successor steward recovering a ticket that "queue.mjs reconcile"
-      marked landed after the original steward died before it could set the key by hand. The
-      verifier key is set only by verify.mjs.
   review-request <ticket> [--delta <path>] [--horde h]
-      appends a timestamped log entry; starts the owner's liveness window. --delta names the
-      file holding the difference between what was approved before and what is on the branch
-      now (the merge checklist writes it and prints its path), so the owner reads that instead
-      of the whole change again.
-  review <ticket> approve|changes ["why"] --by <name> [--node n] [--horde h]
-      records an approval or a changes-request for one node in the Keys line. Pass --node when
-      the ticket names more than one, or when it produces a port other nodes consume — those
-      nodes get their own approval slot, since a version bump changes their contract and only
-      they can say the new version is usable. --by architect with no --node approves every node
-      the ticket names at once (the case where a node's own owner is the ticket's author and so
-      cannot review it). Refuses --by equal to the ticket's author. An "approve" also binds to
-      what was read: the ticket's branch's current tip sha and the identity of its diff against
-      the team branch (both from its queue item). The branch catching up with the team keeps the
-      approval; a change to the ticket's own diff voids it and premerge.mjs's item 2 (keys) asks
-      for the review again. The ticket's own verifier may approve in an owner's place (marked
-      "<name>(verifier-seat)" in the Keys line) only when the ticket's author is that node's own
-      owner and the roster has no live architect — refused otherwise.
-  move <ticket> --team t [--horde h]
-      relocates the issue folder to team t's issues/.
+      appends a timestamped log entry. --delta names the file holding the difference between
+      what was approved before and what is on the branch now (the merge checklist writes it and
+      prints its path), so a re-review reads that instead of the whole change again.
   edit <ticket> --by <name> [--files a,b] [--consumes …] [--produces …] [--evidence E1,…]
-      [--horde h]
+      [--depends NNN,MMM] [--horde h]
       rewrites the body (everything from "## What" on) from stdin, leaving the header block —
       the id/title heading, Status, Node/Class/Severity/Team, Depends on/Branch, Files,
-      Consumes/Produces, Evidence, Keys — untouched. Appends "body edited by <name>" to the log.
+      Consumes/Produces, Evidence — untouched. Appends "body edited by <name>" to the log.
       What owners use to write ticket bodies. With any of --files/--consumes/--produces/
       --evidence it changes those fields instead, each with its own log line saying who changed
       it — how a ticket is widened when the work turns out to touch a file it never declared.
+      --depends adds dependencies to the ticket's queue item, one per number, through the same
+      path "queue.mjs dep" uses — so a dependency is written the same way whoever writes it, and
+      the cycle check lives in one place. The ticket has to be in the queue for that.
 
 options: --json  --help`;
 
@@ -161,11 +151,11 @@ export function ticketQuality(text) {
 // --- the four structural fields ----------------------------------------
 //
 // **Files:** the paths this ticket touches · **Consumes:**/**Produces:** the ports it needs and
-// delivers, `<node>/<port>@<version>` · **Evidence:** the catalogue rows it earns. Together they
-// are what the plan is computed from: the order between tickets, which of them collide over a
-// file, who has to approve a version bump, and which promised evidence nobody is building. Read
-// through these three functions everywhere, so a ticket written by hand in an old shape (an
-// empty field, the word "none") degrades to "not declared" rather than to a wrong answer.
+// delivers, `<node>/<port>` · **Evidence:** the catalogue rows it earns. Together they are what
+// the plan is computed from: the order between tickets, which of them collide over a file, who
+// has to approve a port change, and which promised evidence nobody is building. Read through
+// these three functions everywhere, so a ticket written by hand in an old shape (an empty field,
+// the word "none") degrades to "not declared" rather than to a wrong answer.
 
 function listField(text, label) {
   const raw = parseField(text || '', label);
@@ -177,103 +167,19 @@ export function ticketFiles(text) { return listField(text, 'Files'); }
 
 export function ticketEvidence(text) { return listField(text, 'Evidence'); }
 
-// `<node>/<port>@<version>`, where the node is a whole graph path ("orders/order-service") and
-// the port is its last segment before the "@" — null when the text is not that shape at all.
+// `<node>/<port>`, where the node is a whole graph path ("orders/order-service") and the port is
+// its last segment — null when the text is not that shape at all. No version: there is none, in
+// the graph or in Horde.
 export function parsePortRef(raw) {
-  const m = /^([A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)\/([A-Za-z0-9._-]+)@(\d+)$/.exec(String(raw).trim());
+  const m = /^([A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)\/([A-Za-z0-9._-]+)$/.exec(String(raw).trim());
   if (!m) return null;
-  return {
-    node: m[1], port: m[2], version: Number(m[3]), ref: `${m[1]}/${m[2]}@${m[3]}`,
-  };
+  return { node: m[1], port: m[2], ref: `${m[1]}/${m[2]}` };
 }
 
 // label is "Consumes" or "Produces". Unparseable entries are dropped here — `new`/`edit` refuse
 // them at the door, so anything that reached the file was well-formed when it was written.
 export function ticketPorts(text, label) {
   return listField(text, label).map(parsePortRef).filter(Boolean);
-}
-
-const KEYS_LINE_RE = /^\*\*Keys:\*\*\s*(.*)$/m;
-
-// Every approval segment names the node it belongs to ("<node> <value>"), so the slots the
-// ticket's own **Node:** field lists come first, in that order, and a consumer's slot — a node
-// the ticket does not name but whose contract it changes — is appended after them and found by
-// name. A line whose segments name none of the ticket's nodes is read positionally, the way the
-// first version of this field was written.
-export function parseKeys(text) {
-  const nodes = nodesOf(text);
-  const m = KEYS_LINE_RE.exec(text);
-  const parts = (m ? m[1] : '').split('·').map((s) => s.trim()).filter(Boolean);
-  const takeVal = (seg) => {
-    const sp = seg.indexOf(' ');
-    const v = sp === -1 ? '' : seg.slice(sp + 1).trim();
-    return v || '—';
-  };
-  const segments = parts.slice(2).map((seg) => {
-    const sp = seg.indexOf(' ');
-    return { name: sp === -1 ? seg.trim() : seg.slice(0, sp).trim(), value: takeVal(seg) };
-  });
-  const named = segments.some((s) => nodes.includes(s.name));
-  const nodeApprovals = {};
-  nodes.forEach((n, i) => {
-    const byName = segments.find((s) => s.name === n);
-    if (named) nodeApprovals[n] = byName ? byName.value : '—';
-    else nodeApprovals[n] = segments[i] ? segments[i].value : '—';
-  });
-  if (named) {
-    for (const s of segments) if (!(s.name in nodeApprovals)) nodeApprovals[s.name] = s.value;
-  }
-  return {
-    author: parts[0] ? takeVal(parts[0]) : '—',
-    verifier: parts[1] ? takeVal(parts[1]) : '—',
-    nodeApprovals,
-  };
-}
-
-function writeKeys(text, keys) {
-  const nodes = nodesOf(text);
-  const extra = Object.keys(keys.nodeApprovals).filter((n) => !nodes.includes(n));
-  const segs = [`author ${keys.author || '—'}`, `verifier ${keys.verifier || '—'}`];
-  for (const n of [...nodes, ...extra]) segs.push(`${n} ${keys.nodeApprovals[n] || '—'}`);
-  return text.replace(KEYS_LINE_RE, `**Keys:** ${segs.join(' · ')}`);
-}
-
-export function setAuthorKey(text, name) {
-  const keys = parseKeys(text);
-  keys.author = name;
-  return writeKeys(text, keys);
-}
-
-export function setVerifierKey(text, name) {
-  const keys = parseKeys(text);
-  keys.verifier = name;
-  return writeKeys(text, keys);
-}
-
-// `allowNew` is how a consumer's slot comes into being: the ticket does not name that node, and
-// the caller has already established (from the ports the ticket produces) that its owner is owed
-// a say. Without it, only a node the ticket names can be written.
-export function setNodeApproval(text, node, value, { allowNew = false } = {}) {
-  const keys = parseKeys(text);
-  if (!allowNew && !Object.prototype.hasOwnProperty.call(keys.nodeApprovals, node)) {
-    throw new Error(`ticket does not name node: ${node}`);
-  }
-  keys.nodeApprovals[node] = value;
-  return writeKeys(text, keys);
-}
-
-export function hasAuthor(text) { return parseKeys(text).author !== '—'; }
-export function hasVerifier(text) { return parseKeys(text).verifier !== '—'; }
-
-// Every slot on the line, not only the nodes the ticket names: once a consumer's slot exists it
-// is as binding as an owner's — an approval asked for and not given still blocks the merge.
-export function allNodesApproved(text) {
-  const keys = parseKeys(text);
-  const slots = [...new Set([...nodesOf(text), ...Object.keys(keys.nodeApprovals)])];
-  return slots.every((n) => {
-    const v = keys.nodeApprovals[n];
-    return v && v !== '—' && !v.startsWith('changes:');
-  });
 }
 
 export function setStatus(text, status) {
@@ -300,8 +206,9 @@ function priorChangesRounds(ticket) {
 // What this round of "changes" means: rounds 1..resume ask the steward to resume the same
 // worker with the findings; the next "fresh" rounds ask for a new one, one class heavier, briefed
 // with "brief.mjs worker NNN --takeover"; beyond resume+fresh this refuses outright — another
-// round would be a stall dressed up as progress, not a fix, so the caller is told to rule on it
-// instead (escalate.mjs add … --kind adjudicate, then queue.mjs set … escalated).
+// round would be a stall dressed up as progress, not a fix. What happens then is tick's: the queue
+// item and the ticket both go to "blocked" and the client is asked, once, with the gate's own last
+// words and the path of the ticket's log.
 export function changesRoundInfo(horde, ticket) {
   const cfg = readConfig();
   const fixRounds = (cfg && cfg.fixRounds) || {};
@@ -316,8 +223,7 @@ export function changesRoundInfo(horde, ticket) {
       resume,
       fresh,
       message: `ticket ${ticket.id} has already gone through ${cap} round(s) of changes (config.fixRounds: `
-        + `resume ${resume} + fresh ${fresh}) — another round is a stall, not a fix. Rule on it: `
-        + `escalate.mjs add "<why>" --kind adjudicate --ticket ${ticket.id}, then queue.mjs set ${ticket.id} escalated`,
+        + `resume ${resume} + fresh ${fresh}) — another round is a stall, not a fix.`,
     };
   }
   const label = round <= resume ? 'resume same worker' : 'fresh worker, class up';
@@ -327,8 +233,7 @@ export function changesRoundInfo(horde, ticket) {
 }
 
 // Writes the status and its log line for one transition, embedding the round suffix
-// changesRoundInfo computed (when given) so priorChangesRounds can read it back later. Shared by
-// cmdStatus and verify.mjs's own "flaky" transition, so both count against the one cap.
+// changesRoundInfo computed (when given) so priorChangesRounds can read it back later.
 export function transitionStatus(ticket, status, note, roundInfo) {
   const roundSuffix = roundInfo ? ` (round ${roundInfo.round}/${roundInfo.cap ?? roundInfo.resume + roundInfo.fresh} — ${roundInfo.label})` : '';
   writeText(ticket.issuePath, setStatus(ticket.text, status));
@@ -338,6 +243,8 @@ export function transitionStatus(ticket, status, note, roundInfo) {
 
 // --- id / lookup ---------------------------------------------------------
 
+// A ticket by any of the ways it gets written: "4", "004", "t-004". The prefix is how an id reads,
+// the number is what it IS, so everything below works from the number alone.
 export function padId(idInput) {
   const n = parseInt(String(idInput).replace(/\D/g, ''), 10);
   if (Number.isNaN(n)) throw new Error(`invalid ticket id: ${idInput}`);
@@ -489,7 +396,7 @@ function listFlag(value) {
 function checkFilesInBoundary(nodes, files) {
   if (files.length === 0) return;
   const cfg = readConfig() || {};
-  const root = repoRoot();
+  const root = resolveTree({}).path;
   const boundary = ticketBoundary(root, cfg, nodes);
   if (boundary.length === 0) return;
   const outside = files.filter((f) => !pathInBoundary(f, boundary));
@@ -500,8 +407,11 @@ function checkFilesInBoundary(nodes, files) {
 
 function parsePortList(raw, label) {
   return listFlag(raw).map((entry) => {
+    if (/@\d+$/.test(entry.trim())) {
+      fail(`--${label.toLowerCase()} takes <node>/<port> — the "@<version>" suffix was removed (there is no port version any more, in the graph or in Horde), got "${entry}"`);
+    }
     const ref = parsePortRef(entry);
-    if (!ref) fail(`--${label.toLowerCase()} takes <node>/<port>@<version> (e.g. auth/policy@2) — got "${entry}"`);
+    if (!ref) fail(`--${label.toLowerCase()} takes <node>/<port> (e.g. auth/policy) — got "${entry}"`);
     return ref;
   });
 }
@@ -533,7 +443,7 @@ export function allTickets(horde) {
 function checkConsumesHaveProducers(horde, consumes, selfId) {
   if (consumes.length === 0) return;
   const cfg = readConfig() || {};
-  const root = repoRoot();
+  const root = resolveTree({}).path;
   const tickets = allTickets(horde).filter((t) => t.id !== selfId);
   const missing = consumes.filter((c) => {
     if (portExists(root, cfg, c.node, c.port)) return false;
@@ -552,19 +462,31 @@ function checkConsumesHaveProducers(horde, consumes, selfId) {
 // line; nothing else writes an issue folder. Refusals still go through fail(), which is the tools'
 // shared error contract — a caller wanting a softer answer checks first.
 //
-// `revertBase` (`--revert-base <ref>` on `new`) is the ref premerge.mjs's revert test extracts a
+// `revertBase` (`--revert-base <ref>` on `new`) is the ref land.mjs's revert test extracts a
 // ticket's new tests onto instead of the parent branch's tip, for a test meant to already be green
 // there (a contract test pinning a surface that already holds) and red somewhere else named on the
 // ticket's own acceptance line instead (e.g. "red on develop"). Empty by default: the template's own
-// "**Revert base:**" line then renders with nothing after it, which premerge.mjs reads as "use the
+// "**Revert base:**" line then renders with nothing after it, which land.mjs reads as "use the
 // parent tip".
+//
+// `mutate` (`--mutate "<command>"` on `new`) swaps that whole revert-to-base variant for a mutation
+// one: land.mjs runs this shell command against a scratch copy of the branch's own tip instead of
+// extracting the new tests onto a base tree, and requires them red there. It answers a different
+// question than revertBase does — not "where were these tests already known to fail" but "what
+// breaks the implementation they're meant to catch" — so a ticket declaring both is a contract
+// error, not a preference between them: land.mjs would use `mutate` and silently ignore
+// `revertBase`, hiding whichever one the author actually meant. Refused here instead, at the one
+// place a ticket comes into being, rather than left for land.mjs to discover at the far end.
 export function createTicket(horde, spec) {
   const {
     slug, title, nodes, cls, severity = 'medium', kind = 'work', quality = 'autonomous',
     team = 'trunk', evidence = [], files: fileList = [], consumes: consumesRaw,
-    produces: producesRaw, depends = [], revertBase = null,
+    produces: producesRaw, depends = [], revertBase = null, mutate = null,
   } = spec;
   if (!slug) fail('new requires <slug>');
+  if (mutate && revertBase) {
+    fail('a ticket names either --mutate or --revert-base, not both — --mutate replaces the revert-to-base check entirely, so a --revert-base alongside it would be silently unused by land.mjs\'s revert test. Pick the one variant this ticket actually needs');
+  }
   if (!title) fail('new requires --title "<t>"');
   if (!Array.isArray(nodes) || nodes.length === 0) fail('new requires --node <n> (repeatable)');
   // The model allows a ticket one node, or two when the ticket carries a contract between them —
@@ -591,9 +513,8 @@ export function createTicket(horde, spec) {
   checkFilesInBoundary(nodes, files);
   checkConsumesHaveProducers(horde, consumes, null);
 
-  const counterPath = hordePath(horde, 'counter.json');
-  const counter = readJSON(counterPath, { next: 1 });
-  const id = padId(counter.next);
+  const allocated = allocateId(horde, 'ticket');
+  const id = allocated.number;
   const dirName = `${id}-${slugify(slug)}`;
   const dir = teamPath(horde, team, 'issues', dirName);
   if (existsSync(dir)) fail(`issue folder already exists: ${dirName}`);
@@ -615,10 +536,8 @@ export function createTicket(horde, spec) {
     ...(produces.length ? { produces: produces.map((p) => p.ref).join(', ') } : {}),
     ...(evidenceIds.length ? { evidence: evidenceIds.join(', ') } : {}),
     ...(revertBase ? { revertBase } : {}),
+    ...(mutate ? { mutate } : {}),
   });
-  // The Keys line only names author/verifier by default; extend it with one slot per node now
-  // that the Node field (which the parser reads to know the node list) is actually rendered.
-  text = writeKeys(text, parseKeys(text));
   if (acceptance.length) {
     text = text.replace('- [ ] …', acceptance.map((e) => `- [ ] ${e}`).join('\n'));
   }
@@ -627,10 +546,10 @@ export function createTicket(horde, spec) {
   const issuePath = join(dir, 'issue.md');
   writeText(issuePath, text);
   writeText(join(dir, 'log.md'), '');
-  writeJSON(counterPath, { next: counter.next + 1 });
 
   return {
     id,
+    ref: allocated.id,
     dirName,
     dir,
     issuePath,
@@ -662,9 +581,11 @@ function cmdNew(horde, positional, flags) {
     produces: flags.produces,
     depends: flags.depends ? String(flags.depends).split(',').map((s) => s.trim()).filter(Boolean) : [],
     revertBase: flags['revert-base'] || null,
+    mutate: flags.mutate || null,
   });
   emit({
     id: created.id,
+    ref: created.ref,
     dirName: created.dirName,
     team: created.team,
     kind: created.kind,
@@ -673,7 +594,7 @@ function cmdNew(horde, positional, flags) {
     consumes: created.consumes,
     produces: created.produces,
     evidence: created.evidence,
-  }, flags, () => `${created.id} created — ${created.dirName} (team ${created.team})`);
+  }, flags, () => `${created.ref} created — ${created.dirName} (team ${created.team})`);
 }
 
 function cmdList(horde, positional, flags) {
@@ -769,82 +690,8 @@ function cmdGrep(horde, positional, flags) {
   emit(results, flags, () => (results.length ? results.map((r) => `${r.id} ${r.file}: ${r.line}`).join('\n') : '(no matches)'));
 }
 
-// The ticket's own queue item's recorded "agent" — read directly off queue.json rather than
-// through queue.mjs, since queue.mjs already imports from this file and a two-way import between
-// them would be a cycle. Used by cmdKey's --from-queue: after "queue.mjs reconcile" marks a
-// ticket landed following a steward's death, the successor recovers who actually did the work
-// from the same record reconcile itself trusts, instead of guessing or leaving the key unset.
-function authorFromQueue(horde, ticket) {
-  const queue = readJSON(teamPath(horde, ticket.team, 'queue.json'), { items: [] });
-  const items = Array.isArray(queue.items) ? queue.items : [];
-  const item = items.find((i) => i.ticket === ticket.id);
-  if (!item || !item.agent) fail(`no queue item with a recorded agent for ticket ${ticket.id}`);
-  return item.agent;
-}
-
-// What an approval is bound to: the ticket's own branch, from its queue item's recorded "branch"
-// — read directly off queue.json the same way authorFromQueue does, for the same reason (queue.mjs
-// already imports this module; importing back would be a cycle) — as both the tip sha the review
-// was given at (provenance) and the identity of the diff that was read (the binding). A branch
-// that only catches up with its team keeps the same diff, so the approval stands; a change to what
-// the ticket actually does gives a different one, and premerge.mjs asks for the review again.
-// Both null when there's no queue item or branch to read yet (a ticket approved before ever being
-// queued) — the approval is then recorded as the bare name, exactly as it always was.
-function ticketBranchKey(horde, ticket) {
-  const queue = readJSON(teamPath(horde, ticket.team, 'queue.json'), { items: [] });
-  const items = Array.isArray(queue.items) ? queue.items : [];
-  const item = items.find((i) => i.ticket === ticket.id);
-  if (!item || !item.branch) return { sha: null, patchId: null };
-  const cfg = readConfig();
-  // Against the branch's own parent — its team's, or the unmerged ticket it was started from —
-  // so the diff an approval is bound to is the ticket's own work and nothing underneath it. Bind
-  // a stacked ticket against the team branch instead and the approval would name its parent's
-  // change too, and die the moment that parent merged: exactly the wave a stack is meant to save.
-  const parentBranch = parentBranchOf(horde, ticket.team, item).branch;
-  return {
-    sha: git(['rev-parse', '--short', item.branch]),
-    patchId: patchIdOf(item.branch, parentBranch, { context: cfg && cfg.keyContext }),
-  };
-}
-
-// The recorded form of an approval: "<name>" alone, "<name>@<sha>" when only the branch tip is
-// known (and the approval is then good for that one commit only, as it always was), or
-// "<name>@<sha>+<patch-id>" when the diff's identity is known too — the sha stays readable and
-// stays the provenance; the patch-id after the "+" is what the approval is actually held to.
-function approvalValue(name, { sha, patchId }) {
-  if (!sha) return name;
-  return patchId ? `${name}@${sha}+${patchId}` : `${name}@${sha}`;
-}
-
-function cmdKey(horde, positional, flags) {
-  const [idRaw, field] = positional;
-  if (!idRaw || !field) fail('key requires <ticket> author');
-  if (field !== 'author') fail('key only sets "author" here — the verifier key is set by verify.mjs');
-  if (!flags.by && !flags['from-queue']) fail('key requires --by <name> or --from-queue');
-  const ticket = requireTicket(horde, idRaw);
-  const author = flags['from-queue'] ? authorFromQueue(horde, ticket) : flags.by;
-  writeText(ticket.issuePath, setAuthorKey(ticket.text, author));
-  appendLog(ticket, `key: author set to ${author}`);
-  emit({ id: ticket.id, author }, flags, () => `${ticket.id}: author = ${author}`);
-}
-
-// The nodes that must approve this ticket beyond the ones it names: whoever consumes a port it
-// produces. A version bump is a change to their contract, and only they can say the new version
-// is usable — the same derivation `queue.mjs plan` prints as extra approval slots and
-// `premerge.mjs` item 2 then requires, kept in one place so the three never disagree.
-export function consumerNodesOf(text, nodes = nodesOf(text)) {
-  const produces = ticketPorts(text, 'Produces');
-  if (produces.length === 0) return [];
-  const cfg = readConfig() || {};
-  const root = repoRoot();
-  const out = new Set();
-  for (const p of produces) for (const c of consumersOf(root, cfg, p.node, p.port)) out.add(c);
-  for (const n of nodes) out.delete(n);
-  return [...out].sort();
-}
-
 // --delta <path> — the file holding the difference between what the owner already approved and
-// what is on the branch now, written by premerge.mjs when a ticket's diff moved after the review.
+// what is on the branch now, written by land.mjs when a ticket's diff moved after the review.
 // Logged by path rather than by content: the owner reads the file, and the log keeps the record of
 // which re-review this request was, so a later reader can tell a scoped one from a full one.
 function cmdReviewRequest(horde, positional, flags) {
@@ -859,90 +706,6 @@ function cmdReviewRequest(horde, positional, flags) {
   );
 }
 
-function cmdReview(horde, positional, flags) {
-  const [idRaw, verdict, why] = positional;
-  if (!idRaw || !verdict) fail('review requires <ticket> approve|changes');
-  if (verdict !== 'approve' && verdict !== 'changes') fail('review verdict must be "approve" or "changes"');
-  if (!flags.by) fail('review requires --by <name>');
-  const ticket = requireTicket(horde, idRaw);
-  const keys = parseKeys(ticket.text);
-  if (flags.by === keys.author) fail("the reviewer cannot be the ticket's author");
-  const nodes = nodesOf(ticket.text);
-
-  const consumers = consumerNodesOf(ticket.text, nodes);
-
-  let targets;
-  if (flags.node) {
-    if (!nodes.includes(flags.node) && !consumers.includes(flags.node)) {
-      const offered = [...nodes, ...consumers].join(', ');
-      fail(`ticket does not name node: ${flags.node} — it is reviewed by ${offered}`);
-    }
-    targets = [flags.node];
-  } else if (flags.by === 'architect') {
-    targets = nodes.slice();
-  } else if (nodes.length === 1 && consumers.length === 0) {
-    targets = nodes;
-  } else if (nodes.length === 1) {
-    fail(`this ticket changes a contract ${consumers.join(', ')} depend on — pass --node <n> to say whose approval this is (${[...nodes, ...consumers].join(', ')})`);
-  } else {
-    fail('ticket names multiple nodes — pass --node <n>, or review as "architect" to approve all at once');
-  }
-
-  // The approval seat: a ticket's own recorded verifier may stand in for "approve" only when the
-  // ticket's author is the target node's own owner (nobody reviews their own ticket, and the
-  // owner IS the author here) and the roster carries no live architect (the usual stand-in) —
-  // otherwise a verifier has no standing to approve at all, and this refuses rather than letting
-  // it through unmarked. A "changes" request has no such gap to fill, so this never touches it.
-  let verifierSeat = false;
-  if (verdict === 'approve' && keys.verifier !== '—' && flags.by === keys.verifier) {
-    const notOwned = targets.filter((n) => ownerNameForNode(horde, n) !== keys.author);
-    const liveArchitect = architectIsLive(horde);
-    if (notOwned.length > 0 || liveArchitect) {
-      const reasons = [];
-      if (notOwned.length) reasons.push(`the ticket's author does not own: ${notOwned.join(', ')}`);
-      if (liveArchitect) reasons.push('a live architect is on the roster and reviews it instead');
-      fail(
-        `${flags.by} is this ticket's verifier, not an owner or the architect — a verifier stands in `
-        + `for approval only when the ticket's author owns the node and no architect is live; refused `
-        + `because ${reasons.join(' and ')}`,
-      );
-    }
-    verifierSeat = true;
-  }
-
-  const key = verdict === 'approve' ? ticketBranchKey(horde, ticket) : { sha: null, patchId: null };
-  const seatTag = verifierSeat ? '(verifier-seat)' : '';
-  const value = verdict === 'approve'
-    ? approvalValue(`${flags.by}${seatTag}`, key)
-    : `changes:${flags.by}`;
-  let text = ticket.text;
-  for (const n of targets) text = setNodeApproval(text, n, value, { allowNew: consumers.includes(n) });
-
-  if (verdict === 'changes') {
-    text = setStatus(text, 'changes');
-  } else if (allNodesApproved(text)) {
-    text = setStatus(text, 'verified');
-  }
-  writeText(ticket.issuePath, text);
-  const shaNote = key.sha ? ` at ${key.sha}` : '';
-  const diffNote = key.patchId ? ` (diff ${key.patchId.slice(0, 7)})` : '';
-  const seatNote = verifierSeat ? ' (verifier-seat)' : '';
-  for (const n of targets) appendLog(ticket, `review: ${n} ${verdict} by ${flags.by}${seatNote}${shaNote}${diffNote}${why ? ` — ${why}` : ''}`);
-  traceRoster(horde, flags.by);
-  emit(
-    {
-      id: ticket.id,
-      verdict,
-      by: flags.by,
-      nodes: targets,
-      verifierSeat,
-      sha: key.sha,
-      diff: key.patchId,
-    },
-    flags,
-    () => `${ticket.id}: ${verdict} by ${flags.by}${seatNote} (${targets.join(', ')})${diffNote}`,
-  );
-}
 
 function cmdMove(horde, positional, flags) {
   const ticket = requireTicket(horde, positional[0]);
@@ -985,7 +748,7 @@ function setHeaderField(text, label, value) {
 }
 
 // The header block is everything above "## What" (id/title heading, Status, the combined
-// Node/Class/Severity/Team line, Depends-on/Branch, Files, Consumes/Produces, Evidence, Keys) —
+// Node/Class/Severity/Team line, Depends-on/Branch, Files, Consumes/Produces, Evidence) —
 // edit replaces only what comes after it, so none of that state can be clobbered by a body
 // rewrite. The four structural fields are the exception: they are changed by their own flags,
 // each with its own log line, because widening a ticket's files or changing what it delivers is
@@ -1014,10 +777,19 @@ export function setTicketBody(horde, id, body, by) {
 function cmdEdit(horde, positional, flags) {
   const ticket = requireTicket(horde, positional[0]);
   if (!flags.by) fail('edit requires --by <name>');
-  const wantsFields = ['files', 'consumes', 'produces', 'evidence'].some((k) => flags[k] !== undefined);
+  const wantsFields = ['files', 'consumes', 'produces', 'evidence', 'depends'].some((k) => flags[k] !== undefined);
 
   let text = ticket.text;
   const changed = [];
+  if (flags.depends !== undefined) {
+    const deps = String(flags.depends).split(',').map((d) => d.trim()).filter(Boolean);
+    if (deps.length === 0) fail('edit --depends takes at least one ticket number, e.g. --depends 004,007');
+    const team = String(ticket.team).split('/').pop();
+    for (const dep of deps) {
+      const { on } = addDependency(horde, team, ticket.id, dep);
+      changed.push(`depends on: ${on}`);
+    }
+  }
   if (wantsFields) {
     const nodes = nodesOf(text);
     if (flags.files !== undefined) {
@@ -1047,7 +819,7 @@ function cmdEdit(horde, positional, flags) {
   }
 
   const stdin = wantsFields ? '' : readStdin();
-  if (!wantsFields && !stdin.trim()) fail('edit requires the new body on stdin (everything from "## What" on), or one of --files/--consumes/--produces/--evidence');
+  if (!wantsFields && !stdin.trim()) fail('edit requires the new body on stdin (everything from "## What" on), or one of --files/--consumes/--produces/--evidence/--depends');
 
   let bytes = 0;
   if (stdin.trim()) {
@@ -1082,9 +854,7 @@ function main() {
     case 'status': return cmdStatus(horde, positional, flags);
     case 'log': return cmdLog(horde, positional, flags);
     case 'grep': return cmdGrep(horde, positional, flags);
-    case 'key': return cmdKey(horde, positional, flags);
     case 'review-request': return cmdReviewRequest(horde, positional, flags);
-    case 'review': return cmdReview(horde, positional, flags);
     case 'move': return cmdMove(horde, positional, flags);
     case 'edit': return cmdEdit(horde, positional, flags);
     default: fail(`unknown command: ${cmd} (see --help)`);

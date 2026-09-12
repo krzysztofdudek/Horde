@@ -5,85 +5,77 @@
 // and worktree the moment it goes "running" (cut from the team branch's tip, so a worker never
 // has to figure out where to start — or, with `--on`, from an unmerged dependency's tip, so a
 // chain of tickets does not cost one wave per link); "merged" is refused while a dependency of
-// the ticket is unmerged, and until the ticket carries both keys and an approval for every node
-// it names, because the queue is the one place those gates are actually enforced before a branch
-// disappears. An item named "team:<name>" stands for a sub-team's own branch instead of a ticket —
-// roster.mjs creates that branch directly when the sub-team's steward is spawned, so queue.mjs
-// skips all branch/worktree work for it.
+// the ticket is unmerged.
 //
 // `plan` is the other half of this file and writes nothing: the order of the work is not typed in
-// here, it is derived from what the owners declared on their own tickets — the ports each needs and
+// here, it is derived from what the tickets themselves declare — the ports each needs and
 // delivers, the files each touches, the evidence each earns — plus whatever order somebody wrote by
 // hand. The queue stays the state; the plan is a view of the tickets, recomputed every time.
-//
-// Exports renderQueueDoc so roster.mjs can write a freshly-created team's (and the parent
-// team's updated) queue.json with the same rendered .md sibling this file produces itself.
 
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  hordePath, teamPath, hordeRoot, repoRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, readLeases,
+  hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, leaseHolderForNode,
+  resolveTree, provisionTree, provenanceLine, withProvenance, firstClass,
 } from './_lib.mjs';
 import {
-  findTicket, parseField, padId, parseKeys, hasAuthor, hasVerifier, allNodesApproved, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, createTicket, setTicketBody, acceptanceLines,
+  findTicket, parseField, padId, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, createTicket, setTicketBody, acceptanceLines,
 } from './tk.mjs';
 import { noteMerged, parseEvidenceRows } from './wave.mjs';
 import {
   consumersOf, portExists, globToRegExp, nodeExists, advisoryKey, readAdvisoryLedger,
   recordAdvisory,
 } from './node.mjs';
-// roster.mjs imports this file too (renderQueueDoc). Same deliberate, safe shape as the wave.mjs
-// cycle above: hoisted function declarations on both sides, neither calling the other while the
-// module is still being evaluated. Naming the owner a quality ticket is filed for is the roster's
-// answer and nowhere else's — a second lookup here could disagree with the one every brief uses.
-import { ownerNameForNode } from './roster.mjs';
 
-const STATES = ['queued', 'waiting', 'running', 'landed', 'merged', 'escalated', 'dropped'];
+// "proposed" is the state a ticket nobody has ruled on sits in: in the queue, listed and counted,
+// and never a candidate for `next`. A consultant files its own tickets and adds them here itself;
+// the architect's plan review (refine.mjs --step review) is the only way one becomes "queued".
+// "blocked" is where a ticket stops: its fix rounds are spent, so another round would be a state
+// pretending to be progress. Nothing here moves it — `next` never offers it and `reconcile` never
+// touches it — until the client answers the "stuck" ask tick filed for it.
+const STATES = ['proposed', 'queued', 'waiting', 'running', 'landed', 'blocked', 'merged', 'escalated', 'dropped'];
 const SEVERITY_RANK = { high: 0, medium: 1, low: 2 };
 
 const USAGE = `usage: queue.mjs <command> [options]
 
 commands:
   list [--state s] [--team t] [--horde h]
-  add <ticket> [--depends dep,…] [--team t] [--horde h]
-      each dep is NNN (same team), <team>:NNN (a ticket in another team), or
-      <team>:team:<name> (that team's own merge-up item) — e.g. "trunk:team:allies".
-  set <ticket|team:name> <${STATES.join('|')}> [--sha x] [--agent name] [--note "…"]
+  add <ticket> [--depends dep,…] [--proposed] [--team t] [--horde h]
+      each dep is NNN, a ticket number in this same team.
+      --proposed files it as a proposal rather than as work: listed and counted in the queue,
+      never offered by "next", until the architect's plan review passes it. That is how a
+      consultant's own tickets enter — nothing it writes is dispatchable before somebody has
+      looked at the whole plan.
+  set <ticket> <${STATES.join('|')}> [--sha x] [--agent name] [--note "…"]
       [--on MMM] [--team t] [--horde h]
       "running --on MMM" starts the ticket from MMM's tip instead of the team's (a stack): MMM
       must be a dependency of this ticket, in this same team, running or landed, and on a
       branch. The item records "stackedOn"; everything measured against a parent — base
-      freshness, the diff, the keys' binding, the revert test — then names MMM's branch, until
-      MMM merges and this item's "merged" write clears it back to the team branch.
-      "running" on a real ticket creates the branch "<horde>/t-NNN" off the team's tip and a
-      worktree at "<hordeRoot>/worktrees/<horde>/t-NNN" (per horde, so two hordes never collide
-      on a ticket number), and prints the path. "merged" removes the worktree first, then deletes
-      the branch — refused while a dependency of the ticket is still unmerged, and refused
-      unless the ticket's Keys line has the author key, the verifier key (a "reproduced"
-      verdict), and an approval for every node it names. It also clears "stackedOn" on every
-      ticket stacked on this one: their base is the team branch now. "waiting" (the class this
-      item needs is overloaded — no agent of that class can be spawned right now) just changes
-      the state, keeping class, branch and worktree exactly as they were; "next" never offers a
-      waiting item, and "reconcile" leaves it alone. "set <ticket> queued" brings it back.
-      Items named "team:<name>" skip all of the running/merged branch and worktree work — the
-      sub-team's branch already exists. "merged" also appends the merge's bullet to the team's
-      wave journal, so the evidence catalogue sees it without a second command.
+      freshness, the diff, the revert test — then names MMM's branch, until MMM merges and this
+      item's "merged" write clears it back to the team branch.
+      "running" creates the branch "<horde>/t-NNN" off the team's tip and a worktree at
+      "<hordeRoot>/worktrees/<horde>/t-NNN" (per horde, so two hordes never collide on a ticket
+      number), and prints the path. "merged" removes the worktree first, then deletes the branch
+      — refused while a dependency of the ticket is still unmerged, and requires --sha. It also
+      clears "stackedOn" on every ticket stacked on this one: their base is the team branch now.
+      "waiting" (the class this item needs is overloaded — no agent of that class can be spawned
+      right now) just changes the state, keeping class, branch and worktree exactly as they were;
+      "next" never offers a waiting item, and "reconcile" leaves it alone. "set <ticket> queued"
+      brings it back. "merged" also appends the merge's bullet to the team's wave journal, so the
+      evidence catalogue sees it without a second command.
   dep <ticket> --on <dep> [--team t] [--horde h]
-      adds a dependency to an existing item — --on takes the same NNN / <team>:NNN /
-      <team>:team:<name> forms as add's --depends. A "running" item that gains one goes back to
-      "queued" (its worktree kept) until the dependency merges. Refuses a same-team cycle and an
-      unknown dependency (cross-team dependencies are not cycle-checked — a merge-up DAG only
-      ever points up or sideways, never back down).
+      adds a dependency to an existing item — --on takes the same NNN form as add's --depends. A
+      "running" item that gains one goes back to "queued" (its worktree kept) until the
+      dependency merges. Refuses a cycle and an unknown dependency.
   next [--class c] [--why] [--stack] [--team t] [--horde h]
       the first ready queued item — every dependency merged, and its declared Files (a ticket with
       none locks every file of every node it names) clear of every "running" ticket's own Files in
       this team. Ranked: quality-kind tickets (tk.mjs new --kind quality) always last, whatever
       their severity; then severity (read live from the ticket); then the longer remaining
       critical path through the ticket wins (queue.mjs plan's own DAG, read in-process, never
-      shelled out); then a ticket whose nodes hold no running ticket; then FIFO by queue order. A
-      cross-team dependency is checked against the other team's own queue.json, read fresh each
-      time. A "waiting" item is never a candidate. --why prints every queued item with its rank or
+      shelled out); then a ticket whose nodes hold no running ticket; then FIFO by queue order.
+      A "waiting" item is never a candidate. --why prints every queued item with its rank or
       the reason it did not qualify (an unmet dependency, a file lock naming the running ticket
       and the file, or the --class filter).
       --stack also offers, after every ready item and in the same rank order, a queued item whose
@@ -95,14 +87,13 @@ commands:
       --out writes the plan (rendered, or JSON with --json) to a file instead of stdout, for a reader
       who must see it whole — the architect — rather than a summary relayed through a message
       derives the team's DAG from the tickets themselves and prints it; dispatches nothing.
-      Edges come from the ports the tickets declare (a ticket consuming <node>/<port>@<v> comes
-      after the one producing it), from the graph (a version bump comes before every ticket of a
-      node that consumes that port and still names the old version), and from the dependencies
-      written by hand — the three added together, never one overriding another. Prints the
-      layers, the critical path, the components, the tickets that claim the same file with no
-      order between them, the files three or more tickets claim, the approvals a version bump
-      owes the nodes that consume it, ports nothing produces, the charter's evidence rows no
-      ticket names, and what the whole thing costs in runs. Refuses, naming the circle, when the
+      Edges come from the ports the tickets declare (a ticket consuming <node>/<port> comes after
+      the one producing it) and from the dependencies written by hand — the two added together,
+      never one overriding another. Prints the layers, the critical path, the components, the
+      tickets that claim the same file with no order between them, the files three or more
+      tickets claim, the approvals a port change owes the nodes that consume it, ports nothing
+      produces, the charter's evidence rows no ticket names, and what the whole thing costs in
+      runs. Refuses, naming the circle, when the
       tickets depend on each other in one. --apply-order records the order it proposes for a
       file clash as an ordinary dependency, with a note.
   quality [--from <path>] [--class c] [--dry-run] [--team t] [--horde h]
@@ -114,8 +105,6 @@ commands:
       policy is only-the-work, or when no Grain CLI is configured. --dry-run reads and reports
       without filing anything.
   rm <ticket> [--team t] [--horde h]
-  move <ticket> --team t [--horde h]
-      relocates the item to team t's queue (the source team is found by searching).
   render [--team t] [--horde h]
   reconcile [--team t] [--horde h]
       every "running" item: a commit beyond its parent's tip (the team's branch, or the ticket it
@@ -123,6 +112,11 @@ commands:
       ticket branch and goes to "queued" (worktree kept, noted);
       a clean worktree with no commit -> "queued", worktree removed. A "waiting" item is left
       untouched — it has nothing running to reconcile.
+
+plan and quality also take --tree <path>: read the graph there instead of the tip of trunk —
+--horde alone (no --tree) means trunk for both, which is why "plan --horde h" reads what trunk
+holds, never whatever the main checkout happens to have checked out. plan's own output ends with
+"tree: <path> · branch: <branch> · <sha>"; --json carries the same three fields.
 
 options: --json  --help`;
 
@@ -153,38 +147,13 @@ function save(horde, team, doc) {
   writeJSON(queuePath(horde, team), doc, { render: renderQueueDoc });
 }
 
-function isTeamItem(key) { return String(key).startsWith('team:'); }
+// The same two reads and writes, named for the one caller outside this file: tick.mjs works the
+// queue item by item and must do it against this document, not a second reading of its own.
+export function loadQueue(horde, team) { return load(horde, team); }
+export function saveQueue(horde, team, doc) { return save(horde, team, doc); }
 
 function normalizeKey(raw) {
-  if (isTeamItem(raw)) return raw;
   try { return padId(raw); } catch (e) { fail(e.message); return undefined; }
-}
-
-function teamBranchName(horde, team) {
-  return team === 'trunk' ? `${horde}/trunk` : `${horde}/${String(team).split('/').pop()}`;
-}
-
-// Every team's queue, as {team, doc} — used by move and next-across-team lookups. Mirrors
-// tk.mjs's own team walk (kept private here rather than shared, per the no-cross-file-coupling
-// instruction beyond the tk.mjs helpers this file already imports for ticket/keys reads).
-function allTeamPaths(horde) {
-  const root = hordePath(horde, 'teams');
-  const out = [];
-  const walk = (rel) => {
-    out.push(rel);
-    const subDir = teamPath(horde, rel, 'teams');
-    if (existsSync(subDir)) {
-      for (const d of readdirSync(subDir, { withFileTypes: true })) {
-        if (d.isDirectory()) walk(`${rel}/${d.name}`);
-      }
-    }
-  };
-  if (existsSync(root)) {
-    for (const d of readdirSync(root, { withFileTypes: true })) {
-      if (d.isDirectory()) walk(d.name);
-    }
-  }
-  return out;
 }
 
 function cmdList(horde, positional, flags) {
@@ -194,36 +163,18 @@ function cmdList(horde, positional, flags) {
   emit(items, flags, () => (items.length ? items.map((i) => `${i.ticket} ${i.state} ${i.class} ${i.branch || '-'}`).join('\n') : '(empty)'));
 }
 
-// A dependency string is "NNN" (same team as `defaultTeam`), "<team>:NNN" (a ticket in another
-// team), or "<team>:team:<name>" (that team's own merge-up item, e.g. "trunk:team:allies") — the
-// same forms next.mjs's "team:<name>" items already use, just addressed from outside their own
-// team. Resolves and validates against the target team's queue.json (loaded fresh — teamPath()
-// itself refuses an unknown team), returning the canonical string to store: same-team collapses
-// to the bare ticket, cross-team keeps the "<team>:" prefix so it round-trips unambiguously.
+// A dependency string is always a bare ticket number "NNN" in this same team — a team-prefixed
+// form ("<team>:NNN", or "<team>:team:<name>" naming another team's own merge-up item) addressed
+// a sub-team, and sub-teams no longer exist.
 function resolveDepRef(horde, raw, defaultTeam) {
   const str = String(raw).trim();
-  const firstColon = str.indexOf(':');
-  let team;
+  if (str.includes(':')) fail(`invalid dependency: "${raw}" — team-scoped dependencies no longer exist, only a ticket number in this same team`);
   let ticket;
-  if (firstColon === -1) {
-    team = defaultTeam;
-    try { ticket = padId(str); } catch (e) { fail(e.message); }
-  } else {
-    team = str.slice(0, firstColon);
-    const rest = str.slice(firstColon + 1);
-    if (!team || !rest) fail(`invalid dependency: "${raw}"`);
-    if (rest.startsWith('team:')) {
-      if (rest.length <= 'team:'.length) fail(`invalid dependency: "${raw}"`);
-      ticket = rest;
-    } else {
-      try { ticket = padId(rest); } catch (e) { fail(e.message); }
-    }
-  }
-  const doc = load(horde, team);
+  try { ticket = padId(str); } catch (e) { fail(e.message); }
+  const doc = load(horde, defaultTeam);
   const item = doc.items.find((i) => i.ticket === ticket);
-  const canonical = team === defaultTeam ? ticket : `${team}:${ticket}`;
   return {
-    team, ticket, canonical, item,
+    team: defaultTeam, ticket, canonical: ticket, item,
   };
 }
 
@@ -247,19 +198,21 @@ function cmdAdd(horde, positional, flags) {
       dependsOn.push(ref.canonical);
     }
   }
-  const item = newQueueItem(ticket, dependsOn);
+  const item = newQueueItem(ticket, dependsOn, flags.proposed ? 'proposed' : 'queued');
   doc.items.push(item);
   save(horde, team, doc);
-  emit(item, flags, () => `queued: ${item.ticket}`);
+  emit(item, flags, () => `${item.state}: ${item.ticket}`);
 }
 
 // The shape of a queued item, in one place, so a ticket the quality pass files enters the queue as
-// the same object an owner's ticket does.
-function newQueueItem(ticket, dependsOn = []) {
+// the same object an owner's ticket does. Exported for the same reason: the law audit at a wave
+// close files tickets too, and a second derivation of "what a queued item is" is exactly the drift
+// this one function exists to prevent.
+export function newQueueItem(ticket, dependsOn = [], state = 'queued') {
   return {
     ticket: ticket.id,
-    state: 'queued',
-    class: parseField(ticket.text, 'Class') || 'sonnet',
+    state,
+    class: parseField(ticket.text, 'Class') || firstClass(readConfig()),
     branch: null,
     worktree: null,
     dependsOn,
@@ -404,10 +357,13 @@ function adviceTicketBody(item, source) {
   ].join('\n');
 }
 
+// Which mission this component belongs to. Read through the shared resolver rather than off
+// `leases[node]`, because a mission that has been cut leases its TERRITORIES and not the nodes
+// inside them: the direct lookup answered "leased by no horde" about every component of every cut
+// mission, and every advisory about them was skipped as outside the mission it is squarely inside.
 function leasedBy(node) {
-  const { leases } = readLeases();
-  const lease = leases[node];
-  return lease && lease.horde ? lease.horde : null;
+  const holder = leaseHolderForNode(node);
+  return holder ? holder.horde : null;
 }
 function cmdQuality(horde, positional, flags) {
   const team = flags.team || 'trunk';
@@ -419,7 +375,8 @@ function cmdQuality(horde, positional, flags) {
     return;
   }
   const cfg = readConfig() || {};
-  const root = repoRoot();
+  const info = resolveTree({ tree: flags.tree, horde: flags.horde });
+  const root = info.path;
   const { source, text } = readAdvice(root, cfg, flags.from);
   if (!source) {
     emit({
@@ -457,7 +414,7 @@ function cmdQuality(horde, positional, flags) {
       continue;
     }
     const kind = String(item.kind || 'item');
-    const owner = ownerNameForNode(horde, node) || '(no owner staffed)';
+    const owner = node;
     const title = (ADVICE_TITLE[kind] || ((n) => `Quality advisory on ${n.join(', ')}`))(nodes);
     if (flags['dry-run']) {
       filed.push({
@@ -469,7 +426,7 @@ function cmdQuality(horde, positional, flags) {
       slug: `quality-${kind}-${node}`,
       title,
       nodes: [node],
-      cls: flags.class || 'sonnet',
+      cls: flags.class || firstClass(cfg),
       severity: 'low',
       kind: 'quality',
       team,
@@ -488,7 +445,7 @@ function cmdQuality(horde, positional, flags) {
     });
   }
 
-  emit({
+  emit(withProvenance({
     policy,
     ran: true,
     source,
@@ -496,9 +453,9 @@ function cmdQuality(horde, positional, flags) {
     items: asArray(doc.items).length,
     filed,
     skipped,
-  }, flags, () => {
+  }, info), flags, () => {
     const head = `${source}: ${asArray(doc.items).length} item(s) — ${filed.length} ${flags['dry-run'] ? 'would be filed' : 'filed and queued'}, ${skipped.length} skipped`;
-    return [head, ...filed.map((f) => `  ${f.ticket || '(dry run)'}  ${f.node}  ${f.owner}  ${f.title}`)].join('\n');
+    return [head, ...filed.map((f) => `  ${f.ticket || '(dry run)'}  ${f.node}  ${f.owner}  ${f.title}`), provenanceLine(info)].join('\n');
   });
 }
 
@@ -524,86 +481,123 @@ function resolveStackParent(horde, team, key, item, raw) {
     fail(`--on ${raw}: ${key} does not depend on ${ref.canonical} — a stack follows a dependency and nothing else, or the merge order and the base say different things; record the dependency first (queue.mjs dep ${key} --on ${ref.canonical}) if that is what you mean`);
   }
   if (ref.item.state === 'merged') {
-    fail(`--on ${raw}: ${ref.canonical} is already merged — its work is on ${teamBranchName(horde, team)}, so this ticket starts from the team's tip: run it again without --on`);
+    fail(`--on ${raw}: ${ref.canonical} is already merged — its work is on ${horde}/${team}, so this ticket starts from the team's tip: run it again without --on`);
   }
   if (ref.item.state !== 'running' && ref.item.state !== 'landed') {
     fail(`--on ${raw}: ${ref.canonical} is ${ref.item.state} — only a running or landed ticket has a tip to start from; start ${ref.canonical} first, or run this one without --on`);
   }
   if (!ref.item.branch) fail(`--on ${raw}: ${ref.canonical} has no branch yet — nothing to start from`);
-  if (git(['rev-parse', '--verify', ref.item.branch], repoRoot()) === null) {
+  if (git(['rev-parse', '--verify', ref.item.branch], resolveTree({}).path) === null) {
     fail(`--on ${raw}: branch ${ref.item.branch} does not exist in this repository — ${ref.canonical} says it is ${ref.item.state}, so reconcile the queue (queue.mjs reconcile) before stacking on it`);
   }
   return { ticket: ref.canonical, branch: ref.item.branch };
 }
 
+// Everything recording a merge does to the queue, in one place: the dependency order is checked,
+// the worktree and the branch go, the sha is kept, and whatever was stacked on this ticket is
+// stacked on nothing any more. `cmdSet` calls it for `set <t> merged --sha`, and the landing gate
+// calls recordMerged below the moment it has made the merge commit itself — the two must not drift,
+// since a landing that recorded a merge differently from a hand-recorded one would leave two
+// shapes of the same event in one queue.
+function applyMerged(horde, team, doc, item, key, sha, { tree } = {}) {
+  // Merge order is the dependency order, stack or no stack: a ticket written on top of an
+  // unmerged one still lands after it.
+  const unmerged = (item.dependsOn || []).filter((d) => !dependencySatisfied(horde, doc, team, d));
+  if (unmerged.length) {
+    fail(`${key} depends on ${unmerged.join(', ')}, still unmerged — merge order follows the dependencies, so ${unmerged.length === 1 ? 'that ticket merges' : 'those tickets merge'} first`);
+  }
+  const ticket = findTicket(horde, key);
+  if (!ticket) fail(`ticket ${key} not found`);
+  const mergeRoot = resolveTree({ tree }).path;
+  if (item.worktree) git(['worktree', 'remove', '--force', item.worktree], mergeRoot);
+  if (item.branch) git(['branch', '-D', item.branch], mergeRoot);
+  item.worktree = null;
+  item.sha = sha;
+  // Whatever was stacked on this ticket is stacked on nothing now: the work is on the team
+  // branch and the branch it was cut from is gone. The same write that records the merge moves
+  // their parent, so no later reading of the base depends on somebody remembering a second
+  // command — from here they catch up with the team branch like any other ticket.
+  for (const other of doc.items) {
+    if (other === item || other.stackedOn !== key) continue;
+    other.stackedOn = null;
+    other.notes.push({ at: nowIso(), text: `stack: ${key} merged — base is ${horde}/${team} from now on; catch up with it` });
+  }
+}
+
+// The landing gate's own way in: it has already made the merge commit, so all that is left is the
+// record. Returns the journal bullet the wave close reads, exactly as `set <t> merged` does.
+export function recordMerged(horde, team, key, sha, { tree } = {}) {
+  const { doc, item } = findItem(horde, team, key);
+  if (!item) fail(`no queue item: ${key}`);
+  applyMerged(horde, team, doc, item, key, String(sha), { tree });
+  item.state = 'merged';
+  save(horde, team, doc);
+  return { item, journal: noteMerged(horde, team, key, String(sha)) };
+}
+
+// The branch a ticket is worked on and the worktree it is worked in, cut where `set <ticket>
+// running` cuts them. Its own function because it has two callers now: that command, and tick
+// building a dispatch list, which has to cut several in a row against one queue document.
+function provisionRunning(horde, team, key, item, { tree, on } = {}) {
+  const teamBranch = `${horde}/${team}`;
+  const cfg = readConfig() || {};
+  const root = resolveTree({ tree }).path;
+  const stack = on !== undefined ? resolveStackParent(horde, team, key, item, on) : null;
+  let branchName = item.branch;
+  if (!branchName) {
+    const from = stack ? stack.branch : teamBranch;
+    branchName = `${horde}/t-${key}`;
+    if (git(['rev-parse', '--verify', branchName], root) !== null) fail(`branch already exists: ${branchName}`);
+    const created = git(['branch', branchName, from], root);
+    if (created === null) fail(`could not create branch ${branchName} off ${from}`);
+    if (stack) {
+      item.stackedOn = stack.ticket;
+      item.notes.push({ at: nowIso(), text: `stacked on ${stack.ticket} — branch cut from ${stack.branch}` });
+    }
+  } else if (stack && item.stackedOn !== stack.ticket) {
+    fail(`--on ${on}: ${key} is already on branch ${branchName}, cut from somewhere else — a stack is chosen when the branch is cut, and moving one under work already done is a rebase this tool does not do; land or drop what is there first`);
+  }
+  const worktreePath = join(hordeRoot(), 'worktrees', horde, `t-${key}`);
+  try {
+    provisionTree(worktreePath, branchName, cfg);
+  } catch (e) {
+    fail(e.message);
+  }
+  item.branch = branchName;
+  item.worktree = worktreePath;
+}
+
+// Everything `set <ticket> running` does to one item, for the caller that has to do it to several
+// in a row: tick, building a dispatch list. A ticket on that list has had its branch cut and its
+// worktree made already — that is what lets the brief beside it render against a tree that exists,
+// and what stops the next run, or a second tick racing this one, from handing it out twice.
+export function startRunning(horde, team, key, { tree, on, agent } = {}) {
+  const { doc, item } = findItem(horde, team, key);
+  if (!item) fail(`no queue item: ${key}`);
+  provisionRunning(horde, team, key, item, { tree, on });
+  item.state = 'running';
+  if (agent) item.agent = agent;
+  save(horde, team, doc);
+  return item;
+}
+
 function cmdSet(horde, positional, flags) {
   const [rawKey, state] = positional;
-  if (!rawKey || !state) fail('set requires <ticket|team:name> <state>');
+  if (!rawKey || !state) fail('set requires <ticket> <state>');
   if (!STATES.includes(state)) fail(`unknown state: ${state} (allowed: ${STATES.join(', ')})`);
   const team = flags.team || 'trunk';
   const key = normalizeKey(rawKey);
   const { doc, item } = findItem(horde, team, key);
   if (!item) fail(`no queue item: ${key}`);
-  if (flags.on !== undefined && (state !== 'running' || isTeamItem(key))) {
+  if (flags.on !== undefined && state !== 'running') {
     fail('--on only goes with "set <ticket> running" — it says which branch the ticket is cut from, and nothing else cuts one');
   }
 
-  if (state === 'running' && !isTeamItem(key)) {
-    const teamBranch = teamBranchName(horde, team);
-    const root = repoRoot();
-    const stack = flags.on !== undefined ? resolveStackParent(horde, team, key, item, flags.on) : null;
-    let branchName = item.branch;
-    if (!branchName) {
-      const from = stack ? stack.branch : teamBranch;
-      branchName = `${horde}/t-${key}`;
-      if (git(['rev-parse', '--verify', branchName], root) !== null) fail(`branch already exists: ${branchName}`);
-      const created = git(['branch', branchName, from], root);
-      if (created === null) fail(`could not create branch ${branchName} off ${from}`);
-      if (stack) {
-        item.stackedOn = stack.ticket;
-        item.notes.push({ at: nowIso(), text: `stacked on ${stack.ticket} — branch cut from ${stack.branch}` });
-      }
-    } else if (stack && item.stackedOn !== stack.ticket) {
-      fail(`--on ${flags.on}: ${key} is already on branch ${branchName}, cut from somewhere else — a stack is chosen when the branch is cut, and moving one under work already done is a rebase this tool does not do; land or drop what is there first`);
-    }
-    const worktreePath = join(hordeRoot(), 'worktrees', horde, `t-${key}`);
-    if (!existsSync(worktreePath)) {
-      const added = git(['worktree', 'add', worktreePath, branchName], root);
-      if (added === null) fail(`could not create worktree at ${worktreePath} for ${branchName}`);
-    }
-    item.branch = branchName;
-    item.worktree = worktreePath;
-  }
+  if (state === 'running') provisionRunning(horde, team, key, item, { tree: flags.tree, on: flags.on });
 
   if (state === 'merged') {
-    // Merge order is the dependency order, stack or no stack: a ticket written on top of an
-    // unmerged one still lands after it. Checked before the keys, because a ticket that cannot
-    // merge yet should hear that first, whatever its keys say.
-    const unmerged = (item.dependsOn || []).filter((d) => !dependencySatisfied(horde, doc, team, d));
-    if (unmerged.length) {
-      fail(`${key} depends on ${unmerged.join(', ')}, still unmerged — merge order follows the dependencies, so ${unmerged.length === 1 ? 'that ticket merges' : 'those tickets merge'} first`);
-    }
-    if (!isTeamItem(key)) {
-      const ticket = findTicket(horde, key);
-      if (!ticket) fail(`ticket ${key} not found — cannot check its keys`);
-      if (!hasAuthor(ticket.text)) fail(`ticket ${key} has no author key set`);
-      if (!hasVerifier(ticket.text)) fail(`ticket ${key} has no verifier key (a "reproduced" verdict) set`);
-      if (!allNodesApproved(ticket.text)) fail(`ticket ${key} is missing an approval for one or more of its nodes`);
-      if (!flags.sha) fail('set merged requires --sha');
-      if (item.worktree) git(['worktree', 'remove', '--force', item.worktree], repoRoot());
-      if (item.branch) git(['branch', '-D', item.branch], repoRoot());
-      item.worktree = null;
-    }
-    if (flags.sha) item.sha = flags.sha;
-    // Whatever was stacked on this ticket is stacked on nothing now: the work is on the team
-    // branch and the branch it was cut from is gone. The same write that records the merge moves
-    // their parent, so no later reading of the base depends on somebody remembering a second
-    // command — from here they catch up with the team branch like any other ticket.
-    for (const other of doc.items) {
-      if (other === item || other.stackedOn !== key) continue;
-      other.stackedOn = null;
-      other.notes.push({ at: nowIso(), text: `stack: ${key} merged — base is ${teamBranchName(horde, team)} from now on; catch up with it` });
-    }
+    if (!flags.sha) fail('set merged requires --sha');
+    applyMerged(horde, team, doc, item, key, String(flags.sha), { tree: flags.tree });
   }
 
   item.state = state;
@@ -629,8 +623,9 @@ function cmdSet(horde, positional, flags) {
 
 // True when `from` already (transitively) depends on `target` — adding target as a dependency
 // of from's dependent would close a cycle back on itself. Only meaningful within one team's own
-// doc: a cross-team reference (one with a ":") is a leaf here, not traversed further — a
-// merge-up DAG only ever points up or sideways, never back down into a team that depends on it.
+// doc: a colon-bearing reference is a leaf here, not traversed further — resolveDepRef refuses to
+// write one any more, but this stays defensive for a dependsOn a pre-migration mission still
+// carries on disk.
 function dependsTransitively(doc, from, target, seen = new Set()) {
   if (from === target) return true;
   if (from.includes(':') || seen.has(from)) return false;
@@ -640,17 +635,18 @@ function dependsTransitively(doc, from, target, seen = new Set()) {
   return (item.dependsOn || []).some((d) => dependsTransitively(doc, d, target, seen));
 }
 
-function cmdDep(horde, positional, flags) {
-  const idRaw = positional[0];
-  if (!idRaw) fail('dep requires <ticket>');
-  if (!flags.on) fail('dep requires --on <dep>');
-  const team = flags.team || 'trunk';
-  const key = normalizeKey(idRaw);
+// addDependency(horde, team, ticket, on) — the one path that adds an edge to an existing item, and
+// the one place the cycle is caught. `tk.mjs edit --depends` is an alias onto this rather than a
+// second implementation: a cycle only becomes visible once the whole DAG is built, so a second
+// writer that skipped this check would file a plan nothing can start and nobody would know until
+// `plan` refused. Returns the item it changed.
+export function addDependency(horde, team, ticket, on) {
+  const key = normalizeKey(ticket);
   const { doc, item } = findItem(horde, team, key);
-  if (!item) fail(`no queue item: ${key}`);
+  if (!item) fail(`no queue item: ${key} (in team ${team}) — a dependency hangs off a queued ticket; add it to the queue first`);
 
-  const ref = resolveDepRef(horde, flags.on, team);
-  if (!ref.item) fail(`no such dependency: "${flags.on}" (team ${ref.team})`);
+  const ref = resolveDepRef(horde, on, team);
+  if (!ref.item) fail(`no such dependency: "${on}" (team ${ref.team})`);
   if (ref.canonical === key) fail(`cannot depend on itself: ${key}`);
   if (dependsTransitively(doc, ref.canonical, key)) fail(`adding this dependency would create a cycle: ${ref.canonical} already depends on ${key}`);
 
@@ -660,18 +656,26 @@ function cmdDep(horde, positional, flags) {
     item.notes.push({ at: nowIso(), text: `dep: gained dependency on ${ref.canonical} — back to queued until it merges` });
   }
   save(horde, team, doc);
-  emit(item, flags, () => `${item.ticket} now depends on ${ref.canonical}`);
+  return { item, on: ref.canonical };
+}
+
+function cmdDep(horde, positional, flags) {
+  const idRaw = positional[0];
+  if (!idRaw) fail('dep requires <ticket>');
+  if (!flags.on) fail('dep requires --on <dep>');
+  const team = flags.team || 'trunk';
+  const { item, on } = addDependency(horde, team, idRaw, flags.on);
+  emit(item, flags, () => `${item.ticket} now depends on ${on}`);
 }
 
 function severityOf(horde, item) {
-  if (isTeamItem(item.ticket)) return 'medium';
   const ticket = findTicket(horde, item.ticket);
   return (ticket && parseField(ticket.text, 'Severity')) || 'medium';
 }
 
-// A same-team dependency is checked against `doc` directly; a cross-team one ("<team>:<ticket>")
-// is checked against that team's own queue.json, read fresh — never cached, since another
-// team's steward can merge at any time and this has to see it the moment it happens.
+// A same-team dependency is checked against `doc` directly; a colon-bearing one — never written
+// any more, but still possibly present on disk from before this migration — is checked against
+// that team's own queue.json, read fresh.
 function dependencySatisfied(horde, doc, defaultTeam, dep) {
   const firstColon = dep.indexOf(':');
   if (firstColon === -1) {
@@ -710,7 +714,7 @@ function stackParentsFor(horde, doc, team, item) {
 // nodes instead, and checked against the other side's nodes rather than specific paths.
 function runningLocks(horde, doc) {
   return doc.items
-    .filter((i) => i.state === 'running' && !isTeamItem(i.ticket))
+    .filter((i) => i.state === 'running')
     .map((i) => {
       const ticket = findTicket(horde, i.ticket);
       return {
@@ -740,14 +744,33 @@ function lockConflict(ticketText, ticketId, locks) {
   return null;
 }
 
-function cmdNext(horde, positional, flags) {
-  const team = flags.team || 'trunk';
+// The `STACKED, parent <t-NNN> unmerged` line a candidate cut from an unmerged dependency carries
+// wherever it is listed — `next`'s own output and tick's dispatch list both. It is said on its own
+// line rather than folded into the candidate's: somebody scanning a list for what is ready has to
+// see at a glance that this one is not, and a suffix on a long line is exactly what gets missed.
+export function stackedLine(stackOn) {
+  const parents = asArray(stackOn);
+  if (!parents.length) return null;
+  return `STACKED, parent ${parents.map((p) => `t-${p}`).join(', ')} unmerged`;
+}
+
+// Every queued item, ranked the way `next` ranks it. Exported so tick.mjs dispatches from this
+// order rather than growing a second queue beside it: the comparator, the file locks and the
+// dependency rule are this file's, and there is one of each.
+//
+// `limit` additionally returns `picked` — the greedy prefix of `eligible` that fits the limit and
+// collides with nothing another pick on the same list already holds. `next` answers one at a time,
+// so the running locks are enough for it; a list of things to start at once is not, because
+// nothing on it is running yet and two of its entries could otherwise be handed the same file.
+export function rankedCandidates(horde, team, {
+  stack = false, cls = null, tree, limit,
+} = {}) {
   const doc = load(horde, team);
   const cfg = readConfig() || {};
   // Reused in-process, never shelled out: the same DAG `queue.mjs plan` derives, read straight off
   // this call's own buildPlan() so "longer remaining critical path" ranks against the plan's own
   // figures rather than a second, possibly stale, reading of the tickets.
-  const plan = buildPlan(horde, team, cfg);
+  const plan = buildPlan(horde, team, cfg, { tree });
   const remainingPath = new Map(plan.tickets.map((t) => [t.id, t.remainingPath]));
   const locks = runningLocks(horde, doc);
   const busyNodes = new Set(locks.flatMap((l) => l.nodes));
@@ -763,14 +786,14 @@ function cmdNext(horde, positional, flags) {
       // the same file locks, since the ticket it would start from is often the one holding the
       // file. Without --stack, an unmet dependency is what it always was.
       const stackOn = unmet.length ? stackParentsFor(horde, doc, team, item) : [];
-      if (unmet.length && !(flags.stack && stackOn.length)) {
+      if (unmet.length && !(stack && stackOn.length)) {
         return {
           item, idx, eligible: false,
           reason: `waiting on dependenc${unmet.length > 1 ? 'ies' : 'y'} ${unmet.join(', ')}`
             + (stackOn.length ? ` — could be started on top of ${stackOn.join(', ')} (--stack)` : ''),
         };
       }
-      const ticket = isTeamItem(item.ticket) ? null : findTicket(horde, item.ticket);
+      const ticket = findTicket(horde, item.ticket);
       if (ticket) {
         const conflict = lockConflict(ticket.text, item.ticket, locks);
         if (conflict) {
@@ -783,10 +806,10 @@ function cmdNext(horde, positional, flags) {
           };
         }
       }
-      if (flags.class && item.class !== flags.class) {
+      if (cls && item.class !== cls) {
         return {
           item, idx, eligible: false,
-          reason: `excluded by --class ${flags.class} (this ticket is ${item.class})`,
+          reason: `excluded by --class ${cls} (this ticket is ${item.class})`,
         };
       }
       const nodes = ticket ? nodesOf(ticket.text) : [];
@@ -825,9 +848,36 @@ function cmdNext(horde, positional, flags) {
   });
   eligible.forEach((e, i) => { e.rank = i + 1; });
 
+  let picked = null;
+  if (limit !== undefined) {
+    picked = [];
+    const held = locks.slice();
+    for (const e of eligible) {
+      if (picked.length >= limit) break;
+      const ticket = findTicket(horde, e.item.ticket);
+      const text = ticket ? ticket.text : '';
+      if (lockConflict(text, e.item.ticket, held)) continue;
+      held.push({ ticket: e.item.ticket, files: ticketFiles(text), nodes: nodesOf(text) });
+      picked.push(e);
+    }
+  }
+
+  return {
+    doc, entries, eligible, picked,
+  };
+}
+
+function cmdNext(horde, positional, flags) {
+  const team = flags.team || 'trunk';
+  const { entries, eligible } = rankedCandidates(horde, team, {
+    stack: !!flags.stack, cls: flags.class || null, tree: flags.tree,
+  });
+
   const first = eligible.length ? eligible[0] : null;
   const chosen = first
-    ? { ...first.item, stackReady: first.stackOn.length > 0, stackOn: first.stackOn }
+    ? {
+      ...first.item, stackReady: first.stackOn.length > 0, stackOn: first.stackOn, stacked: stackedLine(first.stackOn),
+    }
     : null;
 
   if (flags.why) {
@@ -838,17 +888,18 @@ function cmdNext(horde, positional, flags) {
       reason: e.eligible ? null : e.reason,
       rank: e.eligible ? e.rank : null,
       stackOn: e.eligible ? e.stackOn : [],
+      stacked: e.eligible ? stackedLine(e.stackOn) : null,
     }));
     emit({ chosen: chosen ? chosen.ticket : null, entries: rows }, flags, () => (rows.length
-      ? rows.map((r) => (r.eligible
-        ? `${r.ticket} (${r.class}) — rank ${r.rank}${r.stackOn.length ? `, stack-ready on ${r.stackOn.join(', ')}` : ''}${chosen && r.ticket === chosen.ticket ? ' (chosen)' : ''}`
-        : `${r.ticket} (${r.class}) — skipped: ${r.reason}`)).join('\n')
+      ? rows.flatMap((r) => (r.eligible
+        ? [`${r.ticket} (${r.class}) — rank ${r.rank}${r.stackOn.length ? `, stack-ready on ${r.stackOn.join(', ')}` : ''}${chosen && r.ticket === chosen.ticket ? ' (chosen)' : ''}`, ...(r.stacked ? [r.stacked] : [])]
+        : [`${r.ticket} (${r.class}) — skipped: ${r.reason}`])).join('\n')
       : '(queue empty)'));
     return;
   }
 
   emit(chosen, flags, () => (chosen
-    ? `${chosen.ticket} (${chosen.class})${chosen.stackReady ? ` stack-ready on ${chosen.stackOn.join(', ')}` : ''}`
+    ? [`${chosen.ticket} (${chosen.class})${chosen.stackReady ? ` stack-ready on ${chosen.stackOn.join(', ')}` : ''}`, ...(chosen.stacked ? [chosen.stacked] : [])].join('\n')
     : '(none ready)'));
 }
 
@@ -867,7 +918,7 @@ function filesOverlap(a, b) {
     || (fb.includes('*') && globToRegExp(fb).test(fa))));
 }
 
-function titleOf(text) {
+export function titleOf(text) {
   return (/^#\s*\S+\s*·\s*(.*)$/.exec((text.split('\n')[0] || '').trim()) || [])[1] || '';
 }
 
@@ -890,8 +941,8 @@ function manualDeps(ticketText, item) {
 // Exported so `wave.mjs start` can record the plan's own layers in the journal at the moment a
 // wave opens — the planned parallelism a wave close is later measured against has to be the
 // number this DAG actually produced, not a second derivation of it.
-export function buildPlan(horde, team, cfg) {
-  const root = repoRoot();
+export function buildPlan(horde, team, cfg, { tree } = {}) {
+  const root = resolveTree({ tree, horde }).path;
   const queue = load(horde, team);
   const items = new Map(queue.items.map((i) => [i.ticket, i]));
   // A ticket records its team as the path it sits at on disk ("trunk/alfa"); every address a
@@ -911,7 +962,7 @@ export function buildPlan(horde, team, cfg) {
       id: t.id,
       title: titleOf(t.text),
       nodes,
-      class: parseField(t.text, 'Class') || 'sonnet',
+      class: parseField(t.text, 'Class') || firstClass(cfg),
       severity: parseField(t.text, 'Severity') || 'medium',
       state: item ? item.state : t.status,
       files: ticketFiles(t.text),
@@ -939,41 +990,27 @@ export function buildPlan(horde, team, cfg) {
     }
   };
 
-  // (a) a consumed port depends on the ticket that produces that exact version — in this team or
+  // (a) a consumed port depends on the ticket that produces that exact port — in this team or
   // another one; a cross-team producer is an edge all the same, it just falls outside the layers.
+  // No version to compare any more: two tickets naming the same <node>/<port> name the same
+  // thing, so the port name alone is the match. (This also absorbs what used to be a second
+  // rule here — a ticket declaring a stale port version needed its own edge, derived from the
+  // graph's own consumersOf, because a version mismatch made it invisible to this match. With no
+  // version left to go stale, every case that second rule caught is one this rule already
+  // catches on its own; a separate graph-derived edge would only ever duplicate it.)
   const consumesWithoutProducer = [];
   for (const t of planned) {
     for (const c of ticketPorts(t.text, 'Consumes')) {
       const producers = everyTicket.filter((o) => o.id !== t.id
-        && ticketPorts(o.text, 'Produces').some((p) => p.node === c.node && p.port === c.port && p.version === c.version));
+        && ticketPorts(o.text, 'Produces').some((p) => p.node === c.node && p.port === c.port));
       for (const p of producers) addEdge(t.id, p.team === leafOf(team) ? p.id : `${p.team}:${p.id}`, `consumes ${c.ref}`);
-      if (producers.length === 0) {
-        const anyProducer = everyTicket.some((o) => o.id !== t.id
-          && ticketPorts(o.text, 'Produces').some((p) => p.node === c.node && p.port === c.port));
-        if (!anyProducer && !portExists(root, cfg, c.node, c.port)) {
-          consumesWithoutProducer.push({ ticket: t.id, port: c.ref });
-        }
+      if (producers.length === 0 && !portExists(root, cfg, c.node, c.port)) {
+        consumesWithoutProducer.push({ ticket: t.id, port: c.ref });
       }
     }
   }
 
-  // (b) the graph's own edge: a ticket that raises a port's version comes before every ticket of
-  // a node that consumes that port and still names the version being replaced.
-  for (const producer of planned) {
-    for (const p of ticketPorts(producer.text, 'Produces')) {
-      const consumerNodes = consumersOf(root, cfg, p.node, p.port);
-      if (consumerNodes.length === 0) continue;
-      for (const t of planned) {
-        if (t.id === producer.id) continue;
-        if (!nodesOf(t.text).some((n) => consumerNodes.includes(n))) continue;
-        const old = ticketPorts(t.text, 'Consumes')
-          .find((c) => c.node === p.node && c.port === p.port && c.version < p.version);
-        if (old) addEdge(t.id, producer.id, `${producer.id} raises ${p.node}/${p.port} to @${p.version}, this ticket consumes @${old.version}`);
-      }
-    }
-  }
-
-  // (c) what a steward or an owner wrote by hand, added to the derived edges, never replacing them.
+  // (b) what a steward or an owner wrote by hand, added to the derived edges, never replacing them.
   for (const t of planned) {
     for (const d of manualDeps(t.text, items.get(t.id))) addEdge(t.id, d, 'declared dependency');
   }
@@ -1161,7 +1198,7 @@ function reachability(tickets, byId) {
   return memo;
 }
 
-function renderPlan(plan) {
+export function renderPlan(plan) {
   const lines = [`plan · horde ${plan.horde} · team ${plan.team} · ${plan.tickets.length} open ticket(s)`, ''];
   if (plan.tickets.length === 0) return `${lines[0]}\n(nothing to plan)`;
   plan.layers.forEach((layer, i) => lines.push(`L${i}  ${layer.join(' ')}`));
@@ -1175,10 +1212,6 @@ function renderPlan(plan) {
   lines.push(plan.hubFiles.length
     ? `hub files: ${plan.hubFiles.map((h) => `${h.file} (${h.tickets.join(', ')})`).join(' · ')}`
     : 'hub files: none');
-  const extra = plan.tickets.filter((t) => t.approvals.length > t.nodes.length);
-  lines.push(extra.length
-    ? `extra approvals: ${extra.map((t) => `${t.id} → ${t.approvals.filter((n) => !t.nodes.includes(n)).join(', ')}`).join(' · ')}`
-    : 'extra approvals: none');
   lines.push(plan.consumesWithoutProducer.length
     ? `consumes without a producer: ${plan.consumesWithoutProducer.map((c) => `${c.ticket} needs ${c.port}`).join(' · ')}`
     : 'consumes without a producer: none');
@@ -1192,7 +1225,8 @@ function renderPlan(plan) {
 function cmdPlan(horde, positional, flags) {
   const team = flags.team || 'trunk';
   const cfg = readConfig() || {};
-  const plan = buildPlan(horde, team, cfg);
+  const info = resolveTree({ tree: flags.tree, horde: flags.horde });
+  const plan = withProvenance(buildPlan(horde, team, cfg, { tree: info.path }), info);
   if (plan.cycles.length && plan.cycles[0].length) {
     fail(`the tickets depend on each other in a circle: ${plan.cycles[0].join(' → ')} — a plan cannot start any of them. Drop one of those dependencies (queue.mjs is not the place: the ticket that should not wait is edited with tk.mjs edit --consumes, or the manual --depends is removed) and run plan again`);
   }
@@ -1202,16 +1236,16 @@ function cmdPlan(horde, positional, flags) {
   // rendering; stdout then carries only where it went.
   if (flags.out) {
     const path = String(flags.out);
-    writeText(path, flags.json ? `${JSON.stringify(plan, null, 2)}\n` : `${renderPlan(plan)}\n`);
+    writeText(path, flags.json ? `${JSON.stringify(plan, null, 2)}\n` : `${renderPlan(plan)}\n${provenanceLine(info)}\n`);
     console.log(`plan written to ${path} — ${plan.tickets.length} ticket(s)`);
     return;
   }
   if (flags['apply-order']) {
     const applied = applyOrder(horde, team, plan);
-    emit({ ...plan, applied }, flags, () => `${renderPlan(plan)}\n\napplied: ${applied.length ? applied.map((a) => `${a.ticket} now depends on ${a.on}`).join(' · ') : 'nothing to apply'}`);
+    emit({ ...plan, applied }, flags, () => `${renderPlan(plan)}\n\napplied: ${applied.length ? applied.map((a) => `${a.ticket} now depends on ${a.on}`).join(' · ') : 'nothing to apply'}\n${provenanceLine(info)}`);
     return;
   }
-  emit(plan, flags, () => renderPlan(plan));
+  emit(plan, flags, () => `${renderPlan(plan)}\n${provenanceLine(info)}`);
 }
 
 // The one thing plan writes, and only when asked: the order it just proposed for a file lock,
@@ -1248,29 +1282,6 @@ function cmdRm(horde, positional, flags) {
   emit({ ticket: key }, flags, () => `removed: ${key}`);
 }
 
-function cmdMove(horde, positional, flags) {
-  const idRaw = positional[0];
-  if (!idRaw) fail('move requires <ticket>');
-  if (!flags.team) fail('move requires --team <t>');
-  const key = normalizeKey(idRaw);
-  let sourceTeam = null;
-  let found = null;
-  for (const team of allTeamPaths(horde)) {
-    const doc = load(horde, team);
-    const item = doc.items.find((i) => i.ticket === key);
-    if (item) { sourceTeam = team; found = item; break; }
-  }
-  if (!found) fail(`no queue item: ${key}`);
-  if (sourceTeam === flags.team) fail(`already in team ${flags.team}`);
-  const srcDoc = load(horde, sourceTeam);
-  srcDoc.items = srcDoc.items.filter((i) => i !== found);
-  save(horde, sourceTeam, srcDoc);
-  const destDoc = load(horde, flags.team);
-  destDoc.items.push(found);
-  save(horde, flags.team, destDoc);
-  emit(found, flags, () => `${found.ticket} moved: ${sourceTeam} -> ${flags.team}`);
-}
-
 function cmdRender(horde, positional, flags) {
   const team = flags.team || 'trunk';
   const doc = load(horde, team);
@@ -1278,23 +1289,31 @@ function cmdRender(horde, positional, flags) {
   emit({ team }, flags, () => queuePath(horde, team).replace(/\.json$/, '.md'));
 }
 
-function cmdReconcile(horde, positional, flags) {
-  const team = flags.team || 'trunk';
+// What a spawn that never came back left behind, settled from the branch rather than from a clock.
+// Exported because tick.mjs opens every run with exactly this: an item is "running" because a call
+// was made, and once that call has returned without landing a sha, the branch is the only thing
+// that still knows what happened. Three answers, and each says out loud what was salvaged, because
+// the caller reading this is usually reading it after somebody else's crash.
+export function reconcileRunning(horde, team, { tree } = {}) {
   const doc = load(horde, team);
+  const root = resolveTree({ tree }).path;
   const results = [];
   for (const item of doc.items) {
-    if (item.state !== 'running' || isTeamItem(item.ticket) || !item.branch) continue;
+    if (item.state !== 'running' || !item.branch) continue;
     // Against the item's own parent: a stacked ticket carries its parent's commits too, and
     // counting those as its own work would call an untouched branch "landed" on the first pass.
     const parent = parentBranchOf(horde, team, item).branch;
-    const countOut = git(['rev-list', '--count', `${parent}..${item.branch}`], repoRoot());
+    const countOut = git(['rev-list', '--count', `${parent}..${item.branch}`], root);
     const count = countOut === null ? 0 : Number(countOut);
     if (count > 0) {
       item.state = 'landed';
-      results.push({ ticket: item.ticket, state: item.state });
+      results.push({ ticket: item.ticket, state: item.state, note: `${count} commit(s) beyond ${parent} on ${item.branch} — the work is safe and the branch is ready for the gate` });
       continue;
     }
-    const dirty = item.worktree && existsSync(item.worktree)
+    // A worktree git still has on record but that is gone from disk is not an error to throw on:
+    // it is the ordinary shape of a killed run, and the branch beside it is what matters.
+    const worktreeGone = !!item.worktree && !existsSync(item.worktree);
+    const dirty = item.worktree && !worktreeGone
       ? git(['status', '--porcelain'], item.worktree)
       : null;
     if (dirty) {
@@ -1302,21 +1321,36 @@ function cmdReconcile(horde, positional, flags) {
       git(['commit', '-m', 'wip: reclaimed'], item.worktree);
       item.state = 'queued';
       item.notes.push({ at: nowIso(), text: 'reconcile: worktree was dirty — committed as "wip: reclaimed"' });
-    } else {
-      item.state = 'queued';
-      if (item.worktree) {
-        git(['worktree', 'remove', '--force', item.worktree], repoRoot());
-        item.worktree = null;
-      }
+      results.push({ ticket: item.ticket, state: item.state, note: `worktree was dirty — committed as "wip: reclaimed" on ${item.branch}, and the worktree is kept` });
+      continue;
     }
-    results.push({ ticket: item.ticket, state: item.state });
+    item.state = 'queued';
+    const hadWorktree = item.worktree;
+    if (item.worktree) {
+      git(['worktree', 'remove', '--force', item.worktree], root);
+      git(['worktree', 'prune'], root);
+      item.worktree = null;
+    }
+    results.push({
+      ticket: item.ticket,
+      state: item.state,
+      note: worktreeGone
+        ? `the worktree at ${hadWorktree} is gone from disk and nothing was committed — there was nothing to salvage; ${item.branch} is left as it was and the item is queued again`
+        : `nothing was committed and the worktree was clean — worktree removed, ${item.branch} left as it was`,
+    });
   }
   save(horde, team, doc);
-  emit(results, flags, () => (results.length ? results.map((r) => `${r.ticket} -> ${r.state}`).join('\n') : '(nothing running)'));
+  return results;
+}
+
+function cmdReconcile(horde, positional, flags) {
+  const team = flags.team || 'trunk';
+  const results = reconcileRunning(horde, team, { tree: flags.tree });
+  emit(results, flags, () => (results.length ? results.map((r) => `${r.ticket} -> ${r.state} · ${r.note}`).join('\n') : '(nothing running)'));
 }
 
 function main() {
-  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['apply-order', 'why', 'stack', 'dry-run'] });
+  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['apply-order', 'why', 'stack', 'dry-run', 'proposed'] });
   const [cmd, ...positional] = allPositional;
 
   if (flags.help) { console.log(USAGE); process.exit(0); }
@@ -1332,7 +1366,6 @@ function main() {
     case 'next': return cmdNext(horde, positional, flags);
     case 'plan': return cmdPlan(horde, positional, flags);
     case 'rm': return cmdRm(horde, positional, flags);
-    case 'move': return cmdMove(horde, positional, flags);
     case 'render': return cmdRender(horde, positional, flags);
     case 'reconcile': return cmdReconcile(horde, positional, flags);
     case 'quality': return cmdQuality(horde, positional, flags);

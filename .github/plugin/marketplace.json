@@ -7,8 +7,8 @@
     {
       "name": "horde",
       "source": "./",
-      "description": "Run a mission too big for one agent: turns your coding agent into a director that raises a horde — a steward per branch, an owner per node, workers in worktrees, verifiers who never verify their own work, an architect with veto over the graph.",
-      "version": "0.4.0",
+      "description": "Run a mission too big for one agent: turns your coding agent into a director that raises a horde — workers in worktrees, one ticket each, an architect subagent with a veto over the graph, legislate that writes each territory's law down, and a retrospective that closes the mission out.",
+      "version": "6.0.0",
       "skills": [
         "./skills/horde"
       ]

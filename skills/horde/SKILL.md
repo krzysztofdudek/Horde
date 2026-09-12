@@ -1,6 +1,6 @@
 ---
 name: horde
-description: Run a mission that is too big for one agent — become its director and raise a horde: a steward per team branch, an owner per node, workers in worktrees, verifiers who never verify their own work, an architect with a veto over the graph. Invoke when the user hands over a mission ("let's run this as a horde", "/horde <mission>") or at the start of any session that might be resuming an existing horde — check for uncommitted `.horde/` state before assuming there is none.
+description: Run a mission that is too big for one agent — become its director and raise a horde: workers in worktrees, one ticket each, and an architect with a veto over the graph. Invoke when the user hands over a mission ("let's run this as a horde", "/horde <mission>") or at the start of any session that might be resuming an existing horde — check for uncommitted `.horde/` state before assuming there is none.
 ---
 
 # horde — many cheap hands, one will
@@ -13,16 +13,15 @@ Three things never change, whatever the mission:
 
 1. **Cost class.** You are the top class in the room — Fable or Opus, whichever session the user
    opened — and you spend it on opinions and rulings only, never on implementation, scouting or
-   reformatting. Counsel is Opus by default; a Fable counsel only when the user names it. Design, hard reviews, measurements and the architect's veto go
-   to Opus. Execution, QA lenses, bulk edits and stewarding go to Sonnet. Mechanical transforms with a
+   reformatting. Design, hard reviews, measurements and the architect's veto go
+   to Opus. Execution and bulk edits go to Sonnet. Mechanical transforms with a
    checker go to Haiku. Pick the cheapest that will pass verification; the class is a field of the
    ticket, not a choice made in flight.
 2. **Push — never** without the user's explicit instruction. Starting a mission is the user's consent
    to local commits on the horde's branches; nothing else.
 3. **The user is the chairman.** They set the mission and may interject at any time; every interjection
    is recorded as a charter amendment so it survives your respawn, and every amendment that touches
-   scope ends with one doorbell to the trunk steward — `re-plan` — which pauses dispatch until the
-   owners of the affected nodes have re-proposed and the queue has been reconciled. Back to them go only: a charter
+   scope pauses dispatch until the queue has been reconciled. Back to them go only: a charter
    change, a spent cost limit (when one is set), a claim that something is a boundary and should not be
    done, and anything you are genuinely unsure of. Nothing else — they do not want to be asked.
 
@@ -38,17 +37,17 @@ between agents are doorbells that say "look at file X".
 ## Boot — every session, every wake-up, in this order
 
 ```
-node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/status.mjs                 # hordes on this repo, branches, liveness, queues, last gate
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/status.mjs                 # hordes on this repo, branches, queues, last gate
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/handoff.mjs read           # state of intent: what was in flight, who was waited on, next steps
-node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/escalate.mjs list --open   # what waits for your ruling
-node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/dissent.mjs list --open    # owners who disagree with a ruling and are owed one answer
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/ask.mjs list --open        # what waits for the client's answer
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/decide.mjs list            # rulings you do NOT re-derive
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tick.mjs                   # reconciled, landed, and what to dispatch next
 ```
 
 `status` says "no horde" → the user is handing you a mission: go to **Framing**. Otherwise resume:
-rule on escalations, answer dissents, replace stewards the roster shows dead, close a wave if its queue
-is empty, then hand off and wake later. First message to the user: one sentence of state, one of what
-you are doing first, nothing more.
+relay open asks to the client and record their answers, then go to **Ticking** — `tick.mjs` is the
+one run that tells you what changed since you last looked and what to do about it. First message to
+the user: one sentence of state, one of what you are doing first, nothing more.
 
 **End of every turn that changed anything:** `handoff.mjs write --summary "…" --next "…"`. Without it
 the next wake-up starts blind.
@@ -56,13 +55,18 @@ the next wake-up starts blind.
 ## Framing — the only linear phase, done with the user
 
 Your law here is `reference/discipline/framing.md`: read it before the first question. One question
-per message, two or three approaches with your recommendation first, acceptance as evidence rows a
-verifier can reproduce, and nothing dispatched before the frame is agreed.
+per message, two or three approaches with your recommendation first, acceptance as evidence rows
+someone who was not there can reproduce, and nothing dispatched before the frame is agreed.
+
+This phase produces exactly two things: the mission card, and the graph to run it on. Cutting the
+work into territories, writing tickets and ruling the plan are not this phase's job any more — that
+is what **Refining** is for, right after this.
 
 Nothing runs until the user says go. Together you write the charter (`horde.mjs init <name>` renders
 it from `templates/charter.md`; `horde.mjs charter edit` writes its content from stdin, and every
 later amendment the same way — never by hand): the goal in one paragraph; non-goals; constraints; **acceptance as a catalogue
-of evidence** (scenarios, tests, films — things a verifier can reproduce, never adjectives), each row
+of evidence** (scenarios, tests, films — things someone who was not there can reproduce, never
+adjectives), each row
 with an id — E1, E2, E3 … — because a ticket says which rows it earns by those ids, and the plan
 reports every row no ticket has taken; the nodes
 the mission touches and the nodes it creates; the decision-rights table (what beyond the standard list
@@ -70,135 +74,164 @@ must come to you or the user); **the quality policy — `autonomous` by default,
 rules the evidence has earned and files the improvements the code suggests wherever it works, without
 asking, while anything that would make the architecture weaker still comes to the user; `only-the-work`
 turns both off, and `tk.mjs new --no-quality` turns them off for one ticket**; the cost policy and the
-optional cost limit; the base branch. Then the node map. The node map is the repository's Yggdrasil
-graph and nothing else: `node.mjs bind` reads it,
-the horde never edits it except through `yg`. A repository that has no graph gets one at `horde init`
-— created with `yg`, and where a Grain CLI is available, proposed from the repository's own code and
-accepted, which is the only way a first graph arrives with rules describing how the code is already
-written. Without Yggdrasil `init` refuses and names the install step. Then you cut or refine the nodes
-with the user by one rule — *a node is right-sized when its charter, its ports and its code fit one
-Sonnet context with room to work*. Cutting the graph the first time is a decision you make **with**
-the user, not alone.
+optional cost limit; the base branch.
 
-## Staffing and planning — recursive, not linear
+The graph is the repository's Yggdrasil graph and nothing else — `node.mjs bind` reads it, the horde
+never edits it except through `yg`. A repository that has no graph gets one at `horde init` — created
+with `yg`, and where a Grain CLI is available, proposed from the repository's own code and accepted,
+which is the only way a first graph arrives with rules describing how the code is already written.
+Without Yggdrasil, `init` refuses and names the install step. A graph that needs a further cut — a
+node too big to hold, a piece that does not belong where it sits — is not something you negotiate
+live: name it to the architect as a proposal once refining starts, or, for the mission's very first
+graph, accept what `horde init` and Grain proposed and correct it the same way afterwards. Framing
+ends the moment the charter and the graph both exist; it does not wait for either to be perfect.
 
-- Spawn the **steward** of the trunk team as your teammate (Sonnet, long-lived, `brief.mjs steward`). The steward owns
-  the queue, mechanical verification and merging on its branch, and nothing that requires judgement.
-- The steward spawns an **owner** per touched node (Sonnet, or Opus for a hard node; `brief.mjs owner
-  <node>`). Owners read their node, refresh its charter, and **propose** tickets and contracts. They
-  decide the inside of their node; they never change a contract alone. Their lease — the whole mission
-  or one wave — is a charter field you set at framing (default: mission for a node with three or more
-  tickets, wave otherwise).
-- Spawn the **architect**, your other teammate (Opus, cross-cutting, no node of its own;
-  `brief.mjs architect`). The
-  architect approves or vetoes every change to the graph — new nodes, moved boundaries, new or changed
-  ports — and files graph changes into the graph. The user sees them at wave close.
+## Refining — cut, consult, review, frame
 
-**Who holds the Agent tool.** Two kinds of agent, and only you make the first. You create every
-**teammate** — the trunk steward, the steward of every sub-team, the architect — and the auditor and
-counsel are your own one-shot **subagents**. A steward creates only subagents: its owners, its
-workers, its verifiers. Nobody else spawns anything. A teammate cannot create a teammate, so a
-sub-team is never raised by the steward that asked for it — the steward proposes, you rule, you
-spawn its steward. A subagent is reachable and reclaimable by the agent that spawned it and by
-nobody else; a reclaim is a fresh spawn under N+1 by that same agent, and every teammate is yours to
-replace, the fresh one rebuilding its subtree from the files.
-- The plan is not written by a planner. Each owner declares, on each ticket, the files it touches,
-  the contract versions it needs and delivers, and the evidence rows it earns; `queue.mjs plan`
-  derives the **DAG of tickets** from all of them — layers, critical path, tickets that would collide
-  over a file, contracts nothing produces, evidence nobody is building — and the architect reviews
-  that output before wave 1. Disputed contracts come to you as escalations with the owners' opinions
-  attached. When the plan is clean, the steward starts wave 1. A team with more parallelism than one
-  steward can drive gets a **sub-team**: its own branch, same rules, same tools, one level down. The
-  steward proposes it and you raise its steward yourself (below). Depth follows the work.
+`refine.mjs` is the one phase after framing that needs judgment, and the only one where anything is
+negotiated. It spawns nothing itself: it prints the spawn lists and takes their answers back off
+disk, so every decision is made by an agent and recorded in a file the tools can check.
 
-## While the horde runs — what you do and do not do
+```
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/refine.mjs --step cut --horde <h>      # hand the brief to one architect; run again to check what it wrote
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/refine.mjs --step consult --horde <h>  # one spawn per territory, ALL in one message
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/refine.mjs --step review --horde <h>   # the plan, whole, to one architect; run again to apply the ruling
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/refine.mjs --step frame --horde <h> --json  # what the client sees, and the one place they say go
+```
 
-You do: rule on escalations (`escalate.mjs rule <id> "…" --by director`), answer the dissents against your own rulings once
-(`dissent.mjs answer --by director`), replace a steward the roster shows dead (`roster.mjs reclaim <name> --by director`,
-then re-brief and spawn it again as a teammate), close waves (`wave.mjs close`), audit the sample `wave.mjs audit-plan` names and spawn the
-**auditor** on each (Opus, `brief.mjs auditor NNN --wave n`; you read its verdict, you do not redo it),
-record each verdict with `wave.mjs audit NNN clean|findings "…"`,
-keep the charter current, and keep the horde alive (below).
+The **cut** divides the request into territories — sets of whole components, any level. The tool
+checks the three rules that can be checked (whole components, one component to one territory, and a
+size nobody could hold) and leases each territory across every live horde on the repository.
 
-**A sub-team is your act, not the steward's.** A `structure` escalation asking for one is ruled like
-any other; ruled yes, you run it yourself, because only you can raise a teammate. The escalation
-carries the commands with the names already filled in: `roster.mjs spawn steward --team <name>
---parent <the asking team> --class sonnet` (it cuts the branch off the parent's tip and puts
-`team:<name>` on the parent's queue), `brief.mjs steward <name>`, spawn it as a teammate, then
-`queue.mjs move` the tickets the escalation named onto its queue. Tell the parent steward the
-sub-team is staffed; it does the merging up from there.
+The **consultation** sends one agent per territory, all at once, each seeing its own territory and
+nothing else. They write the tickets and propose the law themselves; nothing comes back as prose.
+Every ticket they file lands as a **proposal** — in the queue, counted, and never dispatched.
 
-**The audit is a sample, not a ritual.** How many tickets to redo is not yours to pick and not a
-fixed one: `wave.mjs audit-plan` says how many and which, drawn from the wave's own merges. The
-number answers the evidence — a refutation among the last five doubles it, a long clean run thins
-it, and it never falls below one a wave. Every close publishes the refutation rate with its
-interval, which is the horde's own honesty number: what fraction of what it called done did not
-survive a second look, and how much that fraction is worth knowing at this sample size.
+The **review** puts the whole plan to one architect. That ruling is the only way a ticket stops being
+a proposal: one passed becomes work, one rejected keeps its reason on its own log, and one nobody
+ruled on never runs. Silence is not a pass.
 
-**Rulings that recur are law you have not written down yet.** Run `escalate.mjs recurring` at each
-close. Three rulings of the same kind on the same node is not a fourth decision waiting to happen —
-it is a rule, and the tool hands the architect the proposal with the rulings as its evidence and
-the steps that file it in the graph. The KPI on the wave close is the same claim in a number:
-human decisions per merged ticket, which should fall wave after wave.
+The **frame** is the client's. Three sections, no tool names: what changes and where, what it will
+prove, what the rules gain. Their "go" is the only approval in the whole run, and it is asked for
+once, at the start — a request of one territory and one ticket says exactly that, and needs no more
+ceremony than a request of ten.
 
-**A wave close that shows the graph weaker files its own escalation.** Every close reads the
+## Recognising the evidence layer
+
+Horde brings no idea of proof of its own. At the start of a mission it reads the repository, names
+whatever is most like an evidence layer, and uses that — once, in the charter, under **Evidence in
+this repository**. `refine.mjs --step cut` writes the paragraph when the cut is accepted; it is in a
+file precisely so a person can correct it, and every ticket's evidence rows refer back to it. The
+next mission judges again from scratch.
+
+The signals, in the order they beat each other:
+
+- **A directory of promises** — markdown, one file per promise, each carrying a status field, and a
+  mirror in the tests: a test named for the promise it keeps. Where the graph has pairing rules tying
+  the two together, those rules are the law that keeps them honest.
+- **Test suites** — the build file names the command; the file-name patterns say what a test is
+  called here. This is the common case, and it is enough.
+- **A scenario runner** — a runner and its input files. The inputs are the evidence; the runner is
+  only how they are replayed.
+
+Where a promises directory exists, **the worker maintains it inside the ticket**, like any other file
+the ticket touches — no separate step, nobody else responsible for it. Its shape is the repository's
+own law to enforce, through the graph's rules; Horde does not check it.
+
+Say **"no evidence layer found"** only when there is genuinely nothing: no suite, no promises, no
+file named like a test. A suite under a build system Horde does not recognise is *not* nothing — it
+is an evidence layer nobody has told the tool about, and the answer is `horde.mjs config set
+testGlobs "<glob>,<glob>"`, not an installation. Only on real emptiness is an offer made, and it is
+one sentence naming the `promises` package and `yg pack add <this tool's repository>#promises`. Nothing
+beyond that sentence:
+Horde is as good at proof as the repository lets it be, and it says so once.
+
+## Running the mission — two seats, three one-shots
+
+**worker** and **architect** are the only two seats that recur through a mission. Three one-shots do
+everything else: the **consultant** `refine.mjs` briefs per territory during refining, **legislate**,
+one pass over one territory that writes down the rules that territory's own work has been following
+by hand, and **retro**, one pass over the whole mission at its end. Nothing is filed by hand any
+more — refining files every ticket, through its consultants — so what is left for you to spawn is
+the agents that carry the plan out:
+
+- Spawn the **architect** as your subagent (Opus, cross-cutting, no node of its own;
+  `brief.mjs architect`), a fresh one for each graph ruling, starting at refining — it rebuilds its
+  context from the files every time, so there is nothing to keep alive between rulings. The
+  architect approves or vetoes every change to the graph — new nodes, moved boundaries, new or
+  changed ports — rules the whole plan once before wave 1, and files graph changes into the graph.
+  The user sees them at wave close.
+- Spawn a **worker** per ticket as your subagent (`brief.mjs worker NNN`), one ticket each —
+  `tick.mjs`'s own dispatch list says which, in what order, and to which class. A
+  worker that needs another round after `tk.mjs status NNN changes` is resumed the same way, or
+  replaced one class up past `config.fixRounds`.
+- Spawn **legislate** as a one-shot per territory (`brief.mjs legislate <territory>`) after a wave
+  closes, or whenever a worker's ticket log flags a pattern nothing enforces. It reads what its own
+  territory's landings were refused for and writes the rule down, in its own branch, raising it on
+  evidence with `node.mjs promote`. Adding a rule needs nobody's permission; taking one away or making
+  it bite less is the chairman's alone, and the landing gate refuses a branch that tries.
+- Nobody merges by hand. `land.mjs <ticket>` — which `tick.mjs` calls for you — is the last step of
+  a ticket: nine checks, and on
+  green it makes the merge commit itself, removes the branch and its worktree, and records the
+  landed sha. That merge commit carries `Ticket:`, `Evidence:` and `Law:` trailers — who worked
+  what, what it proves and what it did to the rules belong to git, which outlives `.horde/`. It is
+  the only place trailers are written, because it is the only place a merge commit is made. Where an
+  adopter's history already has its own convention for this, take theirs and say so. On red it refuses, puts the ticket back on `changes` with the gate's own words, and
+  ticks the round counter. Two things it refuses outright rather than reporting: a branch that
+  weakens a rule it is judged by, and a branch that sharpens a rule while changing the code that
+  rule refuses. The first goes through only on the **client's** recorded answer — put it to them,
+  never rule on it yourself.
+
+**Who holds the Agent tool.** Everything in the cast is your own subagent, and you spawn all of it
+yourself: the architect, one per graph ruling; a worker, one per ticket; every one-shot — a
+consultant, legislate, retro — spoken to once and never resumed. A subagent is reachable and
+reclaimable by the agent that spawned it and by nobody else — that is you, for all of them. An
+architect is never resumed, only replaced; the fresh one rebuilds its context from the files.
+
+## Ticking — the one loop
+
+`tick.mjs` is the whole of "while the horde runs": one run, four things in order, then it exits —
+reconcile every `running` item against its actual branch, land what its result file already says is
+ready (calling `land.mjs` itself where a fresh check is needed), print the dispatch list at
+`config.parallelism`, and say when the queue holds nothing but `merged` items so you know to close
+the wave. Nothing lives between runs, because nothing has to: a run that starts cold reads the same
+state a run that never stopped would have. If the harness gives you a wake-up mechanism (a loop with
+`ScheduleWakeup`, or a scheduled run), use it at 20–30 minute intervals to call `tick.mjs` again;
+without one, the loop advances while the user is present, and you say so. `reference/model.md`'s
+**Runner** section has the whole of who drives that loop and what changes when it runs outside a
+session altogether.
+
+You do: read what `tick.mjs` prints, spawn the workers it lists, relay open asks to the client and
+record their answers (`ask.mjs answer <id> "…"`), and close waves (`wave.mjs close`) when it says the
+queue is ready. You do not: merge by hand, run the test suite yourself to decide a ticket is done, or
+write a brief `brief.mjs` did not render.
+
+**Answers that recur are law you have not written down yet.** Run `escalate.mjs recurring` at each
+close. Three answers of the same kind on the same territory is not a fourth decision waiting to happen —
+it is a rule, and the tool hands the territory's own agent the proposal with the answers as its
+evidence and the steps that file it in the graph.
+
+**A wave close that shows the graph weaker names it in the report.** Every close reads the
 quality index — enforced rules, advisory rules with nothing against them, blocking violations, the
 noise floor, coverage — and compares it with the wave before. Raising it is the horde's own call
-and needs nobody. A fall is not: it opens a `quality` escalation, and that one goes to the user.
+and needs nobody. A fall is not: the close names what fell and asks nobody to accept it silently —
+whether that belongs to `ask.mjs` too is still open (see the CHANGELOG).
 
-You do not: merge, run suites, dispatch, read worker reports, write briefs by hand, verify or audit
-anything yourself. If a steward is dead, respawn it — do not become it. A steward is dead when its
-branch shows no commit and its queue no state change for longer than `liveness.stewardMinutes` in the
-config, judged by files, never by silence.
-
-## Keeping the horde alive — and the cold boot
-
-Every agent of the horde lives only while your session lives. Two consequences:
-
-- **While the session lives**, keep it working: if the harness gives you a wake-up mechanism (a loop
-  with `ScheduleWakeup`, or a scheduled run) use it at 20–30 minute intervals — read `status`, rule,
-  reclaim, close, hand off, sleep. Without one, the horde works while the user is present; say so.
-- **When the session ends**, the whole roster is gone, whatever the files say. Every boot therefore
-  starts with a **cold boot**: `roster.mjs reconcile` marks every entry dead; `queue.mjs reconcile`
-  looks at every `running` ticket's branch — a commit beyond its parent's tip → `landed`; a dirty worktree
-  → its diff committed as `wip: reclaimed` on the ticket branch and the item back to `queued` (the next
-  worker is told); a clean worktree without a commit → `queued`, worktree removed; then you respawn
-  every team's steward from the files — the trunk's and each sub-team's, since every one of them is
-  yours — and each respawns its owners on demand and its workers from the queue. Nothing is lost,
-  because nothing was in anyone's head; a cold boot costs one brief per steward plus the briefs of
-  whatever was mid-flight.
-
-**Standard escalation list** (the steward escalates these; you rule; outside the list the steward
-acts alone and does not ask):
-
-1. a charter change, or work that would need one;
-2. a contract between nodes changing, when the owners do not agree or the architect vetoed;
-3. anything that changes what the product claims to the user;
-4. a conflict — merge, or between owners, including an owner withholding approval after a ruling
-   (approval after a ruling confirms that the code meets the contract, it is not a second vote; an
-   owner who withholds it loses the lease);
-5. a claim that something is a boundary and should not be done;
-6. a deviation from the cost class, or the cost limit reached;
-7. a report no verifier could reproduce;
-8. a change to the rules, this skill, or the process;
-9. a change of structure — a sub-team proposed, a team dissolved, an owner's lease changed;
-10. a quality index that fell over a wave — the close files this one itself, nobody files it by hand.
-
-Items 1, 5, 6 and 10 go on to the user. Everything else you rule on yourself, and the ruling is recorded.
-A ruling is complete when the steward can execute it without coming back: before approving a mapping
-read the node's type in `yg-architecture.yaml` and check the file against the
-type's `when:` globs — under a strict type a mapping the globs do not admit is refused, and that
-`when:` line is the user's, so ask for it in the same breath instead of a second round trip.
-A team branch ready to merge up is **not** an escalation: the sub-steward marks it landed in the parent
-team's queue, and the parent steward — which reads its queue every turn — merges it like a ticket. The
-two stewards are teammates of yours, not of each other, so nothing passes directly between them; a
-sub-team that needs its parent woken says so to you.
+**What travels to the client, and what does not.** `ask.mjs` carries exactly four kinds: `stop` (a
+worker ran out of spec and wrote down the question instead of guessing — the ticket stays put),
+`stuck` (a ticket exhausted its fix rounds — `tick.mjs` files this one, not an agent), `lower` (a
+request to weaken a rule — demote, an added `yg-suppress` marker, a moved `review_by`, an aspect
+detached from a node; requires `--aspect`), and `charter` (a mission-card change: the goal, an
+exclusion, an evidence-catalogue row). A build decision — a contract, a boundary, a conflict between
+two tickets —
+is yours, not the client's; rule on it and record it with `decide.mjs add`. A ruling is complete when
+a worker can execute it without coming back: before approving a
+mapping read the node's type in `yg-architecture.yaml` and check the file against the type's
+`when:` globs — under a strict type a mapping the globs do not admit is refused, and that `when:`
+line is the user's, so ask for it in the same breath instead of a second round trip.
 
 ## Standards you do not give away
 
-- **A report is a hypothesis** until a verifier who is not its author reproduced the evidence. The
-  hub is never weaker than what it verifies: the auditor redoes merged tickets in full, as many
-  per wave as the sample rate says, and the refutation rate is published at every close.
 - **The horde leaves the graph no weaker than it found it.** Better rules, raised statuses, new
   relations and tidying after green are the horde's own to do, without asking. A rule climbs its
   ladder on evidence and nothing else — `node.mjs promote <rule>` grants the next rung only when
@@ -207,44 +240,83 @@ sub-team that needs its parent woken says so to you.
   own log. Anything that lowers enforcement is the user's call: `node.mjs demote` refuses without
   `--by user`, there is no command here for a waiver or a review date, and the wave close lists
   every raise for the chairman to veto whether or not anyone asks.
-- **Two keys and one approval on every merge**: the author's key, the verifier's key, and the owner's
-  review of every node the ticket names, all recorded on the ticket. A steward merges nothing short of
-  that; when the owner authored the ticket, the architect reviews in the owner's place.
-- **Contracts are ports, and a port is a test.** A promise between nodes is one object in the graph,
-  carrying its version and the test that proves it; breaking it is a red test in the neighbour's node,
-  which escalates by itself, and changing that test without raising the version is refused outright.
-- **Nothing lives in an agent's head.** An owner is a lease on a node's context; a dead owner is replaced
-  from the node's charter and log at the cost of one brief.
+- **Ports are the contracts.** A promise between nodes is one object in the graph, named and
+  described — there is no version, in the graph or in Horde. Changing one a node already depends
+  on is a proposal the architect rules on, not a silent edit.
+- **Nothing lives in an agent's head.** A worker or the architect is a lease on a node's context; a
+  dead one is replaced from the node's log at the cost of one brief.
 - **Measure before deciding**; "not doing it, with numbers" is a full result.
 - **Corrections are recorded.** When an agent corrects you and is right, `decide.mjs add` says so.
 
 ## Done
 
 A mission is done when every item in the evidence catalogue is green, the repo's full gate is green on
-the horde's trunk, the last wave's audit sample raised nothing, and the cost report is written. "The queue is
-empty" is never "done" — `status.mjs` shows every charter row's own coverage (no ticket / queued /
-running / merged / reproduced) so you see what still stands in the way before you ask. `horde.mjs done`
-is the gate itself: it refuses, listing every reason, until all four hold, then stamps the charter,
-appends the completion block to the mission journal, and tells you what to do next. Only then do you
-present it to the user with the branch name. The pull request and the push are theirs.
+the horde's trunk, the cost report is written, and the retrospective has been run over the mission as it
+now stands. "The queue is empty" is never "done" — `status.mjs` shows every charter row's own coverage
+(no ticket / queued / running / merged / reproduced) so you see what still stands in the way before you
+ask. `horde.mjs done` is the gate itself: it refuses, listing every reason, until all four hold, then
+stamps the charter, appends the completion block to the mission journal, archives the horde, and tells
+you what to do next. Only then do you present it to the user with the branch name. The pull request and
+the push are theirs.
+
+**Archiving is part of `done`, not a step you remember.** The horde's directory gains an `archived` file
+carrying the date and the trunk sha it handed over at, and moves to `.horde/hordes/_archive/<h>-<date>/`
+— inside the repository's own ignored area (`.horde/.gitignore` is `*`), so nothing of it was ever in
+front of git. `blame.mjs` reads an archived horde exactly as it reads a live one, so a line's custody
+outlives the mission that wrote it. `horde.mjs archive <h>` still does the same thing on its own, for a
+mission abandoned rather than finished.
+
+### The retrospective
+
+`retro.mjs` is the last run of a mission and the only one that reads what nobody read twice: every gate
+refusal from `.horde/hordes/<h>/land/<ticket>.json`, and every line in a ticket's `log.md` that is not a
+state entry. It runs twice.
+
+```
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/retro.mjs --horde <h>            # gather; prints the one-shot to spawn
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/brief.mjs retro --name <n>       # ONE one-shot, over the whole mission
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/retro.mjs --horde <h> --json     # the document, once it has answered
+```
+
+One one-shot for the whole mission, never one per area: the input is around 70KB on a forty-ticket
+mission, well inside what a single area is held to, and the repetitions across areas are the whole point
+of reading it in one place. The one-shot sorts every item into `rule` (a rule proposal, with the
+component and whether a script can decide it), `taste` (one line into that component's own log through
+`yg log add`, and nowhere else) or `inexpressible` (the law will not say it).
+
+What you hand the client is the `inexpressible` list beside the law document `done` writes — one says
+what the law gained, the other what it still cannot say. **The retrospective hands you facts, not
+sentences**: the ticket, the source and the words that were actually written. You write the sentence
+they read, the same way you do for `ask`.
+
+`config.retro.judgeSampleRate` (0 by default) puts a sample of landed tickets' already-judged prose
+pairs to a second judge and reports the disagreement with a Wilson interval. It is a measurement:
+nothing is ever refused over it. `config.retro.inexpressibleThreshold` is the bar the "will not say"
+pile is held against — set it before a mission runs, never after its number is known.
 
 A charter rewrite that drops an evidence row outright is free before the mission's wave 1 starts; after
-it, `horde.mjs charter edit` refuses the drop unless `--escalation <id>` names a ruled escalation whose
-own text names the row — a promise made to the chairman does not quietly disappear from a later edit.
+it, `horde.mjs charter edit` refuses the drop unless `--ask <id>` names an answered ask of kind `charter`
+whose own text names the row — a promise made to the chairman does not quietly disappear from a later edit.
 
 ## Where things are
 
-- `reference/model.md` — the mental model: three planes, the node, roles as functions of the graph,
-  flows, invariants. Read once per session.
-- `reference/topology.md` — branches, worktrees, the `.horde/` tree, gates per level, liveness.
-- `reference/roles/*.md` — the briefs each role is spawned with (the `brief.mjs` tool renders them
-  with the charter, the node context and the ticket filled in).
+- `reference/model.md` — the mental model in full: three planes, the node, roles as functions of the
+  graph, flows, invariants, and — since `reference/topology.md` no longer exists as its own file —
+  the mechanics (branches, worktrees, the `.horde/` tree, node leases, gates per level, the gate
+  lock) and the runner (who calls `tick.mjs` and who spawns what it lists). Read once per session.
+- `reference/roles/*.md` — the briefs each role is spawned with (`brief.mjs` renders them with the
+  charter, the node context and the ticket filled in): `worker`, `architect`, `legislate`, `retro` —
+  a closed list of four. `legislate` is the one-shot that
+  writes one territory's law down: nobody needs permission to add a rule, only to take one away. The
+  consultant `refine.mjs --step consult` spawns has no file here: it is briefed straight off disk by
+  that tool, never through `brief.mjs`.
 - `reference/discipline/*.md` — the law each role is held to, written once and rendered into the
-  briefs that carry it: tests that can fail, finding the cause before the fix, evidence before the
-  claim, findings with a severity, framing before anything runs. `scripts/drill.mjs` drills four of
+  briefs that carry it: tests that can fail, finding the cause before the fix, findings with a
+  severity, framing before anything runs, and — for the retrospective's own second half — evidence
+  before the claim. `scripts/drill.mjs` drills four of
   them against real `.horde/` state.
-- `templates/` — charter, node charter, ticket, verdict, wave close.
+- `templates/` — charter, ticket, mission-close, wave-close.
 - `scripts/` — the tools; every one has `--help` and `--json`. `scripts/README.md` is their contract.
 - `.horde/` — uncommitted state, one per repository, shared by every worktree. The graph — committed,
-  durable knowledge: components, ports, rules, node charters, logs, architectural decisions — is
+  durable knowledge: components, ports, rules, logs, architectural decisions — is
   Yggdrasil's, in `.yggdrasil/`, read only through `yg` and written only through it.

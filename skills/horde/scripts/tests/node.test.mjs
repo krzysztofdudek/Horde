@@ -10,14 +10,6 @@ import {
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
-// node.mjs's "charter edit" takes its content on stdin, which run() (a plain argv exec) cannot
-// supply.
-function charterEdit(dir, node, stdin) {
-  return execFileSync('node', [join(SCRIPTS_DIR, 'node.mjs'), 'charter', 'edit', node, '--json'], {
-    cwd: dir, input: stdin, encoding: 'utf8',
-  });
-}
-
 // ---- the graph is read only through the CLI ---------------------------------------------
 
 test('node.mjs bind: the graph is read through the Yggdrasil CLI, and there is no way around it', async (t) => {
@@ -61,7 +53,7 @@ test('node.mjs bind: the graph is read through the Yggdrasil CLI, and there is n
     assert.equal(r.code, 1);
     assert.match(r.stderr, /predates/);
     assert.match(r.stderr, /yg-node\/1, yg-context\/1 and yg-impact\/1/);
-    assert.match(r.stderr, /later than 5\.8\.0/);
+    assert.match(r.stderr, /later than 6\.0\.0/);
     assert.match(r.stderr, /reports version 5\.7\.3/);
     run('horde.mjs', ['config', 'set', 'ygCommand', requireYg()], dir);
   });
@@ -156,55 +148,15 @@ test('node.mjs show: the rules in force come from the graph\'s own resolution', 
     assert.equal(r.code, 1);
     assert.match(r.stderr, /no such node in the graph/);
   });
-
-  await t.test('the charter\'s inherited-rules section is shown with the rules', () => {
-    writeFileSync(join(dir, '.yggdrasil', 'model', 'src', 'api', 'charter.md'), [
-      '# src/api', '', '## What lives here', '', 'the api', '',
-      '## Rules inherited from above', '',
-      '- No console in shipped code. — from the component above, `src` · status `enforced`',
-      '', '## Sizing', '', 'small', '',
-    ].join('\n'));
-    const r = run('node.mjs', ['show', 'src/api'], dir);
-    assert.match(r.json.rules.charterInherited, /^## Rules inherited from above/);
-    assert.match(r.json.rules.charterInherited, /No console in shipped code/);
-    assert.doesNotMatch(r.json.rules.charterInherited, /Sizing/);
-
-    const human = run('node.mjs', ['show', 'src/api'], dir, { json: false });
-    const rulesSection = human.stdout.slice(human.stdout.indexOf('## Rules —'), human.stdout.indexOf('## Ports'));
-    assert.match(rulesSection, /Rules inherited from above/);
-  });
 });
 
 // ---- the node's own committed files -------------------------------------------------------
 
-test('node.mjs charter/log: the node\'s charter is committed beside its component file, its log is the graph\'s', async (t) => {
+test('node.mjs log: the node\'s log is the graph\'s own', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
   addNode(dir, 'core', { mapping: ['src/core/**'] });
-
-  await t.test('an empty stdin seeds the charter from the template', () => {
-    const parsed = JSON.parse(charterEdit(dir, 'core', ''));
-    assert.ok(parsed.bytes > 0);
-    const charter = readFileSync(join(dir, '.yggdrasil', 'model', 'core', 'charter.md'), 'utf8');
-    assert.match(charter, /# Node · core/);
-    assert.doesNotMatch(charter, /\{\{/);
-  });
-
-  await t.test('content on stdin is written verbatim', () => {
-    JSON.parse(charterEdit(dir, 'core', '# Node · core\n\nedited by the owner\n'));
-    assert.match(readFileSync(join(dir, '.yggdrasil', 'model', 'core', 'charter.md'), 'utf8'), /edited by the owner/);
-  });
-
-  await t.test('charter edit refuses a component the graph does not have', () => {
-    let refused = null;
-    try {
-      charterEdit(dir, 'invented', '# Node · invented\n');
-    } catch (e) { refused = e; }
-    assert.ok(refused, 'a component nobody filed has no charter to write');
-    assert.match(refused.stderr.toString(), /no such node in the graph/);
-    assert.equal(existsSync(join(dir, '.yggdrasil', 'model', 'invented')), false);
-  });
 
   await t.test('log prints the graph\'s own command, and --run runs it for real', () => {
     const printed = run('node.mjs', ['log', 'core', 'the boundary was widened for the migration'], dir);
@@ -221,93 +173,277 @@ test('node.mjs charter/log: the node\'s charter is committed beside its componen
   });
 });
 
+// node charters (charter.md per component, and node.mjs's own "charter edit" command) no longer
+// exist — templates/node-charter.md and the command were removed together. "charter edit"
+// now falls straight through to the dispatcher's generic unknown-command branch, the same as any
+// other made-up word, rather than a charter-specific refusal.
+test('node.mjs charter: "charter edit" is gone — refused as an unknown command, not a specific charter error', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'core', { mapping: ['src/core/**'] });
+
+  await t.test('charter edit falls through to the generic unknown-command refusal', () => {
+    const r = run('node.mjs', ['charter', 'edit', 'core'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /unknown command: charter/);
+    assert.doesNotMatch(r.stderr, /no such node in the graph/); // not the old, node-specific charter refusal
+    assert.match(r.stderr, /--help/);
+    assert.equal(existsSync(join(dir, '.yggdrasil', 'model', 'core', 'charter.md')), false);
+  });
+
+  await t.test('--help, reached the same generic path, names commands that actually exist', () => {
+    const help = run('node.mjs', ['--help'], dir, { json: false });
+    assert.equal(help.code, 0, help.stderr);
+    assert.match(help.stdout, /\bbind\b/);
+    assert.match(help.stdout, /\bshow\b/);
+    assert.doesNotMatch(help.stdout, /charter edit/);
+  });
+});
+
 // ---- ports are the contracts ---------------------------------------------------------------
 
-test('node.mjs contract: a contract is a port on a component, proposed at a version with its test', async (t) => {
+test('node.mjs contract: a contract is a port on a component, proposed by name — there is no version', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
   addNode(dir, 'auth', {
     mapping: ['src/auth/**'],
-    ports: { policy: { version: 1, test: 'tests/contracts/policy.test.mjs' } },
+    ports: { policy: { description: 'The policy promise.' } },
   });
   addNode(dir, 'api', {
     mapping: ['src/api/**'],
     relations: [{ target: 'auth', type: 'uses', consumes: ['policy'] }],
   });
 
-  await t.test('contracts lists the ports the graph declares, with version, test and consumers', () => {
+  await t.test('contracts lists the ports the graph declares, with description and consumers', () => {
     const r = run('node.mjs', ['contracts', '--node', 'auth'], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual(r.json.declared, [{
       node: 'auth',
       port: 'policy',
-      version: 1,
-      test: 'tests/contracts/policy.test.mjs',
       description: 'The policy promise.',
       consumers: ['api'],
     }]);
   });
 
-  let bump;
-  await t.test('proposing a bump defaults to one above what the graph publishes, and names the consumers', () => {
-    const r = run('node.mjs', ['contract', 'propose', 'auth', 'policy', 'the decision shape gains a reason', '--as', 'tests/contracts/policy.test.mjs', '--by', 'owner-auth'], dir);
+  let change;
+  await t.test('proposing a change to a published port names it and its consumers', () => {
+    const r = run('node.mjs', ['contract', 'propose', 'auth', 'policy', 'the decision shape gains a reason', '--by', 'owner-auth'], dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.version, 2);
-    assert.equal(r.json.kind, 'bump');
-    assert.equal(r.json.from, 1);
+    assert.equal(r.json.kind, 'change');
     assert.deepEqual(r.json.consumers, ['api']);
-    bump = r.json.id;
+    change = r.json.id;
   });
 
-  await t.test('a version that does not raise the published one is refused', () => {
-    const r = run('node.mjs', ['contract', 'propose', 'auth', 'policy', 'restating what is already there', '--as', 'tests/contracts/policy.test.mjs', '--version', '1', '--by', 'owner-auth'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /already publishes version 1/);
-  });
-
-  await t.test('a proposal with no test is refused — a port\'s promise IS a test', () => {
-    const r = run('node.mjs', ['contract', 'propose', 'auth', 'sessions', 'a new promise', '--by', 'owner-auth'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /--as <test-path>/);
-  });
-
-  await t.test('a new port on a component that publishes none starts at 1', () => {
-    const r = run('node.mjs', ['contract', 'propose', 'api', 'guard', 'the guard the web calls', '--as', 'tests/contracts/guard.test.mjs', '--by', 'owner-api'], dir);
+  await t.test('a new port on a component that publishes none is an add, with no consumers yet', () => {
+    const r = run('node.mjs', ['contract', 'propose', 'api', 'guard', 'the guard the web calls', '--by', 'owner-api'], dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.version, 1);
     assert.equal(r.json.kind, 'add');
+    assert.deepEqual(r.json.consumers, []);
   });
 
   await t.test('--pending shows what waits on the architect, and nothing else', () => {
     const r = run('node.mjs', ['contracts', '--pending'], dir);
     assert.equal(r.json.declared.length, 0);
-    assert.deepEqual(r.json.proposals.map((p) => `${p.node}/${p.port}@${p.version}`).sort(), ['api/guard@1', 'auth/policy@2']);
+    assert.deepEqual(r.json.proposals.map((p) => `${p.node}/${p.port}`).sort(), ['api/guard', 'auth/policy']);
   });
 
   await t.test('an approval prints the filing the architect makes by hand', () => {
-    const r = run('node.mjs', ['contract', 'approve', bump, 'the consumers can take it', '--by', 'architect'], dir, { json: false });
+    const r = run('node.mjs', ['contract', 'approve', change, 'the consumers can take it', '--by', 'architect'], dir, { json: false });
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.stdout, /port proposal 1 approved — auth\/policy@2/);
+    assert.match(r.stdout, new RegExp(`port proposal ${change} approved — auth/policy`));
     assert.match(r.stdout, /\.yggdrasil\/model\/auth\/yg-node\.yaml/);
     assert.match(r.stdout, /log add --node auth/);
     assert.match(r.stdout, /--approve --only-deterministic/);
   });
 
   await t.test('a vetoed proposal leaves nothing pending, and neither can be ruled twice', () => {
-    const p = run('node.mjs', ['contract', 'propose', 'auth', 'policy', 'a second, disputed bump', '--as', 'tests/contracts/policy.test.mjs', '--version', '3', '--by', 'owner-auth'], dir);
+    const p = run('node.mjs', ['contract', 'propose', 'auth', 'policy', 'a second, disputed change', '--by', 'owner-auth'], dir);
     const vetoed = run('node.mjs', ['contract', 'veto', p.json.id, 'duplicates the one already approved', '--by', 'architect'], dir);
     assert.equal(vetoed.json.status, 'vetoed');
-    const again = run('node.mjs', ['contract', 'approve', bump, '--by', 'architect'], dir);
+    const again = run('node.mjs', ['contract', 'approve', change, '--by', 'architect'], dir);
     assert.equal(again.code, 1);
     assert.match(again.stderr, /already approved/);
   });
 
-  await t.test('the horde wrote nothing into the graph — the port is still at the version the graph declares', () => {
+  await t.test('the horde wrote nothing into the graph — the port still reads what the graph declares', () => {
     const doc = JSON.parse(yg(dir, ['node', 'auth', '--json']).out);
-    assert.equal(doc.ports.policy.version, 1);
+    assert.equal(doc.ports.policy.description, 'The policy promise.');
     assert.equal(existsSync(join(dir, '.yggdrasil', 'model', 'auth', 'contracts.md')), false);
   });
+});
+
+// ---- consumersOf narrows to the port a relation actually names -----------------------------
+//
+// Yggdrasil normalizes a relation that names no port to portNames: ['default'], so consumersOf
+// no longer treats an unnamed relation as a match for every port — only 'default' picks it up.
+
+test('node.mjs contracts: consumersOf narrows to the exact port a relation names, not every port on a shared node', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const LEAF_COUNT = 30;
+  addNode(dir, 'shared', {
+    mapping: ['src/shared/**'],
+    ports: {
+      p: { description: 'The p promise.' },
+      default: { description: 'The default promise.' },
+      ghost: { description: 'Declared, but nothing relates to it.' },
+    },
+  });
+  for (let i = 0; i < LEAF_COUNT; i++) {
+    addNode(dir, `leaf${i}`, { mapping: [`src/leaf${i}/**`], relations: [{ target: 'shared', type: 'uses' }] });
+  }
+
+  const declaredByPort = () => {
+    const r = run('node.mjs', ['contracts', '--node', 'shared'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    return Object.fromEntries(r.json.declared.map((d) => [d.port, d]));
+  };
+
+  await t.test('thirty relations naming no port: the named port has no consumers, default has all thirty', () => {
+    const declared = declaredByPort();
+    assert.deepEqual(declared.p.consumers, []);
+    assert.deepEqual(declared.default.consumers, Array.from({ length: LEAF_COUNT }, (_, i) => `leaf${i}`).sort());
+  });
+
+  await t.test('one relation naming the port explicitly: it alone consumes it, default drops by one', () => {
+    addNode(dir, 'leaf0', { mapping: ['src/leaf0/**'], relations: [{ target: 'shared', type: 'uses', consumes: ['p'] }] });
+    const declared = declaredByPort();
+    assert.deepEqual(declared.p.consumers, ['leaf0']);
+    assert.equal(declared.default.consumers.length, LEAF_COUNT - 1);
+    assert.ok(!declared.default.consumers.includes('leaf0'));
+  });
+
+  await t.test('a relation naming both ports counts the node as a consumer of each, once', () => {
+    addNode(dir, 'leaf-both', { mapping: ['src/leaf-both/**'], relations: [{ target: 'shared', type: 'uses', consumes: ['default', 'p'] }] });
+    const declared = declaredByPort();
+    assert.equal(declared.p.consumers.filter((n) => n === 'leaf-both').length, 1);
+    assert.equal(declared.default.consumers.filter((n) => n === 'leaf-both').length, 1);
+  });
+
+  await t.test('a port with no relation pointing at it has no consumers, and the command does not crash on a missing dependents list', () => {
+    const declared = declaredByPort();
+    assert.deepEqual(declared.ghost.consumers, []);
+  });
+
+  await t.test('a node with zero ports declared returns an empty declared list, not a refusal', () => {
+    addNode(dir, 'bare', { mapping: ['src/bare/**'] });
+    const r = run('node.mjs', ['contracts', '--node', 'bare'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.json.declared, []);
+  });
+
+  await t.test('yg impact unavailable refuses with a CLI message, not a stack trace', () => {
+    run('horde.mjs', ['config', 'set', 'ygCommand', join(dir, 'no-such-yg')], dir);
+    const r = run('node.mjs', ['contracts', '--node', 'shared'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /could not be started/);
+    assert.match(r.stderr, /config set ygCommand/);
+    run('horde.mjs', ['config', 'set', 'ygCommand', requireYg()], dir);
+  });
+
+  await t.test('a yg-impact document at a version Horde does not know is refused by name, not silently emptied', () => {
+    const real = requireYg();
+    const stub = join(dir, 'stale-impact-yg.mjs');
+    writeFileSync(stub, [
+      "import { execFileSync } from 'node:child_process';",
+      'const args = process.argv.slice(2);',
+      "if (args[0] === 'impact' && args.includes('--json')) {",
+      "  console.log(JSON.stringify({ schema: 'yg-impact/2' }));",
+      '  process.exit(0);',
+      '}',
+      `const real = ${JSON.stringify(real)}.split(/\\s+/);`,
+      'try {',
+      "  const out = execFileSync(real[0], [...real.slice(1), ...args], { stdio: ['ignore', 'pipe', 'pipe'] });",
+      '  process.stdout.write(out);',
+      '} catch (e) {',
+      '  if (e.stdout) process.stdout.write(e.stdout);',
+      '  if (e.stderr) process.stderr.write(e.stderr);',
+      '  process.exit(e.status || 1);',
+      '}',
+      '',
+    ].join('\n'));
+    run('horde.mjs', ['config', 'set', 'ygCommand', `node ${stub}`], dir);
+    const r = run('node.mjs', ['contracts', '--node', 'shared'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /predates/);
+    assert.match(r.stderr, /yg-impact\/1/);
+    run('horde.mjs', ['config', 'set', 'ygCommand', real], dir);
+  });
+
+  await t.test('relations[].ports present but not an array does not crash — asArray is the only defense against a document that does not match its own schema', () => {
+    const real = requireYg();
+    const stub = join(dir, 'malformed-ports-yg.mjs');
+    writeFileSync(stub, [
+      "import { execFileSync } from 'node:child_process';",
+      'const args = process.argv.slice(2);',
+      "if (args[0] === 'impact' && args.includes('--json')) {",
+      "  console.log(JSON.stringify({ schema: 'yg-impact/1', ports: [], dependents: [{ node: 'leaf-malformed', relations: [{ ports: 'default' }] }] }));",
+      '  process.exit(0);',
+      '}',
+      `const real = ${JSON.stringify(real)}.split(/\\s+/);`,
+      'try {',
+      "  const out = execFileSync(real[0], [...real.slice(1), ...args], { stdio: ['ignore', 'pipe', 'pipe'] });",
+      '  process.stdout.write(out);',
+      '} catch (e) {',
+      '  if (e.stdout) process.stdout.write(e.stdout);',
+      '  if (e.stderr) process.stderr.write(e.stderr);',
+      '  process.exit(e.status || 1);',
+      '}',
+      '',
+    ].join('\n'));
+    run('horde.mjs', ['config', 'set', 'ygCommand', `node ${stub}`], dir);
+    const r = run('node.mjs', ['contracts', '--node', 'shared'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const declared = Object.fromEntries(r.json.declared.map((d) => [d.port, d]));
+    assert.deepEqual(declared.p.consumers, []);
+    run('horde.mjs', ['config', 'set', 'ygCommand', real], dir);
+  });
+});
+
+// The mission charter's evidence catalogue, written from stdin through horde.mjs. This is the
+// mission-level charter horde.mjs still owns — unrelated to the per-node charter.md/`node.mjs
+// charter edit`, which no longer exists (see the "node.mjs charter" test above).
+function hordeCharter(dir, body) {
+  return execFileSync('node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit', '--json'], {
+    cwd: dir, input: body, encoding: 'utf8',
+  });
+}
+
+test('queue.mjs plan: a ticket\'s approvals follow consumersOf\'s exact port match, not every neighbour of the node it touches', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  hordeCharter(dir, [
+    '# Mission · port narrowing', '',
+    '## Goal', '', 'Prove a ticket\'s approvals follow the port it names, not every neighbour.', '',
+    '## Acceptance — the evidence catalogue', '',
+    '| id | evidence | node | reproduced by |', '|---|---|---|---|',
+    '| E1 | the shared node ships a p port | shared | |', '',
+    '## Nodes', '', 'shared, named1, named2, plain1, plain2', '',
+  ].join('\n'));
+  addNode(dir, 'shared', { mapping: ['src/shared/**'] });
+  addNode(dir, 'named1', { mapping: ['src/named1/**'], relations: [{ target: 'shared', type: 'uses', consumes: ['p'] }] });
+  addNode(dir, 'named2', { mapping: ['src/named2/**'], relations: [{ target: 'shared', type: 'uses', consumes: ['p'] }] });
+  addNode(dir, 'plain1', { mapping: ['src/plain1/**'], relations: [{ target: 'shared', type: 'uses' }] });
+  addNode(dir, 'plain2', { mapping: ['src/plain2/**'], relations: [{ target: 'shared', type: 'uses' }] });
+
+  const newTicket = (args) => {
+    const r = run('tk.mjs', ['new', ...args, '--evidence', 'E1'], dir);
+    if (r.code !== 0) throw new Error(`tk new failed: ${r.stderr}`);
+    return r.json.id;
+  };
+  const id = newTicket(['bump-p', '--title', 'bump p', '--node', 'shared', '--class', 'standard', '--files', 'src/shared/p.ts', '--produces', 'shared/p']);
+  run('queue.mjs', ['add', id], dir);
+
+  const r = run('queue.mjs', ['plan'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const ticket = r.json.tickets.find((t2) => t2.id === id);
+  assert.ok(ticket, 'the ticket appears in the plan');
+  assert.deepEqual([...ticket.approvals].sort(), ['named1', 'named2', 'shared']);
 });
 
 // ---- graph-change proposals ----------------------------------------------------------------
@@ -362,30 +498,18 @@ test('node.mjs propose/approve/apply: the horde records the decision, the archit
     assert.match(r.stderr, /requires --node/);
   });
 
-  await t.test('--by traces that name in the roster when it is one, for both kinds of ruling', () => {
-    const architect = run('roster.mjs', ['spawn', 'architect', '--class', 'opus'], dir);
-    assert.equal(architect.code, 0, architect.stderr);
-    const architectName = architect.json.name;
+  // There is no roster, and `--by` is not traced against one: it is the name of a
+  // territory, a ticket or whoever is answering, recorded verbatim and nothing more. There is no
+  // seat to look up, so there is no lookup.
+  await t.test('--by is recorded verbatim, and no roster file is read or written', () => {
     const rosterPath = join(dir, '.horde', 'hordes', 'mission1', 'roster.json');
-    const backdate = () => {
-      const roster = JSON.parse(readFileSync(rosterPath, 'utf8'));
-      const staleAt = new Date(Date.now() - 120 * 60000).toISOString();
-      roster.entries.find((e) => e.name === architectName).lastTrace = staleAt;
-      writeFileSync(rosterPath, JSON.stringify(roster, null, 2));
-      return staleAt;
-    };
-
-    let staleAt = backdate();
-    const p = run('node.mjs', ['propose', 'rule', 'traced proposal', '--by', 'owner1'], dir);
-    assert.equal(run('node.mjs', ['approve', p.json.id, '--by', architectName], dir).code, 0);
-    let after = run('roster.mjs', ['list'], dir).json.find((e) => e.name === architectName);
-    assert.notEqual(after.lastTrace, staleAt);
-
-    staleAt = backdate();
-    const c = run('node.mjs', ['contract', 'propose', 'core', 'render', 'traced port', '--as', 'tests/render.test.mjs', '--by', 'owner1'], dir);
-    assert.equal(run('node.mjs', ['contract', 'approve', c.json.id, '--by', architectName], dir).code, 0);
-    after = run('roster.mjs', ['list'], dir).json.find((e) => e.name === architectName);
-    assert.notEqual(after.lastTrace, staleAt);
+    const p = run('node.mjs', ['propose', 'rule', 'an untraced proposal', '--by', 'the-checkout-territory'], dir);
+    assert.equal(p.code, 0, p.stderr);
+    assert.equal(p.json.by, 'the-checkout-territory');
+    const ruled = run('node.mjs', ['approve', p.json.id, '--by', 'the-checkout-territory'], dir);
+    assert.equal(ruled.code, 0, ruled.stderr);
+    assert.equal(ruled.json.rulingBy, 'the-checkout-territory');
+    assert.equal(existsSync(rosterPath), false, 'nothing in this tool set reads or writes a roster any more');
   });
 });
 
@@ -393,8 +517,8 @@ test('node.mjs map: the mission\'s components with owner, ports and open port pr
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  addNode(dir, 'core', { mapping: ['src/core/**'], ports: { render: { version: 2, test: 'tests/render.test.mjs' } } });
-  run('node.mjs', ['contract', 'propose', 'core', 'render', 'the render surface gains slots', '--as', 'tests/render.test.mjs', '--by', 'owner1'], dir);
+  addNode(dir, 'core', { mapping: ['src/core/**'], ports: { render: { description: 'The render promise.' } } });
+  run('node.mjs', ['contract', 'propose', 'core', 'render', 'the render surface gains slots', '--by', 'owner1'], dir);
 
   const rosterPath = join(dir, '.horde', 'hordes', 'mission1', 'roster.json');
   writeFileSync(rosterPath, JSON.stringify({
@@ -405,7 +529,7 @@ test('node.mjs map: the mission\'s components with owner, ports and open port pr
   assert.equal(m.code, 0, m.stderr);
   const row = m.json.find((r) => r.node === 'core');
   assert.equal(row.owner, 'mission1-owner-core-1');
-  assert.deepEqual(row.ports, ['render@2']);
+  assert.deepEqual(row.ports, ['render']);
   assert.equal(row.openPortProposals, 1);
   // stamps are retired: the lock says what is verified, and map does not keep a second answer
   assert.equal('stamp' in row, false);
@@ -461,7 +585,7 @@ test('node.mjs verdicts: the prose rules waiting on a judgement, with the comman
 
 // ---- E16: node ownership is exclusive across live hordes on one repository --------------------
 
-test('node.mjs bind: node-lease-across-hordes — exclusive across live hordes, --take needs a ruled escalation', async (t) => {
+test('node.mjs bind: node-lease-across-hordes — exclusive across live hordes, --take needs an answered ask', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir, 'alpha');
@@ -491,37 +615,37 @@ test('node.mjs bind: node-lease-across-hordes — exclusive across live hordes, 
     refusalText = r.stderr.trim();
   });
 
-  await t.test('the refusal names the escalation path, and --take without one is refused too', () => {
-    assert.match(refusalText, /--take --escalation <id>/);
+  await t.test('the refusal names the ask path, and --take without one is refused too', () => {
+    assert.match(refusalText, /--take --ask <id>/);
     const r = run('node.mjs', ['bind', 'shared', '--horde', 'beta', '--take'], dir);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /--escalation <id>/);
+    assert.match(r.stderr, /--ask <id>/);
   });
 
-  let escalationId;
-  await t.test('--take against an escalation that has not been ruled yet is refused', () => {
-    const esc = run('escalate.mjs', ['add', 'beta needs shared', '--kind', 'conflict', '--horde', 'beta'], dir);
-    assert.equal(esc.code, 0);
-    escalationId = esc.json.id;
-    const r = run('node.mjs', ['bind', 'shared', '--horde', 'beta', '--take', '--escalation', escalationId], dir);
+  let askId;
+  await t.test('--take against an ask that has not been answered yet is refused', () => {
+    const opened = run('ask.mjs', ['add', 'beta needs shared', '--kind', 'charter', '--horde', 'beta'], dir);
+    assert.equal(opened.code, 0);
+    askId = opened.json.id;
+    const r = run('node.mjs', ['bind', 'shared', '--horde', 'beta', '--take', '--ask', askId], dir);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /not ruled/);
+    assert.match(r.stderr, /not answered/);
   });
 
-  await t.test('--take over a ruled escalation succeeds and writes the take-over to the graph\'s own log', () => {
-    const ruled = run('escalate.mjs', ['rule', escalationId, 'beta takes "shared"; alpha no longer needs it', '--horde', 'beta'], dir);
-    assert.equal(ruled.code, 0);
+  await t.test('--take over an answered ask succeeds and writes the take-over to the graph\'s own log', () => {
+    const answered = run('ask.mjs', ['answer', askId, 'beta takes "shared"; alpha no longer needs it', '--horde', 'beta'], dir);
+    assert.equal(answered.code, 0);
 
-    const taken = run('node.mjs', ['bind', 'shared', '--horde', 'beta', '--take', '--escalation', escalationId], dir);
+    const taken = run('node.mjs', ['bind', 'shared', '--horde', 'beta', '--take', '--ask', askId], dir);
     assert.equal(taken.code, 0);
     assert.equal(taken.json.status, 'taken');
     assert.equal(taken.json.from, 'alpha');
-    assert.equal(taken.json.escalation, escalationId);
+    assert.equal(taken.json.ask, askId);
     assert.equal(taken.json.logged, true);
 
     const log = yg(dir, ['log', 'read', '--node', 'shared']);
     assert.equal(log.code, 0, log.out);
-    assert.match(log.out, new RegExp(`took the lease on "shared" from horde "alpha" over escalation ${escalationId}`));
+    assert.match(log.out, new RegExp(`took the lease on "shared" from horde "alpha" over ask ${askId}`));
 
     // alpha lost the lease entirely — beta is now the live holder, so alpha is refused in turn,
     // exactly as beta was before the take-over
@@ -555,5 +679,128 @@ test('node.mjs bind: archiving a horde releases its leases', async (t) => {
     assert.equal(r.code, 0);
     assert.equal(r.json.status, 'claimed');
     assert.equal(r.json.freedFrom, null);
+  });
+});
+
+// ---- one counter, three prefixes ---------------------------------------------------------------
+//
+// Everything the horde numbers comes out of hordes/<h>/counter.json, and wears the prefix that says
+// what kind of thing it is. Before this, tickets, ports and proposals each ran their own sequence
+// from 1, so one mission could hold three different things all called "1" and an id on its own was
+// an ambiguous question.
+
+test('the horde numbers everything from one counter, with one prefix per kind', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'core', { mapping: ['src/core/**'] });
+
+  await t.test('a ticket, a graph item and a question to the client take consecutive numbers', async () => {
+    const ticket = run('tk.mjs', ['new', 'first', '--title', 'First', '--node', 'core', '--class', 'standard'], dir);
+    assert.equal(ticket.code, 0, ticket.stderr);
+    assert.equal(ticket.json.ref, 't-001');
+    assert.equal(ticket.json.id, '001', 'the number on its own is still what names the folder on disk');
+
+    const proposal = run('node.mjs', ['propose', 'rule', 'never bypass the validator', '--by', 'core'], dir);
+    assert.equal(proposal.code, 0, proposal.stderr);
+    assert.equal(proposal.json.id, 'g-002');
+
+    // The client channel is the third kind. Nothing files one yet, so this asks the allocator
+    // directly — the point under test is that all three come out of the same sequence.
+    const { allocateId } = await import('../_lib.mjs');
+    const prevCwd = process.cwd();
+    process.chdir(dir);
+    let ask;
+    try { ask = allocateId('mission1', 'ask'); } finally { process.chdir(prevCwd); }
+    assert.equal(ask.id, 'a-003');
+
+    const second = run('tk.mjs', ['new', 'second', '--title', 'Second', '--node', 'core', '--class', 'standard'], dir);
+    assert.equal(second.json.ref, 't-004', 'the ticket sequence never restarts beside the others');
+  });
+
+  await t.test('a contract proposal is a graph item like any other, with no letter of its own', () => {
+    const port = run('node.mjs', ['contract', 'propose', 'core', 'render', 'the render promise', '--by', 'core'], dir);
+    assert.equal(port.code, 0, port.stderr);
+    assert.match(port.json.id, /^g-\d{3}$/);
+  });
+
+  await t.test('a port proposal always carries an aspects field, empty when none was named', () => {
+    const named = run('node.mjs', ['contract', 'propose', 'core', 'guard', 'the guard promise', '--aspects', 'no-marker, tidy', '--by', 'core'], dir);
+    assert.equal(named.code, 0, named.stderr);
+    assert.deepEqual(named.json.aspects, ['no-marker', 'tidy']);
+
+    const bare = run('node.mjs', ['contract', 'propose', 'core', 'shape', 'the shape promise', '--by', 'core'], dir);
+    assert.equal(bare.code, 0, bare.stderr);
+    assert.deepEqual(bare.json.aspects, [], 'the field is written whether or not one was named — a missing field is a record Yggdrasil cannot read');
+  });
+
+  await t.test('no identifier wears a letter the model no longer has', () => {
+    const graph = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'graph.json'), 'utf8'));
+    const ids = [...graph.proposals, ...graph.ports].map((x) => x.id);
+    assert.ok(ids.length > 0);
+    for (const id of ids) {
+      assert.doesNotMatch(id, /^e-/, 'escalation folded into the client channel and has no kind of its own');
+      assert.doesNotMatch(id, /^d-/, 'dissent folded into the client channel and has no kind of its own');
+    }
+    assert.equal(new Set(ids).size, ids.length, 'no two items in one file wear the same number');
+  });
+
+  await t.test('a bare number still resolves, and says so', () => {
+    const proposal = run('node.mjs', ['propose', 'rule', 'referenced the old way', '--by', 'core'], dir);
+    const n = proposal.json.id.replace(/^g-0*/, '');
+    const ruled = run('node.mjs', ['approve', n, '--by', 'core'], dir, { json: false });
+    assert.equal(ruled.code, 0, ruled.stderr);
+    assert.match(ruled.stdout, new RegExp(`proposal ${proposal.json.id} approved`));
+    assert.match(ruled.stdout, /was read as/);
+    assert.match(ruled.stdout, /accepted for one release/);
+  });
+});
+
+test('a graph.json from before the shared counter reads without collision, and never repeats a number', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'core', { mapping: ['src/core/**'] });
+
+  // The real migration case: two independent sequences, both starting at 1, so a port and a
+  // proposal in the same file both call themselves "1".
+  const hordeDir = join(dir, '.horde', 'hordes', 'mission1');
+  writeFileSync(join(hordeDir, 'graph.json'), `${JSON.stringify({
+    proposals: [
+      { id: '1', kind: 'rule', text: 'the old proposal', by: 'owner1', status: 'open', at: '2026-01-01T00:00:00.000Z' },
+      { id: '2', kind: 'rule', text: 'another old proposal', by: 'owner1', status: 'open', at: '2026-01-01T00:00:00.000Z' },
+    ],
+    ports: [
+      { id: '1', node: 'core', port: 'render', version: 1, test: 'tests/r.test.mjs', kind: 'add', from: null, text: 'the old port', status: 'proposed', by: 'owner1', at: '2026-01-01T00:00:00.000Z' },
+    ],
+    aspects: [],
+    advisories: [],
+  }, null, 2)}\n`);
+  writeFileSync(join(hordeDir, 'counter.json'), `${JSON.stringify({ next: 1 })}\n`);
+
+  await t.test('both old sequences are still readable, each item by its own id', () => {
+    const proposals = run('node.mjs', ['proposals', '--open'], dir);
+    assert.deepEqual(proposals.json.map((p) => p.id), ['1', '2']);
+    const ports = run('node.mjs', ['contracts', '--pending'], dir);
+    assert.equal(ports.code, 0, ports.stderr);
+  });
+
+  await t.test('a new item takes a number above the highest of BOTH old sequences', () => {
+    const fresh = run('node.mjs', ['propose', 'rule', 'the first one issued by the shared counter', '--by', 'core'], dir);
+    assert.equal(fresh.code, 0, fresh.stderr);
+    assert.equal(fresh.json.id, 'g-003', 'counter.json said 1; the file already held 1 and 2, so the next free number is 3');
+
+    const ticket = run('tk.mjs', ['new', 'after-migration', '--title', 'After', '--node', 'core', '--class', 'standard'], dir);
+    assert.equal(ticket.json.ref, 't-004');
+
+    // The old file's own two "1"s stay exactly as they were — nothing rewrites history. What must
+    // never happen is a THIRD one: every number the shared counter issues from here clears both.
+    const graph = JSON.parse(readFileSync(join(hordeDir, 'graph.json'), 'utf8'));
+    const oldNumbers = new Set(['1', '2']);
+    const issued = [...graph.proposals, ...graph.ports].map((x) => x.id).filter((id) => id.startsWith('g-'));
+    assert.deepEqual(issued, ['g-003']);
+    for (const id of issued) {
+      assert.equal(oldNumbers.has(id.replace(/^g-0*/, '')), false, 'the migration never hands out a number the file already carries');
+    }
   });
 });

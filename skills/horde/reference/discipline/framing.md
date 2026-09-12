@@ -1,7 +1,7 @@
 # Framing before anything runs
 
-**The law: nothing is built before the frame is agreed, and the frame is a list of things a verifier
-can reproduce.**
+**The law: nothing is built before the frame is agreed, and the frame is a list of things someone
+who was not there can reproduce.**
 
 Everything downstream is cheap or expensive depending on this one conversation. A vague frame is paid
 for later, in review rounds, by agents who cannot ask.

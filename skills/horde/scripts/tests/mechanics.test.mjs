@@ -6,27 +6,23 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, utimesSync,
+  existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, writeCostRuns, requireYg, MARKER_CHECK,
 } from './helpers.mjs';
-
-const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-// Merges `sourceBranch` into `targetBranch` from a scratch worktree — a steward never checks out
-// another branch in its own worktree, per topology.md's rule (lifecycle.test.mjs does the same).
-// roster.mjs now gives a spawned steward a persistent worktree on its own team branch, so a
-// second, scratch one on the same branch is refused by git outright — reuse the steward's
-// worktree when targetBranch already has one, and only fall back to a scratch worktree (removed
-// again afterward) when it doesn't.
+// Merges `sourceBranch` into `targetBranch` from a scratch worktree — nothing checks out another
+// branch in the same worktree a ticket branch lives in, per model.md's rule (lifecycle.test.mjs
+// does the same). Reuses a worktree already checked out on targetBranch when one exists (git
+// refuses a second one on the same branch outright), and only falls back to a scratch worktree
+// (removed again afterward) when it doesn't.
 function findWorktreeForBranch(dir, branch) {
   const out = execFileSync('git', ['worktree', 'list', '--porcelain'], { cwd: dir, encoding: 'utf8' });
   for (const block of out.split('\n\n')) {
@@ -50,8 +46,13 @@ function mergeBranch(dir, targetBranch, sourceBranch, message) {
 // Runs a ticket from "running" all the way to a real merge into `intoBranch`, returning the
 // merge sha. `write(worktreePath)` makes whatever change the caller wants inside the worker's
 // worktree before it's committed.
-function landReviewVerifyMerge(dir, {
-  id, team, worker, owner, verifier, intoBranch, write, horde,
+//
+// This is the short way round, for scenarios whose subject is something else entirely (dependency
+// order, the queue's own bookkeeping). The full path a ticket really takes — the landing gate, and
+// the merge commit `land.mjs` makes itself — is walked in lifecycle.test.mjs and family.e2e; here
+// the merge is a fixture step, made by hand because what happens after it is the point.
+function landAndMerge(dir, {
+  id, team, worker, intoBranch, write, horde,
 }) {
   const hordeFlag = horde ? ['--horde', horde] : [];
   const teamFlag = team ? ['--team', team] : [];
@@ -65,15 +66,6 @@ function landReviewVerifyMerge(dir, {
   const landedSha = git(['rev-parse', '--short', branch], dir);
 
   assert.equal(run('tk.mjs', ['log', id, `landed ${landedSha}`, ...hordeFlag], dir).code, 0);
-  assert.equal(run('tk.mjs', ['key', id, 'author', '--by', worker, ...hordeFlag], dir).code, 0);
-  assert.equal(run('tk.mjs', ['review-request', id, ...hordeFlag], dir).code, 0);
-  const review = run('tk.mjs', ['review', id, 'approve', '--by', owner, ...hordeFlag], dir);
-  assert.equal(review.code, 0, review.stderr);
-  const verdict = run('verify.mjs', [
-    'record', id, '--verdict', 'reproduced', '--revert', 'failed', '--by', verifier,
-    '--ran', 'manual', '--saw', 'ok', '--gate', 'green', '--sha', landedSha, ...hordeFlag,, '--item', '1|npm test|green'
-  ], dir);
-  assert.equal(verdict.code, 0, verdict.stderr);
 
   const mergeSha = mergeBranch(dir, intoBranch, branch, `merge ticket ${id}`);
   const merged = run('queue.mjs', ['set', id, 'merged', '--sha', mergeSha, ...teamFlag, ...hordeFlag], dir);
@@ -93,7 +85,7 @@ test('two hordes on one repository: independent state, shared refusal without --
 
   await t.test('both create ticket 001 and set it running, each in its own worktree', () => {
     for (const horde of ['red', 'blue']) {
-      const t1 = run('tk.mjs', ['new', 'sample', '--title', 'Sample', '--node', 'x', '--class', 'sonnet', '--horde', horde, '--evidence', 'it works'], dir);
+      const t1 = run('tk.mjs', ['new', 'sample', '--title', 'Sample', '--node', 'x', '--class', 'standard', '--horde', horde, '--evidence', 'it works'], dir);
       assert.equal(t1.code, 0, t1.stderr);
       assert.equal(t1.json.id, '001');
       const queued = run('queue.mjs', ['add', '001', '--horde', horde], dir);
@@ -114,7 +106,7 @@ test('two hordes on one repository: independent state, shared refusal without --
   });
 
   await t.test('every horde-scoped tool refuses without --horde, and works with it', () => {
-    for (const [tool, args] of [['roster.mjs', ['list']], ['tk.mjs', ['list']], ['queue.mjs', ['list']]]) {
+    for (const [tool, args] of [['tk.mjs', ['list']], ['queue.mjs', ['list']]]) {
       const bare = run(tool, args, dir);
       assert.equal(bare.code, 1, `${tool} ${args.join(' ')} should refuse without --horde`);
       assert.match(bare.stderr, /multiple hordes exist/, `${tool}: expected the multi-horde refusal`);
@@ -126,137 +118,30 @@ test('two hordes on one repository: independent state, shared refusal without --
 });
 
 // ---------------------------------------------------------------------------------------------
-// 2. Sub-team merge-up
+// 2. Cold boot with three tickets
 // ---------------------------------------------------------------------------------------------
+// There is one team, and it is trunk. `--team` resolves to nothing else, because nothing in this
+// tool set can create another one — so a merge-up between teams is not a scenario that exists.
 
-// _lib.mjs's teamPath() now does what scripts/README.md's top "the contract" paragraph always
-// said it did: `--team` takes the sub-team's short slash path ("trunk/alfa"), and teamPath()
-// itself inserts the literal "teams/" segments that separate each level on disk
-// ("teams/trunk/teams/alfa"), so every caller — tk.mjs, queue.mjs, wave.mjs, premerge.mjs's own
-// team lookup, roster.mjs's own resolveTeamPath() — works from the same short form. The old long
-// form ("trunk/teams/alfa") is now refused outright rather than silently landing at a wrong,
-// doubly-nested directory.
-test('sub-team merge-up: alfa off trunk, ticket lifecycle, wave close, premerge team-level', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir, 'mission1');
-  addNode(dir, 'feature', { mapping: ['feature-alfa.mjs', 'feature-alfa-2.mjs'] });
-
-  await t.test('roster spawn steward --team alfa --parent trunk creates the branch, directory and running team: item', () => {
-    const spawn = run('roster.mjs', ['spawn', 'steward', '--team', 'alfa', '--parent', 'trunk', '--class', 'sonnet'], dir);
-    assert.equal(spawn.code, 0, spawn.stderr);
-    assert.match(git(['branch', '--list', 'mission1/alfa'], dir), /mission1\/alfa/);
-    assert.equal(existsSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'teams', 'alfa')), true);
-    const trunkQueue = run('queue.mjs', ['list', '--team', 'trunk'], dir);
-    const teamItem = trunkQueue.json.find((i) => i.ticket === 'team:alfa');
-    assert.ok(teamItem, 'expected a team:alfa item in the trunk queue');
-    assert.equal(teamItem.state, 'running');
-    assert.equal(teamItem.branch, 'mission1/alfa');
-  });
-
-  await t.test('the README\'s literal shorthand ("trunk/alfa") finds the team roster.mjs actually created; the old long form is refused', () => {
-    const goodTeam = run('tk.mjs', ['new', 'ghost', '--title', 'Ghost', '--node', 'feature', '--class', 'sonnet', '--team', 'trunk/alfa', '--evidence', 'it works'], dir);
-    assert.equal(goodTeam.code, 0, goodTeam.stderr);
-    const rightDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'teams', 'alfa', 'issues');
-    assert.equal(existsSync(rightDir), true, 'the short slash path landed the ticket where roster.mjs actually built the team');
-
-    const oldLongForm = run('tk.mjs', ['new', 'ghost2', '--title', 'Ghost 2', '--node', 'feature', '--class', 'sonnet', '--team', 'trunk/teams/alfa', '--evidence', 'it works'], dir);
-    assert.equal(oldLongForm.code, 1);
-    assert.match(oldLongForm.stderr, /"teams" is inserted automatically/);
-  });
-
-  let ticketId;
-  await t.test('a ticket filed with the working --team path (trunk/alfa) lands where roster.mjs put the team', () => {
-    const ticket = run('tk.mjs', [
-      'new', 'alfa-thing', '--title', 'Alfa thing', '--node', 'feature', '--class', 'sonnet',
-      '--team', 'trunk/alfa',, '--evidence', 'it works'
-    ], dir);
-    assert.equal(ticket.code, 0, ticket.stderr);
-    ticketId = ticket.json.id;
-    assert.equal(run('queue.mjs', ['add', ticketId, '--team', 'trunk/alfa'], dir).code, 0);
-  });
-
-  await t.test('run, land, key, review, verify, and a real merge into mission1/alfa', () => {
-    const { mergeSha } = landReviewVerifyMerge(dir, {
-      id: ticketId,
-      team: 'trunk/alfa',
-      worker: 'worker-alfa-1',
-      owner: 'owner-feature',
-      verifier: 'verifier-alfa-1',
-      intoBranch: 'mission1/alfa',
-      write: (wt) => writeFileSync(join(wt, 'feature-alfa.mjs'), 'export const flag = true;\n'),
-    });
-    assert.ok(mergeSha);
-    const item = run('queue.mjs', ['list', '--team', 'trunk/alfa'], dir).json.find((i) => i.ticket === ticketId);
-    assert.equal(item.state, 'merged');
-  });
-
-  await t.test('wave close on the child team writes its own plan.md, and the parent tracking item is marked landed', () => {
-    assert.equal(run('wave.mjs', ['start', '--team', 'trunk/alfa'], dir).code, 0);
-    const close = run('wave.mjs', ['close', '--gate', 'green', '--team', 'trunk/alfa'], dir);
-    assert.equal(close.code, 0, close.stderr);
-    const planPath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'teams', 'alfa', 'plan.md');
-    assert.equal(existsSync(planPath), true);
-    assert.match(readFileSync(planPath, 'utf8'), /# Wave 1 — close/);
-
-    const landed = run('queue.mjs', ['set', 'team:alfa', 'landed', '--team', 'trunk'], dir);
-    assert.equal(landed.code, 0, landed.stderr);
-    assert.equal(landed.json.state, 'landed');
-  });
-
-  await t.test('premerge mission1/alfa --level team --no-gate: every check ✓', () => {
-    const pm = run('premerge.mjs', ['mission1/alfa', '--level', 'team', '--no-gate'], dir);
-    assert.equal(pm.code, 0, JSON.stringify(pm.json));
-    assert.equal(pm.json.ok, true);
-    for (const c of pm.json.checks) assert.equal(c.ok, true, `${c.name}: ${c.note}`);
-  });
-
-  await t.test('variant: a second, unmerged alfa ticket flips premerge item 2 (keys) to ✗', () => {
-    const ticket2 = run('tk.mjs', [
-      'new', 'alfa-second', '--title', 'Alfa second', '--node', 'feature', '--class', 'sonnet',
-      '--team', 'trunk/alfa',, '--evidence', 'it works'
-    ], dir);
-    assert.equal(ticket2.code, 0, ticket2.stderr);
-    const id2 = ticket2.json.id;
-    assert.equal(run('queue.mjs', ['add', id2, '--team', 'trunk/alfa'], dir).code, 0);
-    const running2 = run('queue.mjs', ['set', id2, 'running', '--agent', 'worker-alfa-2', '--team', 'trunk/alfa'], dir);
-    assert.equal(running2.code, 0, running2.stderr);
-    writeFileSync(join(running2.json.worktree, 'feature-alfa-2.mjs'), 'export const flag2 = true;\n');
-    git(['add', '-A'], running2.json.worktree);
-    git(['commit', '-qm', `ticket ${id2}`], running2.json.worktree);
-    // left running — never landed/keyed/reviewed/verified/merged
-
-    const pm2 = run('premerge.mjs', ['mission1/alfa', '--level', 'team', '--no-gate'], dir);
-    assert.equal(pm2.code, 1);
-    const keys2 = pm2.json.checks.find((c) => c.name === 'keys');
-    assert.equal(keys2.ok, false);
-    assert.match(keys2.note, new RegExp(`${id2}: running`));
-  });
-});
-
-// ---------------------------------------------------------------------------------------------
-// 3. Cold boot with three tickets
-// ---------------------------------------------------------------------------------------------
-
-test('cold boot: roster reconcile marks everyone dead, queue reconcile sorts three running tickets', async (t) => {
+test('cold boot: queue reconcile sorts three running tickets by their actual git state', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
 
   const ids = {};
   for (const slug of ['ticket-a', 'ticket-b', 'ticket-c']) {
-    const t1 = run('tk.mjs', ['new', slug, '--title', slug, '--node', 'x', '--class', 'sonnet', '--evidence', 'it works'], dir);
+    const t1 = run('tk.mjs', ['new', slug, '--title', slug, '--node', 'x', '--class', 'standard', '--evidence', 'it works'], dir);
     assert.equal(t1.code, 0, t1.stderr);
     ids[slug] = t1.json.id;
     assert.equal(run('queue.mjs', ['add', t1.json.id], dir).code, 0);
   }
 
-  const spawnWorker = run('roster.mjs', ['spawn', 'worker', '--team', 'trunk', '--class', 'sonnet', '--ticket', ids['ticket-a']], dir);
-  assert.equal(spawnWorker.code, 0, spawnWorker.stderr);
+  // A worker is a name string used for --agent and branch naming, and nothing else.
+  const workerName = 'w-cold-boot';
 
-  const runningA = run('queue.mjs', ['set', ids['ticket-a'], 'running', '--agent', spawnWorker.json.name], dir);
-  const runningB = run('queue.mjs', ['set', ids['ticket-b'], 'running', '--agent', spawnWorker.json.name], dir);
-  const runningC = run('queue.mjs', ['set', ids['ticket-c'], 'running', '--agent', spawnWorker.json.name], dir);
+  const runningA = run('queue.mjs', ['set', ids['ticket-a'], 'running', '--agent', workerName], dir);
+  const runningB = run('queue.mjs', ['set', ids['ticket-b'], 'running', '--agent', workerName], dir);
+  const runningC = run('queue.mjs', ['set', ids['ticket-c'], 'running', '--agent', workerName], dir);
   for (const r of [runningA, runningB, runningC]) assert.equal(r.code, 0, r.stderr);
 
   // A: a commit beyond the team tip.
@@ -264,14 +149,6 @@ test('cold boot: roster reconcile marks everyone dead, queue reconcile sorts thr
   // B: a dirty worktree, no commit.
   writeFileSync(join(runningB.json.worktree, 'scratch.txt'), 'uncommitted\n');
   // C: clean, no commit — left exactly as queue.mjs set it up.
-
-  await t.test('roster reconcile marks every active entry dead', () => {
-    const reconciled = run('roster.mjs', ['reconcile'], dir);
-    assert.equal(reconciled.code, 0, reconciled.stderr);
-    assert.equal(reconciled.json.marked, 1);
-    const list = run('roster.mjs', ['list'], dir);
-    assert.ok(list.json.every((e) => e.lease === 'dead'));
-  });
 
   await t.test('queue reconcile: A lands, B is reclaimed with a wip commit and kept worktree, C goes queued with its worktree gone', () => {
     const reconciled = run('queue.mjs', ['reconcile'], dir);
@@ -308,7 +185,7 @@ test('dependency discovered mid-flight: queue dep blocks and unblocks, and refus
   t.after(() => rmRepo(dir));
   initHorde(dir);
 
-  const t1 = run('tk.mjs', ['new', 'needs-x', '--title', 'Needs X', '--node', 'model', '--class', 'sonnet', '--evidence', 'it works'], dir);
+  const t1 = run('tk.mjs', ['new', 'needs-x', '--title', 'Needs X', '--node', 'model', '--class', 'standard', '--evidence', 'it works'], dir);
   const id1 = t1.json.id;
   assert.equal(run('queue.mjs', ['add', id1], dir).code, 0);
   const running1 = run('queue.mjs', ['set', id1, 'running', '--agent', 'worker1'], dir);
@@ -317,7 +194,7 @@ test('dependency discovered mid-flight: queue dep blocks and unblocks, and refus
   const logged = run('tk.mjs', ['log', id1, 'needs X in node ui'], dir);
   assert.equal(logged.code, 0, logged.stderr);
 
-  const t2 = run('tk.mjs', ['new', 'the-x', '--title', 'The X', '--node', 'ui', '--class', 'sonnet', '--evidence', 'it works'], dir);
+  const t2 = run('tk.mjs', ['new', 'the-x', '--title', 'The X', '--node', 'ui', '--class', 'standard', '--evidence', 'it works'], dir);
   const id2 = t2.json.id;
   assert.equal(run('queue.mjs', ['add', id2], dir).code, 0);
 
@@ -337,8 +214,8 @@ test('dependency discovered mid-flight: queue dep blocks and unblocks, and refus
   });
 
   await t.test('once 002 is merged, queue next returns 001', () => {
-    landReviewVerifyMerge(dir, {
-      id: id2, worker: 'worker2', owner: 'owner-ui', verifier: 'verifier2', intoBranch: 'mission1/trunk',
+    landAndMerge(dir, {
+      id: id2, worker: 'worker2', intoBranch: 'mission1/trunk',
       write: (wt) => writeFileSync(join(wt, 'x-file.mjs'), 'export const x = 1;\n'),
     });
     const next = run('queue.mjs', ['next'], dir);
@@ -354,131 +231,33 @@ test('dependency discovered mid-flight: queue dep blocks and unblocks, and refus
 });
 
 // ---------------------------------------------------------------------------------------------
-// 5. Contract ticket on two nodes
+// 3. Ask answer records a decision
 // ---------------------------------------------------------------------------------------------
 
-test('contract ticket on two nodes: merge blocked until both nodes approve, reviewer-is-author refused', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir, 'mission1');
-
-  const ticket = run('tk.mjs', [
-    'new', 'contract-thing', '--title', 'Contract thing', '--node', 'model', '--node', 'ui', '--class', 'sonnet',, '--evidence', 'it works'
-  ], dir);
-  assert.equal(ticket.code, 0, ticket.stderr);
-  const id = ticket.json.id;
-
-  assert.equal(run('tk.mjs', ['key', id, 'author', '--by', 'author1'], dir).code, 0);
-  const verdict = run('verify.mjs', [
-    'record', id, '--verdict', 'reproduced', '--revert', 'failed', '--by', 'verifier1', '--ran', 'x', '--saw', 'y', '--gate', 'green', '--sha', 'deadbee',, '--item', '1|npm test|green'
-  ], dir);
-  assert.equal(verdict.code, 0, verdict.stderr);
-
-  await t.test('review --by <author> is refused regardless of node targeting', () => {
-    const r = run('tk.mjs', ['review', id, 'approve', '--by', 'author1'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /cannot be the ticket's author/);
-  });
-
-  await t.test('approving only the model node leaves queue merge refused for the missing ui approval', () => {
-    const reviewModel = run('tk.mjs', ['review', id, 'approve', '--by', 'owner-model', '--node', 'model'], dir);
-    assert.equal(reviewModel.code, 0, reviewModel.stderr);
-    assert.deepEqual(reviewModel.json.nodes, ['model']);
-
-    assert.equal(run('queue.mjs', ['add', id], dir).code, 0);
-    const merged = run('queue.mjs', ['set', id, 'merged', '--sha', 'deadbee'], dir);
-    assert.equal(merged.code, 1);
-    assert.match(merged.stderr, /missing an approval/);
-  });
-
-  await t.test('approving the ui node too allows the merge', () => {
-    const reviewUi = run('tk.mjs', ['review', id, 'approve', '--by', 'owner-ui', '--node', 'ui'], dir);
-    assert.equal(reviewUi.code, 0, reviewUi.stderr);
-    const merged = run('queue.mjs', ['set', id, 'merged', '--sha', 'deadbee'], dir);
-    assert.equal(merged.code, 0, merged.stderr);
-  });
-});
-
-// ---------------------------------------------------------------------------------------------
-// 6. Owner is the author
-// ---------------------------------------------------------------------------------------------
-
-test('owner is the ticket\'s author: owner review refused, architect approves every node at once', async (t) => {
+// ask.mjs is the one channel to the client: a question goes out, an answer comes back, and the
+// answer is recorded as a decision. There is no second, adversarial channel beside it.
+test('ask answer records a decision', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-
-  const ticket = run('tk.mjs', ['new', 'owner-authored', '--title', 'Owner authored', '--node', 'model', '--class', 'sonnet', '--evidence', 'it works'], dir);
-  const id = ticket.json.id;
-  assert.equal(run('tk.mjs', ['key', id, 'author', '--by', 'owner1'], dir).code, 0);
-
-  await t.test('review --by the owner (who is also the author) is refused', () => {
-    const r = run('tk.mjs', ['review', id, 'approve', '--by', 'owner1'], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /cannot be the ticket's author/);
-  });
-
-  await t.test('review --by architect (no --node) approves every named node at once', () => {
-    const r = run('tk.mjs', ['review', id, 'approve', '--by', 'architect'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.deepEqual(r.json.nodes, ['model']);
-    const show = run('tk.mjs', ['show', id], dir);
-    assert.match(show.json.text, /\*\*Keys:\*\*.*model architect/);
-  });
-});
-
-// ---------------------------------------------------------------------------------------------
-// 7. Dissent and decision
-// ---------------------------------------------------------------------------------------------
-
-test('escalation ruling records a decision; a dissent against it is answered exactly once', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-  const ticket = run('tk.mjs', ['new', 'contested', '--title', 'Contested', '--node', 'model', '--class', 'sonnet', '--evidence', 'it works'], dir);
+  const ticket = run('tk.mjs', ['new', 'contested', '--title', 'Contested', '--node', 'model', '--class', 'standard', '--evidence', 'it works'], dir);
   const id = ticket.json.id;
 
-  const esc = run('escalate.mjs', ['add', 'boundary is ambiguous', '--kind', 'contract', '--ticket', id, '--by', 'steward'], dir);
-  assert.equal(esc.code, 0, esc.stderr);
-  const escId = esc.json.id;
+  const opened = run('ask.mjs', ['add', 'boundary is ambiguous', '--kind', 'stop', '--ticket', id], dir);
+  assert.equal(opened.code, 0, opened.stderr);
+  const askId = opened.json.id;
 
-  await t.test('escalate rule records a decision esc-<id>', () => {
-    const ruled = run('escalate.mjs', ['rule', escId, 'the boundary includes the adapter'], dir);
-    assert.equal(ruled.code, 0, ruled.stderr);
+  await t.test('ask answer records a decision ask-<id>', () => {
+    const answered = run('ask.mjs', ['answer', askId, 'the boundary includes the adapter'], dir);
+    assert.equal(answered.code, 0, answered.stderr);
     const decisions = run('decide.mjs', ['list'], dir);
     assert.equal(decisions.code, 0, decisions.stderr);
-    assert.ok(decisions.json.some((d) => d.slug === `esc-${escId}`), JSON.stringify(decisions.json));
-  });
-
-  let dissentId;
-  await t.test('dissent add records a disagreement against the decision', () => {
-    const dis = run('dissent.mjs', ['add', 'the adapter belongs to a different node', '--ticket', id, '--by', 'owner-model', '--against', `esc-${escId}`], dir);
-    assert.equal(dis.code, 0, dis.stderr);
-    dissentId = dis.json.id;
-  });
-
-  await t.test('dissent answer closes it and appends the answer to decisions.md; a second answer is refused', () => {
-    const answered = run('dissent.mjs', ['answer', dissentId, 'the adapter stays with model, noted for the next boundary review', '--by', 'director'], dir);
-    assert.equal(answered.code, 0, answered.stderr);
-    assert.equal(answered.json.state, 'closed');
-    const decisionsText = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'decisions.md'), 'utf8');
-    assert.match(decisionsText, /dissent-\d+/);
-    assert.match(decisionsText, /the adapter stays with model/);
-
-    const secondAnswer = run('dissent.mjs', ['answer', dissentId, 'again', '--by', 'director'], dir);
-    assert.equal(secondAnswer.code, 1);
-    assert.match(secondAnswer.stderr, /already answered/);
-  });
-
-  await t.test('dissent list --open is empty', () => {
-    const open = run('dissent.mjs', ['list', '--open'], dir);
-    assert.equal(open.code, 0, open.stderr);
-    assert.deepEqual(open.json, []);
+    assert.ok(decisions.json.some((d) => d.slug === `ask-${askId}`), JSON.stringify(decisions.json));
   });
 });
 
 // ---------------------------------------------------------------------------------------------
-// 8. Cost limit
+// 4. Cost limit
 // ---------------------------------------------------------------------------------------------
 
 test('cost limit: charter Limit line gates limit-reached and cost report', async (t) => {
@@ -492,12 +271,14 @@ test('cost limit: charter Limit line gates limit-reached and cost report', async
     writeFileSync(charterPath, charter);
   };
 
-  await t.test('three opus spawns (weighted 30) pass a Limit: 20 charter line', () => {
+  await t.test('three heavy runs (weighted 30) pass a Limit: 20 charter line', () => {
     setLimit('20');
-    for (let i = 0; i < 3; i++) {
-      const spawn = run('roster.mjs', ['spawn', 'owner', '--node', `model${i}`, '--class', 'opus'], dir);
-      assert.equal(spawn.code, 0, spawn.stderr);
-    }
+    // A test that needs cost data seeds the ledger directly, in the shape cost.mjs reads, rather
+    // than running the tick that would bill it — the limit is what is under test here, not the
+    // billing.
+    writeCostRuns(dir, 'mission1', [0, 1, 2].map((i) => ({
+      name: `worker-${i}`, role: 'worker', class: 'heavy', ticket: null, team: null, wave: null, at: new Date().toISOString(),
+    })));
     const reached = run('cost.mjs', ['limit-reached'], dir);
     assert.equal(reached.code, 0, reached.stderr);
     assert.equal(reached.json.reached, true);
@@ -518,48 +299,8 @@ test('cost limit: charter Limit line gates limit-reached and cost report', async
 });
 
 // ---------------------------------------------------------------------------------------------
-// 9. Owner reclaim
+// 5. The graph, read through the CLI and never written by the horde
 // ---------------------------------------------------------------------------------------------
-
-test('owner reclaim: the lease is reclaimed, not the name, and a key remains a fact not a permission', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-
-  const first = run('roster.mjs', ['spawn', 'owner', '--node', 'model', '--class', 'sonnet'], dir);
-  assert.equal(first.code, 0, first.stderr);
-  assert.match(first.json.name, /-owner-model-1$/);
-
-  const reclaim = run('roster.mjs', ['reclaim', first.json.name, 'silent'], dir);
-  assert.equal(reclaim.code, 0, reclaim.stderr);
-
-  const second = run('roster.mjs', ['spawn', 'owner', '--node', 'model', '--class', 'sonnet'], dir);
-  assert.equal(second.code, 0, second.stderr);
-  assert.match(second.json.name, /-owner-model-2$/);
-
-  const list = run('roster.mjs', ['list', '--json'], dir);
-  const firstEntry = list.json.find((e) => e.name === first.json.name);
-  assert.equal(firstEntry.lease, 'reclaimed');
-
-  const ticket = run('tk.mjs', ['new', 'after-reclaim', '--title', 'After reclaim', '--node', 'model', '--class', 'sonnet', '--evidence', 'it works'], dir);
-  const id = ticket.json.id;
-  const review = run('tk.mjs', ['review', id, 'approve', '--by', first.json.name], dir);
-  // A key is a fact, not a permission: tk.mjs's own review refusal is keyed only on
-  // "--by === the ticket's author" (never on roster state), and this ticket has no author key
-  // set at all yet — so a reclaimed name is still accepted here.
-  assert.equal(review.code, 0, review.stderr);
-});
-
-// ---------------------------------------------------------------------------------------------
-// 10. The graph, read through the CLI and never written by the horde
-// ---------------------------------------------------------------------------------------------
-
-function nodeCharterEdit(dir, node, stdin) {
-  const out = execFileSync('node', [join(SCRIPTS_DIR, 'node.mjs'), 'charter', 'edit', node, '--json'], {
-    cwd: dir, input: stdin, encoding: 'utf8',
-  });
-  return JSON.parse(out);
-}
 
 test('the graph: node.mjs reads it through the CLI and writes nothing into it', async (t) => {
   const dir = makeRepo();
@@ -574,14 +315,17 @@ test('the graph: node.mjs reads it through the CLI and writes nothing into it', 
     assert.deepEqual(r.json.nodes.sort(), ['core', 'frontend']);
   });
 
-  await t.test('map shows a component an owner in the roster holds', () => {
-    const spawn = run('roster.mjs', ['spawn', 'owner', '--node', 'core', '--class', 'sonnet'], dir);
-    assert.equal(spawn.code, 0, spawn.stderr);
+  // A ticket naming the node is the only way a component shows up on `map` at all. Nothing holds
+  // a component any more, so the column that used to say who does reads as the honest "nobody",
+  // which is what this checks — the field is still on the document, and still answered truthfully.
+  await t.test('map shows a component a ticket names, and nobody is recorded as holding it', () => {
+    const ticket = run('tk.mjs', ['new', 'core-thing', '--title', 'Core thing', '--node', 'core', '--class', 'standard', '--evidence', 'it works'], dir);
+    assert.equal(ticket.code, 0, ticket.stderr);
     const map = run('node.mjs', ['map'], dir);
     assert.equal(map.code, 0, map.stderr);
     const row = map.json.find((r) => r.node === 'core');
     assert.ok(row, JSON.stringify(map.json));
-    assert.equal(row.owner, spawn.json.name);
+    assert.equal(row.owner, '-');
   });
 
   await t.test('show reads the boundary from the component document, writes nothing', () => {
@@ -591,13 +335,9 @@ test('the graph: node.mjs reads it through the CLI and writes nothing into it', 
     assert.equal(existsSync(join(dir, '.yggdrasil', 'model', 'frontend', 'charter.md')), false);
   });
 
-  await t.test('charter edit writes charter.md beside the component file', () => {
-    const edited = nodeCharterEdit(dir, 'core', '# Node · core\n\nOwns the core package.\n');
-    assert.ok(edited.bytes > 0);
-    const charterPath = join(dir, '.yggdrasil', 'model', 'core', 'charter.md');
-    assert.equal(existsSync(charterPath), true);
-    assert.match(readFileSync(charterPath, 'utf8'), /Owns the core package/);
-  });
+  // Formerly there was also a "charter edit writes charter.md beside the component file" case
+  // here — node.mjs's `charter edit` command is gone outright (node charters no longer exist at
+  // all), so there is nothing left for it to test.
 
   await t.test('log prints the graph\'s own command without running it (no --run)', () => {
     const r = run('node.mjs', ['log', 'core', 'refactor complete'], dir);
@@ -609,75 +349,10 @@ test('the graph: node.mjs reads it through the CLI and writes nothing into it', 
 });
 
 // ---------------------------------------------------------------------------------------------
-// 11. Liveness verdicts
+// 6. Protected path
 // ---------------------------------------------------------------------------------------------
 
-// Moves `branch`'s tip to a new commit with the same content but a backdated author/committer
-// date, without checking anything out — a steward's branch normally never gets touched from the
-// main tree (topology.md), so this is the only way to make a branch look genuinely stale.
-function backdateBranchTip(dir, branch, iso) {
-  const tree = execFileSync('git', ['rev-parse', `${branch}^{tree}`], { cwd: dir, encoding: 'utf8' }).trim();
-  const parent = execFileSync('git', ['rev-parse', branch], { cwd: dir, encoding: 'utf8' }).trim();
-  const commit = execFileSync('git', ['commit-tree', tree, '-p', parent, '-m', 'backdated'], {
-    cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso },
-  }).trim();
-  execFileSync('git', ['update-ref', `refs/heads/${branch}`, commit], { cwd: dir });
-}
-
-// roster.mjs's steward liveness reads three signals — team branch tip commit time, queue.json
-// mtime, lastTrace — and takes the newest of the three against config.liveness.stewardMinutes,
-// but only once the team's queue is non-empty; an empty queue is always alive. Two stewards get
-// an identical stale lastTrace: staleSteward's team (trunk) is left with an empty queue, so it
-// reads alive regardless; busySteward's team (alfa) gets an open ticket plus a backdated branch
-// tip and a backdated queue.json mtime, so all three of its signals are stale and it reads dead.
-test('roster.mjs liveness: an empty queue is always alive; a busy team is dead once branch, queue and trace are all stale', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-
-  const staleSteward = run('roster.mjs', ['spawn', 'steward', '--team', 'trunk', '--class', 'sonnet'], dir);
-  assert.equal(staleSteward.code, 0, staleSteward.stderr);
-  const busySteward = run('roster.mjs', ['spawn', 'steward', '--team', 'alfa', '--parent', 'trunk', '--class', 'sonnet'], dir);
-  assert.equal(busySteward.code, 0, busySteward.stderr);
-
-  const staleAt = new Date(Date.now() - 120 * 60000).toISOString();
-
-  // Back-date both entries' lastTrace beyond config.liveness.stewardMinutes (default 60) — the
-  // only way to get a stale trace deterministically, since roster.mjs trace only ever sets "now".
-  const rosterPath = join(dir, '.horde', 'hordes', 'mission1', 'roster.json');
-  const roster = JSON.parse(readFileSync(rosterPath, 'utf8'));
-  for (const e of roster.entries) e.lastTrace = staleAt;
-  writeFileSync(rosterPath, JSON.stringify(roster, null, 2));
-
-  // busySteward's team (alfa) gets an open ticket; staleSteward's team (trunk) is left with no
-  // queue activity beyond what horde.mjs init created (empty).
-  const ticket = run('tk.mjs', ['new', 'alfa-open', '--title', 'Alfa open', '--node', 'x', '--class', 'sonnet', '--team', 'trunk/alfa', '--evidence', 'it works'], dir);
-  assert.equal(run('queue.mjs', ['add', ticket.json.id, '--team', 'trunk/alfa'], dir).code, 0);
-
-  // Backdate alfa's own two remaining signals: its branch tip and its queue.json's mtime. trunk's
-  // branch and queue.json are left fresh — irrelevant, since its empty queue makes it alive
-  // regardless of any of the three signals.
-  backdateBranchTip(dir, 'mission1/alfa', staleAt);
-  const alfaQueuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'teams', 'alfa', 'queue.json');
-  const staleDate = new Date(staleAt);
-  utimesSync(alfaQueuePath, staleDate, staleDate);
-
-  const list = run('roster.mjs', ['list', '--dead'], dir);
-  assert.equal(list.code, 0, list.stderr);
-  assert.deepEqual(list.json.map((e) => e.name), [busySteward.json.name]);
-
-  const all = run('roster.mjs', ['list'], dir);
-  const staleEntry = all.json.find((e) => e.name === staleSteward.json.name);
-  assert.equal(staleEntry.verdict, 'alive');
-  const busyEntry = all.json.find((e) => e.name === busySteward.json.name);
-  assert.equal(busyEntry.verdict, 'dead');
-});
-
-// ---------------------------------------------------------------------------------------------
-// 12. Protected path
-// ---------------------------------------------------------------------------------------------
-
-test('protected path: premerge scope check (item 3) fails a branch that touches config.protectedPaths', async (t) => {
+test('protected path: land.mjs scope check fails a branch that touches config.protectedPaths', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -687,7 +362,7 @@ test('protected path: premerge scope check (item 3) fails a branch that touches 
 
   addNode(dir, 'x', { mapping: ['package.json'] });
 
-  const ticket = run('tk.mjs', ['new', 'touches-protected', '--title', 'Touches protected', '--node', 'x', '--class', 'sonnet', '--evidence', 'it works'], dir);
+  const ticket = run('tk.mjs', ['new', 'touches-protected', '--title', 'Touches protected', '--node', 'x', '--class', 'standard', '--evidence', 'it works'], dir);
   const id = ticket.json.id;
   assert.equal(run('queue.mjs', ['add', id], dir).code, 0);
   const running = run('queue.mjs', ['set', id, 'running', '--agent', 'worker1'], dir);
@@ -697,7 +372,9 @@ test('protected path: premerge scope check (item 3) fails a branch that touches 
   git(['add', '-A'], running.json.worktree);
   git(['commit', '-qm', 'edit protected path'], running.json.worktree);
 
-  const pm = run('premerge.mjs', [running.json.branch, '--level', 'team', '--no-gate'], dir);
+  // --level team no longer exists (sub-teams are gone) — omitting --level defaults internally to
+  // the same gate lookup a bare branch landing on the team branch always used.
+  const pm = run('land.mjs', [running.json.branch, '--no-gate'], dir);
   assert.equal(pm.code, 1);
   const scope = pm.json.checks.find((c) => c.name === 'scope');
   assert.equal(scope.ok, false);
@@ -705,47 +382,7 @@ test('protected path: premerge scope check (item 3) fails a branch that touches 
 });
 
 // ---------------------------------------------------------------------------------------------
-// 13. Steward dies after a worker landed but before the author key
-// ---------------------------------------------------------------------------------------------
-
-test('steward dies after landing but before the author key: reconcile marks it landed, the successor recovers the author key from the queue', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-
-  const ticket = run('tk.mjs', ['new', 'orphaned', '--title', 'Orphaned', '--node', 'x', '--class', 'sonnet', '--evidence', 'it works'], dir);
-  assert.equal(ticket.code, 0, ticket.stderr);
-  const id = ticket.json.id;
-  assert.equal(run('queue.mjs', ['add', id], dir).code, 0);
-  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'mission1-worker-trunk-1'], dir);
-  assert.equal(running.code, 0, running.stderr);
-
-  // the worker lands a commit, but the steward dies before it can set the author key by hand
-  git(['commit', '--allow-empty', '-qm', 'work'], running.json.worktree);
-
-  const reconciled = run('queue.mjs', ['reconcile'], dir);
-  assert.equal(reconciled.code, 0, reconciled.stderr);
-  assert.equal(reconciled.json.find((r) => r.ticket === id).state, 'landed');
-
-  await t.test('a successor steward recovers the author key from the queue item\'s recorded agent', () => {
-    const keyed = run('tk.mjs', ['key', id, 'author', '--from-queue'], dir);
-    assert.equal(keyed.code, 0, keyed.stderr);
-    assert.equal(keyed.json.author, 'mission1-worker-trunk-1');
-    const show = run('tk.mjs', ['show', id], dir);
-    assert.match(show.json.text, /\*\*Keys:\*\* author mission1-worker-trunk-1/);
-  });
-
-  await t.test('--from-queue on a ticket with no queue item recording an agent is refused', () => {
-    const other = run('tk.mjs', ['new', 'no-agent', '--title', 'No agent', '--node', 'x', '--class', 'sonnet', '--evidence', 'it works'], dir);
-    assert.equal(run('queue.mjs', ['add', other.json.id], dir).code, 0);
-    const failed = run('tk.mjs', ['key', other.json.id, 'author', '--from-queue'], dir);
-    assert.equal(failed.code, 1);
-    assert.match(failed.stderr, /no queue item with a recorded agent/);
-  });
-});
-
-// ---------------------------------------------------------------------------------------------
-// 14. Class overloaded — a queue item waits
+// 7. Class overloaded — a queue item waits
 // ---------------------------------------------------------------------------------------------
 
 test('class overloaded: a queued item waits, next skips it, reconcile leaves it alone, and set queued resumes it', async (t) => {
@@ -753,12 +390,12 @@ test('class overloaded: a queued item waits, next skips it, reconcile leaves it 
   t.after(() => rmRepo(dir));
   initHorde(dir);
 
-  const heavy = run('tk.mjs', ['new', 'heavy', '--title', 'Heavy', '--node', 'x', '--class', 'opus', '--evidence', 'it works'], dir);
-  const light = run('tk.mjs', ['new', 'light', '--title', 'Light', '--node', 'x', '--class', 'sonnet', '--evidence', 'it works'], dir);
+  const heavy = run('tk.mjs', ['new', 'heavy', '--title', 'Heavy', '--node', 'x', '--class', 'heavy', '--evidence', 'it works'], dir);
+  const light = run('tk.mjs', ['new', 'light', '--title', 'Light', '--node', 'x', '--class', 'standard', '--evidence', 'it works'], dir);
   assert.equal(run('queue.mjs', ['add', heavy.json.id], dir).code, 0);
   assert.equal(run('queue.mjs', ['add', light.json.id], dir).code, 0);
 
-  const waited = run('queue.mjs', ['set', heavy.json.id, 'waiting', '--note', 'opus class overloaded'], dir);
+  const waited = run('queue.mjs', ['set', heavy.json.id, 'waiting', '--note', 'heavy class overloaded'], dir);
   assert.equal(waited.code, 0, waited.stderr);
   assert.equal(waited.json.state, 'waiting');
   assert.equal(waited.json.branch, null);
@@ -783,14 +420,14 @@ test('class overloaded: a queued item waits, next skips it, reconcile leaves it 
     assert.equal(requeued.code, 0, requeued.stderr);
     assert.equal(requeued.json.state, 'queued');
 
-    const next = run('queue.mjs', ['next', '--class', 'opus'], dir);
+    const next = run('queue.mjs', ['next', '--class', 'heavy'], dir);
     assert.equal(next.code, 0, next.stderr);
     assert.equal(next.json.ticket, heavy.json.id);
   });
 });
 
 // ---------------------------------------------------------------------------------------------
-// 15. Two hordes, one with a waiting item
+// 8. Two hordes, one with a waiting item
 // ---------------------------------------------------------------------------------------------
 
 test('two hordes, one with a waiting item and one without: status --json reports the queue state per horde', async (t) => {
@@ -799,13 +436,13 @@ test('two hordes, one with a waiting item and one without: status --json reports
   initHorde(dir, 'red');
   initHorde(dir, 'blue');
 
-  const redTicket = run('tk.mjs', ['new', 'red-thing', '--title', 'Red thing', '--node', 'x', '--class', 'sonnet', '--horde', 'red', '--evidence', 'it works'], dir);
+  const redTicket = run('tk.mjs', ['new', 'red-thing', '--title', 'Red thing', '--node', 'x', '--class', 'standard', '--horde', 'red', '--evidence', 'it works'], dir);
   assert.equal(redTicket.code, 0, redTicket.stderr);
   assert.equal(run('queue.mjs', ['add', redTicket.json.id, '--horde', 'red'], dir).code, 0);
   const waited = run('queue.mjs', ['set', redTicket.json.id, 'waiting', '--note', 'class overloaded', '--horde', 'red'], dir);
   assert.equal(waited.code, 0, waited.stderr);
 
-  const blueTicket = run('tk.mjs', ['new', 'blue-thing', '--title', 'Blue thing', '--node', 'x', '--class', 'sonnet', '--horde', 'blue', '--evidence', 'it works'], dir);
+  const blueTicket = run('tk.mjs', ['new', 'blue-thing', '--title', 'Blue thing', '--node', 'x', '--class', 'standard', '--horde', 'blue', '--evidence', 'it works'], dir);
   assert.equal(blueTicket.code, 0, blueTicket.stderr);
   assert.equal(run('queue.mjs', ['add', blueTicket.json.id, '--horde', 'blue'], dir).code, 0);
 
@@ -816,4 +453,239 @@ test('two hordes, one with a waiting item and one without: status --json reports
   assert.equal(red.queue.byState.waiting, 1);
   assert.equal(blue.queue.byState.waiting, undefined);
   assert.equal(blue.queue.byState.queued, 1);
+});
+
+// ---------------------------------------------------------------------------------------------
+// 9. A landing let go of: the result file, and the process that wrote it
+// ---------------------------------------------------------------------------------------------
+//
+// `land.mjs --background` is the one command in this tool set that deliberately outlives its own
+// caller: it spawns itself detached, unrefs the child and returns the path of a file that does not
+// exist yet. Everything else about it is already measured in land.test.mjs — that the path comes
+// back at once, that the document eventually written has the run's shape.
+//
+// What nothing measured is the PROCESS. A caller that only ever polls for the file has no way to
+// tell a run that finished from a run that hung: both look identical from outside until the file
+// appears, and a hung one simply never writes it. The child is detached and unreffed, so nothing
+// waits on it and nothing reaps it; a run that wedges is reparented to init and stays there.
+// This pins the half of the contract a file cannot state — that a background landing has a bounded
+// life, and is gone by the time the thing it was asked for is on disk.
+//
+function pidsMatching(pattern) {
+  try {
+    return execFileSync('pgrep', ['-f', pattern], { encoding: 'utf8' })
+      .trim().split('\n').filter(Boolean).map(Number);
+  } catch {
+    // pgrep exits 1 with no output when nothing matches — that is an answer, not a failure.
+    return [];
+  }
+}
+
+// The child is found by the branch name in its own argv, not by a before/after scan of every
+// `land.mjs` on the machine: this suite runs its files in parallel, and land.test.mjs is landing
+// its own tickets at the same moment. `t-777` and `t-778` belong to these tests and to nothing else.
+function pidsLanding(branch) {
+  return pidsMatching(`land\\.mjs ${branch}`);
+}
+
+function stillAlive(pids) {
+  return pids.filter((pid) => {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  });
+}
+
+// The fixture both background-landing tests run on: one real graph, one real ticket on its own
+// branch, queued as "landed" and ready for the gate. Shared rather than copied so the hang case
+// below differs from the healthy one in exactly one thing — which `yg` the landing talks to.
+function seedLandableTicket(dir, id) {
+  const branch = `mission1/t-${id}`;
+  initHorde(dir);
+  addAspect(dir, 'no-marker', { description: 'Source files must not carry an unfinished-work marker.', check: MARKER_CHECK });
+  addNode(dir, 'feature', { mapping: [`feature-${id}.mjs`, `feature-${id}.test.mjs`], aspects: ['no-marker'] });
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
+
+  // The graph rides on the branch, so it is committed before the ticket branches off it.
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  git(['add', '.yggdrasil'], dir);
+  git(['commit', '-qm', 'graph: the component this ticket touches'], dir);
+  git(['checkout', '-q', '-b', branch], dir);
+  writeFileSync(join(dir, `feature-${id}.mjs`), 'export function add(a, b) { return a + b; }\n');
+  writeFileSync(join(dir, `feature-${id}.test.mjs`), [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    `import { add } from './feature-${id}.mjs';`,
+    "test('add', () => { assert.equal(add(1, 2), 3); });",
+    '',
+  ].join('\n'));
+  git(['add', '--', `feature-${id}.mjs`, `feature-${id}.test.mjs`], dir);
+  git(['commit', '-qm', `ticket ${id}`], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+
+  const issueDirPath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${id}-sample-ticket`);
+  mkdirSync(issueDirPath, { recursive: true });
+  writeFileSync(join(issueDirPath, 'issue.md'), [
+    `# ${id} · Sample ticket`, '',
+    '**Status:** landed',
+    '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',
+    `**Depends on:** none · **Branch:** ${branch}`, '',
+    '## Acceptance — evidence', '', '- [ ] does the thing', '',
+  ].join('\n'));
+  writeFileSync(join(issueDirPath, 'log.md'), `- ${new Date().toISOString()} status: landed — ready to land\n`);
+
+  const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
+  const queueDoc = JSON.parse(readFileSync(queuePath, 'utf8'));
+  queueDoc.items.push({
+    ticket: id, state: 'landed', class: 'standard', branch, dependsOn: [], agent: 'worker1', sha: null, notes: [], worktree: null,
+  });
+  writeFileSync(queuePath, JSON.stringify(queueDoc, null, 2));
+
+  return branch;
+}
+
+test('land.mjs --background: the run is let go of, but not forgotten — the result file arrives and the process that wrote it is gone', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  const id = '777';
+  const branch = seedLandableTicket(dir, id);
+
+  const started = run('land.mjs', [branch, '--background'], dir);
+  assert.equal(started.code, 0, started.stderr);
+  assert.equal(started.json.ticket, id);
+  assert.equal(existsSync(started.json.resultFile), false, 'the caller is handed a path, not a result');
+
+  const children = pidsLanding(branch);
+  assert.equal(children.length > 0, true, 'the detached landing is a real process this test can watch');
+
+  let doc = null;
+  const fileDeadline = Date.now() + 120000;
+  while (Date.now() < fileDeadline) {
+    try { doc = JSON.parse(readFileSync(started.json.resultFile, 'utf8')); break; } catch { /* not yet, or half-written */ }
+    execFileSync('sleep', ['0.1']);
+  }
+  assert.ok(doc, 'the background run wrote its result');
+  assert.equal(doc.ticket, id);
+
+  // The write and the exit are not the same instant — the run still has to flush and unwind — so
+  // the contract is "shortly after", not "already". Ten seconds is far longer than the unwinding
+  // takes and far shorter than a hang: a run still here after it has published its own answer is
+  // not finishing, it is stuck.
+  const exitDeadline = Date.now() + 10000;
+  while (Date.now() < exitDeadline && stillAlive(children).length) execFileSync('sleep', ['0.25']);
+  assert.deepEqual(
+    stillAlive(children), [],
+    'a background landing outlived the result file it was started to write — nothing waits on it, so it stays until the machine is rebooted',
+  );
+});
+
+// The same contract, with the thing that actually wedged in the wild: a `yg check` that never comes
+// back. A stand-in CLI hands every call to the real Yggdrasil build except the landing gate's own
+// two — `check` and `check --approve --only-deterministic` — which it never answers at all. That is
+// the shape of the live incident: not a CLI that is broken, but one particular run of it hanging on
+// one tree, because the worktree was deleted under it, or the disk is a network mount, or the graph
+// is large enough to thrash. The document reads (`check --json`) are deliberately left working, so
+// the landing gets all the way to the item whose answer this test is about.
+//
+// Without a ceiling on the CLI call this test cannot pass: the detached landing blocks inside
+// `execFileSync` forever, the result file is never written, and the poll below runs out. (The same
+// ceiling ends a run wedged on a document read too — that one stops with a refusal on stderr and no
+// result file, which is what `land.mjs` has always done with a graph read it cannot make. Either
+// way the process ends, which is the whole point; this test pins the path that also leaves a
+// readable answer behind.)
+//
+// It is the hang itself that is pinned here, not a message — the assertions are that the file
+// arrives, that the process is gone, that the stopped CLI is gone with it, and that the run's own
+// words name the limit it was stopped at, so a pass cannot come from the run having quietly
+// succeeded some other way.
+function writeHangingYgStub(realYg) {
+  const stubDir = mkdtempSync(join(tmpdir(), 'horde-yg-stub-'));
+  const stub = join(stubDir, 'yg-hangs-on-check.mjs');
+  writeFileSync(stub, [
+    "import { spawnSync } from 'node:child_process';",
+    'const argv = process.argv.slice(2);',
+    `const real = ${JSON.stringify(realYg.split(/\s+/).filter(Boolean))};`,
+    "if (argv[0] === 'check' && !argv.includes('--json')) {",
+    '  // Never answers, never exits. Whatever stops this process, it is not this process.',
+    '  setInterval(() => {}, 1000);',
+    '} else {',
+    "  const r = spawnSync(real[0], [...real.slice(1), ...argv], { stdio: 'inherit' });",
+    '  process.exit(r.status === null || r.status === undefined ? 1 : r.status);',
+    '}',
+    '',
+  ].join('\n'));
+  return { stubDir, stub, command: `node ${stub}` };
+}
+
+test('land.mjs --background: a Yggdrasil CLI that hangs is stopped at config.ygTimeoutMs — the detached run ends instead of outliving the machine', async (t) => {
+  const dir = makeRepo();
+  const { stubDir, stub, command } = writeHangingYgStub(requireYg());
+  t.after(() => { rmRepo(dir); rmRepo(stubDir); });
+
+  const id = '778';
+  const branch = seedLandableTicket(dir, id);
+
+  // Nothing else in the fixture changes: the graph was made, committed and read by the real CLI
+  // above. Only the landing that is about to start talks to the stand-in.
+  assert.equal(run('horde.mjs', ['config', 'set', 'ygCommand', command], dir).code, 0);
+  // Five seconds, not ten minutes. The ceiling under test is the mechanism, not the number — a
+  // suite that waited out the shipped default would be measuring patience.
+  assert.equal(run('horde.mjs', ['config', 'set', 'ygTimeoutMs', '5000'], dir).code, 0);
+
+  const startedAt = Date.now();
+  const started = run('land.mjs', [branch, '--background'], dir);
+  assert.equal(started.code, 0, started.stderr);
+  assert.equal(started.json.ticket, id);
+
+  const children = pidsLanding(branch);
+  assert.equal(children.length > 0, true, 'the detached landing is a real process this test can watch');
+  // Whatever this test proves or fails to prove, it leaves nothing of its own behind — landing and
+  // stand-in both, since killing the landing orphans the CLI it was blocked inside. The leak this
+  // test is about is exactly what an unfixed run would leave here.
+  const stubPattern = stub.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  t.after(() => {
+    for (const pid of [...stillAlive(children), ...stillAlive(pidsMatching(stubPattern))]) {
+      try { process.kill(pid, 'SIGKILL'); } catch { /* already gone, which is the point */ }
+    }
+  });
+
+  // Sixty seconds is the whole landing — the revert test's own `node --test` run, the gate, the git
+  // work — plus the ceilings the wedged CLI is stopped at. An unbounded run never reaches it, and
+  // never would: the old behaviour is not "slow", it is "never".
+  let doc = null;
+  const fileDeadline = Date.now() + 60000;
+  while (Date.now() < fileDeadline) {
+    try { doc = JSON.parse(readFileSync(started.json.resultFile, 'utf8')); break; } catch { /* not yet, or half-written */ }
+    execFileSync('sleep', ['0.25']);
+  }
+  // Two very different things look alike from here, so the message tells them apart: a run still
+  // alive with no result is the hang this test exists to catch; a run already gone with no result
+  // is the landing having refused for some other reason entirely (a Yggdrasil build rebuilt out
+  // from under the stand-in, say) and is a broken fixture, not a regression.
+  assert.ok(doc, stillAlive(children).length
+    ? `the landing wedged on \`yg check\` never wrote a result — it is still waiting, ${Math.round((Date.now() - startedAt) / 1000)}s in`
+    : `the landing ended without writing a result at all, ${Math.round((Date.now() - startedAt) / 1000)}s in — it refused before reaching the graph item, so this run measured nothing about the ceiling`);
+  assert.equal(doc.ticket, id);
+
+  // Stopped, and refused for being stopped: a hung graph read is never a green gate, and the note
+  // says what was stopped, how long it was given, and which setting raises it.
+  assert.equal(doc.ok, false, 'a landing whose graph check never answered must not report itself ready');
+  const graph = (doc.checks || []).find((c) => c.name === 'graph');
+  assert.ok(graph, `no graph item in the run's own checklist: ${(doc.checks || []).map((c) => c.name).join(', ')}`);
+  assert.equal(graph.ok, false);
+  assert.match(graph.note, /did not finish within 5s and was stopped/);
+  assert.match(graph.note, /ygTimeoutMs/);
+
+  const exitDeadline = Date.now() + 10000;
+  while (Date.now() < exitDeadline && stillAlive(children).length) execFileSync('sleep', ['0.25']);
+  assert.deepEqual(
+    stillAlive(children), [],
+    'the landing published its refusal and stayed alive anyway — the process the ceiling exists to end is still here',
+  );
+  // And the stand-in it was blocked inside is gone with it: a ceiling that ends the parent while
+  // leaving the wedged child running has moved the orphan, not removed it.
+  assert.deepEqual(
+    stillAlive(pidsMatching(stubPattern)), [],
+    'the stopped `yg check` is still running — the landing was stopped, the process it was waiting on was not',
+  );
 });

@@ -1,0 +1,14 @@
+name: PromiseHasItsShape
+description: A promise is one file with a frontmatter id matching its filename, a status from the fixed three, and exactly the sections this repository asks for.
+reviewer:
+  type: deterministic
+status: enforced
+errs: exact
+# Promises are markdown; the suite that keeps them is not. This rule is about the
+# promise document, so a repository may map it onto a component that also carries
+# the suite without every test file being read as a malformed promise. The glob is
+# depth-relative on purpose: a package cannot know where a repository keeps things.
+scope:
+  per: node
+  files:
+    path: "**/*.md"

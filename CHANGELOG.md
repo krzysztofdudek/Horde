@@ -7,17 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-09-12
+
+Needs Yggdrasil 6.x — the same major, refused otherwise.
+
 ### Added
-- A plan can be written to a file. `queue plan --out <file>` puts the whole plan where the architect reads it, instead of a summary passed on in a message. A real mission lost its critical path in that summary.
-- The cost report counts reviewer calls. A worker who runs the architecture reviewer while landing a change bills a model per rule it judges, and the roster never saw that. The report now reads those calls from the repository's own record and prints them beside the agent runs, for the whole mission.
-- A merge is refused when a file the branch added belongs to no node. The mapping and the first file land in the same commit, or the branch waits.
-- A merge is refused when a node's charter, a node's log or a commit that changes the graph carries the language of a plan: a wave, a ticket number, a mission, a horde, an evidence id, a scratch path. The graph says what a node is and what must stay true; which mission touched it stays with the mission.
+
+- Landing is automatic: a change that passes every check merges immediately; a failing one is refused with the reason. Only one change lands at a time; a crash mid-landing no longer blocks the next.
+- `land --background` returns immediately and writes its result to a file. `worker.copy`/`worktree.copy` copies files into every new worktree.
+- Weakening a rule (deleting, lowering, moving its review date, narrowing scope, unhooking, disabling for a file) requires the client's written approval — once per landing or for the whole mission.
+- A change cannot both alter a rule and alter the code that rule judges in one landing; both are refused together.
+- Every landing runs the full test suite against a real Yggdrasil build; the architecture check runs on the branch itself and must be fully green.
+- `queue plan --out <file>` writes the whole plan to a file for the architect.
+- The cost report now counts reviewer calls spent during landing, not just agent runs.
+- A merge is refused when a file belongs to no component, or when a component's log or a graph-changing commit names a wave, ticket, mission or horde instead of describing the component itself.
+- A request is split into components before anything is built; one agent per component, no two write the same files; a component too large is refused, with its size named.
+- Nothing starts until the whole plan is reviewed once by someone who sees all of it.
+- The mission is stateless between runs: `tick` reads the mission's state, advances what it can, and exits. `tick --runner external` runs it from any external scheduler, not only a live session.
+- Work sent back past a set number of rounds stops and asks you one question instead of looping.
+- `legislate` writes a component's own rules from what its work has been refused for.
+- `retro` closes a piece of work with three lists: what belongs in a standing rule, what's worth saying once, and what no rule will ever capture — plus its cost.
+- Evidence detection: the mission works out what counts as proof in your repository (test suites, a promises directory, a scenario runner) at the start and uses it; a repository with nothing at all is offered a ready-made `promises` package (four rules, three self-proving for free, the fourth advisory).
+- Every merge commit records what it landed, what it proved, and what it did to the rules.
+- A finished mission archives its own working directory automatically.
+- `wave close` audits the rules: overdue `review_by` rules become renew-or-retire tickets, unhandled `yg advise`/`grain advise` items are picked up, and rules nothing has hit in two waves are named.
+- One channel reaches you: a stalled worker, work sent back too many times, a request to weaken a rule, or a change to the mission card. Each answer is recorded in the mission's decision log.
 
 ### Changed
-- A brief handed to a spawned agent names the skill's own scripts by their absolute path. The agent no longer depends on an environment variable it may not have been given, and the director no longer has to add that path to every brief by hand.
-- A ticket with no acceptance line cannot be queued. Nothing a verifier could reproduce means nothing could ever prove it done; the refusal names the line to add.
-- Quality advisories file tickets only for the nodes this horde leases. An advisory on another node stays in the feed for whichever horde takes that node; `--all` files them anyway.
-- A steward's turn starts by reading the rulings, then the queue. A ruling recorded while the steward was mid-turn used to sit unread until the next message woke it, and the steward's report called it "no ruling".
+
+- No check accepts a recorded result; tests and rules are re-run, never taken on trust. Every step now stops at a time limit and refuses (naming what was stopped and the setting that raises it) instead of running forever — closing a leak that left dozens of orphaned processes on a machine running these checks all night.
+- A port-change approval is required only from neighbours who actually named that port, not every neighbour of the shared component.
+- A ticket with no acceptance line cannot be queued.
+- Quality advisories file tickets only for nodes this horde leases; `--all` overrides.
+- Mission-wide numbering (work, architect decisions, questions for you) now comes from one sequence instead of three, so a bare number is never ambiguous.
+
+### Removed
+
+- Ports carry no version. `<node>/<port>@<version>` is refused; `contract propose` no longer takes `--version`/`--as`.
+- No standing cast: a mission runs on two roles, a worker per ticket and one architect — no steward, owner, verifier, auditor, counsel, or sub-teams.
+- No signatures on a ticket: merging needs no author/verifier key or per-node approval.
+- No charter file at a node; its rules, ports and log show through `node show`.
+- No audit sample.
+- No escalation/dissent mechanism — superseded by the one channel above.
+- Claude Code's experimental Agent Teams feature is not used anywhere in this skill.
+
+### Migrating a mission already in flight
+
+Finish a mission started on an earlier release the old way — it still reads its own state and files itself away. Start fresh from the same mission card afterward; the new run rebuilds its work from the evidence the old one left, at the cost of one conversation per component touched.
 
 ## [0.4.0] - 2026-09-08
 
@@ -92,7 +128,8 @@ Experimental. This version needs a Yggdrasil newer than 5.8.0 — the first one 
 ### Added
 - First version. A prototype, expect rough edges.
 
-[Unreleased]: https://github.com/krzysztofdudek/Horde/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/krzysztofdudek/Horde/compare/v6.0.0...HEAD
+[6.0.0]: https://github.com/krzysztofdudek/Horde/compare/v0.4.0...v6.0.0
 [0.4.0]: https://github.com/krzysztofdudek/Horde/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/krzysztofdudek/Horde/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/krzysztofdudek/Horde/compare/v0.1.0...v0.2.0

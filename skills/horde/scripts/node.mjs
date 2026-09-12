@@ -17,60 +17,64 @@
 // process state — port proposals and graph-change proposals, uncommitted, per horde, in
 // hordes/<horde>/graph.json — until an approval turns one into a filing the architect makes.
 
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  repoRoot, hordePath, readJSON, writeJSON, readText, writeText, readConfig, nowIso,
-  fail, parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, claimLease, qualityPolicy,
+  hordePath, readJSON, writeJSON, readText, writeText, readConfig, nowIso,
+  fail, parseArgs, asArray, emit, isMain, resolveHorde, claimLease, qualityPolicy,
+  resolveTree, assertGraphWritable, provenanceLine, withProvenance,
+  allocateId, idNumber, migrationNote,
 } from './_lib.mjs';
-import { trace as traceRoster } from './roster.mjs';
 
 const USAGE = `usage: node.mjs <command> [options]
 
 commands:
   bind [--horde h]
       verifies the graph is readable through the Yggdrasil CLI; lists every node id.
-  bind <node> [--horde h] [--take --escalation <id>]
+  bind <node> [--horde h] [--take --ask <id>]
       node-lease-across-hordes: leases <node> to this horde in .horde/leases.json, exclusive
       across every live horde on the repository. Refuses a node already leased by another horde
       that is not archived, naming that horde and its last activity. --take overrides that
-      refusal but only over a ruled escalation on this horde (--escalation <id>); the take-over
+      refusal but only over an answered ask on this horde (--ask <id>); the take-over
       is written to the node's own log as well as to the lease history.
   map [--horde h]
-      this mission's nodes (named by an owner in the roster or by a ticket) with owner, the
-      ports they publish, and open port proposals.
+      this mission's nodes (named by a ticket, or by a pre-migration roster entry) with the
+      ports they publish and open port proposals.
   show <node> [--horde h]
       boundary, the rules in force on the node (with the status word that says what a refusal
-      costs), the ports it publishes with version and test, charter, last log entries.
-  charter edit <node> [--horde h]
-      writes charter.md beside the node's yg-node.yaml; seeds it from the template first when
-      the node has none yet and stdin is empty.
+      costs), the ports it publishes, last log entries.
   log <node> "<reason>" [--run] [--horde h]
       prints the "yg log add --reason" command for the node's own log; runs it too with --run.
-  contract propose <node> <port> "<text>" --as <test-path> [--version <n>] --by <owner> [--horde h]
-      port-is-contract: proposes adding a port to a node, or bumping the version of one it
-      already publishes. --as names the test that IS the contract. --version defaults to the
-      next version above what the node publishes today.
+  contract propose <node> <port> "<text>" --by <name> [--aspects a,b] [--horde h]
+      port-is-contract: proposes adding a port to a node, or changing one it already publishes.
+      There is no version — a port is referenced by name alone, everywhere. --aspects names the
+      rules the port is to be held to; the filed record always carries the field, empty when
+      none was named.
   contract approve <id> ["why"] --by <name> [--horde h]
   contract veto <id> "why" --by <name> [--horde h]
       the architect rules on a port proposal; an approved one is filed by editing the node's
       yg-node.yaml and recording the why with "yg log add" — the command prints both.
   contracts [--pending] [--node n] [--horde h]
-      the ports of this mission's nodes as the graph declares them (name, version, test), plus
+      the ports of this mission's nodes as the graph declares them (name, description), plus
       every port proposal this horde has open.
   verdicts [--at <path>] [--by <name>] [--horde h]
       the prose rules still waiting on a judgement in a tree, each with the exact
       "yg verdict package" and "yg verdict record" commands that judge it. --at names the
       worktree to read (default: this one).
-  propose <kind> "<text>" --by <owner> [--node n] [--boundary <glob>[,glob…]] [--horde h]
+  propose <kind> "<text>" --by <name> [--node n] [--boundary <glob>[,glob…]] [--horde h]
       kinds: new-node, move-boundary, rename, rule. move-boundary requires --node and --boundary
       so apply can name the exact edit later, not just record that it happened.
   proposals [--open] [--horde h]
   approve <id> ["why"] --by <name> [--horde h]
   veto <id> "why" --by <name> [--horde h]
   apply <proposal-id> [--horde h]
-      closes an approved graph-change proposal and prints the filing steps for the architect.
+      closes an approved graph-change proposal and prints the filing steps for whoever works
+      that area, who makes them in their own branch.
+
+Every item the architect rules on — a graph change, a port proposal, a rule proposal — reads as
+"g-NNN", out of the same counter tickets ("t-NNN") and questions to the client ("a-NNN") come from,
+so no two of them ever wear the same number. A bare number still resolves, for one release.
   ladder [--horde h]
       every rule the graph declares with the rung it sits on, how many cases it is drilled
       against, what it refuses here, the baseline it was granted against and how many closed
@@ -93,6 +97,14 @@ commands:
       waiver or a review date — those weaken a rule too, and Yggdrasil already asks the user
       for them.
 
+Every command reads the graph from the tree named — --tree <path> (must be a worktree of this
+repository), --ticket NNN (that ticket's own worktree, --horde names whose), --scratch <sha>
+(a throwaway detached worktree at that sha), or cwd when none is given. --horde alone is only
+the multi-horde disambiguator, never a fourth scope — except for a graph write (log --run,
+promote, demote), where naming it means trunk, refused there: trunk is the landing script's
+alone. bind, show, log --run, promote and demote end with "tree: <path> · branch: <branch> ·
+<sha>"; --json carries the same three fields.
+
 options: --json  --help`;
 
 // ---- talking to the Yggdrasil CLI ------------------------------------------------------------
@@ -107,17 +119,52 @@ export function ygCommand(cfg) {
   return { cmd: parts[0] || 'yg', prefix: parts.slice(1), display: parts.join(' ') || 'yg' };
 }
 
-// The release these machine documents arrived in. They are not in 5.8.0; a CLI that answers
-// `--json` with anything but the document is one from before them, and the horde says which
-// release to pass rather than degrading into reading the graph's files itself.
-const YG_DOCUMENTS_AFTER = '5.8.0';
+// How long any one call to that CLI is allowed to take before it is stopped. A CLI that hangs is
+// not an answer about the graph — and, unlike a CLI that refuses, it is an answer that never
+// arrives at all. That matters here more than anywhere else in this tool set because of who runs
+// these calls: `land.mjs --background` detaches itself, unrefs the child and returns, so nothing
+// is left waiting on the process that reads the graph. A `yg check` that wedges inside one of
+// those — a worktree deleted out from under it, a network disk, a graph large enough to thrash —
+// leaves a process with no parent, no limit and nobody to notice, and it stays there until the
+// machine is rebooted. Every call below therefore runs under a ceiling, and a call that reaches it
+// is reported as a stopped non-answer rather than waited on.
+//
+// Ten minutes, and configurable as `config.ygTimeoutMs`. It is a ceiling, not a wait: no healthy
+// call comes near it, and its only job is to be far above the slowest honest `yg check --details`
+// on a large graph while still being finite. It sits deliberately under the 15-minute
+// `config.gateTimeoutMs` the landing gate gives the repository's own test command, so that when a
+// landing does wedge on the graph it gives up in time to still write its own refusal.
+const YG_TIMEOUT_MS = 10 * 60 * 1000;
+export function ygTimeout(cfg) {
+  const asked = Number(cfg && cfg.ygTimeoutMs);
+  return Number.isFinite(asked) && asked > 0 ? asked : YG_TIMEOUT_MS;
+}
+
+// The options every call site hands `startCli`, with the ceiling filled in from config. Written
+// once so a new call site cannot quietly be the one without a limit.
+//
+// SIGTERM, not SIGKILL, and said here rather than left to `execFileSync`'s default: `yg` holds the
+// graph's lock file open while it records verdicts, and a process killed outright mid-write leaves
+// a lock a person then has to repair by hand. Letting a stopped run unwind costs a moment and is
+// worth it.
+function ygOpts(cfg, opts = {}) {
+  return { timeout: ygTimeout(cfg), killSignal: 'SIGTERM', ...opts };
+}
+
+// The release line these machine documents arrived in. Checked by schema name, never by comparing
+// version numbers (`ygJson`'s own `parsed.schema === schema` test, below) — this constant names
+// nothing more than what the refusal tells a person to install. Horde tracks the family's own
+// 6.x line: an older Yggdrasil answers `--json` with something that is not the document at all,
+// and the horde says which release to pass rather than degrading into reading the graph's files
+// itself.
+const YG_DOCUMENTS_AFTER = '6.0.0';
 
 const YG_DOCUMENTS = 'yg-node/1, yg-context/1 and yg-impact/1';
 
 function ygVersion(cfg) {
   const { cmd, prefix } = ygCommand(cfg);
   try {
-    return execFileSync(cmd, [...prefix, '--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    return execFileSync(cmd, [...prefix, '--version'], ygOpts(cfg, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })).trim();
   } catch {
     return null;
   }
@@ -155,17 +202,39 @@ function failStaleCli(cfg, command, saw, docs = YG_DOCUMENTS) {
   );
 }
 
-// Starting the CLI, once. Three outcomes are told apart because they mean different things:
-// the program ran and said something (whatever its exit code), the program does not exist, and
-// the machine could not start a process at all. The last is not an answer about anything — it
-// happens under load, and reading it as "the graph refuses" would turn a busy laptop into an
-// architecture verdict — so it is retried once and then named for what it is.
+// Starting the CLI, once. Four outcomes are told apart because they mean different things:
+// the program ran and said something (whatever its exit code), the program does not exist, the
+// machine could not start a process at all, and the program started but never finished. The third
+// is not an answer about anything — it happens under load, and reading it as "the graph refuses"
+// would turn a busy laptop into an architecture verdict — so it is retried once and then named for
+// what it is.
+//
+// The fourth is the one that used to have no name at all, because there was no limit for it to
+// reach: without a timeout the call simply never returned, and in a detached background landing
+// that is a process left running forever. It is never retried — a second run of a command that
+// hangs is a second wait of the same length for the same non-answer — and it is never folded into
+// `spawnFailed` either, because "this machine is busy, try again" is the wrong advice for a run
+// that started fine and then stopped coming back.
+//
+// Every caller passes a ceiling through `ygOpts`; one is filled in here as well, so a call site
+// that forgets still cannot be the one that hangs.
 function startCli(cmd, args, opts) {
+  const asked = Number(opts && opts.timeout);
+  const limit = Number.isFinite(asked) && asked > 0 ? asked : YG_TIMEOUT_MS;
+  const bounded = { ...opts, timeout: limit, killSignal: (opts && opts.killSignal) || 'SIGTERM' };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      return { out: execFileSync(cmd, args, opts), code: 0, err: '' };
+      return { out: execFileSync(cmd, args, bounded), code: 0, err: '' };
     } catch (e) {
       if (e.code === 'ENOENT') return { missing: true };
+      if (e.code === 'ETIMEDOUT' || (e.signal === bounded.killSignal && (e.status === undefined || e.status === null))) {
+        return {
+          timedOut: true,
+          ms: limit,
+          out: (e.stdout && e.stdout.toString()) || '',
+          err: (e.stderr && e.stderr.toString()) || '',
+        };
+      }
       const exited = e.status !== undefined && e.status !== null;
       if (exited) {
         return {
@@ -180,6 +249,14 @@ function startCli(cmd, args, opts) {
   return { spawnFailed: 'unknown' };
 }
 
+// The one sentence every "it was stopped" message is built from, so the limit, the way to raise it
+// and the reason are worded identically wherever a caller surfaces one.
+function timedOutDetail(ms) {
+  return `it did not finish within ${Math.round(ms / 1000)}s and was stopped — a command that never `
+    + 'returns is not an answer about the graph, and a landing that waits on one never ends. Raise '
+    + 'the limit with: horde.mjs config set ygTimeoutMs <milliseconds>';
+}
+
 // One call to the CLI asking for one machine document. Returns a state rather than throwing, so
 // each caller decides what "absent" means for it: a node the graph does not have is an ordinary
 // answer, while a missing or too-old CLI is a stop.
@@ -189,13 +266,20 @@ function startCli(cmd, args, opts) {
 //   no-cli  — the CLI could not be started
 //   stale   — the CLI ran and answered something that is not the document
 //   error   — the CLI ran and refused for its own reason (a graph that does not load, say)
-function ygJson(root, cfg, args, schema) {
+//
+// Exported because the landing gate reads the same documents on two trees at once and must not go
+// through the readers below: every one of them caches by node or by file alone, which is right for
+// a command looking at one tree and exactly wrong for a comparison of two.
+export function ygJson(root, cfg, args, schema) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], {
+  const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, {
     cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
-  });
+  }));
   if (run.missing) return { state: 'no-cli', command };
+  if (run.timedOut) {
+    return { state: 'error', command, code: null, detail: timedOutDetail(run.ms) };
+  }
   if (run.spawnFailed) {
     return {
       state: 'error',
@@ -298,14 +382,30 @@ export function ygImpact(root, cfg, node) {
 // reason, never a checklist that stops halfway.
 export function ygAvailable(cfg, cwd) {
   const { cmd, prefix } = ygCommand(cfg);
-  const run = startCli(cmd, [...prefix, '--version'], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  return !(run.missing || run.spawnFailed) && run.code === 0;
+  const run = startCli(cmd, [...prefix, '--version'], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+  return !(run.missing || run.spawnFailed || run.timedOut) && run.code === 0;
 }
+
+// A `check` that was stopped at the ceiling is reported as available (the CLI is there, it started,
+// it simply never came back) and not ok, with the stop as its summary. Never as unavailable: the
+// caller's words for that are "install the CLI", which would send somebody to fix the one thing
+// that is not wrong.
 export function runYgCheck(cfg, cwd, extra = []) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const args = ['check', ...extra];
   const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
+  if (run.timedOut) {
+    return {
+      available: true,
+      ok: false,
+      timedOut: true,
+      exit: null,
+      command,
+      out: run.out + run.err,
+      summary: timedOutDetail(run.ms),
+    };
+  }
   if (run.missing || run.spawnFailed) {
     return { available: false, ok: false, command, summary: null, out: '' };
   }
@@ -338,7 +438,12 @@ export function fillDeterministic(cfg, cwd) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const args = ['check', '--approve', '--only-deterministic'];
   const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
+  if (run.timedOut) {
+    return {
+      available: true, ok: false, timedOut: true, exit: null, command, out: timedOutDetail(run.ms),
+    };
+  }
   if (run.missing || run.spawnFailed) return { available: false, ok: false, command, out: '' };
   return {
     available: true, ok: run.code === 0, exit: run.code, command, out: run.out + run.err,
@@ -357,9 +462,12 @@ const PENDING_RE = /No valid verdict for aspect '([^']+)' on (file|node):(.+?)\.
 // verifier off to judge what a command answers for nothing.
 export function pendingProsePairs(cfg, cwd) {
   const res = runYgCheck(cfg, cwd, ['--details']);
-  if (!res.available) {
+  // A run that was stopped listed nothing, which is not the same as "nothing is pending" — reading
+  // its truncated output as an empty list would hand a caller a confident "no prose rule waits" off
+  // a command that never got to the end of the graph.
+  if (!res.available || res.timedOut) {
     return {
-      available: false, command: res.command, pairs: [], scriptPending: [],
+      available: false, timedOut: !!res.timedOut, command: res.command, pairs: [], scriptPending: [],
     };
   }
   const candidates = [];
@@ -548,6 +656,20 @@ export function ygCheckDoc(root, cfg) {
   return ygDoc(root, cfg, ['check', '--json'], 'yg-check/1');
 }
 
+// The same two documents, read softly: `null` when the CLI could not answer, whatever the reason.
+// For a reader that is describing a situation rather than gating on one — a brief says what it
+// could see and says so plainly when it could see nothing, and a brief that refused to render
+// because a CLI was momentarily unreadable would stop a pass that has other things to read.
+export function ygCheckJson(root, cfg) {
+  const res = ygJson(root, cfg, ['check', '--json'], 'yg-check/1');
+  return res.state === 'ok' ? res.doc : null;
+}
+
+export function ygAspectsJson(root, cfg) {
+  const res = ygJson(root, cfg, ['aspects', '--json'], 'yg-aspects/1');
+  return res.state === 'ok' ? res.doc : null;
+}
+
 // What one rule refuses on this repository right now, from that document: the pairs it holds a
 // refusal against, and the pairs nobody has judged yet (an LLM rule's pairs, before a reader has
 // answered them, are neither refusals nor clean — reporting them as clean would be a baseline of
@@ -571,7 +693,12 @@ export function runDrill(root, cfg, aspect) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const args = ['drill', '--aspect', aspect];
   const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
+  if (run.timedOut) {
+    return {
+      available: true, command, read: false, timedOut: true, out: timedOutDetail(run.ms), cases: 0, green: false,
+    };
+  }
   if (run.missing || run.spawnFailed) return { available: false, command };
   const out = `${run.out || ''}${run.err || ''}`;
   const m = DRILL_SUMMARY_RE.exec(out);
@@ -689,7 +816,7 @@ function logToNodes(root, cfg, nodes, reason) {
   const missed = [];
   for (const node of nodes) {
     try {
-      execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+      execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], ygOpts(cfg, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }));
       logged.push(node);
     } catch {
       missed.push(node);
@@ -731,8 +858,9 @@ function logToAspect(root, cfg, aspectId, reason, { status, evidence, by } = {})
   if (status) args.push('--status', status, '--evidence', evidence);
   if (by) args.push('--by', by);
   const command = `${yg.display} ${args.join(' ')}`;
-  const run = startCli(yg.cmd, [...yg.prefix, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 });
+  const run = startCli(yg.cmd, [...yg.prefix, ...args], ygOpts(cfg, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
   if (run.missing) { failNoCli(cfg, command); return null; }
+  if (run.timedOut) { fail(`\`${command}\` — ${timedOutDetail(run.ms)}`); return null; }
   if (run.spawnFailed) {
     fail(`\`${command}\` — this machine could not start the process (${run.spawnFailed}), twice — try again with less running at once.`);
     return null;
@@ -753,7 +881,7 @@ function tryLogAspect(root, cfg, aspectId, reason, { by } = {}) {
     const yg = ygCommand(cfg);
     const args = ['aspects', 'log', 'add', '--aspect', aspectId, '--reason', reason];
     if (by) args.push('--by', by);
-    execFileSync(yg.cmd, [...yg.prefix, ...args], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    execFileSync(yg.cmd, [...yg.prefix, ...args], ygOpts(cfg, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }));
     return true;
   } catch {
     return false;
@@ -827,12 +955,13 @@ function places(n) {
 }
 
 function drillSentence(drill) {
+  if (drill.timedOut) return 'its cases were still running when the run was stopped at the time limit';
   if (!drill.read) return 'its cases could not be read';
   if (drill.cases === 0) return 'it has no cases to run';
   return `${drill.pass} of ${drill.cases} cases answered as written (${drill.miss} miss, ${drill.falseAlarm} false alarm)`;
 }
 
-function cmdPromote(horde, root, cfg, positional, flags) {
+function cmdPromote(horde, root, cfg, positional, flags, info) {
   const aspect = positional[0];
   if (!aspect) fail('promote requires <aspect>');
   if (qualityPolicy(horde) === 'only-the-work') {
@@ -964,9 +1093,8 @@ function cmdPromote(horde, root, cfg, positional, flags) {
     from: status, to, at, by, evidence, nodes, pointered, pointerMissed, baseline: after.refused,
   });
   saveGraph(horde, graph);
-  traceRoster(horde, by);
 
-  emit({
+  emit(withProvenance({
     aspect,
     from: status,
     to,
@@ -981,7 +1109,7 @@ function cmdPromote(horde, root, cfg, positional, flags) {
     pointerMissed,
     reset,
     evidence,
-  }, flags, () => [
+  }, info), flags, () => [
     `"${aspect}" raised ${status} → ${to} — ${drillSentence(drill)}`
     + (to === 'enforced' ? `, ${clean.length} clean waves, nothing outstanding` : `, baseline ${after.refused}`),
     `recorded in the rule's own log (${ygCommand(cfg).display} aspects log read --aspect ${aspect})`,
@@ -993,10 +1121,11 @@ function cmdPromote(horde, root, cfg, positional, flags) {
       ...(pointerMissed.length ? [`could not point to it on: ${pointerMissed.join(', ')}`] : []),
     ] : []),
     'the chairman sees it at wave close and can undo it there',
+    provenanceLine(info),
   ].join('\n'));
 }
 
-function cmdDemote(horde, root, cfg, positional, flags) {
+function cmdDemote(horde, root, cfg, positional, flags, info) {
   const aspect = positional[0];
   if (!aspect) fail('demote requires <aspect>');
   const to = flags.to;
@@ -1045,6 +1174,11 @@ function cmdDemote(horde, root, cfg, positional, flags) {
 
   const evidence = `Rule "${aspect}" lowered from ${status} to ${to} by the chairman: ${why}. The horde does not lower `
     + 'a rule on its own; this one was asked for.';
+  // The rule's own history first, for the same reason a raise writes there: where a rule stands and
+  // why is the rule's own record, and a lowering is the one move nobody in the horde may make — a
+  // successor reading the rule has to find the chairman's own words there, not only on the nodes it
+  // happened to reach.
+  logToAspect(root, cfg, aspect, evidence, { status: to, evidence: why, by: 'user' });
   const { logged, missed } = logToNodes(root, cfg, nodes, evidence);
 
   const graph = loadGraph(horde);
@@ -1059,11 +1193,12 @@ function cmdDemote(horde, root, cfg, positional, flags) {
   });
   saveGraph(horde, graph);
 
-  emit({
+  emit(withProvenance({
     aspect, from: status, to, by: 'user', why, at, logged, missed,
-  }, flags, () => [
+  }, info), flags, () => [
     `"${aspect}" lowered ${status} → ${to} on the chairman's word`,
     logged.length ? `recorded in the log of: ${logged.join(', ')}` : 'no node log to record it in',
+    provenanceLine(info),
   ].join('\n'));
 }
 
@@ -1187,6 +1322,26 @@ export function recordAdvisory(horde, entry) {
   saveGraph(horde, graph);
 }
 
+// ---- what the law audit has already raised ----------------------------------------------------
+//
+// The same record, for the sweep a wave close runs over the law itself: keyed by what the finding
+// IS (`review-by:<rule>`, or the attention item's own stable id), never by where it sat in a list
+// recomputed every close. A rule stays overdue until somebody answers the ticket, and an attention
+// item stays in the feed until somebody decides on it — so without this the close would file the
+// same ticket again every wave, which is how a horde teaches its chairman to stop reading it.
+
+export function readAuditLedger(horde) {
+  const doc = loadGraph(horde);
+  return Array.isArray(doc.audits) ? doc.audits : [];
+}
+
+export function recordAudit(horde, entry) {
+  const graph = loadGraph(horde);
+  if (!Array.isArray(graph.audits)) graph.audits = [];
+  graph.audits.push({ ...entry, at: nowIso() });
+  saveGraph(horde, graph);
+}
+
 // ---- where a node's own files live -----------------------------------------------------------
 
 export function nodeDir(root, node) {
@@ -1221,24 +1376,16 @@ export function nodeBoundary(root, cfg, node) {
   return doc ? asArray(doc.mapping) : [];
 }
 
-// The repo-root-relative directory a node's own graph files live in (yg-node.yaml, charter.md,
-// log.md), trailing slash included — the prefix premerge.mjs's scope check treats as inside a
-// ticket's node, alongside its code boundary. Nothing else under .yggdrasil/
-// (yg-architecture.yaml, aspects, locks, config) is a node's own files, so this names only that
-// one directory, never the graph root.
+// The repo-root-relative directory a node's own graph files live in (yg-node.yaml, log.md),
+// trailing slash included — the prefix land.mjs's scope check treats as inside a ticket's
+// node, alongside its code boundary. Nothing else under .yggdrasil/ (yg-architecture.yaml,
+// aspects, locks, config) is a node's own files, so this names only that one directory, never the
+// graph root.
 export function nodeGraphPathPrefix(root, cfg, node) {
   return `${relative(root, nodeDir(root, node))}/`;
 }
 
-export function nodeCharterPath(root, cfg, node) {
-  return join(nodeDir(root, node), 'charter.md');
-}
-
-export function readNodeCharterText(root, cfg, node) {
-  return readText(nodeCharterPath(root, cfg, node));
-}
-
-// ---- boundary matching (shared with premerge.mjs and tk.mjs) ---------------
+// ---- boundary matching (shared with land.mjs and tk.mjs) ---------------
 //
 // One reading of "inside the node", used by the merge checklist's scope item and by the ticket
 // tool when it accepts a declared file list: the same globs, matched the same way, so a path a
@@ -1270,16 +1417,18 @@ export function ticketBoundary(root, cfg, nodes) {
 
 // ---- ports: the contracts ---------------------------------------------------------------
 //
-// port-is-contract. A port is one object in the graph, carrying the version a consumer names and
-// the test that IS the promise. The horde has no contract object of its own: what it has is a
-// PROPOSAL to add or bump one, which the architect files.
+// port-is-contract. A port is one object in the graph, named and described, that its neighbours
+// depend on. There is no version any more — the graph dropped it (6.0.0), and Horde does not
+// keep a parallel counter of its own; a port is referenced by name alone, everywhere. The horde
+// has no contract object of its own: what it has is a PROPOSAL to add or change one, which the
+// architect files.
 
 export function nodeRelations(root, cfg, node) {
   const doc = ygNode(root, cfg, node);
   return doc ? asArray(doc.relations) : [];
 }
 
-// The ports a node publishes, as {name: {description, version, test, aspects}}.
+// The ports a node publishes, as {name: {description, aspects}}.
 export function nodePorts(root, cfg, node) {
   const doc = ygNode(root, cfg, node);
   return doc && doc.ports && typeof doc.ports === 'object' ? doc.ports : {};
@@ -1290,10 +1439,10 @@ export function portExists(root, cfg, node, port) {
 }
 
 // consumersOf(node, port) — every node that consumes one node's port, from `yg impact`. The one
-// derivation of this, because three things depend on the same answer: which tickets a version
-// bump must come before, whose owner has to approve it, and what the merge checklist then
-// requires. A relation that names no port at all consumes the node as a whole, so a bump reaches
-// it too — the safe direction.
+// derivation of this, because three things depend on the same answer: which tickets a port
+// change must come before, whose owner has to approve it, and what the merge checklist then
+// requires. Yggdrasil normalizes a relation that names no port to portNames: ['default'], so an
+// empty `ports` list here means the relation named nothing at all — never a match for any port.
 export function consumersOf(root, cfg, node, port) {
   const out = new Set();
   const doc = ygImpact(root, cfg, node);
@@ -1305,15 +1454,15 @@ export function consumersOf(root, cfg, node, port) {
     if (!d || !d.node) continue;
     for (const r of asArray(d.relations)) {
       const ports = asArray(r && r.ports);
-      if (ports.length === 0 || ports.includes(port)) out.add(d.node);
+      if (ports.includes(port)) out.add(d.node);
     }
   }
   return [...out].sort();
 }
 
-// One node's ports rendered for a brief: what this node promises its neighbours, at which
-// version, proved by which test. The verifier reads this instead of a hand-kept contracts table,
-// so what it is held to is what the graph actually declares.
+// One node's ports rendered for a brief: what this node promises its neighbours. The verifier
+// reads this instead of a hand-kept contracts table, so what it is held to is what the graph
+// actually declares.
 export function renderNodePorts(root, cfg, node) {
   const ports = nodePorts(root, cfg, node);
   const names = Object.keys(ports).sort();
@@ -1322,10 +1471,10 @@ export function renderNodePorts(root, cfg, node) {
     lines.push('(this component publishes no port — it promises its neighbours nothing by name)');
     return lines.join('\n');
   }
-  lines.push('| port | version | the test that is the contract | promise |', '|---|---|---|---|');
+  lines.push('| port | promise |', '|---|---|');
   for (const name of names) {
     const p = ports[name] || {};
-    lines.push(`| ${name} | ${p.version ?? '(none declared)'} | ${p.test || '(none declared)'} | ${p.description || ''} |`);
+    lines.push(`| ${name} | ${p.description || ''} |`);
   }
   const consumers = names
     .map((n) => ({ port: n, by: consumersOf(root, cfg, node, n) }))
@@ -1367,17 +1516,6 @@ function aspectsFromContext(doc) {
       via: channels.length ? channels.join(' · ') : null,
     };
   });
-}
-
-// The section a node's charter carries naming the rules that reach its files from above — written
-// by whoever generated the graph, not by this tool, and reproduced verbatim when it is there.
-export function charterInheritedRules(charterText) {
-  if (!charterText) return null;
-  const idx = charterText.search(/^##\s+Rules inherited from above\s*$/m);
-  if (idx === -1) return null;
-  const rest = charterText.slice(idx);
-  const next = rest.indexOf('\n## ', 1);
-  return (next === -1 ? rest : rest.slice(0, next)).trim();
 }
 
 // The rules in force on one node.
@@ -1438,7 +1576,9 @@ function graphJsonPath(horde) {
   return hordePath(horde, 'graph.json');
 }
 
-function loadGraph(horde) {
+// Exported so refine.mjs's frame can read the law this mission's consultants proposed without a
+// second reading of graph.json's shape — the frame reports what is on file, it never writes.
+export function loadGraph(horde) {
   const doc = readJSON(graphJsonPath(horde), null);
   return {
     proposals: doc && Array.isArray(doc.proposals) ? doc.proposals : [],
@@ -1448,6 +1588,11 @@ function loadGraph(horde) {
     // are lists like the two above, and both are carried through every write of this file.
     aspects: doc && Array.isArray(doc.aspects) ? doc.aspects : [],
     advisories: doc && Array.isArray(doc.advisories) ? doc.advisories : [],
+    // What the law audit at a wave close has already filed a ticket for — an overdue review date,
+    // an attention item off `yg advise`. Same shape and same purpose as `advisories`: the sweep
+    // runs at every close, and without a record of what it has already raised it would file the
+    // same ticket once a wave for as long as the rule stays overdue.
+    audits: doc && Array.isArray(doc.audits) ? doc.audits : [],
   };
 }
 
@@ -1455,10 +1600,38 @@ function saveGraph(horde, graph) {
   writeJSON(graphJsonPath(horde), graph);
 }
 
-function nextId(items) {
+// Every item the architect rules on — a graph change, a port proposal, a contract proposal, a rule
+// proposal — is one kind, `g-`, out of the horde's one shared counter. Before this, ports and
+// proposals each ran their own sequence from 1, so the same graph.json could hold two items called
+// "1"; and neither sequence knew about tickets, so `show 20` was an ambiguous question.
+//
+// `floor` is what keeps a mission started before this working: its graph.json carries ids the
+// shared counter never issued, so the next number has to clear the highest of them as well as the
+// counter's own.
+function graphFloor(graph) {
   let max = 0;
-  for (const it of items) { const n = Number(it.id); if (Number.isFinite(n)) max = Math.max(max, n); }
-  return String(max + 1);
+  for (const it of [...graph.ports, ...graph.proposals]) {
+    const n = idNumber(it && it.id);
+    if (Number.isFinite(n)) max = Math.max(max, n);
+  }
+  return max;
+}
+
+function nextGraphId(horde, graph) {
+  return allocateId(horde, 'graph', { floor: graphFloor(graph) }).id;
+}
+
+// An item by the id it was given, however it was written: "g-004", "004" or "4". Returns the item
+// and the note to print when the caller wrote a bare number — accepted for one release, so nothing
+// filed before this stops being reachable.
+function findGraphItem(items, ref) {
+  const exact = items.find((x) => String(x.id) === String(ref));
+  if (exact) return { item: exact, note: null };
+  const n = idNumber(ref);
+  if (n === null) return { item: null, note: null };
+  const byNumber = items.filter((x) => idNumber(x.id) === n);
+  if (byNumber.length !== 1) return { item: null, note: null };
+  return { item: byNumber[0], note: migrationNote(ref, byNumber[0].id) };
 }
 
 // ---- commands ---------------------------------------------------------------
@@ -1471,27 +1644,27 @@ function nextId(items) {
 function logNodeTakeover(root, cfg, node, reason) {
   try {
     const yg = ygCommand(cfg);
-    execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], ygOpts(cfg, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }));
     return true;
   } catch {
     return false;
   }
 }
 
-function cmdBind(horde, root, cfg, positional, flags) {
+function cmdBind(horde, root, cfg, positional, flags, info) {
   const node = positional[0];
   if (!node) {
     const nodes = listAllNodes(root);
     // Ask the graph about one real node, so "readable" means the documents answered rather than
     // that a directory exists: an unreadable graph or a CLI that predates them stops here.
     if (nodes.length) ygNode(root, cfg, nodes[0]);
-    emit({ nodes }, flags, () => `graph readable through ${ygCommand(cfg).display} — ${nodes.length} node(s): ${nodes.join(', ') || '(none)'}`);
+    emit(withProvenance({ nodes }, info), flags, () => `graph readable through ${ygCommand(cfg).display} — ${nodes.length} node(s): ${nodes.join(', ') || '(none)'}\n${provenanceLine(info)}`);
     return;
   }
 
   let result;
   try {
-    result = claimLease(horde, node, { take: !!flags.take, escalation: flags.escalation || null });
+    result = claimLease(horde, node, { take: !!flags.take, ask: flags.ask || null });
   } catch (e) {
     fail(e.message);
     return;
@@ -1502,9 +1675,9 @@ function cmdBind(horde, root, cfg, positional, flags) {
     return;
   }
   if (result.status === 'taken') {
-    const reason = `took the lease on "${node}" from horde "${result.from}" over escalation ${result.escalation}: ${result.ruling}`;
+    const reason = `took the lease on "${node}" from horde "${result.from}" over ask ${result.ask}: ${result.answer}`;
     const logged = logNodeTakeover(root, cfg, node, reason);
-    emit({ ...result, logged }, flags, () => `"${node}" taken from "${result.from}" over escalation ${result.escalation} — ${logged ? 'logged on the node' : 'recorded in the lease history only (no node log to append to)'}`);
+    emit({ ...result, logged }, flags, () => `"${node}" taken from "${result.from}" over ask ${result.ask} — ${logged ? 'logged on the node' : 'recorded in the lease history only (no node log to append to)'}`);
     return;
   }
   emit(result, flags, () => (result.freedFrom
@@ -1566,8 +1739,7 @@ function ownerOf(horde, node) {
 
 function portSummary(root, cfg, node) {
   const ports = nodePorts(root, cfg, node);
-  const names = Object.keys(ports).sort();
-  return names.map((n) => `${n}@${ports[n] && ports[n].version != null ? ports[n].version : '-'}`);
+  return Object.keys(ports).sort();
 }
 
 function cmdMap(horde, root, cfg, flags) {
@@ -1586,80 +1758,52 @@ function cmdMap(horde, root, cfg, flags) {
   });
 }
 
-function cmdShow(horde, root, cfg, positional, flags) {
+function cmdShow(horde, root, cfg, positional, flags, info) {
   const node = positional[0];
   if (!node) fail('show requires <node>');
   if (!nodeExists(root, cfg, node)) fail(`no such node in the graph: ${node}`);
   const doc = ygNode(root, cfg, node);
   const boundary = asArray(doc.mapping);
-  const charter = readNodeCharterText(root, cfg, node) || '(no charter yet)';
   const ports = renderNodePorts(root, cfg, node);
   let log = '(no log yet)';
   try {
     const { cmd, prefix } = ygCommand(cfg);
-    log = execFileSync(cmd, [...prefix, 'log', 'read', '--node', node], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim() || log;
+    log = execFileSync(cmd, [...prefix, 'log', 'read', '--node', node], ygOpts(cfg, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] })).toString().trim() || log;
   } catch { /* no entries yet — keep the placeholder */ }
   const rules = nodeRules(root, cfg, node);
-  const inherited = charterInheritedRules(readNodeCharterText(root, cfg, node));
-  const result = {
+  const result = withProvenance({
     node,
     type: doc.type || null,
     description: doc.description || null,
     boundary,
     ports: doc.ports || {},
-    rules: { ...rules, charterInherited: inherited },
-    charter,
+    rules,
     log,
-  };
+  }, info);
   emit(result, flags, () => [
     `# ${node}${doc.type ? ` [${doc.type}]` : ''}`, '',
     `**Boundary:** ${boundary.join(', ') || '(none)'}`, '',
     '## Rules — what this node\'s code must satisfy', '',
-    renderRules(rules, inherited), '',
+    renderRules(rules), '',
     '## Ports — what it promises its neighbours', '',
     ports, '',
-    '## Charter', charter, '',
     '## Log', log,
+    provenanceLine(info),
   ].join('\n'));
 }
 
-function readStdin() {
-  try {
-    return readFileSync(0, 'utf8');
-  } catch {
-    return '';
-  }
-}
-
-function cmdCharterEdit(horde, root, cfg, positional, flags) {
-  const node = positional[0];
-  if (!node) fail('charter edit requires <node>');
-  if (!nodeExists(root, cfg, node)) {
-    fail(`no such node in the graph: ${node} — a new node is filed with \`${ygCommand(cfg).display}\` by the architect, not seeded here`);
-  }
-  const stdin = readStdin();
-  let content = stdin;
-  if (!content.trim()) {
-    content = renderTemplate('node-charter', {
-      node, owner: '(unassigned)', class: '(unassigned)', lease: '(unassigned)',
-    });
-  }
-  writeText(nodeCharterPath(root, cfg, node), content);
-  emit({ node, bytes: content.length }, flags, () => `charter written: ${node} (${content.length} bytes)`);
-}
-
-function cmdLog(horde, root, cfg, positional, flags) {
+function cmdLog(horde, root, cfg, positional, flags, info) {
   const [node, reason] = positional;
   if (!node || !reason) fail('log requires <node> "<reason>"');
   const yg = ygCommand(cfg);
   const cmd = `${yg.display} log add --node ${node} --reason "${reason.replace(/"/g, '\\"')}"`;
   if (flags.run) {
     try {
-      execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+      execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', node, '--reason', reason], ygOpts(cfg, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }));
     } catch (e) {
       fail(`${yg.display} log add failed: ${e.message}`);
     }
-    emit({ node, reason, ran: true }, flags, () => `ran: ${cmd}`);
+    emit(withProvenance({ node, reason, ran: true }, info), flags, () => `ran: ${cmd}\n${provenanceLine(info)}`);
     return;
   }
   emit({ node, reason, command: cmd }, flags, () => cmd);
@@ -1667,40 +1811,41 @@ function cmdLog(horde, root, cfg, positional, flags) {
 
 // ---- port proposals ---------------------------------------------------------
 
+// `--aspects a,b` — the rules a proposed port is to be held to. Always resolved to a list, never
+// left undefined: the filed record carries the field whether or not one was named.
+function parseAspectList(v) {
+  if (v === undefined || v === null || v === false) return [];
+  return String(v).split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 function cmdContractPropose(horde, root, cfg, positional, flags) {
   const [node, port, text] = positional;
   if (!node || !port || !text) fail('contract propose requires <node> <port> "<text>"');
-  if (!flags.as) fail('contract propose requires --as <test-path> — a port\'s promise IS a test, and the graph records which one');
-  if (!flags.by) fail('contract propose requires --by <owner>');
+  if (!flags.by) fail('contract propose requires --by <name>');
   if (!nodeExists(root, cfg, node)) fail(`no such node in the graph: ${node}`);
 
   const existing = nodePorts(root, cfg, node)[port];
-  const current = existing && existing.version != null ? Number(existing.version) : null;
-  const version = flags.version !== undefined ? Number(flags.version) : (current === null ? 1 : current + 1);
-  if (!Number.isFinite(version) || version < 1) fail(`--version must be a whole number of 1 or more, got: ${flags.version}`);
-  if (current !== null && version <= current) {
-    fail(`${node}/${port} already publishes version ${current} — a proposal must raise it, not restate it (--version ${current + 1})`);
-  }
+  const kind = existing ? 'change' : 'add';
 
   const graph = loadGraph(horde);
   const entry = {
-    id: nextId(graph.ports),
+    id: nextGraphId(horde, graph),
     node,
     port,
-    version,
-    test: flags.as,
-    kind: current === null ? 'add' : 'bump',
-    from: current,
+    kind,
     text,
+    // The rules this port is to be held to. Always written, empty when none was named: Yggdrasil
+    // validates the field and a record that simply left it out is a record it cannot read.
+    aspects: parseAspectList(flags.aspects),
     status: 'proposed',
     by: flags.by,
     at: nowIso(),
   };
   graph.ports.push(entry);
   saveGraph(horde, graph);
-  const consumers = current === null ? [] : consumersOf(root, cfg, node, port);
-  emit({ ...entry, consumers }, flags, () => `port ${entry.kind === 'add' ? 'proposed' : 'bump proposed'}: [${entry.id}] ${node}/${port}@${version}`
-    + (consumers.length ? ` — ${consumers.length} consumer(s) read the old version: ${consumers.join(', ')}` : ''));
+  const consumers = kind === 'change' ? consumersOf(root, cfg, node, port) : [];
+  emit({ ...entry, consumers }, flags, () => `port ${kind === 'add' ? 'proposed' : 'change proposed'}: [${entry.id}] ${node}/${port}`
+    + (consumers.length ? ` — ${consumers.length} consumer(s): ${consumers.join(', ')}` : ''));
 }
 
 // The filing an approved port proposal asks the architect for: the edit to the node's own file,
@@ -1709,8 +1854,8 @@ function cmdContractPropose(horde, root, cfg, positional, flags) {
 function portFilingSteps(cfg, p) {
   const yg = ygCommand(cfg);
   return [
-    `edit .yggdrasil/model/${p.node}/yg-node.yaml — under ports:, set ${p.port}: { version: ${p.version}, test: ${p.test} }`,
-    `${yg.display} log add --node ${p.node} --reason "<why this port exists at version ${p.version}>"`,
+    `edit .yggdrasil/model/${p.node}/yg-node.yaml — under ports:, set ${p.port}: { description: "<the promise>" }`,
+    `${yg.display} log add --node ${p.node} --reason "<why this port ${p.kind === 'add' ? 'exists' : 'changed'}>"`,
     `${yg.display} check --approve --only-deterministic  (records the contract baseline — free, no key)`,
   ];
 }
@@ -1720,18 +1865,18 @@ function cmdContractRule(horde, root, cfg, positional, flags, verdict) {
   if (!id) fail(`contract ${verdict === 'approved' ? 'approve' : 'veto'} requires <id>`);
   if (!flags.by) fail('--by is required');
   const graph = loadGraph(horde);
-  const p = graph.ports.find((x) => x.id === id);
+  const { item: p, note } = findGraphItem(graph.ports, id);
   if (!p) fail(`no such port proposal: ${id}`);
-  if (p.status !== 'proposed') fail(`port proposal ${id} is already ${p.status}`);
+  if (p.status !== 'proposed') fail(`port proposal ${p.id} is already ${p.status}`);
   p.status = verdict;
   p.ruling = why || null;
   p.rulingBy = flags.by;
   p.ruledAt = nowIso();
   saveGraph(horde, graph);
-  traceRoster(horde, flags.by);
   const steps = verdict === 'approved' ? portFilingSteps(cfg, p) : [];
   emit({ ...p, filing: steps }, flags, () => [
-    `port proposal ${id} ${verdict} — ${p.node}/${p.port}@${p.version}`,
+    `port proposal ${p.id} ${verdict} — ${p.node}/${p.port}`,
+    ...(note ? [note] : []),
     ...(steps.length ? ['file it into the graph yourself:', ...steps.map((s) => `  ${s}`)] : []),
   ].join('\n'));
 }
@@ -1749,8 +1894,6 @@ function cmdContracts(horde, root, cfg, flags) {
         declared.push({
           node,
           port: name,
-          version: p.version ?? null,
-          test: p.test || null,
           description: p.description || '',
           consumers: consumersOf(root, cfg, node, name),
         });
@@ -1766,13 +1909,13 @@ function cmdContracts(horde, root, cfg, flags) {
     if (!flags.pending) {
       lines.push('Declared in the graph:');
       lines.push(...(declared.length
-        ? declared.map((d) => `  ${d.node}/${d.port}@${d.version ?? '-'}  test=${d.test || '(none)'}  consumers=${d.consumers.join(',') || '-'}`)
+        ? declared.map((d) => `  ${d.node}/${d.port}  consumers=${d.consumers.join(',') || '-'}`)
         : ['  (none)']));
       lines.push('');
     }
     lines.push(flags.pending ? 'Proposals waiting on the architect:' : 'Proposals:');
     lines.push(...(proposals.length
-      ? proposals.map((p) => `  [${p.id}] ${p.node}/${p.port}@${p.version}  ${p.status}  test=${p.test}  by ${p.by}  ${p.text}`)
+      ? proposals.map((p) => `  [${p.id}] ${p.node}/${p.port}  ${p.status}  by ${p.by}  ${p.text}`)
       : ['  (none)']));
     return lines.join('\n');
   });
@@ -1823,13 +1966,13 @@ function cmdPropose(horde, positional, flags) {
   const [kind, text] = positional;
   if (!kind || !text) fail(`propose requires <kind> "<text>" (kinds: ${PROPOSAL_KINDS.join(', ')})`);
   if (!PROPOSAL_KINDS.includes(kind)) fail(`unknown kind: ${kind} (kinds: ${PROPOSAL_KINDS.join(', ')})`);
-  if (!flags.by) fail('propose requires --by <owner>');
+  if (!flags.by) fail('propose requires --by <name>');
   if (kind === 'move-boundary' && (!flags.node || !flags.boundary)) {
     fail('propose move-boundary requires --node <n> --boundary <glob>[,glob…], so apply can name the exact edit');
   }
   const graph = loadGraph(horde);
   const entry = {
-    id: nextId(graph.proposals),
+    id: nextGraphId(horde, graph),
     kind,
     text,
     by: flags.by,
@@ -1858,26 +2001,25 @@ function cmdProposalRule(horde, positional, flags, verdict) {
   if (!id) fail(`${verdict === 'approved' ? 'approve' : 'veto'} requires <id>`);
   if (!flags.by) fail('--by is required');
   const graph = loadGraph(horde);
-  const p = graph.proposals.find((x) => x.id === id);
+  const { item: p, note } = findGraphItem(graph.proposals, id);
   if (!p) fail(`no such proposal: ${id}`);
-  if (p.status !== 'open') fail(`proposal ${id} is already ${p.status}`);
+  if (p.status !== 'open') fail(`proposal ${p.id} is already ${p.status}`);
   p.status = verdict;
   p.ruling = why || null;
   p.rulingBy = flags.by;
   p.ruledAt = nowIso();
   saveGraph(horde, graph);
-  traceRoster(horde, flags.by);
-  emit(p, flags, () => `proposal ${id} ${verdict}`);
+  emit(p, flags, () => [`proposal ${p.id} ${verdict}`, ...(note ? [note] : [])].join('\n'));
 }
 
 function cmdApply(horde, root, cfg, positional, flags) {
   const id = positional[0];
   if (!id) fail('apply requires <proposal-id>');
   const graph = loadGraph(horde);
-  const p = graph.proposals.find((x) => x.id === id);
+  const { item: p, note } = findGraphItem(graph.proposals, id);
   if (!p) fail(`no such proposal: ${id}`);
-  if (p.status !== 'approved') fail(`proposal ${id} is not approved (status: ${p.status})`);
-  if (p.appliedAt) fail(`proposal ${id} was already applied`);
+  if (p.status !== 'approved') fail(`proposal ${p.id} is not approved (status: ${p.status})`);
+  if (p.appliedAt) fail(`proposal ${p.id} was already applied`);
 
   p.appliedAt = nowIso();
   saveGraph(horde, graph);
@@ -1886,10 +2028,11 @@ function cmdApply(horde, root, cfg, positional, flags) {
     ? `set ${p.node}'s mapping: to ${p.boundary.join(', ')} in .yggdrasil/model/${p.node}/yg-node.yaml`
     : 'edit .yggdrasil/model/**/yg-node.yaml (and yg-architecture.yaml for a new, renamed or moved node)';
   emit(
-    { id, kind: p.kind, applied: true, step },
+    { id: p.id, kind: p.kind, applied: true, step },
     flags,
-    () => `proposal ${id} closed — file it into the graph yourself: ${step}; record the why with \`${yg.display} log add\`. `
-      + 'A change to yg-architecture.yaml needs the user\'s explicit confirmation.',
+    () => `proposal ${p.id} closed — the agent working that area files it, in its own branch: ${step}; record the why with \`${yg.display} log add\`. `
+      + 'A change to yg-architecture.yaml needs the user\'s explicit confirmation.'
+      + (note ? `\n${note}` : ''),
   );
 }
 
@@ -1903,17 +2046,32 @@ function main() {
   if (!cmd) fail('missing command (see --help)');
 
   const horde = resolveHorde(flags);
-  const root = repoRoot();
   const cfg = readConfig() || {};
 
-  if (cmd === 'bind') return cmdBind(horde, root, cfg, rest, flags);
+  // Every read here takes the same three scope flags resolveTree offers a command with no horde
+  // scope of its own — `--tree`, `--ticket`, `--scratch` — but `--horde` alone is never a fourth:
+  // it is only ever the disambiguator `resolveHorde` already spent above, never a second signal
+  // for "read trunk instead" (a repository running more than one horde still passes `--horde` on
+  // an ordinary read, and cwd — not trunk — is still where its uncommitted graph edits are).
+  // `--ticket` still needs a horde name to build its path from, though, so it borrows the one
+  // already resolved rather than insisting the caller type `--horde` a second time just for that.
+  // A graph write (log --run, promote, demote) is the one place `--horde` alone DOES mean trunk,
+  // held to the rule that trunk is the landing script's alone, and cwd sitting on the mission's
+  // own base branch is almost always the wrong tree found by accident — `--tree` named explicitly
+  // is what actually authorises either.
+  const isGraphWrite = cmd === 'promote' || cmd === 'demote' || (cmd === 'log' && flags.run);
+  const info = isGraphWrite
+    ? resolveTree({ tree: flags.tree, horde: flags.horde })
+    : resolveTree({
+      tree: flags.tree, ticket: flags.ticket, scratch: flags.scratch, horde: flags.ticket ? horde : undefined,
+    });
+  const root = info.path;
+  if (isGraphWrite) assertGraphWritable(info, { horde, cfg });
+
+  if (cmd === 'bind') return cmdBind(horde, root, cfg, rest, flags, info);
   if (cmd === 'map') return cmdMap(horde, root, cfg, flags);
-  if (cmd === 'show') return cmdShow(horde, root, cfg, rest, flags);
-  if (cmd === 'charter') {
-    if (rest[0] !== 'edit') fail('charter requires "edit"');
-    return cmdCharterEdit(horde, root, cfg, rest.slice(1), flags);
-  }
-  if (cmd === 'log') return cmdLog(horde, root, cfg, rest, flags);
+  if (cmd === 'show') return cmdShow(horde, root, cfg, rest, flags, info);
+  if (cmd === 'log') return cmdLog(horde, root, cfg, rest, flags, info);
   if (cmd === 'contract') {
     const [sub, ...subRest] = rest;
     if (sub === 'propose') return cmdContractPropose(horde, root, cfg, subRest, flags);
@@ -1929,8 +2087,8 @@ function main() {
   if (cmd === 'veto') return cmdProposalRule(horde, rest, flags, 'vetoed');
   if (cmd === 'apply') return cmdApply(horde, root, cfg, rest, flags);
   if (cmd === 'ladder') return cmdLadder(horde, root, cfg, flags);
-  if (cmd === 'promote') return cmdPromote(horde, root, cfg, rest, flags);
-  if (cmd === 'demote') return cmdDemote(horde, root, cfg, rest, flags);
+  if (cmd === 'promote') return cmdPromote(horde, root, cfg, rest, flags, info);
+  if (cmd === 'demote') return cmdDemote(horde, root, cfg, rest, flags, info);
   fail(`unknown command: ${cmd} (see --help)`);
 }
 

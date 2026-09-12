@@ -1,0 +1,20 @@
+---
+id: brand-palette-signed-off
+status: implemented
+artefact:
+  path: docs/brand/palette.pdf
+  sha256: 3b1f8a2c9d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8
+  accepted_by: Maya Lind
+  at: 2026-08-14
+---
+
+# An order the customer placed comes back confirmed
+
+## What it checks
+A customer who places an order is told, on the spot, that it is confirmed.
+
+## Why it matters
+An order that vanishes without a word is the one complaint support cannot answer.
+
+## How to see it
+Place an order and watch for the confirmation.
