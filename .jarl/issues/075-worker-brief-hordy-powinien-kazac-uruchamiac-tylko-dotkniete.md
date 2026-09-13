@@ -1,6 +1,6 @@
 # 075 · worker brief hordy powinien kazac uruchamiac tylko dotkniete testy
 
-**Status:** in-progress
+**Status:** done
 **Kind:** gap
 **Priority:** 1
 **Tier:** standard
@@ -19,5 +19,5 @@ Bez tego workerzy Hordy powtarzają dokładnie ten sam wzorzec zawieszania się 
 reference/roles/worker.md każe workerowi uruchomić tylko test(y) dotknięte jego zmianą, w foreground, z timeoutem narzędzia powłoki ustawionym jawnie — nie całą bramkę/suite. Pełna suita zostaje zadaniem lądowania/mergera, tak jak w Jarlu.
 
 ## Evidence
-Otwarte — decyzja i implementacja należą do przyszłej pracy nad Hordą, nie do tej pętli.
+Merge commit de33d4c: worker brief scopes test runs to touched files, foreground, explicit timeout; merged
 

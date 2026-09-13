@@ -1,6 +1,6 @@
 # 078 · brief mjs powinien pisac brief do pliku zamiast tylko stdout
 
-**Status:** in-progress
+**Status:** done
 **Kind:** gap
 **Priority:** 2
 **Tier:** standard
@@ -21,4 +21,6 @@ reference/model.md nazywa kontekst dyrektora najbardziej deficytowym zasobem; ta
 Dowod, ktorego oczekuje: nowy test w tests/brief.test.mjs.
 
 ## Evidence
+
+Merge commit 32e933a: brief.mjs and refine.mjs --step consult take --out to write briefs to a file; merged
 

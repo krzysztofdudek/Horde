@@ -1,6 +1,6 @@
 # 014 · test rewersji tylko nowe pliki
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -21,4 +21,6 @@ Do czasu straży niesłabnięcia (issue 020): brak nowego pliku testowego jest �
 Dowód, którego oczekuję: skills/horde/scripts/tests/land.test.mjs.
 
 ## Evidence
+
+Merge commit 46bee4b: land.mjs's revert test now checks changed test files too and honors a declared No new tests exemption; merged
 

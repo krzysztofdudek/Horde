@@ -1,6 +1,6 @@
 # 077 · brief test mutuje prawdziwy plik roli, powodując losowe czerwone CI
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 1
 **Tier:** standard
@@ -21,4 +21,6 @@ Oba testy operują na kopii pliku w katalogu tymczasowym (albo na atrapie, któr
 Dowód, którego oczekuję: kilka przebiegów `node --test tests/brief.test.mjs tests/docs.test.mjs` zielonych z rzędu; opis w CHANGELOG pod [6.0.0].
 
 ## Evidence
+
+Merge commit 5d99ccb: brief.test.mjs no longer mutates the real reference/roles/legislate.md on disk; merged
 
