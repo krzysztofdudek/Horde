@@ -19,14 +19,13 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - A change cannot both alter a rule and alter the code that rule judges in one landing; both are refused together.
 - Every landing runs the full test suite against a real Yggdrasil build; the architecture check runs on the branch itself and must be fully green.
 - `queue plan --out <file>` writes the whole plan to a file for the architect.
-- The cost report now counts reviewer calls spent during landing, not just agent runs.
 - A merge is refused when a file belongs to no component, or when a component's log or a graph-changing commit names a wave, ticket, mission or horde instead of describing the component itself.
 - A request is split into components before anything is built; one agent per component, no two write the same files; a component too large is refused, with its size named.
 - Nothing starts until the whole plan is reviewed once by someone who sees all of it.
 - The mission is stateless between runs: `tick` reads the mission's state, advances what it can, and exits. `tick --runner external` runs it from any external scheduler, not only a live session.
 - Work sent back past a set number of rounds stops and asks you one question instead of looping.
 - `legislate` writes a component's own rules from what its work has been refused for.
-- `retro` closes a piece of work with three lists: what belongs in a standing rule, what's worth saying once, and what no rule will ever capture — plus its cost.
+- `retro` closes a piece of work with three lists: what belongs in a standing rule, what's worth saying once, and what no rule will ever capture.
 - Evidence detection: the mission works out what counts as proof in your repository (test suites, a promises directory, a scenario runner) at the start and uses it; a repository with nothing at all is offered a ready-made `promises` package (four rules, three self-proving for free, the fourth advisory).
 - Every merge commit records what it landed, what it proved, and what it did to the rules.
 - A finished mission archives its own working directory automatically.
@@ -53,6 +52,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - No audit sample.
 - No escalation/dissent mechanism — superseded by the one channel above.
 - Claude Code's experimental Agent Teams feature is not used anywhere in this skill.
+- Cost tracking and the charter's cost limit are gone: no cost report, no per-run ledger, and nothing stops a mission on a budget. Watch your own account the way you would for any other agent work.
 
 ### Fixed
 

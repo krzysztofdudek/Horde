@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  run, findRealYg, writeCostRuns,
+  run, findRealYg,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -664,15 +664,13 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     }
   });
 
-  // `done` counts four things: evidence reproduced, trunk gate green, cost recorded, and the
-  // retrospective run over the mission as it stands. Three of the four are already true by now —
-  // the tick in step 10 billed the run it handed out, which is the only thing that writes the
-  // ledger — so the retrospective is the one refusal left to meet.
+  // `done` counts three things: evidence reproduced, trunk gate green, and the retrospective run
+  // over the mission as it stands. Two of the three are already true by now, so the retrospective
+  // is the one refusal left to meet.
   await t.test('14. the mission gate refuses until the retrospective is run, and passes once it is', () => {
     const withoutRetro = run('horde.mjs', ['done'], dir);
     assert.equal(withoutRetro.code, 1);
     assert.match(withoutRetro.stderr, /no retrospective has been run on this mission/);
-    assert.doesNotMatch(withoutRetro.stderr, /no cost has ever been recorded/, 'the tick that handed the work out billed it');
 
     // The retrospective, both runs: the gathering one prints what this mission wrote down, and the
     // one-shot's answer is written here by hand — nothing about what a model would decide is under
@@ -694,7 +692,7 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     assert.equal(done.code, 0, done.stderr);
     assert.equal(done.json.evidence.green, 2);
     assert.equal(done.json.evidence.total, 2);
-    assert.equal(done.json.cost.runs, 1);
+    assert.equal(done.json.cost, undefined, 'done no longer reports a cost figure');
     assert.equal(done.json.retro.inexpressible, gathered.json.items.length);
 
     // "done" is also where the mission files itself away: the horde's directory is marked with the

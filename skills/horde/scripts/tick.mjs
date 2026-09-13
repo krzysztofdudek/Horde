@@ -22,10 +22,10 @@
 // this hands out, not whether the work can happen. Everything below is the same either way.
 //
 // What tick does write: the queue (reconcile's settlements, the gate's verdicts, and the state of
-// what it just handed out), the fix-round counter on a ticket that came back red, `asks.json` when
-// a ticket's rounds are spent, and one cost entry per thing it hands out. It holds the landing
-// gate's own lock while it does — the same lock, not a second one, because two ticks on one
-// repository must not hand the same ticket to two workers, and a second lock would not stop them.
+// what it just handed out), the fix-round counter on a ticket that came back red, and `asks.json`
+// when a ticket's rounds are spent. It holds the landing gate's own lock while it does — the same
+// lock, not a second one, because two ticks on one repository must not hand the same ticket to two
+// workers, and a second lock would not stop them.
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -42,7 +42,6 @@ import {
   findTicket, parseField, changesRoundInfo, transitionStatus,
 } from './tk.mjs';
 import { readLandResult, acquireGateLock, gateLockWaitMs } from './land.mjs';
-import { currentWaveNumber } from './wave.mjs';
 import { asksPath, loadAsks, addAsk } from './ask.mjs';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
@@ -127,46 +126,6 @@ function readQueue(horde) {
       + 'and tick will not write an empty queue over one it could not read — restore the file (git, a backup, or by hand) and run again.');
     return null;
   }
-}
-
-// ---- cost ---------------------------------------------------------------------------------
-//
-// Every worker and every judge this run hands out is one run somebody pays for, so it is booked the
-// moment it goes on the list, in the shape the deleted roster tool used to write:
-// `{name, role, class, ticket, wave, at}`. `cost.mjs` reads it unchanged.
-//
-// Booked at most once per ticket, per wave, per role — the key, deliberately not the timestamp:
-// two runs against a state nothing changed must leave the ledger exactly as they found it, and two
-// ticks racing each other must not bill the same worker twice. A fix round is a genuinely new run
-// of a new worker, so the round number rides in `name` and makes its own key: round 0 is the plain
-// `(ticket, wave, role)` the contract names, and nothing below it can be double-booked.
-function costKey(entry) {
-  return `${entry.role}|${entry.ticket}|${entry.wave === null || entry.wave === undefined ? '' : entry.wave}|${entry.name}`;
-}
-
-function bookCost(horde, entries) {
-  if (!entries.length) return [];
-  const path = hordePath(horde, 'cost.json');
-  const doc = readJSON(path, { runs: [] });
-  if (!Array.isArray(doc.runs)) doc.runs = [];
-  const seen = new Set(doc.runs.map(costKey));
-  const added = [];
-  for (const e of entries) {
-    const key = costKey(e);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const row = {
-      name: e.name, role: e.role, class: e.class, ticket: e.ticket, wave: e.wave, at: nowIso(),
-    };
-    doc.runs.push(row);
-    added.push(row);
-  }
-  if (added.length) writeJSON(path, doc);
-  return added;
-}
-
-function waveNumber(horde) {
-  return currentWaveNumber(readText(hordePath(horde, 'plan.md'))) || null;
 }
 
 // ---- 2. land what is ready ----------------------------------------------------------------
@@ -318,9 +277,9 @@ function landTheLanded(horde, cfg, root) {
 
 // ---- 3. the dispatch list ------------------------------------------------------------------
 
-// The name a run is booked under, and the name the brief is rendered for. A fix round is a new run
-// of a new worker on the same ticket, so it carries the round: that is what keeps the ledger honest
-// without letting two ticks over one unchanged state bill the same worker twice.
+// The name a run is identified by, and the name the brief is rendered for. A fix round is a new
+// run of a new worker on the same ticket, so it carries the round: that keeps two ticks over one
+// unchanged state from being mistaken for the same worker run twice.
 function workerName(ticket, round) {
   return round > 0 ? `w-${ticket}-r${round}` : `w-${ticket}`;
 }
@@ -438,7 +397,7 @@ function runOnce(horde, cfg, flags, runner) {
   const info = resolveTree({ tree: flags.tree }, { cwd: process.cwd() });
   const root = info.path;
   // The landing gate's lock, not a second one: two ticks on one repository would otherwise settle
-  // the same branch twice, hand the same ticket to two workers and bill both.
+  // the same branch twice and hand the same ticket to two workers.
   const lock = acquireGateLock('tick', null, { waitMs: gateLockWaitMs(cfg) });
   if (!lock.ok) fail(lock.note);
   try {
@@ -451,19 +410,6 @@ function runOnce(horde, cfg, flags, runner) {
 
     const doc = readQueue(horde);
     const judge = judgeList(horde, cfg, doc);
-    const wave = waveNumber(horde);
-    const booked = bookCost(horde, [
-      ...spawn.map((s) => ({
-        name: workerName(s.ticket, s.round), role: 'worker', class: s.model, ticket: s.ticket, wave,
-      })),
-      ...judge.map((j) => ({
-        // A judge is billed at the class that answers the pairs, and under one-shot — the only
-        // policy that puts anything on this list — that is a judge called once for this ticket,
-        // not the repository's own reviewer tier. Recorded as "one-shot" rather than guessed at a
-        // model name this tool was never told.
-        name: `judge-${j.ticket}`, role: 'judge', class: 'one-shot', ticket: j.ticket, wave,
-      })),
-    ]);
 
     const close = doc.items.every((i) => i.state === 'merged');
     const external = runner === 'external' ? externalStart(horde, cfg, spawn, root) : [];
@@ -480,7 +426,6 @@ function runOnce(horde, cfg, flags, runner) {
       askClient: openAsks(horde),
       close,
       closeCommand: close ? closeCommand(horde) : null,
-      cost: booked,
       external,
     }, info);
   } finally {
@@ -504,7 +449,6 @@ function render(out) {
   for (const j of out.judge) lines.push(`judge ${j.ticket}: ${j.pairs.length} prose pair(s) waiting`);
   for (const a of out.askClient) lines.push(`ask client ${a.id} (${a.kind}): ${a.why}`);
   for (const e of out.external) lines.push(`started ${e.ticket}: ${e.started ? e.command : e.note}`);
-  if (out.cost.length) lines.push(`cost: ${out.cost.length} new entr${out.cost.length === 1 ? 'y' : 'ies'}`);
   lines.push(out.close ? `close: the queue holds nothing unmerged — ${out.closeCommand}` : 'close: not yet');
   lines.push(provenanceLine({ path: out.tree, branch: out.branch, sha: out.sha }));
   return lines.join('\n');

@@ -114,8 +114,8 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
 
 ## Flows
 
-1. **Framing** — director and user; charter, node map, decision rights, evidence catalogue, cost
-   policy, base branch. Linear, interactive, the only phase with the user in the loop.
+1. **Framing** — director and user; charter, node map, decision rights, evidence catalogue,
+   base branch. Linear, interactive, the only phase with the user in the loop.
 2. **Refining** — `refine.mjs`'s four steps: cut the mission into territories; consult, one agent
    per territory, all at once, writing tickets and law as proposals; review, the architect ruling
    the whole plan once; frame, what the client is shown before the one "go".
@@ -132,8 +132,9 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
 6. **The retrospective** — `retro.mjs`, the mission's last run: every gate refusal and every ticket
    log line nobody read twice, sorted into what the law could have said, what is worth one line in a
    component's own log, and what no rule will ever capture.
-7. **Completion** — evidence catalogue green, full gate green on the trunk, cost report written;
-   `horde.mjs done` is the gate itself, and it archives the horde the moment it passes.
+7. **Completion** — evidence catalogue green, full gate green on the trunk, and the retrospective
+   run over the mission as it stands; `horde.mjs done` is the gate itself, and it archives the
+   horde the moment it passes.
 
 ## Invariants
 
@@ -143,7 +144,7 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
 - Every decision that changes structure is in the graph's log, not in a conversation.
 - The truth about who works on what is in files. Liveness is judged by branches and state changes,
   never by silence.
-- The model class of a task is the cheapest that passes verification, and is written on the ticket.
+- The model class of a task is the lightest that passes verification, and is written on the ticket.
 - The director's context holds intent, asks and wave closes — nothing else.
 - Operational state is uncommitted and dies with the horde; durable knowledge is committed to the
   graph and outlives it.
@@ -157,7 +158,6 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
 - Planning can loop: the architect's review caps what passes in one pass; a rejected ticket is
   rewritten and put back, not argued over.
 - A port change propagates: know who consumes it before it lands (`node.mjs contracts`).
-- Cost must be counted even roughly (runs × class), or "cheapest capable" is a wish.
 - The first cut of the graph is a judgement the director makes with the user, not alone.
 
 ## Mechanics
@@ -200,24 +200,23 @@ file ever conflicts in a merge.
 .horde/
   .gitignore                        "*"
   config.json                       base branch, gate commands, how to invoke the Yggdrasil and
-                                    Grain CLIs, cost-class weights (`classes`), fix-round caps,
-                                    protected paths, territory size limit
+                                    Grain CLIs, class weights (`classes`, also used for model
+                                    selection and plan ranking), fix-round caps, protected paths,
+                                    territory size limit
   leases.json (+ .md)               subject -> {horde, since}: territories now, node ids from a
                                     pre-migration mission still read the same way — shared across
                                     every horde on this repository, never per-horde
   hordes/<horde>/
     charter.md                      the mission: goal, non-goals, constraints, evidence catalogue,
-                                    touched and new nodes, decision rights, quality policy, cost
-                                    policy and limit
+                                    touched and new nodes, decision rights, quality policy
     territories.json                the cut: {"<territory>": {nodes, class, why}}, written by the
                                     architect at `refine.mjs --step cut`
     review.json                     the architect's plan ruling, written at `refine.mjs --step review`
     counter.json                    the one shared counter every id in this horde comes out of
-    plan.md                         wave journal: starts, merges, closes, cost per wave
+    plan.md                         wave journal: starts, merges, closes
     decisions.md                    build decisions and the answered asks recorded through them
     asks.json (+ .md)               the one channel to the client
     handoff.json (+ .md)            state of intent between director sessions
-    cost.json                       runs × class per ticket, wave, mission
     land/<ticket>.json              the merge checklist's own result, one file per ticket
     retro-classes.json, retro.json  the retrospective's classification and its finished document
     teams/trunk/
@@ -252,7 +251,7 @@ Configured in `config.json` under `gates`; the defaults for this repository:
 |---|---|---|
 | ticket commit | every commit on a ticket branch | the repository's commit hook lanes (`yg check`, lint, build, typecheck, unit) |
 | ticket → trunk | `land` merges it | all nine items of the landing gate |
-| trunk → base | the user | full gate; evidence catalogue fully green; cost report written |
+| trunk → base | the user | full gate; evidence catalogue fully green; retrospective run |
 
 `land.mjs <ticket>` is the middle row, and it is not a checklist somebody reads and then acts on —
 it merges the branch itself when every item is green, and refuses when one is not. There is no

@@ -54,7 +54,7 @@ test('_lib.mjs: hordeRoot, parseArgs, renderTemplate, appendText', async (t) => 
     const { renderTemplate } = await import('../_lib.mjs');
     const out = renderTemplate('charter', { title: 'T', horde: 'h', base: 'develop', date: '2026-01-01', user: 'U' });
     assert.match(out, /# Mission · T/);
-    assert.match(out, /Limit: none runs-weighted/);
+    assert.match(out, /\*\*Policy:\*\* autonomous/);
   });
 
   // teamPath()'s refusal paths (unknown team, a literal "teams" segment, a mismatched full path)
@@ -302,7 +302,7 @@ test('_lib.mjs leases: one mechanism, keyed by whatever is being held — a node
   }
 });
 
-// Cost-class names are host-neutral, never a Claude model name, and the generic
+// Class names are host-neutral, never a Claude model name, and the generic
 // fallback (config.classes' own first key, DEFAULT_CLASSES' first key with no config yet) never
 // falls back to a literal "sonnet".
 test('_lib.mjs: DEFAULT_CLASSES and firstClass are host-neutral', async (t) => {

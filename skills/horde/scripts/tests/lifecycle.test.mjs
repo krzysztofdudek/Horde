@@ -25,7 +25,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, requireYg, writeCostRuns,
+  makeRepo, rmRepo, run, initHorde, addNode, requireYg,
 } from './helpers.mjs';
 
 function git(args, cwd) {
@@ -77,8 +77,6 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     assert.ok(approved.json.filing.some((f) => f.includes('yg-node.yaml')), 'the approval names the edit the architect makes');
   });
 
-  let costRuns;
-
   // The graph rides on the branch: `land` reads it by running the real `yg check` in a fresh tree
   // at the ticket branch's own tip, so the components filed above have to be committed before any
   // ticket branches off trunk — exactly the order an architect files one on a real mission.
@@ -102,23 +100,6 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     git(['add', '.yggdrasil', 'src', 'tests'], dir);
     git(['commit', '-qm', 'graph: the components this mission touches, and the code they govern'], dir);
     assert.equal(git(['branch', '--show-current'], dir), 'pilot/trunk');
-  });
-
-  // Nothing in this tool set writes cost.json yet, so a mission-level report is exercised by
-  // seeding the ledger directly, in the shape cost.mjs is contracted to read. The roles on it are
-  // the ones that still exist — a run is booked against the kind of agent that made it.
-  await t.test('4. cost: seeded runs sum in a mission-level report', () => {
-    costRuns = [
-      { name: 'architect1', role: 'architect', class: 'heavy', ticket: null, wave: null, at: '2026-01-01T00:00:00.000Z' },
-      { name: 'legislate-1', role: 'legislate', class: 'standard', ticket: null, wave: null, at: '2026-01-01T00:00:00.000Z' },
-      { name: 'retro-1', role: 'retro', class: 'standard', ticket: null, wave: null, at: '2026-01-01T00:00:00.000Z' },
-    ];
-    writeCostRuns(dir, 'pilot', costRuns);
-
-    const missionCost = run('cost.mjs', ['report', '--mission'], dir);
-    assert.equal(missionCost.code, 0, missionCost.stderr);
-    assert.equal(missionCost.json.runs, 3);
-    assert.equal(missionCost.json.weighted, 3 + 3 + 10); // standard(3) + standard(3) + heavy(10)
   });
 
   let ticketId;
@@ -252,7 +233,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     assert.equal(run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === ticketId).state, 'merged');
   });
 
-  await t.test('11. wave journal, ticket status, wave close, cost, status', () => {
+  await t.test('11. wave journal, ticket status, wave close, status', () => {
     const waveMerged = run('wave.mjs', ['merged', ticketId, mergeSha], dir);
     assert.equal(waveMerged.code, 0, waveMerged.stderr);
     const tkMerged = run('tk.mjs', ['status', ticketId, 'merged'], dir);
@@ -264,18 +245,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     const planText = readFileSync(join(dir, '.horde', 'hordes', 'pilot', 'plan.md'), 'utf8');
     assert.match(planText, /# Wave 1 — close/);
     assert.match(planText, /\*\*Merged:\*\* 1 tickets/);
-
-    // One run belongs to this wave — the worker's — seeded the same way the mission-level runs
-    // were, in step 4.
-    costRuns.push({
-      name: workerName, role: 'worker', class: 'standard', ticket: ticketId, wave: '1', at: '2026-01-01T00:00:00.000Z',
-    });
-    writeCostRuns(dir, 'pilot', costRuns);
-
-    const waveCost = run('cost.mjs', ['report', '--wave', '1'], dir);
-    assert.equal(waveCost.code, 0, waveCost.stderr);
-    assert.equal(waveCost.json.runs, 1); // just the worker, standard — the mission-level runs predate wave 1
-    assert.equal(waveCost.json.weighted, 3);
+    assert.doesNotMatch(planText, /\*\*Cost:\*\*/);
 
     const status = run('status.mjs', ['--horde', 'pilot'], dir);
     assert.equal(status.code, 0, status.stderr);
