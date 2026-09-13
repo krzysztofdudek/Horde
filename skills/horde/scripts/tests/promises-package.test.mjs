@@ -27,7 +27,7 @@ const PACKAGE_DIR = join(HORDE_ROOT, 'packages', 'promises');
 const OWNER = 'krzysztofdudek/Horde';
 const INSTALLED = `packages/${OWNER}/promises`;
 
-const DETERMINISTIC = ['doc-shape', 'product-language', 'has-evidence'];
+const DETERMINISTIC = ['doc-shape', 'product-language', 'has-evidence', 'evidence-is-live'];
 const ALL_ASPECTS = [...DETERMINISTIC, 'evidence-matches-promise'];
 
 // ── the accounting between the corpus and the refusals below ─────────────────
@@ -64,6 +64,18 @@ const REFUSALS = [
   { id: 'self with no status', drill: 'has-evidence/violates-self-no-status', test: 'a promise that is its own evidence and says no status is refused' },
   { id: 'artefact missing a field', drill: 'has-evidence/violates-artefact-missing-field', test: 'an artefact with no hash recorded is refused' },
   { id: 'artefact hash is not one', drill: 'has-evidence/violates-artefact-bad-sha', test: 'an artefact whose hash is not a hash is refused' },
+
+  { id: 'a case marked to be skipped', drill: 'evidence-is-live/violates-skip-javascript', test: 'a case marked to be skipped is refused' },
+  { id: 'a case marked as unfinished', drill: 'evidence-is-live/violates-unfinished-javascript', test: 'a case marked as unfinished is refused' },
+  { id: 'a case marked as the only one to run', drill: 'evidence-is-live/violates-only-javascript', test: 'a case marked as the only one to run is refused' },
+  { id: 'a case crossed out', drill: 'evidence-is-live/violates-crossed-out-case', test: 'a case crossed out is refused' },
+  { id: 'a group of cases crossed out', drill: 'evidence-is-live/violates-crossed-out-group', test: 'a whole group of cases crossed out is refused' },
+  { id: 'a case skipped by the decorator above it', drill: 'evidence-is-live/violates-skip-python', test: 'a case skipped by the decorator above it is refused' },
+  { id: 'a case that skips itself', drill: 'evidence-is-live/violates-skips-itself-python', test: 'a case that skips itself from the inside is refused' },
+  { id: 'a case that stops itself', drill: 'evidence-is-live/violates-skip-go', test: 'a case that stops itself before it runs is refused' },
+  { id: 'a case marked to be ignored', drill: 'evidence-is-live/violates-ignored-dotnet', test: 'a case marked to be ignored is refused' },
+  { id: 'a case switched off with a reason', drill: 'evidence-is-live/violates-skip-reason-dotnet', test: 'a case switched off with a reason is refused' },
+  { id: 'the named case is the one switched off', drill: 'evidence-is-live/violates-named-case-skipped', test: 'a promise pointing at the one case that is switched off is refused' },
 
   {
     id: 'no suite at all',
@@ -184,7 +196,7 @@ test('the Horde repository is fit to publish what it publishes', () => {
   assert.match(r, /Ready to publish/);
 });
 
-test('installing the package copies four rules under the publisher and records what they hashed to', () => {
+test('installing the package copies five rules under the publisher and records what they hashed to', () => {
   const dir = promisesRepo();
   try {
     const base = join(dir, '.yggdrasil', 'aspects', 'packages', OWNER, 'promises');
@@ -485,6 +497,165 @@ test('an artefact whose hash is not a hash is refused', () => {
     },
   });
   assert.match(out, /'not-a-hash' is not a sha256/);
+});
+
+// ── the thing that keeps a promise, switched off ─────────────────────────────
+//
+// One test per marker of the closed list, each one the spelling a real suite in that language
+// uses. The pairing is the mirror throughout, because the marker is the subject here and the
+// mirror is the pairing that needs nothing said about it in the promise.
+
+/** A repository where the mirror keeping the promise is the file the caller writes. */
+function switchedOff(name, content) {
+  return refusal({
+    promises: { 'orders-are-confirmed.md': promise() },
+    suite: { [name]: content },
+  });
+}
+
+test('a case marked to be skipped is refused', () => {
+  const out = switchedOff('orders-are-confirmed.test.mjs', "test.skip('an order comes back confirmed', () => { placeOrder(); });\n");
+  assert.match(out, /'test\.skip' here switches off what keeps the promise 'orders-are-confirmed'/);
+});
+
+test('a case marked as unfinished is refused', () => {
+  const out = switchedOff('orders-are-confirmed.test.mjs', "test.fixme('an order comes back confirmed', () => { placeOrder(); });\n");
+  assert.match(out, /'test\.fixme' here switches off what keeps the promise 'orders-are-confirmed'/);
+});
+
+test('a case marked as the only one to run is refused', () => {
+  const out = switchedOff(
+    'orders-are-confirmed.test.mjs',
+    "test.only('an order is paid for', () => { payForOrder(); });\ntest('an order comes back confirmed', () => { placeOrder(); });\n",
+  );
+  assert.match(out, /'test\.only' here makes one case the only one that runs/);
+});
+
+test('a case crossed out is refused', () => {
+  const out = switchedOff('orders-are-confirmed.test.mjs', "xit('an order comes back confirmed', () => { placeOrder(); });\n");
+  assert.match(out, /'xit' here switches off what keeps the promise 'orders-are-confirmed'/);
+});
+
+test('a whole group of cases crossed out is refused', () => {
+  const out = switchedOff(
+    'orders-are-confirmed.test.mjs',
+    "xdescribe('orders', () => {\n  it('an order comes back confirmed', () => { placeOrder(); });\n});\n",
+  );
+  assert.match(out, /'xdescribe' here switches off what keeps the promise 'orders-are-confirmed'/);
+});
+
+test('a case skipped by the decorator above it is refused', () => {
+  const out = switchedOff(
+    'orders-are-confirmed.test.py',
+    '@pytest.mark.skip(reason="waiting on the payment sandbox")\ndef test_an_order_comes_back_confirmed():\n    place_order()\n',
+  );
+  assert.match(out, /'@pytest\.mark\.skip' here switches off what keeps the promise 'orders-are-confirmed'/);
+});
+
+test('a case that skips itself from the inside is refused', () => {
+  const out = switchedOff(
+    'orders-are-confirmed.test.py',
+    'def test_an_order_comes_back_confirmed():\n    pytest.skip("waiting on the payment sandbox")\n    place_order()\n',
+  );
+  assert.match(out, /'pytest\.skip\(' here switches off what keeps the promise 'orders-are-confirmed'/);
+});
+
+test('a case that stops itself before it runs is refused', () => {
+  const out = switchedOff(
+    'orders-are-confirmed.test.go',
+    'func TestAnOrderComesBackConfirmed(t *testing.T) {\n\tt.Skip("waiting on the payment sandbox")\n\tplaceOrder()\n}\n',
+  );
+  assert.match(out, /'t\.Skip\(' here switches off what keeps the promise 'orders-are-confirmed'/);
+});
+
+test('a case marked to be ignored is refused', () => {
+  const out = switchedOff(
+    'orders-are-confirmed.test.cs',
+    '[Ignore("waiting on the payment sandbox")]\n[Test]\npublic void AnOrderComesBackConfirmed() { PlaceOrder(); }\n',
+  );
+  assert.match(out, /'\[Ignore\]' here switches off what keeps the promise 'orders-are-confirmed'/);
+});
+
+test('a case switched off with a reason is refused', () => {
+  const out = switchedOff(
+    'orders-are-confirmed.test.cs',
+    '[Fact(Skip = "waiting on the payment sandbox")]\npublic void AnOrderComesBackConfirmed() { PlaceOrder(); }\n',
+  );
+  assert.match(out, /'Skip =' here switches off what keeps the promise 'orders-are-confirmed'/);
+});
+
+test('a promise pointing at the one case that is switched off is refused', () => {
+  const out = refusal({
+    promises: {
+      'orders-are-confirmed.md': promise({ extra: ['evidence: suite/orders.py#an order comes back confirmed'] }),
+    },
+    suite: {
+      'orders.py': [
+        'def test_an_order_is_paid_for():',
+        '    pay_for_order()',
+        '',
+        '',
+        '@pytest.mark.skip(reason="waiting on the payment sandbox")',
+        'def test_an_order_comes_back_confirmed():',
+        '    place_order()',
+        '',
+      ].join('\n'),
+    },
+  });
+  assert.match(out, /switches off what keeps the promise 'orders-are-confirmed'/);
+});
+
+test('a marker on a case another promise points at is not held against this one', () => {
+  const dir = promisesRepo({
+    promises: {
+      'orders-are-confirmed.md': promise({ extra: ['evidence: suite/orders.py#an order comes back confirmed'] }),
+      'orders-are-paid.md': promise({ id: 'orders-are-paid', extra: ['evidence: suite/orders.py#an order is paid for'] }),
+    },
+    suite: {
+      'orders.py': [
+        '@pytest.mark.skip(reason="waiting on the payment sandbox")',
+        'def test_an_order_is_paid_for():',
+        '    pay_for_order()',
+        '',
+        '',
+        'def test_an_order_comes_back_confirmed():',
+        '    place_order()',
+        '',
+      ].join('\n'),
+    },
+  });
+  try {
+    const r = checked(dir);
+    assert.notEqual(r.code, 0, r.out);
+    assert.match(r.out, /switches off what keeps the promise 'orders-are-paid'/);
+    assert.doesNotMatch(
+      r.out,
+      /switches off what keeps the promise 'orders-are-confirmed'/,
+      `a promise whose own case runs was refused for a neighbour's:\n${r.out}`,
+    );
+  } finally {
+    rmRepo(dir);
+  }
+});
+
+test('a promise nothing runs yet may be paired with a case that is switched off', () => {
+  const dir = promisesRepo({
+    promises: {
+      'orders-are-confirmed.md': promise({
+        status: 'planned',
+        extra: ['evidence: suite/orders.py#an order comes back confirmed'],
+      }),
+    },
+    suite: {
+      'orders.py': '@pytest.mark.skip(reason="not written yet")\ndef test_an_order_comes_back_confirmed():\n    place_order()\n',
+    },
+  });
+  try {
+    const r = checked(dir);
+    assert.equal(r.code, 0, `a promise that says nothing runs it yet was refused anyway:\n${r.out}`);
+  } finally {
+    rmRepo(dir);
+  }
 });
 
 test('an unknown way of pairing is refused, naming the four that exist', () => {

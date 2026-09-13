@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A new rule in the evidence package: a promise counts as kept only while the case that keeps it actually runs. A case that is skipped, crossed out, or left behind another one marked as the only case to run is refused — unless the promise says nothing runs it yet. It knows the markers JavaScript, Python, Go and .NET suites use, and a repository can narrow that list to the ones its own suite uses.
+
 ## [6.0.0] - 2026-09-12
 
 Needs Yggdrasil 6.x — the same major, refused otherwise.
