@@ -40,6 +40,7 @@ import { execFileSync } from 'node:child_process';
 import {
   hordePath, readJSON, writeJSON, nowIso, fail, parseArgs, emit, isMain,
   resolveHorde, resolveTree, readConfig, asArray,
+  runMain,
 } from './_lib.mjs';
 import { ygCommand, ygJson } from './node.mjs';
 
@@ -633,4 +634,4 @@ function main() {
   cmdRetro(flags);
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

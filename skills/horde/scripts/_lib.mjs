@@ -528,12 +528,11 @@ export function teamPath(horde, team, ...parts) {
 // already each have their own) is what this is instead of: one shared primitive in `_lib.mjs`,
 // scoped per horde+team so two different queues never wait on each other.
 //
-// Every queue command that refuses mid-change does it through `fail()`, which calls
-// `process.exit()` straight away — the `finally` releasing this lock never gets to run, because
-// the process is gone before the stack unwinds that far. A dead holder must not wedge every later
-// command on this queue forever, so — exactly like `acquireGateLock` and `acquireRetroLock` — the
-// lock file names the pid that took it, and a pid no longer running is taken over immediately
-// rather than waited out.
+// A refusal raised through `fail()` now unwinds the stack, so the `finally` releasing this lock
+// does run. A holder can still die without releasing — killed outright, or the machine going down
+// — and a dead holder must not wedge every later command on this queue forever, so — exactly like
+// `acquireGateLock` and `acquireRetroLock` — the lock file names the pid that took it, and a pid
+// no longer running is taken over immediately rather than waited out.
 const QUEUE_LOCK_WAIT_MS = 15000;
 const QUEUE_LOCK_POLL_MS = 20;
 
@@ -852,7 +851,7 @@ export function listHordes() {
 
 // resolveHorde(args) — args is a parsed-flags object (or {flags} from parseArgs). `--horde name`
 // wins outright; otherwise the sole existing horde is the default; anything else is a refusal
-// (fail() exits the process, matching every other tool's error contract).
+// (fail() raises it, matching every other tool's error contract).
 export function resolveHorde(args) {
   const flags = args && args.flags ? args.flags : args || {};
   const hordes = listHordes();
@@ -939,9 +938,42 @@ export function today() {
   return nowIso().slice(0, 10);
 }
 
+// A refusal, raised — never an exit. A library function that killed the process took the decision
+// away from its caller: a loop meant to run unattended (`tick.mjs --watch`) died on the first
+// refusal it should have written down and retried, and a caller that wanted to handle one could
+// not. Every tool below still ends on a refusal exactly as before, because `runMain` turns this
+// into the same `error: ...` line and the same exit code — and `process.exit` now lives only
+// there, in one place, at the edge of each script.
+export class HordeError extends Error {
+  constructor(msg, code = 1) {
+    super(msg);
+    this.name = 'HordeError';
+    this.code = code;
+  }
+}
+
 export function fail(msg, code = 1) {
-  console.error(`error: ${msg}`);
-  process.exit(code);
+  throw new HordeError(msg, code);
+}
+
+// runMain(main) — the one place a horde tool exits. A refusal raised anywhere below prints the
+// same `error: ...` line it always did and exits with its code; anything else keeps its stack and
+// crashes loudly, because an unexpected throw is a bug, not a refusal.
+export function runMain(main) {
+  try {
+    const result = main();
+    if (result && typeof result.then === 'function') result.then(undefined, exitOnFailure);
+  } catch (e) {
+    exitOnFailure(e);
+  }
+}
+
+function exitOnFailure(e) {
+  if (e instanceof HordeError) {
+    console.error(`error: ${e.message}`);
+    process.exit(e.code);
+  }
+  throw e;
 }
 
 // emit(result, args, human) — JSON when `--json` was passed (args may be a parsed-flags object

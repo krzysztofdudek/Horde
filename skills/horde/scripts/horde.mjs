@@ -18,6 +18,7 @@ import {
   writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
   readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
   qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES,
+  runMain,
 } from './_lib.mjs';
 import {
   currentWaveNumber, lastWaveNumber, parseEvidenceRows, mentionsEvidenceId, wave1Started,
@@ -1124,4 +1125,4 @@ function main() {
   }
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

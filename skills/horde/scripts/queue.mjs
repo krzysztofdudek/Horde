@@ -18,6 +18,7 @@ import { execFileSync } from 'node:child_process';
 import {
   hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, leaseHolderForNode,
   resolveTree, provisionTree, provenanceLine, withProvenance, firstClass, withQueueLock, appendText,
+  runMain,
 } from './_lib.mjs';
 import {
   findTicket, parseField, padId, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, createTicket, setTicketBody, acceptanceLines,
@@ -1403,4 +1404,4 @@ function main() {
   }
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

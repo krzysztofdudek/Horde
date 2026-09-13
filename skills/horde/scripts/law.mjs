@@ -32,6 +32,7 @@ import { execFileSync } from 'node:child_process';
 import {
   hordePath, readConfig, writeJSON, nowIso, fail, parseArgs, emit, isMain, resolveHorde,
   resolveTree, asArray, git,
+  runMain,
 } from './_lib.mjs';
 import { ygJson, ygCommand } from './node.mjs';
 
@@ -314,4 +315,4 @@ function main() {
   return fail(`unknown command: ${cmd} (see --help)`);
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

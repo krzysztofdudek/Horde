@@ -9,6 +9,7 @@
 import {
   hordePath, teamPath, listHordes, readConfig, readJSON, readText, git, fail, parseArgs, emit, isMain,
   readLeases,
+  runMain,
 } from './_lib.mjs';
 import { currentWaveNumber, evidenceCoverage } from './wave.mjs';
 import { missionNodes } from './node.mjs';
@@ -200,4 +201,4 @@ function main() {
   }
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

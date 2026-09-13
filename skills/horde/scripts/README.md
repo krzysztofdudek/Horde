@@ -1036,7 +1036,9 @@ then it exits — nothing lives between runs, so there is no roster and no minut
 the caller is, and only `external` changes what this script does: with nobody in front of it,
 tick.mjs spawns each worker itself, through `config.runner.spawn` (`<class>` and `<brief>` filled
 in). Under `session` it starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds until the
-queue empties or a signal arrives; a signal exits cleanly, holding no lock.
+queue empties or a signal arrives; a signal exits cleanly, holding no lock. A refused pass does not
+end the loop: the refusal goes to stderr and to the mission journal (`plan.md`) as one
+`tick refused:` line, and the next interval asks again.
 
 It holds the landing gate's own lock — `.horde/gate.lock`, not a second one — so two ticks on one
 repository cannot hand the same ticket to two workers or cut one ticket's branch twice. A

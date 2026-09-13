@@ -30,6 +30,7 @@ import {
   hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
   allocateId,
+  runMain,
 } from './_lib.mjs';
 import {
   ticketBoundary, pathInBoundary, portExists,
@@ -863,4 +864,4 @@ function main() {
   }
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);
