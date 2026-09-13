@@ -63,6 +63,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - The worker brief now states the ticket log's actual location, including the horde-scoped path segment it was missing before.
 - Copied straight from the documentation, the first commands for raising an architect, a worker or a territory's own rule-writer used to be refused. Every example in the docs now runs as shown.
 - A worker whose ticket names two components used to be handed a first step that always failed. It now works for one component or two, the same as everywhere else the ticket system allows both.
+- The rule against code-shaped writing in a promise now names every kind of writing it actually refuses, table and field names included, instead of leaving two of them unexplained.
 
 ### Migrating a mission already in flight
 
