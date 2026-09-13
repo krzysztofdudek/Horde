@@ -1,6 +1,6 @@
 # 052 · legislate brief passes the territory name not the agent
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 1
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Render `brief.mjs legislate <territory> --name alice
 Refuterzy: Verified against both sides. skills/horde/reference/roles/legislate.md line 73 reads: `node ... node.mjs promote <rule> --by {{territory}} --horde {{horde}}` — using the territory variable, not {{name | Confirmed exactly as stated. /home/user/Horde/skills/horde/reference/roles/legislate.md:73 renders `node.mjs promote <rule> --by {{territory}} --horde {{horde}}`, passing the territory name rather tha
 
 ## Evidence
+
+npm test: 901 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha 24a26f5
 
