@@ -82,6 +82,9 @@ test('brief.mjs: renders worker and architect from a seeded ticket, queue and ro
     assert.match(r.json.brief, /branch `mission1\/t-001`/);
     assert.match(r.json.brief, /unknown — report the count you get/);
     assert.doesNotMatch(r.json.brief, /\{\{/);
+    // The stated log path must include the horde-scoped `hordes/<horde>/` segment — it is where
+    // `tk.mjs log` actually writes, and the brief text must not point at a shorter, nonexistent path.
+    assert.match(r.json.brief, /Under `\.horde\/` you write only `hordes\/mission1\/teams\/trunk\/issues\/001-sample-ticket\/log\.md`/);
   });
 
   await t.test('every role requires --name', () => {
