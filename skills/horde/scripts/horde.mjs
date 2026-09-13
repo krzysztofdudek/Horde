@@ -152,13 +152,18 @@ function detectEcosystems(root) {
   return found;
 }
 
-// The gate commands to start from: the first ecosystem's test command, with the commit lane
-// swapped for a pre-commit hook runner where one is configured. Empty when nothing was
-// recognized — and `init` says so out loud rather than leaving a silent empty gate behind.
+// The gate commands to start from: every detected ecosystem's test command, chained with `&&` so
+// a repository with more than one ecosystem still runs all of them — a gate that only runs the
+// first ecosystem's tests is a green gate over code the other ecosystem never proved. The commit
+// lane uses each ecosystem's own pre-commit hook runner where one is configured. Empty when
+// nothing was recognized — and `init` says so out loud rather than leaving a silent empty gate
+// behind.
 function detectGates(root) {
-  const [first] = detectEcosystems(root);
-  if (!first) return { commit: '', team: '', trunk: '' };
-  return { commit: first.commit || first.gate, team: first.gate, trunk: first.gate };
+  const found = detectEcosystems(root);
+  if (!found.length) return { commit: '', team: '', trunk: '' };
+  const commit = found.map((e) => e.commit || e.gate).join(' && ');
+  const gate = found.map((e) => e.gate).join(' && ');
+  return { commit, team: gate, trunk: gate };
 }
 
 // The file-name patterns this repository writes its tests under, from every ecosystem detected.
@@ -668,7 +673,7 @@ function cmdInit(positional, flags) {
   // unrecognized test convention discovered later is discovered as a checklist item that refuses.
   const ecosystems = detectEcosystems(root).map((e) => e.name);
   const gateNote = cfg.gates && cfg.gates.team
-    ? `gate: \`${cfg.gates.team}\`${ecosystems.length ? ` (${ecosystems[0]})` : ''} — change it with: horde.mjs config set gates.team "<command>"`
+    ? `gate: \`${cfg.gates.team}\`${ecosystems.length ? ` (${ecosystems.join(' + ')})` : ''} — change it with: horde.mjs config set gates.team "<command>"`
     : 'no gate command could be worked out from this repository\'s files, and a merge checklist with an empty gate refuses rather than passes. What proves this repository still works? Set it: horde.mjs config set gates.team "<command>" (and gates.commit, gates.trunk).';
   const globsNote = cfg.testGlobs && cfg.testGlobs.length
     ? `tests recognised by: ${cfg.testGlobs.join(', ')} — change them with: horde.mjs config set testGlobs "<glob>,<glob>"`
