@@ -49,10 +49,12 @@ for either way.
                       it: "tier" is Yggdrasil's own reviewer, "one-shot" hands the pairs back)
   3. scope          — diff stays inside the files the ticket declared, or its node boundaries when
                       it declared none; no protected path touched
-  4. revert test    — new test files (named by config.testGlobs), extracted onto the parent's
-                      tree, fail there; or, when the ticket names a "**Mutate:**" command instead,
-                      run against a scratch copy of the branch's own tip with that command applied,
-                      fail there. ✗ when this repository's test patterns are unknown
+  4. revert test    — new or changed test files (named by config.testGlobs), extracted onto the
+                      parent's tree, fail there; or, when the ticket names a "**Mutate:**" command
+                      instead, run against a scratch copy of the branch's own tip with that command
+                      applied, fail there. Diff carries none of those: ✗, unless the ticket declares
+                      "**No new tests:**" with a reason. ✗ when this repository's test patterns are
+                      unknown
   5. gate           — config.gates.<level> green on the branch's own tree, run fresh
   6. graph          — the free deterministic verdicts recorded, every prose rule still waiting
                       on a judgement named, and a full "yg check" green on this branch's tree
@@ -370,6 +372,17 @@ function mutateCommand(issueText) {
   return m ? m[1].trimEnd() : null;
 }
 
+// A ticket's own declared exemption from the revert test — "**No new tests:**" followed by a
+// reason (tdd.md's "a change that adds no test at all ... says so"). \S as the first character of
+// the capture, not \s*, for the same reason revertBaseRef and mutateCommand avoid it: an empty
+// header ("**No new tests:** " with nothing after it) is not a reason and must read as absent, so a
+// diff with no new or changed test files still refuses rather than passing on an unexplained claim.
+function noNewTestsReason(issueText) {
+  if (!issueText) return null;
+  const m = /\*\*No new tests:\*\*[ \t]*(\S.*)$/m.exec(issueText);
+  return m ? m[1].trimEnd() : null;
+}
+
 // Runs one already-materialised test file in `tmp` and reports whether it's red. A file this
 // repo's own runner (`node --test`) can run directly is run directly; anything else falls back to
 // the whole `gates.commit` command (coarser: any red in that command counts as "a failure" for
@@ -468,10 +481,13 @@ function runMutateVariant(root, cfg, branch, mutate, newTestFiles) {
   }
 }
 
-// New test files (git-added, matching config.testGlobs), checked against whichever variant the
-// ticket itself asks for — the mutation one when it carries a "**Mutate:**" command, the
-// revert-to-base one (today's default, unchanged) otherwise. The variant is always the ticket's
-// own choice, never a land.mjs flag.
+// New or changed test files (git-added or git-modified, matching config.testGlobs), checked
+// against whichever variant the ticket itself asks for — the mutation one when it carries a
+// "**Mutate:**" command, the revert-to-base one (today's default, unchanged) otherwise. A modified
+// existing test file is treated the same as a new one: its content on the branch is extracted onto
+// the revert base exactly like a new file's, and must show a failure there too — a change to an
+// existing test's assertions proves nothing about the code it now checks if it already passed on
+// the base unmodified. The variant is always the ticket's own choice, never a land.mjs flag.
 //
 // The result is derived here, by running the tests: nothing anywhere declares to this gate
 // whether either variant failed, passed, or was not run, and no flag offers to say so. A
@@ -504,12 +520,19 @@ function checkRevertTest(root, cfg, branch, parentBranch, files, issueText) {
   const nameStatus = diffPaths(['diff', '--name-status', `${parentBranch}...${branch}`])
     .map((l) => { const [status, ...p] = l.split('\t'); return { status, path: p.join('\t') }; });
   const newTestFiles = nameStatus
-    .filter((e) => e.status === 'A' && files.includes(e.path))
+    .filter((e) => (e.status === 'A' || e.status === 'M') && files.includes(e.path))
     .filter((e) => testGlobs.some((g) => globToRegExp(g).test(e.path)))
     .map((e) => e.path);
 
   if (newTestFiles.length === 0) {
-    return { ok: true, note: `no new test files in diff (looked for ${testGlobs.join(', ')})` };
+    const reason = noNewTestsReason(issueText);
+    if (reason) {
+      return { ok: true, note: `no new or changed test files in diff — declared no-new-tests: ${reason}` };
+    }
+    return {
+      ok: false,
+      note: `no new or changed test files in diff (looked for ${testGlobs.join(', ')}) — a change that adds none must say so: declare "**No new tests:** <reason>" in issue.md`,
+    };
   }
 
   if (mutate) return runMutateVariant(root, cfg, branch, mutate, newTestFiles);

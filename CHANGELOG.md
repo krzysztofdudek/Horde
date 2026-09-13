@@ -74,6 +74,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - The sample drawn for the two-judges measurement is now reproducible: run the retrospective twice over the same landed work and it draws the same tickets both times, and the retrospective document records what drew it.
 - Recovering a crashed worker's dirty, uncommitted work now writes a line to that ticket's own log, with the reason and the commit it saved — not only to the internal queue record.
 - Status now also shows a ticket's work branch when its queue entry has been lost, labelled as needing attention, instead of hiding it.
+- Landing a change that edits an existing test without adding a new one used to pass silently. It is now refused unless the change says plainly that it adds no test, with a reason — and an edited test is checked the same way a new one is.
 
 ### Migrating a mission already in flight
 
