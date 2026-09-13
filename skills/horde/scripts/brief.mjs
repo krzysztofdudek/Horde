@@ -21,7 +21,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readJSON, readText, readConfig, fail, parseArgs, asArray, emit,
-  isMain, resolveHorde, parentBranchOf, resolveTree,
+  isMain, resolveHorde, parentBranchOf, resolveTree, writeText,
 } from './_lib.mjs';
 import {
   nodeExists, readNodePortsText, ticketNodes, ygCheckJson, ygAspectsJson,
@@ -69,7 +69,7 @@ const ROLE_LAW = {
   retro: ['review', 'verification'],
 };
 
-const USAGE = `usage: brief.mjs <role> [args] --name <n> [--horde h] [--json]
+const USAGE = `usage: brief.mjs <role> [args] --name <n> [--horde h] [--json] [--out <path>]
 
 roles:
   architect --name <n>
@@ -93,7 +93,9 @@ inline, under "## Law": worker (tdd, debugging), architect (framing's checklist)
 retro (review, verification). The consultant is held to framing's checklist too, spliced into its own
 brief by refine.mjs directly — it is spawned off disk, never through this command.
 
-options: --json  --help`;
+options: --json  --help  --out <path>  — write the rendered brief to <path> and print only its path
+    (plus a short summary in --json), instead of the whole brief on stdout. The director spawns from
+    the remembered path rather than pasting the brief text.`;
 
 // ---- role template loading + rendering (reference/roles/, not templates/) --
 
@@ -160,6 +162,23 @@ function lawSection(role) {
     body,
     '',
   ].join('\n');
+}
+
+// Printing a whole brief costs the director's context on every spawn, and every worker report
+// comes back the same way — the same cost this tool set already pays for a plan (queue.mjs
+// plan --out). --out writes the rendered brief to a file and prints only its path, plus a short
+// summary; the director spawns from the remembered path instead of pasting the brief text.
+// Without --out, behaviour is unchanged: the brief prints to stdout as before.
+function emitBrief(result, flags) {
+  if (flags.out) {
+    const path = String(flags.out);
+    writeText(path, `${result.brief}\n`);
+    const summary = { ...result, brief: `written to ${path}` };
+    if (flags.json) { console.log(JSON.stringify(summary, null, 2)); return; }
+    console.log(`brief written to ${path}`);
+    return;
+  }
+  emit(result, flags, () => result.brief);
 }
 
 function renderRole(role, vars) {
@@ -353,9 +372,9 @@ function cmdArchitect(horde, cfg, flags) {
     reportsTo: reportsToFor('architect', horde, { name }),
   };
   const brief = renderRole('architect', vars);
-  emit({
+  emitBrief({
     role: 'architect', name, brief, tree: info.path, branch: info.branch, sha: info.sha,
-  }, flags, () => brief);
+  }, flags);
 }
 
 // The branch this ticket is cut from, and the paragraph that says so when it is not the one
@@ -418,9 +437,9 @@ function cmdWorker(horde, cfg, positional, flags) {
     takeoverBlock: flags.takeover ? takeoverBlockFor(horde, t) : '',
   };
   const brief = renderRole('worker', vars);
-  emit({
+  emitBrief({
     role: 'worker', ticket: rawId, name, takeover: !!flags.takeover, brief, tree: worktree, branch: t.queueItem.branch,
-  }, flags, () => brief);
+  }, flags);
 }
 
 
@@ -525,7 +544,7 @@ function cmdLegislate(horde, cfg, positional, flags) {
     retireAfterWaves: law.retireAfterWaves === undefined ? 2 : law.retireAfterWaves,
   };
   const brief = renderRole('legislate', vars);
-  emit({
+  emitBrief({
     role: 'legislate',
     territory,
     nodes,
@@ -535,7 +554,7 @@ function cmdLegislate(horde, cfg, positional, flags) {
     tree: info.path,
     branch: info.branch,
     sha: info.sha,
-  }, flags, () => brief);
+  }, flags);
 }
 
 // The retrospective one-shot's brief carries the mission's whole input inline — every gate refusal
@@ -568,7 +587,7 @@ function cmdRetro(horde, cfg, flags) {
     ),
   };
   const brief = renderRole('retro', vars);
-  emit({
+  emitBrief({
     role: 'retro',
     horde,
     name,
@@ -578,7 +597,7 @@ function cmdRetro(horde, cfg, flags) {
     tree: info.path,
     branch: info.branch,
     sha: info.sha,
-  }, flags, () => brief);
+  }, flags);
 }
 
 // ---- main -----------------------------------------------------------------------

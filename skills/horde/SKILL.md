@@ -181,6 +181,11 @@ the agents that carry the plan out:
   rule refuses. The first goes through only on the **client's** recorded answer — put it to them,
   never rule on it yourself.
 
+Every `brief.mjs` command (and `refine.mjs --step consult`) also takes `--out <path>`: it writes
+the brief to that file and prints only the path, instead of the whole text. When your own context
+is what you are protecting, spawn from a remembered path that way rather than carrying the brief's
+text through it.
+
 **Who holds the Agent tool.** Everything in the cast is your own subagent, and you spawn all of it
 yourself: the architect, one per graph ruling; a worker, one per ticket; every one-shot — a
 consultant, legislate, retro — spoken to once and never resumed. A subagent is reachable and

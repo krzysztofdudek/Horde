@@ -94,6 +94,12 @@ Briefs are rendered by `brief.mjs` from these sets (the consultant's own brief i
 whole conversation. The hierarchy also routes contact: a brief names one address, the agent's own
 parent, and anything meant for someone else travels as a file with a doorbell to that parent.
 
+The director's own context is the scarcest of these budgets: every brief it hands out and every
+report it takes back spends it. `brief.mjs` (and `refine.mjs --step consult`) take `--out <path>`
+for that reason — the brief is written to the file instead of printed, and only the path comes
+back, so the director can spawn from a remembered path rather than carrying the brief's own text
+through its context at all.
+
 ## Trust is manufactured in one place
 
 Agents are biased towards their own work, and no prompt fixes that. The structure routes around it:

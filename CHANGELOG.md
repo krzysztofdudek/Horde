@@ -19,6 +19,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - A change cannot both alter a rule and alter the code that rule judges in one landing; both are refused together.
 - Every landing runs the full test suite against a real Yggdrasil build; the architecture check runs on the branch itself and must be fully green.
 - `queue plan --out <file>` writes the whole plan to a file for the architect.
+- Every brief — worker, architect, legislate, retro, and each consultant — can be written to a file with `--out <path>` instead of printed in full.
 - A merge is refused when a file belongs to no component, or when a component's log or a graph-changing commit names a wave, ticket, mission or horde instead of describing the component itself.
 - A request is split into components before anything is built; one agent per component, no two write the same files; a component too large is refused, with its size named.
 - Nothing starts until the whole plan is reviewed once by someone who sees all of it.
