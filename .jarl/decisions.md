@@ -11,3 +11,6 @@ Wszystko na tej gałęzi to poprawki do 6.0.0: wpisy pod [6.0.0], wersja bez zmi
 
 ## 2026-09-13 · jarl-tylko-na-galezi
 .jarl/ żyje tylko na tej gałęzi i znika ostatnim commitem przed scaleniem do main.
+
+## 2026-09-13 · jarl-zostaje-0-1-0
+Każda zmiana w JarlSkill w trakcie tej pracy idzie pod 0.1.0: wersja w manifestach i sekcja CHANGELOG bez zmian, wpisy dopisywane do istniejącej sekcji 0.1.0.

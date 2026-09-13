@@ -46,3 +46,4 @@
 - 2026-09-13 15:47 · 004 → in-progress · worker raised, wave 1
 - 2026-09-13 15:47 · 010 → in-progress · worker raised, wave 1
 - 2026-09-13 15:47 · 005 → in-progress · worker raised, wave 1
+- 2026-09-13 15:49 · decided jarl-zostaje-0-1-0
