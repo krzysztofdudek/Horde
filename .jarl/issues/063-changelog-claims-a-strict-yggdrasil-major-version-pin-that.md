@@ -1,6 +1,6 @@
 # 063 · changelog claims a strict yggdrasil major version pin that
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
