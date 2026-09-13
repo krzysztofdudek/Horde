@@ -79,6 +79,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - A repository keeping its promises directory somewhere other than one of the usual four spots is now found correctly, once the evidence package is installed, instead of being read as having no evidence at all.
 - The plan and the quality-advisory filing now read the mission's own tree by default, instead of whatever the main checkout happened to be sitting on.
 - Two permission-based tests no longer fail with a false alarm when the test suite runs as an administrator account, which ignores file permissions by design.
+- The plan review now refuses with a plain reason when the plan itself can't be built, instead of crashing with a raw error.
 
 ### Migrating a mission already in flight
 
