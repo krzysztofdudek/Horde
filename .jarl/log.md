@@ -62,3 +62,21 @@
 - 2026-09-13 15:53 · filed 049 · refine review buduje plan bez oslony na blad
 - 2026-09-13 16:06 · filed 050 · stress testy hordy po poprawkach
 - 2026-09-13 16:08 · 004: worker stalled twice on a background test run; jarl reviewed the diff, ran law-guard tests, added the changelog line and committed on its branch
+- 2026-09-13 16:16 · filed 051 · architect brief tells the architect to run a nonexistent
+- 2026-09-13 16:16 · filed 052 · legislate brief passes the territory name not the agent
+- 2026-09-13 16:16 · filed 053 · worker brief s issuedir omits the hordes horde path
+- 2026-09-13 16:16 · filed 054 · worker brief s node mjs show command breaks when
+- 2026-09-13 16:16 · filed 055 · horde mjs config key worktree copy missing from readme
+- 2026-09-13 16:16 · filed 056 · readme lists a nonexistent queue mjs move command
+- 2026-09-13 16:16 · filed 057 · node mjs propose s node boundary flags required for
+- 2026-09-13 16:16 · filed 058 · escalate mjs s minimum 2 floor on min is
+- 2026-09-13 16:16 · filed 059 · queue mjs plan s out flag is undocumented in
+- 2026-09-13 16:16 · filed 060 · readme documents wave mjs audit audit plan commands that
+- 2026-09-13 16:16 · filed 061 · node mjs veto s why argument notation disagrees between
+- 2026-09-13 16:16 · filed 062 · fresh worker class up is documented but never implemented
+- 2026-09-13 16:16 · filed 063 · changelog claims a strict yggdrasil major version pin that
+- 2026-09-13 16:16 · filed 064 · changelog names a nonexistent config key worker copy
+- 2026-09-13 16:16 · filed 065 · product language s description omits two of the four
+- 2026-09-13 16:16 · filed 066 · evidence matches promise s companion hardcodes the parked status
+- 2026-09-13 16:16 · filed 067 · tk mjs review request delta error names a source
+- 2026-09-13 16:16 · filed 068 · status mjs branchcategory tests queue item state for values
