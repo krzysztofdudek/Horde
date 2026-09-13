@@ -40,6 +40,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - A ticket with no acceptance line cannot be queued.
 - Quality advisories file tickets only for nodes this horde leases; `--all` overrides.
 - Mission-wide numbering (work, architect decisions, questions for you) now comes from one sequence instead of three, so a bare number is never ambiguous.
+- Every write to the queue now goes through a single lock, so two sessions changing the same horde's queue at once can no longer silently drop one another's item.
 
 ### Removed
 
