@@ -636,6 +636,16 @@ test('the companion has nothing to pair for a promise nothing runs yet', async (
   assert.deepEqual(companion(ctx), []);
 });
 
+test('the companion honors a repository-configured parked status, matching has-evidence', async () => {
+  const { companion } = await import(join(PACKAGE_DIR, 'evidence-matches-promise', 'companion.mjs'));
+  const ctx = {
+    subject: [{ path: 'promises/orders-are-confirmed.md', content: promise({ status: 'deferred' }) }],
+    config: { parked_markers: 'planned, disabled, deferred' },
+    fs: { exists: () => false, read: () => { throw new Error('nothing to read'); }, list: () => [] },
+  };
+  assert.deepEqual(companion(ctx), []);
+});
+
 test('the companion refuses to guess when a promise says it is kept and nothing keeps it', async () => {
   const { companion } = await import(join(PACKAGE_DIR, 'evidence-matches-promise', 'companion.mjs'));
   const ctx = {

@@ -63,6 +63,13 @@ config:
     spec_suffix:
       type: string
       default: ".test"
+    # Statuses that mean "nothing runs this yet, and that is fine", comma separated.
+    # Kept in step with has-evidence's own key of the same name: a promise has-evidence
+    # treats as parked must read as parked here too, or the two rules of this package
+    # would disagree about which promises need nothing paired with them yet.
+    parked_markers:
+      type: string
+      default: "planned, disabled"
     # How far the companion follows relative imports out of the paired file.
     max_depth:
       type: number
