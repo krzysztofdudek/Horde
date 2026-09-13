@@ -70,7 +70,7 @@ a lowering like any other and goes to whoever is asking for the work.
    must pass. A rule with no cases has never been run against anything, and nothing will raise it.
 5. **Raise it on evidence.**
    ```
-   node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs promote <rule> --by {{territory}} --horde {{horde}}
+   node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs promote <rule> --by {{name}} --horde {{horde}}
    ```
    That grants the next rung when the evidence is there and refuses, naming exactly what is missing,
    when it is not: a clean case corpus over a corpus that actually has cases for advisory; two closed
