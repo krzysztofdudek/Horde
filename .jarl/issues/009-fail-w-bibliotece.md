@@ -1,6 +1,6 @@
 # 009 · fail w bibliotece
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 1
 **Tier:** strong
@@ -21,4 +21,6 @@ Funkcje eksportowane rzucają błędy; `process.exit` tylko w main() każdego sk
 Dowód, którego oczekuję: skills/horde/scripts/tests/tick.test.mjs (nowy przypadek).
 
 ## Evidence
+
+npm test: 902 pass, 4 fail (pre-existing chmod/root), merge d1bd06a
 
