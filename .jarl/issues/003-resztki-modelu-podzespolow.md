@@ -1,6 +1,6 @@
 # 003 · resztki modelu podzespolow
 
-**Status:** open
+**Status:** in-progress
 **Kind:** cleanup
 **Priority:** 2
 **Tier:** strong

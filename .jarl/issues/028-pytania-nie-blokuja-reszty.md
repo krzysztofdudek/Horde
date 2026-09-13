@@ -1,6 +1,6 @@
 # 028 · pytania nie blokuja reszty
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong

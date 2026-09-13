@@ -1,6 +1,6 @@
 # 032 · granica srodowiska w skill
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 2
 **Tier:** standard

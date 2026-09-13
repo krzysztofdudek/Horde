@@ -1,11 +1,11 @@
 # 023 · obietnica zyje
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong
 **Tags:** kontrakt, pakiet
-**Files:** 
+**Files:** packages/promises/evidence-is-live/yg-aspect.yaml, packages/promises/evidence-is-live/check.mjs, packages/promises/evidence-is-live/drills
 **Found by:** jarl, reading every file of Horde
 **Where:** packages/promises/evidence-is-live/{yg-aspect.yaml, check.mjs, drills/}
 

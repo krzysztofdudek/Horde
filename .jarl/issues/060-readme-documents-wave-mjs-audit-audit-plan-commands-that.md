@@ -1,6 +1,6 @@
 # 060 · readme documents wave mjs audit audit plan commands that
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard

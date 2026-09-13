@@ -1,6 +1,6 @@
 # 083 · trzeci test chmod pod rootem w law-diff
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard

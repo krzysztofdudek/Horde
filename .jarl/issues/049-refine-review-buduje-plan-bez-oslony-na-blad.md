@@ -1,6 +1,6 @@
 # 049 · refine review buduje plan bez oslony na blad
 
-**Status:** open
+**Status:** in-progress
 **Kind:** research
 **Priority:** 3
 **Tier:** standard

@@ -1,6 +1,6 @@
 # 007 · retro dopasowanie jednostki przez includes
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard

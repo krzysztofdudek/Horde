@@ -1,6 +1,6 @@
 # 034 · changelog 6 0 0 i re release
 
-**Status:** open
+**Status:** in-progress
 **Kind:** process
 **Priority:** 3
 **Tier:** standard

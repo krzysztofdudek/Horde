@@ -1,6 +1,6 @@
 # 066 · evidence matches promise s companion hardcodes the parked status
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard

@@ -1,6 +1,6 @@
 # 058 · escalate mjs s minimum 2 floor on min is
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard

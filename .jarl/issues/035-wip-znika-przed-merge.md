@@ -1,6 +1,6 @@
 # 035 · wip znika przed merge
 
-**Status:** open
+**Status:** in-progress
 **Kind:** process
 **Priority:** 3
 **Tier:** standard

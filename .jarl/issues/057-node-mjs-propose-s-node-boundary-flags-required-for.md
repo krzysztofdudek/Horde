@@ -1,6 +1,6 @@
 # 057 · node mjs propose s node boundary flags required for
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard

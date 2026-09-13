@@ -1,6 +1,6 @@
 # 076 · jarl evidence powinno przyjmowac strukturalne wiersze
 
-**Status:** open
+**Status:** dropped
 **Kind:** gap
 **Priority:** 2
 **Tier:** standard
@@ -19,5 +19,5 @@ Dziś dowód to nieprzejrzysty tekst; nic mechanicznie nie sprawdza, że każda 
 `evidence` przyjmuje opcjonalną strukturę (np. powtarzalne `--row "<komenda>" "<wynik>"` obok istniejącego trybu wolnego tekstu, wstecznie zgodne). Decyzja o dokładnym kształcie i o tym, czy `done` zacznie to sprawdzać, należy do przyszłej pracy nad JarlSkill, nie do tej gałęzi Hordy.
 
 ## Evidence
-Otwarte — to jest bilet dla JarlSkill (narzędzia pętli), nie dla kodu Hordy; nie ma tu nic do zrobienia w tym repozytorium.
+Dropped: Out of scope for Horde: issue text itself says nothing to do in this repository — it is a ticket against the JarlSkill loop tool's evidence command, filed for tracking, not a Horde code/doc change.
 

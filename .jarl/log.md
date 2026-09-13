@@ -261,3 +261,26 @@
 - 2026-09-13 21:10 · 069 → done · merged and reviewed already; bookkeeping catch-up after the wave-6 merger was interrupted
 - 2026-09-13 21:10 · 011 evidence row · node --test tests/horde.test.mjs (combined with 069's fix, from skills/horde/scripts)
 - 2026-09-13 21:10 · 011 → done · reviewed approve (independent reviewer, full acceptance verified against red-before/green-after); merged
+- 2026-09-13 21:22 · 003 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 007 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 023 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 028 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 032 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 033 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 045 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 066 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 083 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 034 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 035 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 046 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 049 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 057 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 058 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 060 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 070 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · asked a-001 (charter) · Issue 024 needs client-approved closed lists for a promise's optional 'class' (evidence type: e2e scenario, hermetic test, mutation, recorded stub, artifact, client testimony) and 'executor' (who reproduces it: gate, guard, worker, client) fields before implementation can start. Proposed lists are in the issue body's Where/Acceptance. Holding 024 open, not raised.
+- 2026-09-13 21:22 · 076 → dropped · Out of scope for Horde: issue text itself says nothing to do in this repository — it is a ticket against the JarlSkill loop tool's evidence command, filed for tracking, not a Horde code/doc change.
+- 2026-09-13 21:22 · 082 → dropped · Out of scope for Horde: issue text itself says this is a note for JarlSkill's merger brief (always delete both branch names after merge), not a Horde code change; no worker to raise here.
+- 2026-09-13 21:32 · 037 → open · reverted (f551100): the fix broke a pre-existing, deliberate test in tree.test.mjs that expects no --horde to mean cwd, not the resolved horde's trunk — the two behaviors conflict and the issue needs a design decision on what 'no --horde' should mean before a fix lands, not a blanket flags.horde→horde swap
+- 2026-09-13 21:32 · 037 evidence row · node --test tests/tree.test.mjs tests/plan.test.mjs (from skills/horde/scripts, after revert f551100)
+- 2026-09-13 21:33 · asked a-002 (charter) · Issue 037 filed queue.mjs plan/quality as a bug (no --horde, one horde in repo → should read trunk, not cwd) and a worker's fix made resolveTree always use the resolved horde's trunk when one exists. That broke a pre-existing, deliberate test in tree.test.mjs asserting the opposite: no --tree, no --horde → cwd, even with a horde present. Both can't be the documented default. Which is correct: (a) no --horde always means cwd, full stop — 037 is invalid, close it; or (b) no --horde should mean trunk when exactly one horde exists, and tree.test.mjs's existing case needs to change instead; or (c) something more specific (e.g. this distinction should key off something else, like whether a mission is actively running vs a bare repo)?

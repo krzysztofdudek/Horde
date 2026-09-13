@@ -1,6 +1,6 @@
 # 070 · retro podwojny bieg blokada niestabilna pod obciazeniem
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard

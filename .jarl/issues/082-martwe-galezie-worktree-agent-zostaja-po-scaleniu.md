@@ -1,6 +1,6 @@
 # 082 · martwe galezie worktree agent zostaja po scaleniu
 
-**Status:** open
+**Status:** dropped
 **Kind:** cleanup
 **Priority:** 3
 **Tier:** standard
@@ -19,5 +19,5 @@ Nieszkodliwe dla działania pętli (jarl.mjs branches filtruje po wzorcu jarl/NN
 To jest notatka dla JarlSkill (merger brief), nie zmiana kodu Hordy: krok 5 briefu mergera powinien zawsze kasować zarówno finalną, jak i (jeśli różna) oryginalną nazwę gałęzi po scaleniu. Nie do podjęcia przez workera Hordy.
 
 ## Evidence
-Otwarte — porządkowe, niepilne; do decyzji jarla czy warto sprzątnąć ręcznie na koniec pętli.
+Dropped: Out of scope for Horde: issue text itself says this is a note for JarlSkill's merger brief (always delete both branch names after merge), not a Horde code change; no worker to raise here.
 

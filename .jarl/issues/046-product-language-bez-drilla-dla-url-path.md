@@ -1,6 +1,6 @@
 # 046 · product-language bez drilla dla url-path
 
-**Status:** open
+**Status:** in-progress
 **Kind:** test
 **Priority:** 3
 **Tier:** standard

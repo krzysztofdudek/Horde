@@ -1,6 +1,6 @@
 # 045 · has-evidence bez bloku scope
 
-**Status:** open
+**Status:** in-progress
 **Kind:** research
 **Priority:** 2
 **Tier:** standard

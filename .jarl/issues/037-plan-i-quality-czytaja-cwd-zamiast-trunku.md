@@ -1,6 +1,6 @@
 # 037 · plan i quality czytaja cwd zamiast trunku
 
-**Status:** done
+**Status:** open
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -21,4 +21,5 @@ Obie komendy podają do resolveTree rozwiązaną hordę. Test: jedna horda, gł�
 ## Evidence
 
 - **ran:** git log --oneline; node --test tests/plan.test.mjs · **saw:** merged as a4ef9f4
+- **ran:** node --test tests/tree.test.mjs tests/plan.test.mjs (from skills/horde/scripts, after revert f551100) · **saw:** 40 pass, 0 fail — confirms the revert restored the pre-existing tree.test.mjs expectation without breaking plan.test.mjs's own case (which only exercises the explicit --horde path, unaffected either way)
 
