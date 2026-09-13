@@ -1,6 +1,6 @@
 # 053 · worker brief s issuedir omits the hordes horde path
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 1
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Render a worker brief and diff the stated `{{issueDi
 Refuterzy: Verified both sides: worker.md:68 states the log path as `{{issueDir}}/log.md`; brief.mjs:406 sets issueDir = `teams/${t.team}/issues/${t.issueDirName}` with no `hordes/<horde>/` prefix. The actual wr | Verified both sides. worker.md:68 states the worker writes only `{{issueDir}}/log.md` under `.horde/`. brief.mjs:406 sets `issueDir: \`teams/${t.team}/issues/${t.issueDirName}\`` with no `hordes/<hord
 
 ## Evidence
+
+npm test: 901 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha 94c51cc
 
