@@ -7,7 +7,7 @@ import {
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, writeCostRuns,
+  makeRepo, rmRepo, run, initHorde,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -372,91 +372,6 @@ test('tick.mjs close: an empty queue raises the flag and names the command; one 
   });
 });
 
-// ---- 3. cost ----------------------------------------------------------------------------------
-
-test('tick.mjs cost: one entry per thing handed out, keyed so two runs over one state cannot double-book it', async (t) => {
-  const dir = makeRepo();
-  t.after(() => quietRm(dir));
-  initHorde(dir);
-  run('wave.mjs', ['start'], dir);
-
-  const id = mkTicket(dir, 'billed-work', { files: 'src/billed.ts', class: 'heavy' });
-  run('queue.mjs', ['add', id], dir);
-
-  const first = tick(dir);
-  assert.equal(first.code, 0, first.stderr);
-
-  await t.test('the entry carries the ticket\'s class and the wave it was handed out in', () => {
-    const runs = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'cost.json'), 'utf8')).runs;
-    const entry = runs.find((x) => x.ticket === id);
-    assert.ok(entry, 'the worker is booked');
-    assert.equal(entry.role, 'worker');
-    assert.equal(entry.class, 'heavy');
-    assert.equal(entry.wave, '1');
-  });
-
-  await t.test('a second run over the same state leaves the ledger exactly as it found it', () => {
-    const before = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'cost.json'), 'utf8')).runs.length;
-    const second = tick(dir);
-    assert.equal(second.code, 0, second.stderr);
-    assert.deepEqual(second.json.cost, [], 'the second run books nothing new');
-    const after = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'cost.json'), 'utf8')).runs.length;
-    assert.equal(after, before);
-  });
-
-  await t.test('cost.mjs report sums what tick wrote, with no change of its own', () => {
-    const r = run('cost.mjs', ['report'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.ok(r.json.runs >= 1);
-    assert.ok(r.json.weighted >= 10, 'a heavy run weighs 10');
-  });
-
-  await t.test('an entry seeded before this run is recognised rather than written a second time', () => {
-    const fresh = makeRepo();
-    t.after(() => quietRm(fresh));
-    initHorde(fresh);
-    const seeded = mkTicket(fresh, 'already-billed', { files: 'src/seeded.ts' });
-    run('queue.mjs', ['add', seeded], fresh);
-    writeCostRuns(fresh, 'mission1', [{
-      name: `w-${seeded}`, role: 'worker', class: 'standard', ticket: seeded, wave: null, at: '2026-01-01T00:00:00.000Z',
-    }]);
-    const r = tick(fresh);
-    assert.equal(r.code, 0, r.stderr);
-    assert.ok(r.json.spawn.some((s) => s.ticket === seeded), 'it is still handed out');
-    assert.deepEqual(r.json.cost, [], 'and it is not billed twice');
-  });
-});
-
-test('tick.mjs cost: a judge on the dispatch list leaves an entry of its own', async (t) => {
-  const dir = makeRepo();
-  t.after(() => quietRm(dir));
-  initHorde(dir);
-
-  const id = mkTicket(dir, 'judged-work', { files: 'src/judged.ts' });
-  run('queue.mjs', ['add', id], dir);
-  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'w'], dir);
-  git(['-C', running.json.worktree, 'commit', '--allow-empty', '-qm', 'work'], dir);
-  writeLandResult(dir, id, {
-    ticket: id,
-    branch: running.json.branch,
-    sha: git(['-C', running.json.worktree, 'rev-parse', 'HEAD'], dir),
-    ok: false,
-    checks: [{ name: 'judge', ok: false, note: 'a prose rule waits' }],
-    pairs: [{ aspect: 'plain-language', unitKind: 'node', unit: 'core' }],
-    brief: 'judge it',
-    landed: null,
-  });
-
-  const r = tick(dir);
-  assert.equal(r.code, 0, r.stderr);
-  const entry = r.json.cost.find((c) => c.role === 'judge');
-  assert.ok(entry, 'the judge is booked too');
-  assert.equal(entry.ticket, id);
-
-  const again = tick(dir);
-  assert.deepEqual(again.json.cost.filter((c) => c.role === 'judge'), [], 'and only once');
-});
-
 // ---- 4. broken states and races ---------------------------------------------------------------
 //
 // The real content of this tool: tick reads state after somebody else's crash, and every one of
@@ -653,11 +568,6 @@ test('tick.mjs: two ticks racing on one repository bill one worker once and leav
 
   await t.test('both runs came back — the gate lock made them wait for each other, it did not refuse either', () => {
     for (const one of both) assert.equal(one.code, 0, one.stderr);
-  });
-
-  await t.test('the worker is billed exactly once, however many runs handed the ticket out', () => {
-    const runs = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'cost.json'), 'utf8')).runs;
-    assert.equal(runs.filter((x) => x.ticket === id).length, 1);
   });
 
   await t.test('one item, one branch, one worktree — the ticket was never cut twice', () => {

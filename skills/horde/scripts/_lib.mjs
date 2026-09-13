@@ -356,13 +356,15 @@ export function readConfig() {
   return readJSON(configPath(), null);
 }
 
-// The cost-class weights a fresh mission starts with. Host-neutral on purpose: Horde installs
-// the same way on Claude Code, Codex, Cursor… and each host has its own roster of model names
-// (Codex has no "sonnet"), so a default keyed by a Claude model name would mean nothing on most
-// of them. "light|standard|heavy|max" says only how a run's cost ranks against the others in the
-// same mission; an adopter maps each tier onto a real model through this same `config.classes`
-// map (Claude Code: light: haiku, standard: sonnet, heavy: opus; Codex: light: gpt-5-mini,
-// heavy: gpt-5; …) — that mapping is theirs to make, never Horde's to guess.
+// The class weights a fresh mission starts with — used to rank a queue.mjs plan (the critical
+// path and each ticket's remaining weight) by how heavy the tickets on it are. Host-neutral on
+// purpose: Horde installs the same way on Claude Code, Codex, Cursor… and each host has its own
+// roster of model names (Codex has no "sonnet"), so a default keyed by a Claude model name would
+// mean nothing on most of them. "light|standard|heavy|max" says only how a run's weight ranks
+// against the others in the same mission; an adopter names each tier after a real model through
+// this same `config.classes` map (Claude Code: light: haiku, standard: sonnet, heavy: opus;
+// Codex: light: gpt-5-mini, heavy: gpt-5; …) — that mapping is theirs to make, never Horde's to
+// guess.
 export const DEFAULT_CLASSES = {
   light: 1, standard: 3, heavy: 10, max: 30,
 };
@@ -454,8 +456,8 @@ export function migrationNote(ref, resolvedId) {
 export const QUALITY_POLICIES = ['autonomous', 'only-the-work'];
 
 // The `**Policy:**` line inside the charter's `## Quality` section, or null when there is none.
-// Scoped to that section on purpose: `## Cost` carries a policy line of its own, and a loose
-// search would read the cost policy as a quality setting.
+// Scoped to that section on purpose: another section could carry a policy line of its own, and a
+// loose search would misread it as the quality setting.
 export function qualityPolicyIn(charterText) {
   const text = String(charterText || '');
   const start = text.search(/^##\s+Quality\s*$/m);

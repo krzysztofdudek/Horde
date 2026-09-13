@@ -50,10 +50,10 @@ is a convention that has no other home yet.
 A rule that judges no file and no component weakens nothing when it goes, so removing one is the one
 lowering nobody has to be asked about: delete its directory under `.yggdrasil/aspects/`, remove it from
 every component that declares it, and say why in the commit. The threshold is
-**{{retireAfterWaves}}** closed waves reaching nothing (`config.law.retireAfterWaves`). Cost is never a
-reason: `cost.mjs report` says what a rule costs to run, and no rule is ever retired or weakened over
-that figure. A rule that still reaches code but has stopped making sense is NOT this case — that one is
-a lowering like any other and goes to whoever is asking for the work.
+**{{retireAfterWaves}}** closed waves reaching nothing (`config.law.retireAfterWaves`). How often it
+runs is never a reason on its own, and no rule is ever retired or weakened over that alone. A rule that
+still reaches code but has stopped making sense is NOT this case — that one is a lowering like any
+other and goes to whoever is asking for the work.
 
 ## What you do
 

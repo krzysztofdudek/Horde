@@ -6,7 +6,6 @@
 **Keys transferred:** {{keysTransferred}} without re-review
 **Decisions per merged ticket:** {{decisionsLine}}
 **Quality index:** {{qualityLine}}
-**Cost:** {{runs}} runs · weighted {{weighted}} · mission to date {{cumulative}}{{ of limit}}
 
 ## Quality — what the horde raised on its own
 

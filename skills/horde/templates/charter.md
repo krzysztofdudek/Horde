@@ -53,7 +53,7 @@ Beyond the standard escalation list in `SKILL.md`, these come to the director:
 
 And these go on to the chairman:
 
-- a charter change · a spent cost limit · a boundary claim · anything the director is unsure of
+- a charter change · a boundary claim · anything the director is unsure of
 - …
 
 ## Quality
@@ -68,12 +68,6 @@ of that runs; the horde does what the tickets say and nothing else.
 Neither setting lets anything be made weaker. Lowering a rule's status, retiring one, waiving one or
 moving a review date is the chairman's call under both, and every wave close lists what was raised
 so it can be undone.
-
-## Cost
-
-Policy: cheapest class that passes verification; classes on every ticket.
-Limit: {{limit | none}} runs-weighted. When set and reached, the horde stops after running tickets land
-and reports. When none, nobody asks; cost appears in every wave close.
 
 ## Amendments
 

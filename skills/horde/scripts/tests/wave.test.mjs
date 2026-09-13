@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, writeCostRuns, requireYg,
+  makeRepo, rmRepo, run, initHorde, requireYg,
 } from './helpers.mjs';
 
 function git(args, cwd) {
@@ -55,9 +55,6 @@ test('wave.mjs: start, note, merged, close, current', async (t) => {
 
   await t.test('note and merged append dated bullets to the journal', () => {
     run('wave.mjs', ['note', 'DAG composed'], dir);
-    writeCostRuns(dir, 'mission1', [
-      { name: 'mission1-worker-trunk-1', role: 'worker', class: 'standard', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
-    ]);
     run('wave.mjs', ['merged', '001', 'abc1234'], dir);
     const text = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
     assert.match(text, /# Wave 1 — start/);
@@ -89,7 +86,7 @@ test('wave.mjs: start, note, merged, close, current', async (t) => {
     assert.equal(r.json.gate, 'green');
     const text = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
     assert.match(text, /# Wave 1 — close/);
-    assert.match(text, /\*\*Cost:\*\* 1 runs · weighted 3 · mission to date 3/);
+    assert.doesNotMatch(text, /\*\*Cost:\*\*/);
     const current = run('wave.mjs', ['current'], dir);
     assert.equal(current.json.current, null);
   });

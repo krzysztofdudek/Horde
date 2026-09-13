@@ -83,8 +83,8 @@ steps (default: cut):
 
 The size a territory is held to is config.territory.maxBytes (default 400000): the bytes of the
 code its components map, plus the text of every rule that reaches those files, plus those
-components' own logs. One number for the whole horde — the class a territory carries decides what
-it costs, never what fits.
+components' own logs. One number for the whole horde — the class a territory carries decides which
+model works it, never what fits.
 
 options: --json  --help`;
 
@@ -299,9 +299,9 @@ function cutBrief(horde, root, cfg, info, charter) {
     '}',
     '```',
     '',
-    `Classes this horde has: ${Object.keys(classes).join(', ') || '(none configured)'}. The class says what the`,
-    'territory costs to work, never how big it may be — a small area full of hard decisions is an expensive',
-    'class on a small territory, and that is the right answer.',
+    `Classes this horde has: ${Object.keys(classes).join(', ') || '(none configured)'}. The class says which`,
+    'model works the territory, never how big it may be — a small area full of hard decisions still gets a',
+    'heavier class on a small territory, and that is the right answer.',
     '',
     'The "why" is read by the client, in their own words, in the frame at the end. Write it for them.',
   ].join('\n');

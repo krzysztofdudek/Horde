@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import {
-  existsSync, mkdirSync, readFileSync, writeFileSync, rmSync,
+  existsSync, mkdirSync, readFileSync, writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -248,6 +248,7 @@ test('retro.mjs: five items, five classes, and what each class does with its ite
     const r = run('retro.mjs', ['--tree', dir], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.items.length, 5);
+    assert.equal(r.json.cost, undefined, 'the document carries no cost section');
     for (const it of r.json.items) {
       assert.ok(['rule', 'taste', 'inexpressible'].includes(it.class), it.class);
       assert.ok(['gate', 'log'].includes(it.source), it.source);
@@ -558,24 +559,6 @@ test('retro.mjs: everything that cannot be read is a note on the document, never
   assert.equal(r.code, 0, r.stderr);
   assert.ok(r.json.notes.length >= 2);
   assert.match(readFileSync(hordeFile(dir, 'mission1', 'retro.md'), 'utf8'), /## What could not be read/);
-});
-
-test('retro.mjs: no cost on file is zeroes and a note, never a refusal', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  graphFixture(dir);
-  initHorde(dir);
-  seedTicket(dir, 'mission1', '001', { refusals: ['gate: red'] });
-  writeClasses(dir, 'mission1', { 'gate:001:0': { class: 'inexpressible' } });
-  rmSync(hordeFile(dir, 'mission1', 'cost.json'), { force: true });
-
-  const r = run('retro.mjs', ['--tree', dir], dir);
-  assert.equal(r.code, 0, r.stderr);
-  assert.equal(r.json.cost.runs, 0);
-  assert.equal(r.json.cost.weighted, 0);
-  assert.equal(r.json.cost.reviewerCalls, 0);
-  assert.match(r.json.cost.reviewerCallsNote, /nothing has run/);
-  assert.equal(r.json.cost.scope, 'mission');
 });
 
 test('retro.mjs: a document from an earlier run is overwritten, never appended to', async (t) => {

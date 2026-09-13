@@ -17,7 +17,6 @@ import {
   hordePath, teamPath, readText, writeText, appendText, readJSON, writeJSON, readConfig, today,
   nowIso, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy, resolveTree,
 } from './_lib.mjs';
-import { readCostLimit, sumEntries } from './cost.mjs';
 // queue.mjs imports this file too (noteMerged, parseEvidenceRows). The cycle is deliberate and
 // safe — every binding on both sides is a hoisted function declaration and neither module calls
 // the other while it is still being evaluated. The alternative, a second derivation of the DAG
@@ -48,8 +47,8 @@ commands:
       appends a dated "merged: <ticket> <sha>" bullet. "queue.mjs set <ticket> merged --sha" does
       this itself, so this is only for a merge the queue never saw; it never records one twice.
   close [--gate green|red] [--sha <sha>] [--evidence E5[,E6]] [--team t] [--horde h]
-      renders templates/wave-close.md — counts from the team's queue.json, cost from cost.json —
-      and appends it. --gate with --sha records that gate for the team's level (trunk for the
+      renders templates/wave-close.md — counts from the team's queue.json — and appends it.
+      --gate with --sha records that gate for the team's level (trunk for the
       trunk team) in cache/last-gate.json — the branch tip the gate ran on, so status can show it.
       --evidence names catalogue rows the wave gate itself proves (a green gate on the trunk is
       the usual one); they are filled with "wave <n> gate on <sha>" — refused when the gate is red.
@@ -838,16 +837,6 @@ function cmdClose(horde, positional, flags) {
   // Provisional — flagged, not a settled design.
   const declined = withoutPromotionEffects(qualityDecline(quality, prevQuality), promotions, quality, prevQuality);
 
-  const cost = readJSON(hordePath(horde, 'cost.json'), { runs: [] });
-  const costRuns = Array.isArray(cost.runs) ? cost.runs : [];
-  const weights = cfg.classes || {};
-  // cost.json's runs each carry their own wave number, so a wave's cost is a direct filter — no
-  // need to cross-reference which tickets this wave merged.
-  const waveRuns = costRuns.filter((r) => String(r.wave) === String(n));
-  const waveSums = sumEntries(waveRuns, weights);
-  const missionSums = sumEntries(costRuns, weights);
-  const limit = readCostLimit(horde);
-
   const qualityMerges = qualityMergesIn(horde, mergedTickets);
   const indexLine = qualityLine(quality, prevQuality);
 
@@ -883,10 +872,6 @@ function cmdClose(horde, positional, flags) {
       policy, promotions, qualityMerges, indexLine, observed, declined,
     }),
     auditBlock: auditBlock(audit),
-    runs: waveSums.runs,
-    weighted: waveSums.weighted,
-    cumulative: missionSums.weighted,
-    'of limit': limit === null ? '' : ` of ${limit}`,
   };
 
   let rendered;

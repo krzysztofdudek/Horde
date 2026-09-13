@@ -42,7 +42,6 @@ import {
   resolveHorde, resolveTree, readConfig, asArray,
 } from './_lib.mjs';
 import { ygCommand, ygJson } from './node.mjs';
-import { sumEntries, readCostLimit, reviewerCalls } from './cost.mjs';
 
 export const RETRO_SCHEMA = 'horde-retro/1';
 export const CLASSES = ['rule', 'taste', 'inexpressible'];
@@ -58,7 +57,7 @@ The mission's retrospective, in two runs.
      brief.mjs retro --name <n>. Nothing is written to the document.
   2. Once that one-shot has written ${classesFileName()}, this validates it against the same
      input and writes .horde/hordes/<h>/retro.json (with retro.md beside it): the rule proposals,
-     the items the law will not express, the mission's cost, and the judge measurement.
+     the items the law will not express, and the judge measurement.
 
 A "taste" item leaves one line in its component's own log through \`yg log add\` and goes nowhere
 else. An item already logged by an earlier run is never logged twice.
@@ -409,39 +408,6 @@ function measureJudge(horde, root, cfg, tickets, landed) {
   };
 }
 
-// ---- the mission's cost ---------------------------------------------------------------------
-
-// The whole mission's cost, at mission scope, which is the only scope this document has: `--wave`
-// and `--ticket` narrow that figure and neither applies at a close. The reviewer-call count is
-// counted per mission by construction, so this is exactly the scope it answers for.
-function measureCost(horde, cfg) {
-  const doc = readJSON(hordePath(horde, 'cost.json'), null);
-  const limit = readCostLimit(horde);
-  const runs = doc && Array.isArray(doc.runs) ? doc.runs : null;
-  if (runs === null) {
-    return {
-      scope: 'mission',
-      runs: 0,
-      weighted: 0,
-      limit,
-      reached: false,
-      reviewerCalls: 0,
-      reviewerCallsNote: 'no cost has ever been recorded for this mission — nothing has run against it, so every figure here is zero rather than unknown',
-    };
-  }
-  const { runs: runCount, weighted } = sumEntries(runs, (cfg && cfg.classes) || {});
-  const reviewers = reviewerCalls(horde);
-  return {
-    scope: 'mission',
-    runs: runCount,
-    weighted,
-    limit,
-    reached: limit !== null && weighted >= limit,
-    reviewerCalls: reviewers.calls,
-    reviewerCallsNote: reviewers.why,
-  };
-}
-
 // ---- the bar this mission is held to ---------------------------------------------------------
 
 // The share of everything the mission wrote down that the law turned out unable to express. The
@@ -540,13 +506,6 @@ function render(doc) {
   for (const it of doc.taste) lines.push(`- ticket ${it.ticket} · ${it.node} — ${it.text}`);
   lines.push('', `Written to ${doc.logged.length} component log(s) this run; nowhere else.`, '');
 
-  lines.push('## Cost', '');
-  lines.push(`${doc.cost.runs} run(s), weighted ${doc.cost.weighted}`
-    + `${doc.cost.limit === null ? ', no limit set' : ` of a limit of ${doc.cost.limit}${doc.cost.reached ? ' — REACHED' : ''}`}`
-    + `, ${doc.cost.reviewerCalls} reviewer call(s).`);
-  if (doc.cost.reviewerCallsNote) lines.push(doc.cost.reviewerCallsNote);
-  lines.push('');
-
   lines.push('## Two judges', '');
   if (doc.judge.note) lines.push(doc.judge.note);
   if (doc.judge.sampled) {
@@ -620,7 +579,6 @@ function cmdRetro(flags) {
       taste: taste.map((it) => ({ ticket: it.ticket, node: it.node, text: it.text })),
       inexpressible,
       logged: [...alreadyLogged, ...logging.logged],
-      cost: measureCost(horde, cfg),
       judge: measureJudge(horde, info.path, cfg, input.tickets, input.landed),
       threshold: measureThreshold(cfg, classified, inexpressible),
       notes,
@@ -632,7 +590,6 @@ function cmdRetro(flags) {
         + `— ${doc.threshold.count} of ${doc.threshold.of}, a share of ${doc.threshold.share.toFixed(3)}`
         + `${doc.threshold.threshold === null ? '' : ` against a bar of ${doc.threshold.threshold}${doc.threshold.over ? ' — OVER' : ''}`}.`,
       ...(doc.threshold.note ? [doc.threshold.note] : []),
-      `cost: ${doc.cost.runs} run(s), weighted ${doc.cost.weighted}, ${doc.cost.reviewerCalls} reviewer call(s).`,
       doc.judge.note || `two judges: ${doc.judge.pairs.length} pair(s), ${doc.judge.disagreements} disagreement(s).`,
       `${retroPath(horde)}`,
     ].join('\n'));

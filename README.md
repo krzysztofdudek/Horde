@@ -45,7 +45,7 @@ You and Horde write the charter together first: the goal, what's out of scope, a
 
 Workers pick up tickets, each in its own worktree, each against a locked spec. Nothing merges by hand: a nine-item checklist runs fresh on the branch itself, and the moment every item is green it makes the merge commit and moves on — new tests proven to fail without the change, the architecture rules read and satisfied, the diff kept inside what the ticket declared. After a wave, a **legislate** pass reads what that area's own work was refused for and writes the pattern down as a rule, so the next ticket in that area gets it enforced rather than repeated by hand.
 
-You never read a diff. What comes to you: a worker that ran out of spec and stopped rather than guess, a request to weaken a rule, a cost limit reached, a change to the mission card itself. Everything else, the horde rules on itself and writes down why, so the next session picks it up cold from the files, not from your memory of the conversation. At the very end, a **retrospective** reads everything nobody read twice — every refusal, every note a worker left the next one — and sorts it into what the law could have said, what's worth one line in a component's own history, and what no rule will ever capture; that last list is yours to read, because it's the one thing the horde cannot learn on its own.
+You never read a diff. What comes to you: a worker that ran out of spec and stopped rather than guess, a request to weaken a rule, a change to the mission card itself. Everything else, the horde rules on itself and writes down why, so the next session picks it up cold from the files, not from your memory of the conversation. At the very end, a **retrospective** reads everything nobody read twice — every refusal, every note a worker left the next one — and sorts it into what the law could have said, what's worth one line in a component's own history, and what no rule will ever capture; that last list is yours to read, because it's the one thing the horde cannot learn on its own.
 
 Every line the horde ever merged has a custody chain: point at a file and a line and it tells you the commit that introduced it, the ticket that commit belongs to, who wrote it and what the merge checklist proved before it was let through, what evidence that ticket was supposed to prove and whether it did, and what the graph currently says about the rules standing over that code. A closed mission is searched too; a line from before the horde ever touched the repository is reported as exactly that.
 
@@ -160,11 +160,11 @@ that quietly reads worse than the repository deserves.
 
 ## What it doesn't claim
 
-It's not free. Every spawned agent is a real run on your account, at whatever cost class its ticket carries (Haiku, Sonnet, or Opus for the hard nodes and the rulings). The horde reports cost every wave rather than hiding it, and a charter can carry a cost limit that stops it after the running tickets land.
+It's not free. Every spawned agent is a real run on your account, at whatever model class its ticket carries (Haiku, Sonnet, or Opus for the hard nodes and the rulings). The horde does not track or cap what a mission spends — watch your own account the way you would for any other agent work.
 
 The default runner is your own session: your turn calls the loop, reads what it says to dispatch, and spawns the workers. The loop can also be driven from outside any agent — a cron job or a script of your own, pointed at how your tools start an agent — and then that is what starts each worker instead; nothing about the loop itself changes either way, only who starts what it hands out. The skill installs the same way on Codex, Cursor, and Copilot, and the discipline travels with it (evidence over reports, ask rather than guess, nothing merges without a green checklist), but whether those hosts spawn agents the way this one leans on hasn't been checked at all. Try it there and watch whether the spawning holds before trusting it with something you can't easily undo.
 
-It's not a substitute for reading the result. You get the final branch, the evidence catalogue, and the cost report; whether the mission actually did what you meant is still your call.
+It's not a substitute for reading the result. You get the final branch and the evidence catalogue; whether the mission actually did what you meant is still your call.
 
 ---
 
@@ -173,7 +173,7 @@ It's not a substitute for reading the result. You get the final branch, the evid
 <details>
 <summary><b>Won't this spawn agents endlessly and burn my budget?</b></summary>
 
-No hidden spend: cost is booked once per spawn and summed every wave, and a charter can carry a cost limit that stops the horde after whatever's running lands. Without a limit, nobody asks; the cost still shows up in every wave close, so you're never finding out at the end.
+Dispatch is bounded by `config.parallelism` and by the queue itself: a wave only hands out what is ready, and the mission stops handing out new work once the queue is empty or a ticket needs your answer. The horde does not track spend on its own, so watch your account the way you would for any other agent work.
 </details>
 
 <details>

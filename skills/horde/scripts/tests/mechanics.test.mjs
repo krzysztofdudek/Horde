@@ -11,7 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, writeCostRuns, requireYg, MARKER_CHECK,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, requireYg, MARKER_CHECK,
 } from './helpers.mjs';
 
 function git(args, cwd) {
@@ -253,48 +253,6 @@ test('ask answer records a decision', async (t) => {
     const decisions = run('decide.mjs', ['list'], dir);
     assert.equal(decisions.code, 0, decisions.stderr);
     assert.ok(decisions.json.some((d) => d.slug === `ask-${askId}`), JSON.stringify(decisions.json));
-  });
-});
-
-// ---------------------------------------------------------------------------------------------
-// 4. Cost limit
-// ---------------------------------------------------------------------------------------------
-
-test('cost limit: charter Limit line gates limit-reached and cost report', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-  const charterPath = join(dir, '.horde', 'hordes', 'mission1', 'charter.md');
-
-  const setLimit = (text) => {
-    const charter = readFileSync(charterPath, 'utf8').replace(/Limit: .* runs-weighted/, `Limit: ${text} runs-weighted`);
-    writeFileSync(charterPath, charter);
-  };
-
-  await t.test('three heavy runs (weighted 30) pass a Limit: 20 charter line', () => {
-    setLimit('20');
-    // A test that needs cost data seeds the ledger directly, in the shape cost.mjs reads, rather
-    // than running the tick that would bill it — the limit is what is under test here, not the
-    // billing.
-    writeCostRuns(dir, 'mission1', [0, 1, 2].map((i) => ({
-      name: `worker-${i}`, role: 'worker', class: 'heavy', ticket: null, team: null, wave: null, at: new Date().toISOString(),
-    })));
-    const reached = run('cost.mjs', ['limit-reached'], dir);
-    assert.equal(reached.code, 0, reached.stderr);
-    assert.equal(reached.json.reached, true);
-
-    const report = run('cost.mjs', ['report', '--mission'], dir);
-    assert.equal(report.code, 0, report.stderr);
-    assert.equal(report.json.limit, 20);
-    assert.equal(report.json.weighted, 30);
-    assert.equal(report.json.reached, true);
-  });
-
-  await t.test('Limit: none makes limit-reached exit non-zero even over the old threshold', () => {
-    setLimit('none');
-    const reached = run('cost.mjs', ['limit-reached'], dir);
-    assert.notEqual(reached.code, 0);
-    assert.equal(reached.json.reached, false);
   });
 });
 

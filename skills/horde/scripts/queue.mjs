@@ -92,7 +92,7 @@ commands:
       never one overriding another. Prints the layers, the critical path, the components, the
       tickets that claim the same file with no order between them, the files three or more
       tickets claim, the approvals a port change owes the nodes that consume it, ports nothing
-      produces, the charter's evidence rows no ticket names, and what the whole thing costs in
+      produces, the charter's evidence rows no ticket names, and what the whole thing weighs in
       runs. Refuses, naming the circle, when the
       tickets depend on each other in one. --apply-order records the order it proposes for a
       file clash as an ordinary dependency, with a note.
@@ -1107,7 +1107,7 @@ export function buildPlan(horde, team, cfg, { tree } = {}) {
     .filter((r) => r.id && !claimed.has(r.id))
     .map((r) => ({ id: r.id, evidence: r.evidence }));
 
-  const cost = tickets.reduce((sum, t) => sum + weightOf(t.class) * 2, 0);
+  const weightEstimate = tickets.reduce((sum, t) => sum + weightOf(t.class) * 2, 0);
   const parallelism = cfg.parallelism || 6;
   const waves = layers.reduce((sum, l) => sum + Math.ceil(l.length / parallelism), 0);
 
@@ -1127,7 +1127,7 @@ export function buildPlan(horde, team, cfg, { tree } = {}) {
     consumesWithoutProducer,
     cycles,
     uncoveredEvidence,
-    cost: { estimate: cost, runsPerTicket: 2 },
+    weight: { estimate: weightEstimate, runsPerTicket: 2 },
     waves: { estimated: waves, parallelism },
   };
 }
@@ -1218,7 +1218,7 @@ export function renderPlan(plan) {
   lines.push(plan.uncoveredEvidence.length
     ? `evidence nobody is building: ${plan.uncoveredEvidence.map((e) => e.id).join(', ')}`
     : 'evidence nobody is building: none');
-  lines.push(`cost estimate: ${plan.cost.estimate} (class weight × 2 runs per ticket) · waves: ${plan.waves.estimated} at parallelism ${plan.waves.parallelism}`);
+  lines.push(`weight estimate: ${plan.weight.estimate} (class weight × 2 runs per ticket) · waves: ${plan.waves.estimated} at parallelism ${plan.waves.parallelism}`);
   return lines.join('\n');
 }
 

@@ -2,7 +2,7 @@
 // horde skill — status.mjs
 //
 // The session-start digest: every horde on this repository, one screen each. Reads across every
-// other tool's state files directly (queue.json, asks.json, cost.json,
+// other tool's state files directly (queue.json, asks.json,
 // cache/last-gate.json) rather than importing their tools, since it only ever reads — nothing
 // here mutates state, so there's no journal-format contract to share.
 
@@ -11,14 +11,13 @@ import {
   readLeases,
 } from './_lib.mjs';
 import { currentWaveNumber, evidenceCoverage } from './wave.mjs';
-import { sumEntries, readCostLimit } from './cost.mjs';
 import { missionNodes } from './node.mjs';
 
 const USAGE = `usage: status.mjs [--horde h] [--team t] [--json]
 
 One screen: hordes on this repository, and for each: trunk sha and distance from base, its branch
 tip, ticket branches beyond it (landed / unverified / unmerged), queue counts by state, open
-asks, the last recorded gate result, cost to date against the charter's limit, and any
+asks, the last recorded gate result, and any
 lease another live horde holds on a node this one touches (node-lease-across-hordes).
 
 --horde narrows to one horde, --team (within it) to one team.
@@ -83,11 +82,6 @@ function hordeDigest(horde, cfg, teamFilter) {
   // run at that level; absent levels simply aren't shown.
   const lastGate = readJSON(hordePath(horde, 'cache', 'last-gate.json'), {});
 
-  const cost = readJSON(hordePath(horde, 'cost.json'), { runs: [] });
-  const weights = (cfg && cfg.classes) || {};
-  const { runs, weighted } = sumEntries(Array.isArray(cost.runs) ? cost.runs : [], weights);
-  const limit = readCostLimit(horde);
-
   // node-lease-across-hordes: leases another live horde holds on a node THIS horde touches — the
   // exact overlap node.mjs bind would refuse if this horde tried to claim it. Read fresh every
   // call, straight off the one file every horde on the repository shares.
@@ -113,7 +107,6 @@ function hordeDigest(horde, cfg, teamFilter) {
     queue: { byState: queueTotals(horde), total: Object.values(queueTotals(horde)).reduce((a, b) => a + b, 0) },
     asks: { open: askItems.filter((i) => i.state !== 'answered').length, total: askItems.length },
     lastGate,
-    cost: { runs, weighted, limit, reached: limit !== null && weighted >= limit },
     leases: { foreign: foreignLeases },
     evidence: { total: evidenceRows.length, byState: evidenceByState, rows: evidenceRows },
   };
@@ -144,8 +137,6 @@ function printHorde(h) {
       console.log(`  last gate (${lvl}): ${g.result} · sha ${g.sha} · count ${g.count} · at ${g.at}`);
     }
   }
-  const limitText = h.cost.limit === null ? 'no limit' : `limit ${h.cost.limit}${h.cost.reached ? ' — REACHED' : ''}`;
-  console.log(`  cost: ${h.cost.runs} runs · weighted ${h.cost.weighted} · ${limitText}`);
   if (h.leases.foreign.length > 0) {
     console.log('  leases held by other hordes on nodes this one touches:');
     for (const l of h.leases.foreign) console.log(`    ${l.node} -> ${l.horde} (since ${l.since})`);

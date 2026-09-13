@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, writeCostRuns, requireYg, addNode,
+  makeRepo, rmRepo, run, initHorde, requireYg, addNode,
 } from './helpers.mjs';
 
 // Horde requires Yggdrasil: `init` creates the graph when a repository has none, so every direct
@@ -52,7 +52,7 @@ test('horde.mjs: init, list, config, archive', async (t) => {
     assert.deepEqual(paths.json.value, ['a/b', 'c/d']);
   });
 
-  // A fresh mission's default cost classes are host-neutral (Horde installs the same
+  // A fresh mission's default classes are host-neutral (Horde installs the same
   // way on Claude Code, Codex, Cursor…), never named after a Claude model.
   await t.test('a fresh mission\'s default classes carry no Claude model name', () => {
     const classes = run('horde.mjs', ['config', 'get', 'classes'], dir).json.value;
@@ -198,11 +198,13 @@ test('horde.mjs: a mission with an old on-disk config.classes (Claude model name
   };
   writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
 
+  let oldSchemeId;
   await t.test('a ticket still takes the old class name', () => {
     const created = run('tk.mjs', [
       'new', 'old-scheme', '--title', 'Old scheme', '--node', 'core', '--class', 'sonnet', '--evidence', 'it works',
     ], dir);
     assert.equal(created.code, 0, created.stderr);
+    oldSchemeId = created.json.id;
     const shown = run('tk.mjs', ['show', created.json.id], dir);
     assert.match(shown.json.text, /\*\*Class:\*\* sonnet\b/);
   });
@@ -215,13 +217,12 @@ test('horde.mjs: a mission with an old on-disk config.classes (Claude model name
     assert.match(refused.stderr, /haiku, sonnet, opus, fable/);
   });
 
-  await t.test('cost weighting still reads the old weight for the old name (sonnet = 3)', () => {
-    writeCostRuns(dir, 'mission1', [
-      { name: 'w-1', role: 'worker', class: 'sonnet', ticket: null, team: 'trunk', wave: '1', at: new Date().toISOString() },
-    ]);
-    const report = run('cost.mjs', ['report'], dir);
-    assert.equal(report.code, 0, report.stderr);
-    assert.equal(report.json.weighted, 3, 'the old config\'s own "sonnet": 3 weight, unchanged by DEFAULT_CLASSES');
+  await t.test('plan weighting still reads the old weight for the old name (sonnet = 3)', () => {
+    const plan = run('queue.mjs', ['plan'], dir);
+    assert.equal(plan.code, 0, plan.stderr);
+    const weighed = plan.json.tickets.find((t) => t.id === oldSchemeId);
+    assert.equal(weighed.class, 'sonnet');
+    assert.equal(plan.json.weight.estimate, 6, 'the old config\'s own "sonnet": 3 weight × 2 runs, unchanged by DEFAULT_CLASSES');
   });
 });
 
@@ -427,7 +428,7 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
     const r = run('horde.mjs', ['done'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /evidence catalogue is empty/);
-    assert.match(r.stderr, /no cost has ever been recorded/);
+    assert.match(r.stderr, /no retrospective has been run/);
   });
 
   const charterPath = join(dir, '.horde', 'hordes', 'mission1', 'charter.md');
@@ -447,20 +448,6 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
   mkdirSync(ticketDir, { recursive: true });
   writeFileSync(join(ticketDir, 'issue.md'), '# 001 · slug\n\n**Status:** merged\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
   writeFileSync(join(ticketDir, 'log.md'), '## Verdict · 001 · 2026-01-01 · by verifier-1 (standard)\n\n**Result:** reproduced\n');
-
-  await t.test('refuses naming the missing cost report once evidence and gate are clear', () => {
-    // The seat that used to sample this mission's own work is gone entirely — done's gate is now
-    // evidence, trunk gate, cost and the retrospective — so with evidence reproduced and the gate
-    // green, those last two are the reasons left.
-    const r = run('horde.mjs', ['done'], dir);
-    assert.equal(r.code, 1);
-    assert.doesNotMatch(r.stderr, /evidence row\(s\) not reproduced/);
-    assert.match(r.stderr, /no cost has ever been recorded/);
-  });
-
-  writeCostRuns(dir, 'mission1', [
-    { name: 'mission1-worker-trunk-1', role: 'worker', class: 'standard', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
-  ]);
 
   const retroClasses = join(dir, '.horde', 'hordes', 'mission1', 'retro-classes.json');
   const landResult = join(dir, '.horde', 'hordes', 'mission1', 'land', '001.json');
@@ -507,7 +494,7 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
     assert.equal(r.json.evidence.green, 1);
     assert.equal(r.json.evidence.total, 1);
     assert.equal(r.json.gate.result, 'green');
-    assert.equal(r.json.cost.runs, 1);
+    assert.equal(r.json.cost, undefined, 'done no longer reports or requires a cost figure');
 
     // The mission is over, so the horde is archived by "done" itself — everything it wrote is read
     // back from where it now stands, and nothing is left live for a later run to pick up.

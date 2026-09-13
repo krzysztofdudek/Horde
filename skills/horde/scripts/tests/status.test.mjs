@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { makeRepo, rmRepo, run, initHorde, writeCostRuns } from './helpers.mjs';
+import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
 
 test('status.mjs: no horde, then a populated digest', async (t) => {
   const dir = makeRepo();
@@ -16,12 +16,9 @@ test('status.mjs: no horde, then a populated digest', async (t) => {
     assert.deepEqual(json.json, { hordes: [] });
   });
 
-  await t.test('digest reflects trunk, queue, asks and cost once a horde runs', () => {
+  await t.test('digest reflects trunk, queue and asks once a horde runs', () => {
     initHorde(dir, 'mission1');
     run('ask.mjs', ['add', 'q', '--kind', 'charter'], dir);
-    writeCostRuns(dir, 'mission1', [
-      { name: 'mission1-worker-trunk-1', role: 'worker', class: 'light', ticket: '001', team: 'trunk', wave: '1', at: new Date().toISOString() },
-    ]);
 
     const r = run('status.mjs', [], dir);
     assert.equal(r.code, 0);
@@ -31,8 +28,7 @@ test('status.mjs: no horde, then a populated digest', async (t) => {
     assert.equal(h.trunk.branch, 'mission1/trunk');
     assert.equal(h.trunk.sha.length > 0, true);
     assert.equal(h.asks.open, 1);
-    assert.equal(h.cost.runs, 1);
-    assert.equal(h.cost.limit, null);
+    assert.equal(h.cost, undefined);
     assert.equal(h.teams.length, 1);
     assert.equal(h.teams[0].name, 'trunk');
     // status.mjs no longer reads roster.json or dissents.json at all — both fields are gone.

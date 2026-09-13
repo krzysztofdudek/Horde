@@ -79,8 +79,9 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   `**Policy:** only-the-work`. Anything else is refused here rather than read as the default, since a
   word nothing recognises would quietly mean the opposite of what an operator writing it meant. Both
   `show` and `edit` report the resolved policy in their `--json`. `_lib.mjs`'s `qualityPolicy(horde)`
-  is the one reader of it, scoped to that section so `## Cost`'s own policy line is never mistaken
-  for it, and every tool that acts on the policy asks it rather than parsing the charter again.
+  is the one reader of it, scoped to that section so a loose search never mistakes another
+  section's own line for it, and every tool that acts on the policy asks it rather than parsing
+  the charter again.
 - `archive <name>` — moves `hordes/<name>` to `hordes/_archive/<name>-<date>`; branches untouched.
   Also releases every node lease the horde held (`.horde/leases.json`) — the moment it is no longer
   live, another horde can bind its nodes with no `--take` needed.
@@ -94,8 +95,7 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   is run fresh in a scratch worktree); no audit verdict (`wave.mjs audit`) was recorded anywhere in
   the mission's last wave — "current" once that wave is closed means "the last one", not "none
   open", and a verdict recorded *after* that close counts toward it, since `audit-plan` draws its
-  sample from the wave that has just closed; or no run has ever been recorded in `cost.json` (nothing has run, so there is nothing to
-  report). Otherwise: the charter is already stamped (a side effect of the evidence check above),
+  sample from the wave that has just closed. Otherwise: the charter is already stamped (a side effect of the evidence check above),
   the completion block (`templates/mission-close.md`) is appended to the mission's `plan.md`, and
   the result says what to do next — push, a decision that stays the chairman's, never this tool's.
 
@@ -103,7 +103,7 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
 
 One screen: hordes, for each: trunk sha and distance from base, its branch tip, ticket branches
 beyond it (landed, unverified, unmerged, waiting), queue counts by state (including `waiting`), open
-asks, the last recorded gate result per level, cost to date and limit, any lease another *live* horde
+asks, the last recorded gate result per level, any lease another *live* horde
 holds on a node this
 horde's own tickets touch (node-lease-across-hordes — `.horde/leases.json`, shared by every horde
 on the repository), and an **evidence** block: every row of the charter's evidence catalogue in one
@@ -234,8 +234,8 @@ the only thing that moves one to `queued`.
   connected components with the tickets that hang loose on their own, tickets with no order
   between them that claim the same file, files three or more tickets claim, the extra approvals a
   port change owes (who consumes it: `node.mjs`'s `consumersOf`), consumed ports nothing produces,
-  the charter evidence rows no ticket names, the cost (Σ class weight × 2 runs per ticket) and the
-  waves that many layers need at
+  the charter evidence rows no ticket names, the weight estimate (Σ class weight × 2 runs per
+  ticket) and the waves that many layers need at
   `config.parallelism`. Merged and dropped tickets are out of the plan — it is what remains to do.
   A circle of dependencies is a refusal, with the circle printed. `--json` is a `horde-plan/1`
   document carrying all of it. `--apply-order` records the order `plan` proposed for a file clash
@@ -314,7 +314,7 @@ guesses at an answer.
   (counted once per rule), plus those nodes' own logs. Over it, refused with the count broken into
   code, rules and logs — which part is large says what to do about it. The boundary is closed:
   exactly the limit fits. One threshold and not a table of them per class, because the class decides
-  what a territory COSTS, never what fits in one.
+  which model works a territory, never what fits in one.
 - **Leases.** `.horde/leases.json`, the same file and the same mechanism `node.mjs bind` uses, keyed
   by the territory instead of the node (the on-disk shape is unchanged; history's `node` field
   carries whichever subject the entry is about). A conflict with another live horde is refused,
@@ -669,8 +669,8 @@ says so whenever `--node` is given, and prints the `yg log add` command instead.
 Appends to `hordes/<horde>/plan.md` (team waves to `teams/<team>/plan.md`): `start [n] [--team t]`,
 `note "…"`, `merged NNN <sha>`, `audit NNN clean|findings "…"`, `audit-plan [--seed <n>] [--team t]`,
 `close [--gate green|red] [--sha <tip>]
-[--evidence E5,…] [--team t]` (renders `templates/wave-close.md` with counts from the queue, the
-evidence catalogue and `cost`; `--gate` with `--sha` records the level's gate at that tip in
+[--evidence E5,…] [--team t]` (renders `templates/wave-close.md` with counts from the queue and the
+evidence catalogue; `--gate` with `--sha` records the level's gate at that tip in
 `cache/last-gate.json`; `--evidence` fills catalogue rows the green wave gate itself proves),
 `evidence <id> --by "<who/what>"` (fills one row by hand, for rows no ticket verdict can fill),
 `current [--team t]`. Every close also writes the mission's `horde-law/1` document (see `law.mjs`) and
@@ -943,15 +943,6 @@ is about to merge into, which is a question about the merge; the `tdd` drill ask
 that introduced them could have failed at the moment it was written, which is a question about how
 the work was done.
 
-## cost.mjs — runs × class
-
-`report [--wave n] [--ticket NNN]` (runs and weighted sums from `cost.json`, a ledger
-some other tool writes, shape `{runs: [{name, role, class, ticket|null, wave, at}]}`;
-against the charter's limit when set), `limit-reached` (exit 0 when reached, meant to be checked
-before dispatching). Mission scope is the default and has no flag of its own; `--wave` and `--ticket`
-narrow it. Reviewer calls are counted at mission scope only, since an event names a pair and not a
-ticket.
-
 ## retro.mjs — what nobody read twice
 
 `retro [--horde h] [--tree p] [--json]`, and it runs twice.
@@ -974,7 +965,7 @@ read it in one place.
 The second run validates that file — every key classified exactly once, a `rule` carrying its
 sentence, its component and `check`/`prose`, a `taste` carrying a component and no rule, an
 `inexpressible` carrying neither — and writes `hordes/<h>/retro.json` (`horde-retro/1`) with
-`retro.md` beside it: `{schema, horde, at, state, items, law, taste, inexpressible, logged, cost,
+`retro.md` beside it: `{schema, horde, at, state, items, law, taste, inexpressible, logged,
 judge, threshold, notes}`. A `taste` item leaves one line in its component's own log through
 `yg log add` and nowhere else; a key already on the previous document is never logged twice, and one
 retrospective runs at a time (`hordes/<h>/retro.lock`, taken over when the pid holding it is gone).
@@ -1034,9 +1025,7 @@ starts nothing at all. `--watch` repeats the run every `config.tick.interval` se
 queue empties or a signal arrives; a signal exits cleanly, holding no lock.
 
 It holds the landing gate's own lock — `.horde/gate.lock`, not a second one — so two ticks on one
-repository cannot bill one worker twice or cut one ticket's branch twice. Each list entry books one
-`cost.json` row (`{name, role, class, ticket, wave, at}`), keyed by ticket, wave, role and fix
-round, so two runs over a state nothing changed leave the ledger exactly as they found it. A
+repository cannot hand the same ticket to two workers or cut one ticket's branch twice. A
 `queue.json` caught half-written is refused by name and never written over — that file is the
 mission's own state, and an empty document written across a truncated one is the worst thing this
 tool could do.
