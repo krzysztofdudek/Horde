@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Needs Yggdrasil 6.x — the same major, refused otherwise.
 
+- The conflict-of-interest refusal at landing has no waiver any more: a branch that changes a rule and the code that rule reaches in one landing is always split into two, and no recorded answer lets it through.
+
 ### Added
 
 - Landing is automatic: a change that passes every check merges immediately; a failing one is refused with the reason. Only one change lands at a time; a crash mid-landing no longer blocks the next.
