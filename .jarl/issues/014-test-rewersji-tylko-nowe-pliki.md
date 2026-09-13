@@ -1,6 +1,6 @@
 # 014 · test rewersji tylko nowe pliki
 
-**Status:** done
+**Status:** open
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -22,5 +22,5 @@ Dowód, którego oczekuję: skills/horde/scripts/tests/land.test.mjs.
 
 ## Evidence
 
-Merge commit 46bee4b: land.mjs's revert test now checks changed test files too and honors a declared No new tests exemption; merged
+Merged as 46bee4b then reverted as 03155bb: breaks 15 of tests/law-guard.test.mjs's fixtures (they build synthetic land.mjs tickets with no test files and no `**No new tests:**` declaration). Isolated rerun: `node --test tests/law-guard.test.mjs` — 17/32 red on 46bee4b, 32/32 green after the revert. Needs 014 to also update law-guard.test.mjs's fixtures before it can land again.
 

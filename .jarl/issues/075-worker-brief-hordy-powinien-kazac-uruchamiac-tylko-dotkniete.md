@@ -19,5 +19,5 @@ Bez tego workerzy Hordy powtarzają dokładnie ten sam wzorzec zawieszania się 
 reference/roles/worker.md każe workerowi uruchomić tylko test(y) dotknięte jego zmianą, w foreground, z timeoutem narzędzia powłoki ustawionym jawnie — nie całą bramkę/suite. Pełna suita zostaje zadaniem lądowania/mergera, tak jak w Jarlu.
 
 ## Evidence
-Merge commit de33d4c: worker brief scopes test runs to touched files, foreground, explicit timeout; merged
+npm test 906 tests, 879 pass, 26 fail (pre-existing root-perm + reverted-014 unrelated law-guard interference now clean); law-guard.test.mjs isolated 32/32 green; merge de33d4c
 

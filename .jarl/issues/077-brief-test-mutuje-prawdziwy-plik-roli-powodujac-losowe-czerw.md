@@ -22,5 +22,5 @@ Dowód, którego oczekuję: kilka przebiegów `node --test tests/brief.test.mjs 
 
 ## Evidence
 
-Merge commit 5d99ccb: brief.test.mjs no longer mutates the real reference/roles/legislate.md on disk; merged
+brief.test.mjs isolated green, no longer mutates real reference/roles/legislate.md; merge 5d99ccb
 

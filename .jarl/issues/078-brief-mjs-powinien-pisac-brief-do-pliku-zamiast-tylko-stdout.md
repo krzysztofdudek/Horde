@@ -22,5 +22,5 @@ Dowod, ktorego oczekuje: nowy test w tests/brief.test.mjs.
 
 ## Evidence
 
-Merge commit 32e933a: brief.mjs and refine.mjs --step consult take --out to write briefs to a file; merged
+brief.test.mjs isolated green, --out writes brief to file for all roles + refine.mjs --step consult; merge 32e933a
 

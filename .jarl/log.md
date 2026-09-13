@@ -199,3 +199,14 @@
 - 2026-09-13 19:08 · 078 evidence · Merge commit 32e933a: brief.mjs and refine.mjs --step consult take --out to write briefs to a file; merged
 - 2026-09-13 19:08 · 078 → done · merged
 - 2026-09-13 19:08 · reconciled bookkeeping: 014, 075, 077, 078 were already merged (46bee4b, de33d4c, 5d99ccb, 32e933a) but evidence/done had not been recorded; fixed
+- 2026-09-13 19:32 · 014 round 1 · reverted from the batch: land.mjs's stricter revert-test default (refuse when a diff adds no new/changed test file, unless the ticket declares **No new tests:**) breaks 15 of skills/horde/scripts/tests/law-guard.test.mjs's fixtures, which build synthetic land.mjs tickets with no test files and no No-new-tests declaration. Isolated rerun: node --test tests/law-guard.test.mjs alone, 17/32 red on 46bee4b, 32/32 green after reverting the merge. Needs 014 to update law-guard.test.mjs's fixture helper (declare No new tests, or add a trivial test file) before it can land again.
+- 2026-09-13 19:32 · 075 evidence · npm test 906 tests, 879 pass, 26 fail (pre-existing root-perm + reverted-014 unrelated law-guard interference now clean); law-guard.test.mjs isolated 32/32 green; merge de33d4c
+- 2026-09-13 19:32 · 075 → done · merged
+- 2026-09-13 19:32 · 077 evidence · brief.test.mjs isolated green, no longer mutates real reference/roles/legislate.md; merge 5d99ccb
+- 2026-09-13 19:32 · 077 → done · merged
+- 2026-09-13 19:32 · 078 evidence · brief.test.mjs isolated green, --out writes brief to file for all roles + refine.mjs --step consult; merge 32e933a
+- 2026-09-13 19:32 · 078 → done · merged
+- 2026-09-13 19:32 · merged 075 de33d4c
+- 2026-09-13 19:32 · merged 077 5d99ccb
+- 2026-09-13 19:32 · merged 078 32e933a
+- 2026-09-13 19:33 · reverted 014 merge 46bee4b as 03155bb: breaks law-guard.test.mjs fixtures, round 1 filed
