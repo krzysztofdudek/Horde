@@ -225,3 +225,8 @@
 - 2026-09-13 19:36 · 079 evidence · suite: 887 pass / 21 fail (chmod-permission tests + pre-existing law-guard/014 fixture issue, unrelated to this branch); merge sha cdbd5fe
 - 2026-09-13 19:36 · 079 → done · merged
 - 2026-09-13 19:36 · merged 079 cdbd5fe
+- 2026-09-13 19:37 · 009 → in-progress · worker raised, wave 6
+- 2026-09-13 19:37 · 016 → in-progress · worker raised, wave 6
+- 2026-09-13 19:37 · 020 → in-progress · worker raised, wave 6
+- 2026-09-13 19:37 · 069 → in-progress · worker raised, wave 6
+- 2026-09-13 19:37 · 037 → in-progress · worker raised, wave 6

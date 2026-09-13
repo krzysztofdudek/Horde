@@ -1,6 +1,6 @@
 # 037 · plan i quality czytaja cwd zamiast trunku
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard

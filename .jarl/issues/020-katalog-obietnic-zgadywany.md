@@ -1,6 +1,6 @@
 # 020 · katalog obietnic zgadywany
 
-**Status:** open
+**Status:** in-progress
 **Kind:** cleanup
 **Priority:** 2
 **Tier:** standard

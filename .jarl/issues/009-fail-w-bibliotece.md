@@ -1,6 +1,6 @@
 # 009 · fail w bibliotece
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 1
 **Tier:** strong

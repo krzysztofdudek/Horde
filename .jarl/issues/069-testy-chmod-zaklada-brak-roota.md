@@ -1,6 +1,6 @@
 # 069 · testy chmod zaklada brak roota
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard

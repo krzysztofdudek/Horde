@@ -1,6 +1,6 @@
 # 016 · dokumentacja i kod w jednym tescie
 
-**Status:** open
+**Status:** in-progress
 **Kind:** test
 **Priority:** 1
 **Tier:** standard
