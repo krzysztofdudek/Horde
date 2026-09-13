@@ -1,6 +1,6 @@
 # 001 · tick nigdy nie spawnia
 
-**Status:** open
+**Status:** in-progress
 **Kind:** cleanup
 **Priority:** 1
 **Tier:** standard

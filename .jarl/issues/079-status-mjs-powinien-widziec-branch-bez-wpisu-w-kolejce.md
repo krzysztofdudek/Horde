@@ -1,6 +1,6 @@
 # 079 · status mjs powinien widziec branch bez wpisu w kolejce
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 2
 **Tier:** standard

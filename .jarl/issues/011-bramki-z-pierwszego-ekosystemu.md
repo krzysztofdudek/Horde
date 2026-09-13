@@ -1,6 +1,6 @@
 # 011 · bramki z pierwszego ekosystemu
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard

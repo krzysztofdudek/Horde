@@ -1,6 +1,6 @@
 # 017 · reconcile bez wpisu w logu
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard

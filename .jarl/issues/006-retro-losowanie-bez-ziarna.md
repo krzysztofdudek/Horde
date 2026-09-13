@@ -1,6 +1,6 @@
 # 006 · retro losowanie bez ziarna
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
