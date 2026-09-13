@@ -379,7 +379,7 @@ function cmdQuality(horde, positional, flags) {
     return;
   }
   const cfg = readConfig() || {};
-  const info = resolveTree({ tree: flags.tree, horde });
+  const info = resolveTree({ tree: flags.tree, horde: flags.horde });
   const root = info.path;
   const { source, text } = readAdvice(root, cfg, flags.from);
   if (!source) {
@@ -1241,7 +1241,7 @@ export function renderPlan(plan) {
 function cmdPlan(horde, positional, flags) {
   const team = flags.team || 'trunk';
   const cfg = readConfig() || {};
-  const info = resolveTree({ tree: flags.tree, horde });
+  const info = resolveTree({ tree: flags.tree, horde: flags.horde });
   const plan = withProvenance(buildPlan(horde, team, cfg, { tree: info.path }), info);
   if (plan.cycles.length && plan.cycles[0].length) {
     fail(`the tickets depend on each other in a circle: ${plan.cycles[0].join(' → ')} — a plan cannot start any of them. Drop one of those dependencies (queue.mjs is not the place: the ticket that should not wait is edited with tk.mjs edit --consumes, or the manual --depends is removed) and run plan again`);

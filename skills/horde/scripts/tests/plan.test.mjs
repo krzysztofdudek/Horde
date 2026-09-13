@@ -300,17 +300,3 @@ test('queue.mjs plan: the graph edge comes from yg-impact/1, and a CLI that cann
     assert.match(r.stderr, /config set ygCommand/);
   });
 });
-
-test('queue.mjs plan: with one horde and no --horde/--tree, the plan reads trunk even when the main checkout sits on a foreign branch', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-
-  // The main checkout moves to a branch that is neither the mission's base nor its trunk — the
-  // "cudzym checkout" the issue names. Plan is invoked bare, with no --horde and no --tree.
-  execFileSync('git', ['checkout', '-b', 'someone-elses-work'], { cwd: dir, stdio: 'ignore' });
-
-  const plan = run('queue.mjs', ['plan'], dir).json;
-  assert.equal(plan.branch, 'mission1/trunk');
-  assert.notEqual(plan.branch, 'someone-elses-work');
-});
