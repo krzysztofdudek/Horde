@@ -60,3 +60,4 @@
 - 2026-09-13 15:53 · filed 047 · land liczy wpis cache bramki i nigdy go nie zapisuje
 - 2026-09-13 15:53 · filed 048 · retro drugi sedzia bierze pierwszy werdykt z listy
 - 2026-09-13 15:53 · filed 049 · refine review buduje plan bez oslony na blad
+- 2026-09-13 16:06 · filed 050 · stress testy hordy po poprawkach
