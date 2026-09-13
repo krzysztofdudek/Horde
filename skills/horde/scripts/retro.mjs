@@ -42,7 +42,10 @@ import {
   resolveHorde, resolveTree, readConfig, asArray,
   runMain,
 } from './_lib.mjs';
-import { ygCommand, ygJson } from './node.mjs';
+import {
+  ygCommand, ygJson, ticketNodes, ticketBoundary, pathInBoundary,
+} from './node.mjs';
+import { ticketFiles } from './tk.mjs';
 
 export const RETRO_SCHEMA = 'horde-retro/1';
 export const CLASSES = ['rule', 'taste', 'inexpressible'];
@@ -308,12 +311,18 @@ function sampleRate(cfg) {
 }
 
 // A verdict's unit belongs to a ticket when the ticket declared that component or that file. The
-// declarations are the ticket's own, read from its issue.md the way every other tool reads them.
-function ticketDeclares(dir, unit) {
+// declarations are the ticket's own, read from its issue.md the way every other tool reads them —
+// the same two-step bound the merge checklist uses (land.mjs's checkScope): the declared **Files**
+// win when there are any, else the **Node** field's own boundary, matched whole-path or
+// whole-glob through pathInBoundary, never by substring. A ticket that declares `src/ab` must
+// never also claim a verdict against `src/a`.
+export function ticketDeclares(root, cfg, dir, unit) {
   const text = (() => {
     try { return readFileSync(join(dir, 'issue.md'), 'utf8'); } catch { return ''; }
   })();
-  return text.includes(unit);
+  const declared = ticketFiles(text);
+  const boundary = declared.length ? declared : ticketBoundary(root, cfg, ticketNodes(text));
+  return boundary.length ? pathInBoundary(unit, boundary) : false;
 }
 
 // Which landed tickets are re-judged, and what came back. Nothing here refuses: every way this can
@@ -374,7 +383,7 @@ function measureJudge(horde, root, cfg, tickets, landed) {
 
   for (const p of picked) {
     const ticket = tickets.find((t) => t.id === p.ticket);
-    const mine = verdicts.filter((v) => v && v.unit && ticket && ticketDeclares(ticket.dir, v.unit.path));
+    const mine = verdicts.filter((v) => v && v.unit && ticket && ticketDeclares(root, cfg, ticket.dir, v.unit.path));
     if (mine.length === 0) {
       skipped.push({ ticket: p.ticket, why: 'no prose pair on this ticket\'s own files or components carries a recorded verdict' });
       continue;
