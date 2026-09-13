@@ -230,3 +230,5 @@
 - 2026-09-13 19:37 · 020 → in-progress · worker raised, wave 6
 - 2026-09-13 19:37 · 069 → in-progress · worker raised, wave 6
 - 2026-09-13 19:37 · 037 → in-progress · worker raised, wave 6
+- 2026-09-13 19:41 · filed 083 · trzeci test chmod pod rootem w law-diff
+- 2026-09-13 19:41 · filed 083, trzeci test chmod pod rootem, znaleziony przy sprawdzaniu 069
