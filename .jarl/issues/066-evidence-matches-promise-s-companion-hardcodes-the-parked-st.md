@@ -1,6 +1,6 @@
 # 066 · evidence matches promise s companion hardcodes the parked status
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Configure `has-evidence.parked_markers: "planned, di
 Refuterzy: Verified directly against both files. companion.mjs:25 declares `const PARKED = new Set(['planned', 'disabled']);` and line 36 uses `if (PARKED.has(front.fields.status)) return [];` — a hardcoded lite | Verified against actual files: companion.mjs:25 declares const PARKED = new Set(['planned', 'disabled']) and uses it at line 36 to gate the parked-status check, with no reference to ctx.config anywher
 
 ## Evidence
+
+npm test in skills/horde/scripts (batch of 083+032+066): 919 tests, 914 pass, 4 skipped (3 root-only chmod skips, 1 optional RatatoskrSkill-checkout skip), 1 fail (land.test.mjs:978 'a branch tip that moved...', a load-timing flake unrelated to this issue — land.mjs/land.test.mjs untouched by 066's diff, reproduces green in isolation in 12.1s, same class as tracked issue 070). Merged b6863fd.
 
