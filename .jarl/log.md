@@ -47,3 +47,8 @@
 - 2026-09-13 15:47 · 010 → in-progress · worker raised, wave 1
 - 2026-09-13 15:47 · 005 → in-progress · worker raised, wave 1
 - 2026-09-13 15:49 · decided jarl-zostaje-0-1-0
+- 2026-09-13 15:51 · filed 037 · plan i quality czytaja cwd zamiast trunku
+- 2026-09-13 15:51 · filed 038 · tk usage nie wymienia komendy move
+- 2026-09-13 15:51 · filed 039 · readme done obiecuje odmowe za brak audytu
+- 2026-09-13 15:51 · filed 040 · tk new waliduje granice wobec cwd
+- 2026-09-13 15:51 · filed 041 · tick rozwiazuje drzewo bez hordy
