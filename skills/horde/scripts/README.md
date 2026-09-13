@@ -469,9 +469,11 @@ several users.
   would call a script rule a prose one on any tree where the free run had not happened and send a
   verifier off to judge what a command answers for nothing. Script rules still without a verdict are
   reported separately, with the free command that settles them.
-- `propose <kind> "…" --by <name>` (kinds: new-node, move-boundary, rename, rule), `proposals
-  [--open]`, `approve|veto <id> ["why"] --by architect`, `apply <id>`. Approval and apply record;
-  filing into the graph is the architect's own `yg` calls, and `apply` prints the exact edit.
+- `propose <kind> "…" --by <name> [--node n] [--boundary <glob>[,glob…]]` (kinds: new-node,
+  move-boundary, rename, rule; move-boundary requires --node and --boundary, so apply can name
+  the exact edit later, not just record that it happened), `proposals [--open]`,
+  `approve|veto <id> ["why"] --by architect`, `apply <id>`. Approval and apply record; filing
+  into the graph is the architect's own `yg` calls, and `apply` prints the exact edit.
 - **The status ladder** (ruling quality-always-authorised). A rule goes draft → advisory → enforced,
   and which rung it deserves is a question about evidence. `ladder` lists every rule the graph
   declares with its rung, the number of cases it is drilled against, what it refuses here, the

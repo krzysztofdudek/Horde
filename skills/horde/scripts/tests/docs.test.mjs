@@ -657,3 +657,43 @@ test('every documented <script>.mjs subcommand and flag exists in that script\'s
   const offenders = docOffenders(docFiles);
   assert.deepEqual(offenders, [], `dead doc syntax:\n${offenders.join('\n')}`);
 });
+
+// ---- issue 057: README's propose entry names --node/--boundary, and that move-boundary
+// requires them, matching node.mjs's own USAGE ------------------------------------------------
+
+// The doc-vs-USAGE scan above (issue 016) only catches a flag that appears in the docs but not in
+// USAGE. It does not catch the opposite gap this issue is about: a flag USAGE marks required for
+// one kind of `propose`, silently missing from README's own syntax line entirely. node.mjs's own
+// USAGE is the one source of which flags `propose` takes and which kind requires them — read live
+// off the propose command's own block rather than hardcoded, so a future change to what
+// move-boundary requires is caught here too, instead of leaving README to say nothing about it
+// again.
+function proposeUsageBlock() {
+  const usage = scriptUsage('node');
+  const m = /^ {2}propose <kind>.*(?:\n {4,}.*)*/m.exec(usage);
+  assert.ok(m, 'node.mjs USAGE no longer has a `propose <kind>` command line');
+  return m[0];
+}
+
+function requiredFlagNames(text) {
+  const m = /requires ([^.]+)/.exec(text);
+  assert.ok(m, `no "requires ..." clause found in: ${text}`);
+  return [...m[1].matchAll(/--([a-z-]+)/g)].map((x) => x[1]);
+}
+
+test('scripts/README.md\'s propose entry names --node/--boundary and says move-boundary requires them', () => {
+  const required = requiredFlagNames(proposeUsageBlock());
+  assert.deepEqual(required, ['node', 'boundary'],
+    'node.mjs USAGE no longer requires exactly --node and --boundary for move-boundary — this test\'s premise moved');
+
+  const readme = readText(join(SCRIPTS_DIR, 'README.md'));
+  const bulletM = /^- `propose <kind>[\s\S]*?(?=\n- )/m.exec(readme);
+  assert.ok(bulletM, 'scripts/README.md has no `propose <kind>` bullet');
+  const bullet = bulletM[0];
+
+  for (const flag of required) {
+    assert.match(bullet, new RegExp(`--${flag}\\b`), `README's propose entry does not mention --${flag}`);
+  }
+  assert.match(bullet, /move-boundary[\s\S]{0,120}requires/,
+    'README\'s propose entry does not say move-boundary requires anything');
+});
