@@ -89,3 +89,4 @@
 - 2026-09-13 16:25 · 051 → in-progress · worker raised, wave 2
 - 2026-09-13 16:25 · 052 → in-progress · worker raised, wave 2
 - 2026-09-13 16:25 · 053 → in-progress · worker raised, wave 2
+- 2026-09-13 16:42 · 051 review approve · Reviewer: acceptance met literally, new docs.test.mjs test verified red on base architect.md / green on branch's fix, scope limited to architect.md + expected CHANGELOG.md + the new test file. Minor only: regression test is intentionally general across reference/roles/, CHANGELOG entry checked against register rules.
