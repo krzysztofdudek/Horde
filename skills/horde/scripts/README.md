@@ -4,14 +4,12 @@ Every tool: Node ESM, zero dependencies, `--help`, `--json`, exit non-zero on fa
 stderr. All tools resolve the repository root by walking up to `.git`, then the shared state root as
 `<git common dir>/../.horde` so a worktree and the main checkout see the same state. `--horde <name>`
 selects the horde; when only one exists it is the default. `--team <name>` selects a team; default is
-`trunk`. `<name>` is always a team's short LEAF name (`alfa`), unique per horde — while nested
-sub-teams are still readable on disk (`teams/<parent>/teams/<child>/`), a fresh mission only ever
-files tickets on `trunk`: nothing spawns a sub-team any more, since that needed a steward to run it,
-and there is no such role now. `_lib.mjs`'s
-`teamPath()` still resolves that nesting for a pre-migration mission that has one, by walking
-`roster.json`'s own `parent` links back to `trunk`; a full slash path (`trunk/alfa`) is also accepted,
-but only when it matches what that resolution independently finds — anything else, including the
-literal segment `teams`, is
+`trunk`, and on anything filed at 6.0.0 or later that is the only value there is: nothing spawns a
+sub-team any more. `<name>` is always a team's short LEAF name (`alfa`), unique per horde;
+`_lib.mjs`'s `teamPath()` still resolves the nested layout (`teams/<parent>/teams/<child>/`) that a
+mission started before 6.0.0 can carry on disk — see **pre-6.0.0 history** at the end. A full slash
+path (`trunk/alfa`) is also accepted, but only when it matches what that resolution independently
+finds — anything else, including the literal segment `teams`, is
 refused rather than silently landing in the wrong directory. JSON files are the source of truth; every
 `.md` beside one is rendered on write and never parsed. No tool ever rewrites history in a journal;
 journals append.
@@ -112,14 +110,15 @@ it, not yet started), `running` (in flight), `merged` (a merged ticket already c
 verdict naming it, but the charter has not been stamped yet — that happens at the next `wave.mjs
 close`, a manual `wave.mjs evidence`, or `horde.mjs done`), and `reproduced` (the charter's own
 "reproduced by" cell already names who). This is `wave.mjs`'s own `evidenceCoverage` — the same
-reading `horde.mjs done` uses for its gate, read here without writing anything. `--horde`, `--team`
-narrow it. `--json`.
+reading `horde.mjs done` uses for its gate, read here without writing anything. `--horde` narrows
+it to one horde. `--team` takes `trunk` and nothing else — every ticket is filed there, so any
+other name is refused rather than answered with a horde that has no team in it at all. `--json`.
 
 ## handoff.mjs — state of intent
 
 `write --summary "…" [--next "…"]…`, `read`, `add-waiting <who> "<what>"`, `rm-waiting <who>` — one
 handoff per horde, always at `hordes/<horde>/handoff.json` (+ `.md`). There is no `--by` or `--team`
-any more: with only a director and one-shots left, a handoff scoped to a steward's own team has
+any more: with only a director and one-shots left, a handoff scoped to one team or one name has
 nobody left to read it, and both flags are refused by name rather than silently accepted and
 ignored, so a caller that still passes one finds out at once. `write` fills
 `inFlight` from the queue's running items and `head` from git. `read` prints "fresh start — no
@@ -135,7 +134,8 @@ its folder and of the `id:` its issue.md carries.
   [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
   [--produces <node>/<port>,…] [--evidence "…"]… [--revert-base <ref>] [--mutate "<command>"]` —
   from `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries
-  a contract between them; three or more is refused — no owner holds the whole of such a diff.
+  a contract between them; three or more is refused — nothing in the graph answers for the whole of
+  such a diff.
   `--revert-base` names the ref where the ticket's new tests must fail (a contract test
   is green on the team tip by design; its red base is e.g. `develop`); `land`'s revert-test item reads it, or
   a "red on <ref>" phrase in the acceptance lines. `--mutate` names a shell command that swaps the
@@ -155,7 +155,7 @@ its folder and of the `id:` its issue.md carries.
   own policy, for a change delicate enough that nothing should ride along with it. Neither value ever
   permits the opposite: nothing at any setting makes a rule weaker.
   Ticket creation itself is one exported function (`createTicket`), so a ticket the quality pass
-  files is the same object, validated the same way, as one an owner files by hand; `setTicketBody`
+  files is the same object, validated the same way, as one filed by hand; `setTicketBody`
   is the same for a body, and `edit`'s own write goes through it.
 - The four structural fields — `**Files:**`, `**Consumes:**`/`**Produces:**`, `**Evidence:**` — are
   what `queue.mjs plan` computes the mission's order from, and they are validated where they are
@@ -167,8 +167,9 @@ its folder and of the `id:` its issue.md carries.
   the graph — refused by name otherwise. Port existence is read through `node.mjs`'s graph reading,
   in one place, so a later change of where the graph comes from changes one function.
 - `list [--state s] [--node n] [--team t] [--review-pending] [--open]`, `show NNN [--log]`,
-  `status NNN <state> ["note"]` (states: proposed queued running landed changes blocked verified merged
-  escalated dropped — `blocked` is `tick.mjs`'s own, for a ticket whose fix rounds ran out) —
+  `status NNN <state> ["note"]` (states: proposed queued running landed changes blocked merged
+  dropped — `blocked` is `tick.mjs`'s own, for a ticket whose fix rounds ran out; `verified` and
+  `escalated` are pre-6.0.0 history and refused by name, saying what replaced each) —
   `changes` is the fix-loop breaker: it counts the round in the ticket's log
   and prints it (`config.fixRounds`, defaults `resume` 3, `fresh` 2). Rounds 1..`resume`: resume
   the same worker with the findings. Rounds `resume`+1..`resume`+`fresh`: the result says "fresh
@@ -183,7 +184,7 @@ its folder and of the `id:` its issue.md carries.
   header block (id/title, `**Status:**`, `**Node:**`/`**Class:**`/`**Severity:**`/`**Team:**`,
   `**Depends on:**`/`**Branch:**`, `**Files:**`, `**Consumes:**`/`**Produces:**`, `**Evidence:**`)
   untouched; appends "body edited by `<name>`" to the
-  log. What owners use to write ticket bodies, instead of editing `issue.md` by hand.
+  log. What the director uses to write ticket bodies, instead of editing `issue.md` by hand.
 - `edit NNN --by <name> [--files a,b] [--consumes …] [--produces …] [--evidence E1,…]` — changes
   those fields instead of the body (no stdin needed), each with its own log line naming who changed
   it, and validated exactly as `new` validates them. This is how a ticket is widened when the work
@@ -198,7 +199,9 @@ its folder and of the `id:` its issue.md carries.
 ## queue.mjs — the DAG
 
 `teams/<team>/queue.json`: items `{ticket, state, class, branch, worktree, dependsOn[], stackedOn, agent, sha, notes[]}`.
-States: `proposed queued waiting running landed blocked merged escalated dropped`. `proposed` is a ticket
+States `set` writes: `proposed queued waiting running landed blocked merged dropped`. `escalated` is
+pre-6.0.0 history — refused by name, still grouped by the rendered `queue.md` so an old queue's own
+items are not left out of it. `proposed` is a ticket
 nobody has ruled on: listed and counted like any other, and never a candidate for `next`. A
 consultant files its own tickets and adds them with `add --proposed`; `refine.mjs --step review` is
 the only thing that moves one to `queued`.
@@ -277,7 +280,7 @@ can release the lock — is taken over immediately rather than waited on.
   already done is a rebase this tool does not do). From then on the item's **parent branch** — the
   branch it is rooted on, measured against, and merged into — is `MMM`'s, everywhere: base
   freshness, the diff its keys bind to, the scope, the revert test, the range-diff of a moved diff,
-  and the branch the worker's and verifier's briefs tell them to merge. `set MMM merged` clears
+  and the branch the worker's own brief tells them to merge. `set MMM merged` clears
   `stackedOn` on everything stacked on it by the same write, and the parent is the team branch
   again — with the work now in it, the stacked ticket's own diff is unchanged, so its keys hold and
   only the gate re-runs.
@@ -333,7 +336,8 @@ guesses at an answer.
   `horde.mjs archive` releases territories exactly as it releases nodes.
 - `--step consult` — prints `[{territory, class, brief}]`, exactly one spawn per territory, all
   parallel, issued by the caller in one message. A brief carries only its own territory: `yg context
-  --node --json` for each of its nodes (owner, rules with status and reviewer kind, paths), the node
+  --node --json` for each of its nodes (its rules with status and reviewer kind, and the paths they
+  reach), the node
   descriptions and logs, `grain where`/`how`/`obligation`, and the mission card cut to this
   territory's own evidence rows. Then the five questions, in order: what must change in me; is this
   a new module or a change inside one; does this break single responsibility; what pattern do I want
@@ -362,8 +366,9 @@ guesses at an answer.
 
 `brief.mjs <role> [args]` prints the brief for a role, filled from `reference/roles/<role>.md`. Four
 roles, a closed list: `architect`, `worker NNN [--takeover]`, `legislate <territory>`, `retro`. Any
-other name — including `steward`, `owner`, `verifier`, `auditor` or `counsel`, gone with the seat
-cassation — is refused as unknown, naming these four and no others. `worker --takeover` renders a
+other name is refused as unknown, naming these four and no others — including every seat the
+cassation removed, each of which is listed under **pre-6.0.0 history**.
+`worker --takeover` renders a
 takeover section — a prior
 worker attempted this ticket N times, the ticket is yours, here is its log — for the fresh,
 one-class-up worker `tk.mjs status NNN changes` hands a ticket to once its resume rounds
@@ -440,9 +445,9 @@ several users.
   write happened (it is skipped, never refused, when the node's own graph object doesn't exist yet
   to log against). `horde.mjs archive` is the only place a lease is released outright.
 - `map [--horde h]` — the mission's nodes with the ports each publishes (by name) and how many port
-  proposals are open on it. The `owner` column is read from a pre-migration mission's `roster.json`
-  only — nothing writes one any more, so a fresh mission always reads `-` there. There is no
-  currency stamp: the lock binds every verdict
+  proposals are open on it. Its roster-derived column is pre-6.0.0 history (see the section at the
+  end) — nothing writes a `roster.json` any more, so a fresh mission always reads `-` there. There
+  is no currency stamp: the lock binds every verdict
   to the hash of the code it judged, so `yg check` is the one answer to "is this current", and a
   second one kept here could only disagree.
 - `show <node>` — boundary, **the rules in force on the node**, its ports, last log entries. There is
@@ -461,13 +466,13 @@ several users.
   `--pending` shows only the proposals. `contract approve|veto <id> ["why"] --by architect` rules on
   one, and an approval prints the filing the architect makes by hand: the `yg-node.yaml` edit, the
   `yg log add`, and the free run that records the contract baseline.
-- `verdicts [--at <path>] [--by <name>]` — verifier-is-yggdrasil-reviewer: the prose rules over a
+- `verdicts [--at <path>] [--by <name>]` — the prose rules over a
   tree that no judge has answered yet, each with the exact `yg verdict package` and
   `yg verdict record` commands that answer it. `--at` names the worktree to read (default: this
   one). Read-only. Which pending pairs are prose is the graph's own word — each unit's context
   document names the reviewer kind of every rule reaching it — never "whatever is left over", which
   would call a script rule a prose one on any tree where the free run had not happened and send a
-  verifier off to judge what a command answers for nothing. Script rules still without a verdict are
+  reviewer off to judge what a command answers for nothing. Script rules still without a verdict are
   reported separately, with the free command that settles them.
 - `propose <kind> "…" --by <name> [--node n] [--boundary <glob>[,glob…]]` (kinds: new-node,
   move-boundary, rename, rule; move-boundary requires --node and --boundary, so apply can name
@@ -1078,7 +1083,7 @@ one walk, on the two real builds: **Grain** mines a graph out of a repository's 
    enforced out of nowhere. The graph is committed, and the horde's base branch cut from it;
 3. `horde.mjs init` keeps that graph (it made none), works the gate command and the test patterns
    out of the repository's own build file, and leases the node the mission works on; the charter is
-   written through `charter edit` with two evidence rows; an owner files a ticket carrying `Files`,
+   written through `charter edit` with two evidence rows; a ticket is filed carrying `Files`,
    `Produces` and both evidence ids; `queue plan` derives one layer and no uncovered row; `queue set
    running` cuts the branch and the worktree; the worker lands a change with a test that really is
    red on the branch it merges into and green on its own; `land` passes all nine items — the graph
@@ -1160,3 +1165,48 @@ and the ticket goes back to its author, untouched.
 One function answers "what is this branch's parent" for the whole tool set — the merge checklist,
 the brief the worker is given, and `queue.mjs reconcile`'s count of what a branch actually carries
 of its own. Two answers would be a ticket measured against one branch and checked against another.
+
+## pre-6.0.0 history
+
+6.0.0 cassated the seats: `steward`, `owner`, `verifier`, `auditor` and `counsel` are gone, and so
+are the two channels only they used — escalations and dissents, both folded into the client channel
+(`ask.mjs`). Nothing in this tool set writes any of it any more. `horde.mjs init` no longer even
+creates the empty `dissents.json` it used to.
+
+What stays is the reading side, so a mission started before 6.0.0 — and every archive of one — still
+opens. This is the whole of it; nothing outside this section is on that path:
+
+- `_lib.mjs`'s `teamPath()` resolves a leaf team name through `roster.json`'s `steward` entries and
+  their `parent` links, which is how the nested `teams/<parent>/teams/<child>/` layout on an old
+  mission's disk is addressed at all. A fresh mission only ever has `trunk`, and takes the fast path.
+- `walkTeams` in `brief.mjs`, `retro.mjs` and `node.mjs` descends that same `teams/*/teams` nesting,
+  so a ticket, a log or a queue filed under an old sub-team is still found.
+- `brief.mjs` reads `roster.json` for the agent that spawned the one being briefed — its `spawnedBy`,
+  its Agent-tool id, and, for a worker, the live `steward` of its team. A fresh mission writes no
+  roster, so every role's `reportsTo` falls back to the director, `main`.
+- `brief.mjs` refuses each cassated seat by name as an unknown role, listing the four that remain.
+- `node.mjs map`'s roster-derived column reads those same old `owner` entries; `-` on a fresh
+  mission.
+- `blame.mjs` reads an old ticket's `**Keys:**` line (author, verifier, node approvals) and its
+  verdict blocks' `**Gate:** … at sha …`, which are two of the three places a branch tip was ever
+  recorded — without them a line introduced before 6.0.0 could not be traced to the ticket that
+  wrote it.
+- `tk.mjs status` refuses `verified` and `escalated` by name, saying what replaced each; a ticket on
+  disk in either state is still read and shown exactly as it stands.
+- `queue.mjs set` refuses `escalated` the same way, while the rendered `queue.md` still groups it —
+  dropping the word outright would leave an old queue's own items out of its rendering.
+- `status.mjs` still buckets a queue item in the retired `verified` state under "unverified", and
+  both it and `wave.mjs` still read a `team`-level entry in `cache/last-gate.json`.
+- `wave.mjs` still counts a wave's `escalated` items for the wave-close document, which is how an
+  old mission's close still adds up; a fresh mission's always reads 0.
+- A stray `roster.json`, `dissents.json` or `escalations.json` left on disk is read by nothing and
+  crashes nothing.
+
+The ruling behind the verdicts command — that Yggdrasil's own reviewer is the verifier, so Horde
+does not keep a second one — is `verifier-is-yggdrasil-reviewer`, named here because its slug
+carries a seat that no longer exists.
+
+`land.mjs`'s gate levels are not on this list. `config.gates.team` is the gate a ticket branch lands
+through and `config.gates.trunk` the one for a branch landing straight on `<horde>/trunk`; both are
+live, both run on every landing, and `team` there is the name of a config key every adopter already
+has in `.horde/config.json`, not a team anybody can pass. `--level team` is refused outright.

@@ -75,8 +75,10 @@ neither is a thing a worker can fix by trying again:
   the conflict guard     — a branch may not sharpen a rule and change the code that rule refuses in
                            the same landing. Split it into a code ticket and a legislative one.
 
---level selects the gate command (config.gates.trunk; default team — "trunk" is only for a branch
-landing directly on <horde>/trunk; "team" is no longer a value you pass, only the default).
+--level selects which gate command runs. Omitted — the normal case — runs config.gates.team, the
+gate a ticket branch lands through. --level trunk runs config.gates.trunk, for a branch landing
+directly on <horde>/trunk. "team" here is the name of a config key kept from before 6.0.0, not a
+team you can name: passing --level team is refused outright rather than read as the default.
 --no-gate skips items 5, 6 and 7 (informational: pass) and never merges.
 --background starts the run and prints the path of the result file it will write, immediately.
 
@@ -274,7 +276,7 @@ function checkBaseFreshness(branch, parentBranch) {
 // log.md) and hand edits are what `yg check` in the gate refuses, so they are reported as derived
 // and left to the gate.
 //
-// A declared list is the tighter of the two and it wins: the owner said which files this ticket
+// A declared list is the tighter of the two and it wins: the ticket said which files it
 // touches, and a diff that reaches past it is a widened ticket nobody agreed to. The fix is never
 // a quiet pass — it is `tk.mjs edit NNN --files …`, which writes the new list and a log line
 // saying who widened it and when.
@@ -1552,6 +1554,11 @@ function main() {
   if (!arg) fail('land requires <ticket|branch>');
   if (flags.level === 'team') fail('--level team no longer exists — omit --level, or pass --level trunk for a branch landing directly on <horde>/trunk');
   if (flags.level !== undefined && flags.level !== 'trunk') fail('--level must be "trunk"');
+  // "team" is the config key this reads the gate command from (config.gates.team) and the key the
+  // result and cache/last-gate.json are filed under — not a team, and not something a caller can
+  // pass. The key predates 6.0.0 and is kept: it is what every adopter's .horde/config.json holds
+  // for the gate a ticket branch lands through, and renaming it would move that command out from
+  // under them for no change in what runs.
   const level = flags.level || 'team';
 
   const horde = resolveHorde(flags);

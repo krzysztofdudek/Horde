@@ -53,7 +53,7 @@ function walk(dir, out = []) {
 // legitimate code, kept on purpose so an old mission's state does not break a fresh binary).
 // Scoping the ban to the text a person or an agent actually reads to learn the roles is the
 // difference between a real regression and hundreds of false positives across the tool set.
-const RETIRED_ROLE_RE = /\b(steward|owner|verifier|auditor|counsel)\b/i;
+const RETIRED_ROLE_RE = /\b(stewards?|owners?|verifiers?|auditors?|counsels?)\b/i;
 
 test('the skill\'s prose (SKILL.md, reference/**) names no retired role', () => {
   const files = [join(SKILL_DIR, 'SKILL.md'), ...walk(join(SKILL_DIR, 'reference'))];
@@ -65,6 +65,68 @@ test('the skill\'s prose (SKILL.md, reference/**) names no retired role', () => 
     if (m) offenders.push(`${file}: names "${m[1]}"`);
   }
   assert.deepEqual(offenders, [], `retired role named in prose:\n${offenders.join('\n')}`);
+});
+
+// ---- the scripts README names a retired role only where it is naming history -----------------
+
+// scripts/README.md is the tool set's own contract, and the half-removed seat model left the old
+// role names scattered through it — describing live commands as if a steward, an owner or a
+// verifier still ran them. The words are not banned outright here: the readers kept so a mission
+// started before 6.0.0 (and every archive of one) still opens HAVE to name the seats they read
+// for. They are confined to one section, so the contract reads in one model and the compatibility
+// surface is a list somebody can actually check rather than a scatter nobody can find.
+const SCRIPTS_HISTORY_HEADING = '## pre-6.0.0 history';
+
+// The text with one `## ` section cut out of it — from its heading to the next `## ` heading, so
+// the exemption ends where the section does and never spills into whatever follows it.
+function withoutSection(text, heading) {
+  const start = text.indexOf(heading);
+  if (start === -1) return text;
+  const rest = text.slice(start + heading.length);
+  const next = rest.search(/^## /m);
+  return text.slice(0, start) + (next === -1 ? '' : rest.slice(next));
+}
+
+function retiredRolesOutside(text, heading) {
+  const offenders = [];
+  for (const line of withoutSection(text, heading).split('\n')) {
+    const m = RETIRED_ROLE_RE.exec(line);
+    if (m) offenders.push(`names "${m[1]}": ${line.trim()}`);
+  }
+  return offenders;
+}
+
+test('scripts/README.md names a retired role only inside its "pre-6.0.0 history" section', () => {
+  const text = readRaw(join(SCRIPTS_DIR, 'README.md'));
+  assert.ok(
+    text.includes(SCRIPTS_HISTORY_HEADING),
+    `scripts/README.md has no "${SCRIPTS_HISTORY_HEADING}" section — the readers kept for a pre-6.0.0 mission have nowhere to be named`,
+  );
+  const offenders = retiredRolesOutside(text, SCRIPTS_HISTORY_HEADING);
+  assert.deepEqual(offenders, [], `retired role named outside the history section:\n${offenders.join('\n')}`);
+});
+
+test('the scripts-README scan actually catches what it is for: a retired role outside the section, and one after it', () => {
+  const clean = '# scripts\n\nA worker lands its own branch.\n\n## pre-6.0.0 history\n\nThe steward, the owner and the verifier are gone.\n';
+  assert.deepEqual(retiredRolesOutside(clean, SCRIPTS_HISTORY_HEADING), []);
+
+  const before = '# scripts\n\nAn owner files the ticket.\n\n## pre-6.0.0 history\n\nThe steward is gone.\n';
+  assert.ok(
+    retiredRolesOutside(before, SCRIPTS_HISTORY_HEADING).some((o) => o.includes('owner')),
+    'a retired role named before the history section should be caught',
+  );
+
+  const after = '# scripts\n\n## pre-6.0.0 history\n\nThe steward is gone.\n\n## land.mjs\n\nThe verifier signs it off.\n';
+  assert.ok(
+    retiredRolesOutside(after, SCRIPTS_HISTORY_HEADING).some((o) => o.includes('verifier')),
+    'the exemption must end at the next "## " heading, not run to the end of the file',
+  );
+
+  const plural = '# scripts\n\nWhat owners use to write ticket bodies.\n\n## pre-6.0.0 history\n\nGone.\n';
+  assert.ok(
+    retiredRolesOutside(plural, SCRIPTS_HISTORY_HEADING).some((o) => o.includes('owners')),
+    'the plural of a retired role should be caught too',
+  );
 });
 
 // ---- the model page replaces topology.md ---------------------------------------------------

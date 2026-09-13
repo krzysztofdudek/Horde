@@ -476,11 +476,11 @@ export function qualityPolicy(horde) {
 
 // Resolves a team's short LEAF name (e.g. "lark") to its full on-disk segment chain
 // (["trunk", "lark"]) by walking roster.json's steward entries' own `parent` links back to
-// "trunk". Nothing writes a steward entry any more — there is only ever "trunk" — so this always
-// takes the "trunk" fast path below in practice; kept as a lookup rather than hard-coded because
-// leaf names are the only address that stays correct no matter how deep a team is nested, and a
-// pre-migration mission's roster.json may still carry a real chain worth resolving. "trunk" is
-// the implicit root and needs no roster lookup at all.
+// "trunk". Pre-6.0.0 history, and read-only: nothing writes a steward entry any more and a fresh
+// mission only ever has "trunk", so this always takes the "trunk" fast path below in practice.
+// Kept as a lookup rather than hard-coded because leaf names are the only address that stays
+// correct no matter how deep a team is nested, and a mission started before 6.0.0 can still carry
+// a real chain worth resolving. "trunk" is the implicit root and needs no roster lookup at all.
 function resolveTeamSegments(horde, leaf, seen = new Set()) {
   if (!leaf || leaf === 'trunk') return ['trunk'];
   if (seen.has(leaf)) fail(`team "${leaf}" has a cyclical parent chain in roster.json`);
@@ -488,12 +488,12 @@ function resolveTeamSegments(horde, leaf, seen = new Set()) {
   const doc = readJSON(hordePath(horde, 'roster.json'), { entries: [] });
   const entries = Array.isArray(doc.entries) ? doc.entries : [];
   const entry = entries.find((e) => e.role === 'steward' && e.team === leaf);
-  if (!entry) fail(`no such team: "${leaf}" — has its steward been spawned yet?`);
+  if (!entry) fail(`no such team: "${leaf}" — every ticket is filed on "trunk"; a nested team is only ever found in a mission started before 6.0.0`);
   return [...resolveTeamSegments(horde, entry.parent, seen), leaf];
 }
 
-// teamPath(horde, team, ...parts) — `team` is normally just the short LEAF name a steward was
-// spawned with ("lark"), unique per horde; this resolves its real nesting from roster.json and
+// teamPath(horde, team, ...parts) — `team` is normally just the short LEAF name a team was
+// created under ("lark"), unique per horde; this resolves its real nesting from roster.json and
 // inserts the literal "teams/" segments that actually separate each level on disk
 // ("teams/trunk/teams/lark"), so every caller works from the one name a brief or a queue item
 // already carries, never having to spell out or track the ancestry itself. A full slash path
@@ -865,7 +865,7 @@ export function resolveHorde(args) {
 }
 
 // parentBranchOf(horde, team, item) — the branch a queue item's own branch is rooted on, merges
-// into, and is measured against. Normally the team's branch. A ticket the steward started from an
+// into, and is measured against. Normally the team's branch. A ticket started from an
 // unmerged dependency's tip (`queue.mjs set NNN running --on MMM`, recorded as `stackedOn`) is
 // rooted on that dependency's branch instead, so a chain of three tickets does not cost three
 // waves. The stack lasts exactly as long as the dependency is unmerged: once it merges, its work

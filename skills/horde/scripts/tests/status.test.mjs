@@ -57,6 +57,21 @@ test('status.mjs: no horde, then a populated digest', async (t) => {
     assert.doesNotMatch(human.stdout, /last gate \(team\)/);
   });
 
+  // --team used to narrow the digest to a sub-team. Nothing spawns one any more, so for any name
+  // but "trunk" it printed a horde with no team in it at all — an empty answer that reads as
+  // "nothing is happening here". A digest that answers with silence is the one failure it cannot
+  // have, so the name is refused instead.
+  await t.test('--team takes trunk, and refuses any other name rather than printing an empty horde', () => {
+    const trunk = run('status.mjs', ['--horde', 'mission1', '--team', 'trunk'], dir);
+    assert.equal(trunk.code, 0, trunk.stderr);
+    assert.deepEqual(trunk.json.hordes[0].teams.map((t2) => t2.name), ['trunk']);
+
+    const other = run('status.mjs', ['--horde', 'mission1', '--team', 'lark'], dir);
+    assert.equal(other.code, 1);
+    assert.match(other.stderr, /no such team "lark"/);
+    assert.match(other.stderr, /every ticket is filed on "trunk"/);
+  });
+
   await t.test('--horde narrows to one horde and refuses an unknown one', () => {
     initHorde(dir, 'mission2');
     const scoped = run('status.mjs', ['--horde', 'mission2'], dir);

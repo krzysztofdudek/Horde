@@ -35,7 +35,16 @@ import {
 // "blocked" is where a ticket stops: its fix rounds are spent, so another round would be a state
 // pretending to be progress. Nothing here moves it — `next` never offers it and `reconcile` never
 // touches it — until the client answers the "stuck" ask tick filed for it.
+// Every state this file RECOGNISES, in the order the rendered queue.md groups them. "escalated" is
+// on it for reading only — escalation folded into the client channel (ask.mjs), so nothing writes
+// it any more, but a pre-6.0.0 queue.json can still hold an item in it and dropping the word from
+// this list would quietly leave that item out of the rendered queue.md while queue.json still
+// carried it. See "pre-6.0.0 history" in scripts/README.md.
 const STATES = ['proposed', 'queued', 'waiting', 'running', 'landed', 'blocked', 'merged', 'escalated', 'dropped'];
+const RETIRED_STATES = new Set(['escalated']);
+// What `set` will write, and what its USAGE offers: the recognised states minus the retired ones.
+// Derived rather than written out twice, so the two lists cannot drift apart.
+const SETTABLE_STATES = STATES.filter((s) => !RETIRED_STATES.has(s));
 const SEVERITY_RANK = { high: 0, medium: 1, low: 2 };
 
 const USAGE = `usage: queue.mjs <command> [options]
@@ -48,7 +57,7 @@ commands:
       never offered by "next", until the architect's plan review passes it. That is how a
       consultant's own tickets enter — nothing it writes is dispatchable before somebody has
       looked at the whole plan.
-  set <ticket> <${STATES.join('|')}> [--sha x] [--agent name] [--note "…"]
+  set <ticket> <${SETTABLE_STATES.join('|')}> [--sha x] [--agent name] [--note "…"]
       [--on MMM] [--team t] [--horde h]
       "running --on MMM" starts the ticket from MMM's tip instead of the team's (a stack): MMM
       must be a dependency of this ticket, in this same team, running or landed, and on a
@@ -100,8 +109,8 @@ commands:
   quality [--from <path>] [--class c] [--dry-run] [--team t] [--horde h]
       the quality pass (ruling quality-always-authorised): reads a grain-advice/1 document —
       the configured Grain CLI's own "advise --json", or --from a file — and files one
-      low-priority "quality" ticket per improvement it names, attributed to the owner of the
-      node it is about, queued straight away without an escalation. An advisory already turned
+      low-priority "quality" ticket per improvement it names, on the node it is about, queued
+      straight away without an escalation. An advisory already turned
       into a ticket is not filed twice. Prints and files nothing when the charter's quality
       policy is only-the-work, or when no Grain CLI is configured. --dry-run reads and reports
       without filing anything.
@@ -186,7 +195,7 @@ function cmdAdd(horde, positional, flags) {
   const ticket = findTicket(horde, idRaw);
   if (!ticket) fail(`no such ticket: ${idRaw}`);
   if (acceptanceLines(ticket.text).length === 0) {
-    fail(`ticket ${ticket.id} has no acceptance line — nothing a verifier could reproduce, so nothing could ever prove it done. Add at least one "- [ ] …" line under "## Acceptance" (tk.mjs new --evidence "<what a verifier reproduces>", or edit the issue), then add it to the queue.`);
+    fail(`ticket ${ticket.id} has no acceptance line — nothing anybody could reproduce, so nothing could ever prove it done. Add at least one "- [ ] …" line under "## Acceptance" (tk.mjs new --evidence "<what someone reproduces>", or edit the issue), then add it to the queue.`);
   }
   const item = withQueueLock(horde, team, () => {
     const doc = load(horde, team);
@@ -209,7 +218,7 @@ function cmdAdd(horde, positional, flags) {
 }
 
 // The shape of a queued item, in one place, so a ticket the quality pass files enters the queue as
-// the same object an owner's ticket does. Exported for the same reason: the law audit at a wave
+// the same object a hand-filed ticket does. Exported for the same reason: the law audit at a wave
 // close files tickets too, and a second derivation of "what a queued item is" is exactly the drift
 // this one function exists to prevent.
 export function newQueueItem(ticket, dependsOn = [], state = 'queued') {
@@ -233,7 +242,7 @@ export function newQueueItem(ticket, dependsOn = [], state = 'queued') {
 // always change together with nothing in the architecture joining them, a component its own
 // evidence says is two. Grain reads those out of the history as a `grain-advice/1` document, and
 // under an autonomous quality policy the horde does not wait to be asked about them: each item
-// becomes a low-priority ticket on the node it is about, attributed to that node's owner, queued
+// becomes a low-priority ticket on the node it is about, filed against that node, queued
 // without a ruling and worked in whatever parallelism is free after the mission's own tickets.
 //
 // Three things keep this from turning into noise. It never files the same advisory twice (what has
@@ -398,7 +407,7 @@ function cmdQuality(horde, positional, flags) {
     const nodes = asArray(item && item.nodes).filter(Boolean);
     const key = advisoryKey(item);
     if (nodes.length === 0) {
-      skipped.push({ key, why: 'it names no component, so there is no owner to hand it to' });
+      skipped.push({ key, why: 'it names no component, so there is nothing to file it against' });
       continue;
     }
     if (already.has(key)) {
@@ -410,9 +419,9 @@ function cmdQuality(horde, positional, flags) {
       skipped.push({ key, node, why: 'the graph has no such component' });
       continue;
     }
-    // An advisory on a node this horde does not lease has no owner here to hand it to and no
-    // ticket of this mission touching it: it stays in the feed for whichever horde leases that
-    // node, instead of sitting in this queue unowned. --all files them anyway.
+    // An advisory on a node this horde does not lease has no component of this mission to file it
+    // against and no ticket of this mission touching it: it stays in the feed for whichever horde
+    // leases that node, instead of sitting in this queue unclaimed. --all files them anyway.
     if (!flags.all && leasedBy(node) !== horde) {
       skipped.push({ key, node, why: `outside the mission — ${leasedBy(node) ? `leased by horde ${leasedBy(node)}` : 'leased by no horde'}` });
       continue;
@@ -473,8 +482,8 @@ function findItem(horde, team, key) {
 // `set NNN running --on MMM`: the ticket starts from MMM's tip rather than the team's, so a chain
 // of tickets can be written and reviewed in one wave instead of one per link. What MMM has to be
 // is what makes the base honest — a real dependency of this ticket (merge order is the same DAG,
-// only now the work rides on top of it), in this same team (only this team's steward merges these
-// branches), and unmerged but already on a branch (a merged one's work is on the team branch
+// only now the work rides on top of it), in this same team (these branches only ever merge into
+// their own team's), and unmerged but already on a branch (a merged one's work is on the team branch
 // already, and there is nothing else to start from). Anything else is refused here rather than
 // cut into a branch nobody can reason about afterwards.
 function resolveStackParent(horde, team, key, item, raw) {
@@ -595,7 +604,10 @@ export function startRunning(horde, team, key, { tree, on, agent } = {}) {
 function cmdSet(horde, positional, flags) {
   const [rawKey, state] = positional;
   if (!rawKey || !state) fail('set requires <ticket> <state>');
-  if (!STATES.includes(state)) fail(`unknown state: ${state} (allowed: ${STATES.join(', ')})`);
+  if (RETIRED_STATES.has(state)) {
+    fail(`"${state}" is no longer a state an item is moved to — escalation folded into the client channel; file it with ask.mjs add "<why>" --kind stop (allowed: ${SETTABLE_STATES.join(', ')})`);
+  }
+  if (!SETTABLE_STATES.includes(state)) fail(`unknown state: ${state} (allowed: ${SETTABLE_STATES.join(', ')})`);
   const team = flags.team || 'trunk';
   const key = normalizeKey(rawKey);
   const item = withQueueLock(horde, team, () => {
@@ -922,8 +934,8 @@ function cmdNext(horde, positional, flags) {
 // ---- plan: the DAG derived, not typed in --------------------------------------------
 //
 // Nothing here dispatches or changes state (except `--apply-order`, which writes exactly the
-// dependencies it printed). Everything is read off what the owners already declared on their
-// tickets — the files they touch, the ports they need and deliver, the evidence rows they earn —
+// dependencies it printed). Everything is read off what the tickets already declare for
+// themselves — the files they touch, the ports they need and deliver, the evidence rows they earn —
 // so the plan is a view of the tickets, and the tickets stay the source of truth.
 
 // Two declared file lists collide when any path in one is the other's path, or matches it as a
@@ -939,9 +951,9 @@ export function titleOf(text) {
 }
 
 // The manual edges: what the ticket's own "**Depends on:**" field says, plus what its queue item
-// carries — union, never one overriding the other (a steward's `--depends` and an owner's field
-// are two people saying the same kind of thing, and dropping either loses an order somebody
-// meant).
+// carries — union, never one overriding the other (a `--depends` on the queue item and the
+// ticket's own field are two people saying the same kind of thing, and dropping either loses an
+// order somebody meant).
 function manualDeps(ticketText, item) {
   const field = parseField(ticketText, 'Depends on');
   const fromField = field && field !== 'none' ? field.split(',').map((s) => s.trim()).filter(Boolean) : [];
@@ -1026,7 +1038,7 @@ export function buildPlan(horde, team, cfg, { tree } = {}) {
     }
   }
 
-  // (b) what a steward or an owner wrote by hand, added to the derived edges, never replacing them.
+  // (b) what somebody wrote by hand, added to the derived edges, never replacing them.
   for (const t of planned) {
     for (const d of manualDeps(t.text, items.get(t.id))) addEdge(t.id, d, 'declared dependency');
   }
@@ -1247,8 +1259,8 @@ function cmdPlan(horde, positional, flags) {
     fail(`the tickets depend on each other in a circle: ${plan.cycles[0].join(' → ')} — a plan cannot start any of them. Drop one of those dependencies (queue.mjs is not the place: the ticket that should not wait is edited with tk.mjs edit --consumes, or the manual --depends is removed) and run plan again`);
   }
   // --out writes the plan to a file the architect reads whole: a plan relayed through a message
-  // gets summarised on the way (a real mission lost its critical path that way), and a steward
-  // cannot message the architect directly in any case. JSON with --json, else the terminal
+  // gets summarised on the way (a real mission lost its critical path that way). JSON with
+  // --json, else the terminal
   // rendering; stdout then carries only where it went.
   if (flags.out) {
     const path = String(flags.out);

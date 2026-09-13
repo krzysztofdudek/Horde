@@ -309,6 +309,13 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     // And the whole ladder is one closed list, named in the refusal when something else is asked for.
     const bogus = run('queue.mjs', ['set', stuckId, 'nonsense'], dir);
     assert.equal(bogus.code, 1);
-    assert.match(bogus.stderr, /allowed: proposed, queued, waiting, running, landed, blocked, merged, escalated, dropped/);
+    assert.match(bogus.stderr, /allowed: proposed, queued, waiting, running, landed, blocked, merged, dropped/);
+
+    // The retired state is refused by name rather than falling through to "unknown state", and the
+    // refusal says where escalation went instead of leaving the caller to work it out.
+    const retired = run('queue.mjs', ['set', stuckId, 'escalated'], dir);
+    assert.equal(retired.code, 1);
+    assert.match(retired.stderr, /"escalated" is no longer a state an item is moved to/);
+    assert.match(retired.stderr, /ask\.mjs add/);
   });
 });
