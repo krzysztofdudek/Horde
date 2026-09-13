@@ -24,7 +24,7 @@ test('escalate.mjs recurring: the third answer of a kind on one territory is a r
   await t.test('nothing to propose while no answer has been given three times', () => {
     for (const [i, ticket] of onCheckout.slice(0, 2).entries()) {
       const opened = run('ask.mjs', ['add', `checkout question ${i}`, '--kind', 'stop', '--ticket', ticket, '--territory', 'checkout'], dir);
-      run('ask.mjs', ['answer', opened.json.id, `the producing node decides, round ${i}`], dir);
+      run('ask.mjs', ['answer', opened.json.id, 'the producing node decides'], dir);
     }
     const r = run('escalate.mjs', ['recurring'], dir);
     assert.equal(r.code, 0, r.stderr);
@@ -35,7 +35,7 @@ test('escalate.mjs recurring: the third answer of a kind on one territory is a r
 
   await t.test('the third one proposes the rule, with the answers as its evidence', () => {
     const opened = run('ask.mjs', ['add', 'checkout question 2', '--kind', 'stop', '--ticket', onCheckout[2], '--territory', 'checkout'], dir);
-    run('ask.mjs', ['answer', opened.json.id, 'the producing node decides, round 2'], dir);
+    run('ask.mjs', ['answer', opened.json.id, 'The Producing Node Decides.'], dir);
 
     const r = run('escalate.mjs', ['recurring'], dir);
     assert.equal(r.json.groups.length, 1);
@@ -86,11 +86,37 @@ test('escalate.mjs recurring: the third answer of a kind on one territory is a r
   await t.test('an ask with no territory groups under "(no territory)", and still has somewhere to be filed', () => {
     for (let i = 0; i < 3; i++) {
       const opened = run('ask.mjs', ['add', `stray question ${i}`, '--kind', 'charter'], dir);
-      run('ask.mjs', ['answer', opened.json.id, `agreed, round ${i}`], dir);
+      run('ask.mjs', ['answer', opened.json.id, 'agreed'], dir);
     }
     const r = run('escalate.mjs', ['recurring'], dir);
     const stray = r.json.groups.find((g) => g.kind === 'charter');
     assert.equal(stray.territory, '(no territory)');
     assert.match(stray.command, /^decide\.mjs add <slug> "/);
+  });
+
+  await t.test('three answers with the same normalized text propose a rule, spacing, case and trailing punctuation aside', () => {
+    const onPricing = run('tk.mjs', ['new', 'pricing-0', '--title', 'Pricing question', '--node', 'checkout', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
+    const texts = ['round nightly, no exceptions.', '  ROUND nightly,   no exceptions  ', 'round nightly, no exceptions'];
+    for (const [i, text] of texts.entries()) {
+      const opened = run('ask.mjs', ['add', `pricing question ${i}`, '--kind', 'stop', '--ticket', onPricing, '--territory', 'pricing'], dir);
+      run('ask.mjs', ['answer', opened.json.id, text], dir);
+    }
+    const r = run('escalate.mjs', ['recurring'], dir);
+    const pricing = r.json.groups.find((g) => g.territory === 'pricing');
+    assert.ok(pricing, 'three differently-formatted but same-content answers still count as one recurring answer');
+    assert.equal(pricing.count, 3);
+    assert.match(pricing.rule, /stop on pricing: answered the same way 3 times/);
+  });
+
+  await t.test('three different answers on the same kind and territory never propose a rule', () => {
+    const onRefunds = run('tk.mjs', ['new', 'refunds-0', '--title', 'Refunds question', '--node', 'checkout', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
+    const texts = ['refund within 7 days', 'refund within 14 days', 'no refunds on this plan'];
+    for (const [i, text] of texts.entries()) {
+      const opened = run('ask.mjs', ['add', `refunds question ${i}`, '--kind', 'stop', '--ticket', onRefunds, '--territory', 'refunds'], dir);
+      run('ask.mjs', ['answer', opened.json.id, text], dir);
+    }
+    const r = run('escalate.mjs', ['recurring'], dir);
+    const refunds = r.json.groups.filter((g) => g.territory === 'refunds');
+    assert.deepEqual(refunds, [], 'three different answers are three different answers, not a rule nobody wrote down');
   });
 });

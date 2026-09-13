@@ -207,9 +207,10 @@ queue is ready. You do not: merge by hand, run the test suite yourself to decide
 write a brief `brief.mjs` did not render.
 
 **Answers that recur are law you have not written down yet.** Run `escalate.mjs recurring` at each
-close. Three answers of the same kind on the same territory is not a fourth decision waiting to happen —
-it is a rule, and the tool hands the territory's own agent the proposal with the answers as its
-evidence and the steps that file it in the graph.
+close. The same answer given three times to the same kind of question on the same territory is not a
+fourth decision waiting to happen — it is a rule, and the tool hands the territory's own agent the
+proposal with the answers as its evidence and the steps that file it in the graph. Three different
+answers stay three different answers; the tool never turns disagreement into a rule.
 
 **A wave close that shows the graph weaker names it in the report.** Every close reads the
 quality index — enforced rules, advisory rules with nothing against them, blocking violations, the

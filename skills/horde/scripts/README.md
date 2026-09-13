@@ -645,10 +645,13 @@ is the second of the three triggers for legislation (the first is the consultant
 the third is `legislate.mjs` after a wave close). No state of its own — it reads `ask.mjs`'s own
 `asks.json` and only ever proposes, never files: filing a rule is the territory's own agent's move.
 
-`recurring [--min <n>]` — the **answered** asks (`ask.mjs`) grouped by kind and by territory (an ask
-with no territory groups under `(no territory)`). A group of `<n>` (default 3, minimum 2) or more is
-an answer this horde keeps giving the client by hand, and the third time is not another answer — it is
-a rule. Each such group prints as a proposal: the answers as evidence, one line of rule text quoting
+`recurring [--min <n>]` — the **answered** asks (`ask.mjs`) grouped by kind, by territory and by the
+normalized text of the answer itself (lower-case, whitespace collapsed, trailing punctuation dropped),
+so different answers to the same kind of question on one territory stay separate groups and never
+propose a rule on their own (an ask with no territory groups under `(no territory)`). A group of `<n>`
+(default 3, minimum 2) or more is the same answer this horde keeps giving the client by hand, and the
+third time is not another answer — it is a rule. Each such group prints as a proposal: the answers as
+evidence, one line of rule text quoting
 the latest of them, and the steps that file it — where the group has a territory, filing the rule
 itself (`.yggdrasil/aspects/<id>/yg-aspect.yaml`, attached to that territory's node — an edit this
 tool makes no graph object for), then `<config.ygCommand> aspects log add --aspect <id> --reason "…"`,
