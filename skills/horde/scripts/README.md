@@ -132,8 +132,8 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
 "Identifiers" below). A ticket reads as `t-NNN`; NNN alone is the same ticket, and stays the name of
 its folder and of the `id:` its issue.md carries.
 - `new <slug> --title "…" --node n --class light|standard|heavy|max [--severity high|medium|low]
-  [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>@<v>,…]
-  [--produces <node>/<port>@<v>,…] [--evidence "…"]… [--revert-base <ref>] [--mutate "<command>"]` —
+  [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
+  [--produces <node>/<port>,…] [--evidence "…"]… [--revert-base <ref>] [--mutate "<command>"]` —
   from `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries
   a contract between them; three or more is refused — no owner holds the whole of such a diff.
   `--revert-base` names the ref where the ticket's new tests must fail (a contract test

@@ -360,6 +360,58 @@ test('refine.mjs --step consult: one spawn per territory, each seeing only its o
   });
 });
 
+test('refine.mjs --step consult: the brief\'s --consumes/--produces syntax is exactly what tk.mjs accepts', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  yg(dir, ['init']);
+  addNode(dir, 'auth', {
+    description: 'Signing people in.',
+    mapping: ['src/auth/**'],
+    aspects: ['no-marker'],
+    ports: { 'session-issued': { description: 'A session token for a signed-in user.' } },
+  });
+  addNode(dir, 'api', {
+    description: 'The HTTP surface.',
+    mapping: ['src/api/**'],
+    ports: { 'request-routed': { description: 'An inbound request handed to a handler.' } },
+  });
+  addAspect(dir, 'no-marker', { check: MARKER_CHECK });
+  writeFile(dir, 'src/auth/login.mjs', 'export const login = 1;\n');
+  writeFile(dir, 'src/api/routes.mjs', 'export const routes = 1;\n');
+  execFileSync('git', ['add', '-A'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-qm', 'the graph and the code it governs'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['branch', '-f', 'develop', 'HEAD'], { cwd: dir, stdio: 'ignore' });
+  initHorde(dir, 'm1');
+  seedCharter(dir, 'm1', [
+    { id: 'E1', evidence: 'a signed-in user reaches /me', node: 'auth' },
+  ]);
+  writeTerritories(dir, 'm1', { 'the front door': { nodes: ['auth', 'api'], class: 'standard', why: 'Both of these are how a request gets in.' } });
+  assert.equal(run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).code, 0);
+
+  const consult = run('refine.mjs', ['--step', 'consult', '--horde', 'm1'], dir);
+  assert.equal(consult.code, 0, consult.stderr);
+  const brief = consult.json.spawns.find((s) => s.territory === 'the front door').brief;
+
+  await t.test('the brief names ports as <node>/<port>, with no version suffix', () => {
+    assert.match(brief, /--consumes <component>\/<port> --produces <component>\/<port>/);
+    assert.doesNotMatch(brief, /@<v>/);
+  });
+
+  await t.test('the exact command shape the brief shows, run with real values, is not refused', () => {
+    const r = run('tk.mjs', [
+      'new', 'session-check', '--title', 'Route login through the session port',
+      '--node', 'auth', '--class', 'standard',
+      '--files', 'src/auth/login.mjs',
+      '--consumes', 'api/request-routed',
+      '--produces', 'auth/session-issued',
+      '--evidence', 'E1',
+      '--horde', 'm1',
+    ], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.doesNotMatch(r.stderr, /@<version>|there is no port version/);
+  });
+});
+
 test('refine.mjs: a consultant\'s ticket is a proposal — in the queue, never dispatched', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
