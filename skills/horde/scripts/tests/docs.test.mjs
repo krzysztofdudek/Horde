@@ -437,3 +437,39 @@ test('the brief.mjs example scan actually catches what it is for: an example mis
   const snippets = briefInvocationSnippets(text);
   assert.deepEqual(snippets, ['brief.mjs worker NNN']);
 });
+
+// ---- the product-language aspect's description names every category the code refuses -------
+
+// check.mjs's CATEGORIES table is the one source of what this rule refuses (its own header
+// comment says so). The aspect's description is the one sentence an adopter reads as the rule's
+// contract, so every distinct label in the table needs a word or phrase in that sentence that a
+// reader can map back to it — the way "a path" plainly covers "a file path". This test reads both
+// live off disk rather than hardcoding the category list, so a category added to check.mjs without
+// a matching word added to the description fails here instead of only in a reader's confusion.
+function productLanguageCategoryLabels() {
+  const text = readText(join(REPO_ROOT, 'packages', 'promises', 'product-language', 'check.mjs'));
+  const m = /export const CATEGORIES = \[([\s\S]*?)\n\];/.exec(text);
+  assert.ok(m, 'check.mjs no longer declares CATEGORIES the way this test expects');
+  return [...new Set([...m[1].matchAll(/label: '([^']+)'/g)].map((x) => x[1]))];
+}
+
+test('product-language\'s yg-aspect.yaml description names every category label check.mjs refuses', () => {
+  const labels = productLanguageCategoryLabels();
+  assert.ok(labels.length >= 8, `expected at least 8 distinct category labels, found ${labels.length}`);
+  assert.ok(labels.includes('a table name') && labels.includes('a field name'),
+    'this test\'s premise moved: check.mjs no longer labels table-name/field-name as expected');
+
+  const yaml = readText(join(REPO_ROOT, 'packages', 'promises', 'product-language', 'yg-aspect.yaml'));
+  const descriptionLine = /^description: (.+)$/m.exec(yaml);
+  assert.ok(descriptionLine, 'yg-aspect.yaml has no description: line');
+  const description = descriptionLine[1].toLowerCase();
+
+  // Each label's core noun (its last word, singular) must appear somewhere in the description —
+  // a coarse but honest proxy for "a reader can map this label back to a clause of the sentence".
+  const missing = [];
+  for (const label of labels) {
+    const noun = label.split(/\s+/).pop().toLowerCase();
+    if (!description.includes(noun)) missing.push(label);
+  }
+  assert.deepEqual(missing, [], `description names no word for: ${missing.join(', ')}\ndescription: "${descriptionLine[1]}"`);
+});

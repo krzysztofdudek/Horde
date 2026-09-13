@@ -1,5 +1,5 @@
 name: PromiseSpeaksTheProduct
-description: A promise says what the software does in the product's own words — never an identifier, a path, an address, a verb and a code, or a selector.
+description: A promise says what the software does in the product's own words — never a table name, a field name, an identifier, a path, an address, a verb and a code, or a selector.
 reviewer:
   type: deterministic
 status: enforced
