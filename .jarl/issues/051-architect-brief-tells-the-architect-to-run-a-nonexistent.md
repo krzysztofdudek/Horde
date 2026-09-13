@@ -1,6 +1,6 @@
 # 051 · architect brief tells the architect to run a nonexistent
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 1
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Run `node skills/horde/scripts/escalate.mjs add "por
 Refuterzy: Confirmed exactly as stated. /home/user/Horde/skills/horde/reference/roles/architect.md:66 reads: \"A port two consultants dispute goes to the director with your opinion attached (`escalate.mjs add …  | Confirmed. /home/user/Horde/skills/horde/reference/roles/architect.md:66 literally says '(`escalate.mjs add … --by architect`)'. But /home/user/Horde/skills/horde/scripts/escalate.mjs's USAGE and code
 
 ## Evidence
+
+npm test: 900 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha cbe0f3b
 
