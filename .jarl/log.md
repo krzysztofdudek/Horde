@@ -99,3 +99,8 @@
 - 2026-09-13 17:10 · 052 review approve · Reviewer: acceptance met literally, --by {{territory}} → --by {{name}} matching every other role's usage and node.mjs promote semantics. Verified red on parent (5088c50 unmerged) / green on branch via brief.test.mjs subtest 9. Scope: legislate.md + expected CHANGELOG.md + brief.test.mjs only. Minor only: an unrelated flake seen during first uncontrolled setup run, absent from the final controlled comparison.
 - 2026-09-13 17:10 · 053 review approve · Reviewer: acceptance met literally, worker.md now renders hordes/{{horde}}/{{issueDir}}/log.md, matching hordePath()'s real location. Verified red on merge-base (old worker.md) / green on branch via brief.test.mjs subtest 'worker'. Scope: worker.md + expected CHANGELOG.md + brief.test.mjs only. No findings beyond Minor (none).
 - 2026-09-13 17:10 · filed 072 z raportu workera 044 (Found)
+- 2026-09-13 17:17 · 004 evidence · npm test (split in two): # tests 310 # pass 306 # fail 4 (root-permission-only, pre-existing/environmental) + # tests 594 # pass 593 # fail 0 # skipped 1; merged as 322436f
+- 2026-09-13 17:18 · test call after denial
+- 2026-09-13 17:18 · 002 evidence · npm test (split in two): # tests 310 # pass 306 # fail 4 (root-permission-only, pre-existing/environmental) + # tests 594 # pass 593 # fail 0 # skipped 1; merged as 23144c2
+- 2026-09-13 17:18 · 005 evidence · npm test (split in two): # tests 310 # pass 306 # fail 4 (root-permission-only, pre-existing/environmental) + # tests 594 # pass 593 # fail 0 # skipped 1; merged as f1230d3
+- 2026-09-13 17:18 · 010 evidence · npm test (split in two): # tests 310 # pass 306 # fail 4 (root-permission-only, pre-existing/environmental) + # tests 594 # pass 593 # fail 0 # skipped 1; merged as f60e3c3
