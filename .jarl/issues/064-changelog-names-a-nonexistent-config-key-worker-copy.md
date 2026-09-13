@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** docs
 **Priority:** 3
-**Model:** sonnet
+**Tier:** standard
 **Tags:** proces
 **Files:** CHANGELOG.md
 **Found by:** workflow finder changelog-vs-code, confirmed by two refuters

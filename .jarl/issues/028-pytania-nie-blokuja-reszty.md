@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** gap
 **Priority:** 2
-**Model:** opus
+**Tier:** strong
 **Tags:** front
 **Files:** skills/horde/scripts/tick.mjs, skills/horde/scripts/ask.mjs, skills/horde/scripts/README.md
 **Found by:** jarl, reading every file of Horde

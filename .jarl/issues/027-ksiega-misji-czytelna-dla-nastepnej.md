@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** gap
 **Priority:** 2
-**Model:** opus
+**Tier:** strong
 **Tags:** ksiega
 **Files:** skills/horde/scripts/horde.mjs, skills/horde/scripts/refine.mjs, skills/horde/scripts/README.md
 **Found by:** jarl, reading every file of Horde

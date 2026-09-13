@@ -3,7 +3,7 @@
 **Status:** in-progress
 **Kind:** bug
 **Priority:** 1
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/queue.mjs, skills/horde/scripts/_lib.mjs
 **Found by:** jarl, reading every file of Horde

@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** bug
 **Priority:** 2
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/status.mjs
 **Found by:** workflow finder cross-script-contracts, confirmed by two refuters

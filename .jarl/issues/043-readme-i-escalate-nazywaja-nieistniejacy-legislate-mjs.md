@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** docs
 **Priority:** 2
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/escalate.mjs, skills/horde/scripts/README.md
 **Found by:** reader C, reading escalate.mjs and README

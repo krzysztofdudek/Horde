@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** research
 **Priority:** 2
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze, proces
 **Files:** skills/horde/scripts/tests/
 **Found by:** klient, w trakcie fali pierwszej

@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** bug
 **Priority:** 2
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/_lib.mjs, reference/model.md, skills/horde/scripts/README.md
 **Found by:** jarl, reading every file of Horde

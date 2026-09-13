@@ -3,7 +3,7 @@
 **Status:** in-progress
 **Kind:** cleanup
 **Priority:** 1
-**Model:** sonnet
+**Tier:** standard
 **Tags:** granice
 **Files:** skills/horde/scripts/cost.mjs, skills/horde/scripts/tick.mjs, skills/horde/scripts/wave.mjs, skills/horde/scripts/retro.mjs, skills/horde/scripts/status.mjs, skills/horde/scripts/horde.mjs, templates/charter.md, reference/model.md, skills/horde/scripts/README.md, SKILL.md
 **Found by:** jarl, reading every file of Horde

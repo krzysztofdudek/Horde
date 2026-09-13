@@ -3,7 +3,7 @@
 **Status:** in-progress
 **Kind:** cleanup
 **Priority:** 1
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/refine.mjs, skills/horde/scripts/tk.mjs
 **Found by:** jarl, reading every file of Horde

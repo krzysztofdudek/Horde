@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** bug
 **Priority:** 2
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/land.mjs
 **Found by:** reader B, reading land.mjs, horde.mjs and wave.mjs

@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** bug
 **Priority:** 2
-**Model:** sonnet
+**Tier:** standard
 **Tags:** kontrakt
 **Files:** skills/horde/scripts/horde.mjs
 **Found by:** jarl, reading every file of Horde

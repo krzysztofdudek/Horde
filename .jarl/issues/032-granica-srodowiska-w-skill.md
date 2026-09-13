@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** docs
 **Priority:** 2
-**Model:** sonnet
+**Tier:** standard
 **Tags:** granice
 **Files:** SKILL.md, reference/model.md, templates/charter.md
 **Found by:** jarl, reading every file of Horde

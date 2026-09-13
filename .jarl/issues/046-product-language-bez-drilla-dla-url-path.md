@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** test
 **Priority:** 3
-**Model:** sonnet
+**Tier:** standard
 **Tags:** kontrakt, pakiet
 **Files:** packages/promises/product-language/drills/
 **Found by:** reader C, reading the product-language corpus

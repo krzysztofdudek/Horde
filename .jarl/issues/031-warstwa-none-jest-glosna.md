@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** gap
 **Priority:** 2
-**Model:** opus
+**Tier:** strong
 **Tags:** kontrakt
 **Files:** skills/horde/scripts/land.mjs, skills/horde/scripts/wave.mjs, skills/horde/scripts/retro.mjs
 **Found by:** jarl, reading every file of Horde

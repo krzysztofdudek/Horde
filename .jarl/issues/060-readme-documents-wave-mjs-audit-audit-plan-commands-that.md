@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** docs
 **Priority:** 3
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/wave.mjs
 **Found by:** workflow finder usage-vs-readme, confirmed by two refuters

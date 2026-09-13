@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** research
 **Priority:** 2
-**Model:** sonnet
+**Tier:** standard
 **Tags:** kontrakt, pakiet
 **Files:** packages/promises/has-evidence/yg-aspect.yaml
 **Found by:** reader C, reading packages/promises (plausible)

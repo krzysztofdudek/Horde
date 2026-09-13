@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** process
 **Priority:** 3
-**Model:** sonnet
+**Tier:** standard
 **Tags:** proces
 **Files:** CHANGELOG.md, .github/workflows/release.yml
 **Found by:** jarl, reading every file of Horde

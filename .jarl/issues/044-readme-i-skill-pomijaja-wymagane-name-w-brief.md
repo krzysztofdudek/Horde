@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** docs
 **Priority:** 1
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/README.md, skills/horde/SKILL.md
 **Found by:** reader C, reading brief.mjs, README and SKILL.md

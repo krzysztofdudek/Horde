@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** docs
 **Priority:** 3
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/tk.mjs
 **Found by:** workflow finder tests-vs-docs, confirmed by two refuters

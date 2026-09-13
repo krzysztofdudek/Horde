@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** gap
 **Priority:** 2
-**Model:** opus
+**Tier:** strong
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/queue.mjs, skills/horde/scripts/land.mjs, skills/horde/scripts/wave.mjs
 **Found by:** jarl, reading every file of Horde

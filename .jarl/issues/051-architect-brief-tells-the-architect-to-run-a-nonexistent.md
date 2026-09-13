@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** docs
 **Priority:** 1
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze
 **Files:** skills/horde/reference/roles/architect.md
 **Found by:** workflow finder roles-vs-scripts, confirmed by two refuters

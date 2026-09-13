@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** bug
 **Priority:** 1
-**Model:** opus
+**Tier:** strong
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/_lib.mjs, skills/horde/scripts/node.mjs, skills/horde/scripts/tick.mjs
 **Found by:** jarl, reading every file of Horde

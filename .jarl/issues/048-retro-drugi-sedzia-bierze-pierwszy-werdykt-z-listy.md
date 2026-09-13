@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** research
 **Priority:** 3
-**Model:** sonnet
+**Tier:** standard
 **Tags:** uczenie
 **Files:** skills/horde/scripts/retro.mjs
 **Found by:** reader B, reading retro.mjs (plausible)

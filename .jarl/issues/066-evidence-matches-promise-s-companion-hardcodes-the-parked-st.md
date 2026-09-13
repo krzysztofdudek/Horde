@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** bug
 **Priority:** 2
-**Model:** sonnet
+**Tier:** standard
 **Tags:** kontrakt, pakiet
 **Files:** packages/promises/evidence-matches-promise/companion.mjs
 **Found by:** workflow finder package-vs-docs, confirmed by two refuters

@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** gap
 **Priority:** 2
-**Model:** opus
+**Tier:** strong
 **Tags:** front
 **Files:** skills/horde/scripts/tk.mjs, skills/horde/scripts/queue.mjs, skills/horde/scripts/land.mjs, skills/horde/scripts/refine.mjs, skills/horde/scripts/wave.mjs, templates/ticket.md
 **Found by:** jarl, reading every file of Horde

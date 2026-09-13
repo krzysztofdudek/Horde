@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** docs
 **Priority:** 1
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze
 **Files:** skills/horde/reference/discipline/review.md
 **Found by:** reader C, reading discipline/review.md and tk.mjs

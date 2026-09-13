@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** test
 **Priority:** 2
-**Model:** sonnet
+**Tier:** standard
 **Tags:** kontrakt
 **Files:** skills/horde/scripts/tests/family.e2e.test.mjs
 **Found by:** jarl, reading every file of Horde

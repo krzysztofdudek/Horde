@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** bug
 **Priority:** 2
-**Model:** sonnet
+**Tier:** standard
 **Tags:** kontrakt, pakiet
 **Files:** packages/promises/has-evidence/check.mjs, evidence-matches-promise/companion.mjs
 **Found by:** jarl, reading every file of Horde

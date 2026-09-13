@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** bug
 **Priority:** 2
-**Model:** opus
+**Tier:** strong
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/_lib.mjs, skills/horde/scripts/retro.mjs, skills/horde/scripts/brief.mjs, skills/horde/scripts/drill.mjs, skills/horde/scripts/blame.mjs, skills/horde/scripts/land.mjs, skills/horde/scripts/cost.mjs, skills/horde/scripts/wave.mjs
 **Found by:** jarl, reading every file of Horde

@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** cleanup
 **Priority:** 2
-**Model:** opus
+**Tier:** strong
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/_lib.mjs, skills/horde/scripts/horde.mjs, skills/horde/scripts/tk.mjs, skills/horde/scripts/queue.mjs, skills/horde/scripts/brief.mjs, skills/horde/scripts/status.mjs, skills/horde/scripts/land.mjs, README.md
 **Found by:** jarl, reading every file of Horde

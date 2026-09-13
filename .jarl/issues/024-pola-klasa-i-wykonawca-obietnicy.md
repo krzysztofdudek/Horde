@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** gap
 **Priority:** 2
-**Model:** opus
+**Tier:** strong
 **Tags:** kontrakt, pakiet
 **Files:** 
 **Found by:** jarl, reading every file of Horde

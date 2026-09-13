@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** process
 **Priority:** 3
-**Model:** sonnet
+**Tier:** standard
 **Tags:** proces
 **Files:** wip/
 **Found by:** jarl, reading every file of Horde

@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** research
 **Priority:** 3
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze
 **Files:** skills/horde/scripts/tick.mjs
 **Found by:** reader A, reading tick.mjs (plausible, unconfirmed)

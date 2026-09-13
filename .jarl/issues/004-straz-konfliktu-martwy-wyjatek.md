@@ -3,7 +3,7 @@
 **Status:** in-progress
 **Kind:** bug
 **Priority:** 1
-**Model:** sonnet
+**Tier:** standard
 **Tags:** kontrakt
 **Files:** skills/horde/scripts/land.mjs, skills/horde/scripts/ask.mjs
 **Found by:** jarl, reading every file of Horde

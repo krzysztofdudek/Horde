@@ -3,7 +3,7 @@
 **Status:** open
 **Kind:** docs
 **Priority:** 2
-**Model:** sonnet
+**Tier:** standard
 **Tags:** zaplecze, pakiet
 **Files:** skills/horde/scripts/node.mjs, skills/horde/scripts/horde.mjs, skills/horde/scripts/refine.mjs, skills/horde/scripts/escalate.mjs, skills/horde/scripts/tk.mjs, packages/promises/yg-package.yaml, skills/horde/scripts/README.md
 **Found by:** jarl, reading every file of Horde
