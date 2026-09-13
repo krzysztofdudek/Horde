@@ -1,6 +1,6 @@
 # 046 · product-language bez drilla dla url-path
 
-**Status:** in-progress
+**Status:** done
 **Kind:** test
 **Priority:** 3
 **Tier:** standard
@@ -19,4 +19,6 @@ Regex adresów nie jest nigdy ćwiczony; regresja przejdzie bez śladu.
 Przypadek violates-url-path w korpusie; yg aspects drill product-language zielony i liczy go.
 
 ## Evidence
+
+- **ran:** 3 targeted existing tests + a real 'yg drill --aspect .../product-language' run · **saw:** the drill case already exists and passes: 11 pass, 0 MISS, 0 FALSE-ALARM; git history shows it was added in e85062a (2026-09-11), two days before this issue was filed — stale from the start
 

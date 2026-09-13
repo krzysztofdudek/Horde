@@ -1,6 +1,6 @@
 # 034 · changelog 6 0 0 i re release
 
-**Status:** in-progress
+**Status:** done
 **Kind:** process
 **Priority:** 3
 **Tier:** standard
@@ -23,4 +23,6 @@ Dowód, którego oczekuję: GitHub Releases pokazuje jedno 6.0.0.
 Uwagi: Skasowanie tagu i release na słowo klienta, na końcu.
 
 ## Evidence
+
+- **ran:** cat CHANGELOG.md (one [6.0.0] header, confirmed); read .github/workflows/release.yml in full; list_releases/list_tags on krzysztofdudek/Horde · **saw:** exactly one v6.0.0 tag and release exist; workflow's re-release runbook already correct; no code defect found — the only remaining step (delete+recreate the tag/release) is gated on the maintainer's word at the end of this whole batch, per decisions.md's jedno-wydanie-6-0-0 ruling, and not a worker's to do
 
