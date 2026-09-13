@@ -24,13 +24,14 @@ import { ygCommand } from './node.mjs';
 const USAGE = `usage: escalate.mjs recurring [--min <n>] [--horde h]
 
 the answered asks grouped by kind, by territory and by the normalized text of the answer itself
-(lower-case, whitespace collapsed, trailing punctuation dropped); a group of <n> (default 3) or
-more is the same answer this horde keeps giving the client by hand, so it prints the rule
-proposal: the answers as evidence, one line of rule text, and — where the group has a territory —
-the steps that file it: create the rule in the graph, then record why in its own log. Different
-answers to the same kind of question on one territory stay separate groups and never propose a
-rule on their own. It prints those steps rather than running them — the agent that works that
-territory files the rule, in its own branch, and raises it on evidence with node.mjs promote.
+(lower-case, whitespace collapsed, trailing punctuation dropped); a group of <n>
+(default 3, minimum 2) or more is the same answer this horde keeps giving the client by hand, so
+it prints the rule proposal: the answers as evidence, one line of rule text, and — where the
+group has a territory — the steps that file it: create the rule in the graph, then record why in
+its own log. Different answers to the same kind of question on one territory stay separate groups
+and never propose a rule on their own. It prints those steps rather than running them — the agent
+that works that territory files the rule, in its own branch, and raises it on evidence with
+node.mjs promote.
 
 options: --json  --help`;
 

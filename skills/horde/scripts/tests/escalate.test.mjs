@@ -83,6 +83,12 @@ test('escalate.mjs recurring: the third answer of a kind on one territory is a r
     assert.match(bad.stderr, /--min must be a whole number of at least 2/);
   });
 
+  await t.test('--help documents the --min floor the code enforces, matching README', () => {
+    const help = run('escalate.mjs', ['--help'], dir, { json: false });
+    assert.equal(help.code, 0, help.stderr);
+    assert.match(help.stdout, /default 3, minimum 2/);
+  });
+
   await t.test('an ask with no territory groups under "(no territory)", and still has somewhere to be filed', () => {
     for (let i = 0; i < 3; i++) {
       const opened = run('ask.mjs', ['add', `stray question ${i}`, '--kind', 'charter'], dir);
