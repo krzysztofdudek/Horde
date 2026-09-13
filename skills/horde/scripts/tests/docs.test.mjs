@@ -9,7 +9,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  readFileSync, readdirSync, existsSync,
+  readFileSync, readdirSync, existsSync, writeFileSync, unlinkSync,
 } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
@@ -366,8 +366,8 @@ test('the frontmatter scan actually catches what it is for: no frontmatter, and 
 // review.md's own code block is not prose about a command — it is the command an agent reading
 // the discipline literally pastes into a shell (a legislate or retro brief carries the whole file
 // verbatim under "## Law"). Parsed and executed here against a real ticket, standing in for the
-// general docs-vs-USAGE scan (issue 016) until that lands: this is the one case it would have
-// caught — `tk.mjs review` was removed and review.md kept calling it.
+// general docs-vs-USAGE scan below (issue 016): this was the one case it would have caught —
+// `tk.mjs review` was removed and review.md kept calling it.
 function reviewMdCommands() {
   const text = readText(join(SKILL_DIR, 'reference', 'discipline', 'review.md'));
   const m = /and the ticket goes back:\n\n```\n([\s\S]*?)```/.exec(text);
@@ -524,4 +524,101 @@ test('product-language\'s yg-aspect.yaml description names every category label 
     if (!description.includes(noun)) missing.push(label);
   }
   assert.deepEqual(missing, [], `description names no word for: ${missing.join(', ')}\ndescription: "${descriptionLine[1]}"`);
+});
+
+// ---- issue 016: every documented <script>.mjs command/flag exists in that script's own USAGE --
+
+// Issue 001 and issue 002 were one class of bug: a doc line invoking a subcommand or flag the
+// script had already dropped. This closes the class instead of the one case: it extracts every
+// `<script>.mjs <subcommand> ... --flag` shown across SKILL.md, scripts/README.md and reference/**
+// (the same three places a director or a role brief copies a command line from), and checks each
+// piece against the named script's own live USAGE text — never a second, hand-maintained list.
+
+const DOC_SCRIPT_NAMES = readdirSync(SCRIPTS_DIR).filter((f) => f.endsWith('.mjs')).map((f) => f.slice(0, -4));
+
+function scriptUsage(name) {
+  const text = readText(join(SCRIPTS_DIR, `${name}.mjs`));
+  const m = /const USAGE = `([\s\S]*?)`;/.exec(text);
+  return m ? m[1] : '';
+}
+
+// Subcommand names: the one word right after "usage: <script>.mjs " on the USAGE's own first
+// line (when it isn't a placeholder), plus every "  <word> ..." line under a "commands:" section
+// — the two shapes every USAGE in scripts/ actually uses.
+function usageCommands(usage) {
+  const names = new Set();
+  const head = /^usage: [a-zA-Z.]+\.mjs\s+(\S+)/.exec(usage);
+  if (head && !/^[<[-]/.test(head[1])) names.add(head[1].replace(/[.,]$/, ''));
+  const cmdSection = /commands:\n([\s\S]*?)\n\noptions:/.exec(usage);
+  if (cmdSection) {
+    for (const m of cmdSection[1].matchAll(/^ {2}([a-zA-Z-]+)/gm)) names.add(m[1]);
+  }
+  return names;
+}
+
+// One doc invocation per `<script>.mjs` mention, confined to one line (a backtick span or a
+// fenced code line never crosses a newline in these docs) so a code example and unrelated prose
+// two lines later are never joined into one match.
+function docInvocations(text) {
+  const out = [];
+  for (const m of text.matchAll(/\b([a-zA-Z_-]+)\.mjs\b([^\n`]*)/g)) {
+    if (!DOC_SCRIPT_NAMES.includes(m[1])) continue;
+    out.push({ script: m[1], rest: m[2] });
+  }
+  return out;
+}
+
+// Scoped this way on purpose: a subcommand is only checked on an invocation that also carries a
+// flag (real command syntax, per the issue's own "<skrypt>.mjs <podkomenda> --flag" shape) — a
+// bare word like "`wave.mjs audit`" used as a noun in prose ("no audit verdict was recorded") is
+// not this test's business and belongs to whichever issue is about that sentence, not this one.
+function docOffenders(docFiles) {
+  const offenders = [];
+  for (const file of docFiles) {
+    const text = readText(file);
+    for (const { script, rest } of docInvocations(text)) {
+      const usage = scriptUsage(script);
+      if (!usage) continue;
+      const commands = usageCommands(usage);
+      const firstToken = (rest.trim().split(/\s+/)[0] || '').replace(/[.,:]+$/, '');
+      const hasFlag = /--[a-z-]/.test(rest);
+      if (hasFlag && firstToken && /^[a-zA-Z-]+$/.test(firstToken) && commands.size > 0
+          && !commands.has(firstToken)) {
+        offenders.push(`${file}: "${script}.mjs ${firstToken}" — no such command (known: ${[...commands].join(', ')})`);
+      }
+      for (const flagM of rest.matchAll(/--([a-z-]+)/g)) {
+        if (!usage.includes(`--${flagM[1]}`)) {
+          offenders.push(`${file}: "${script}.mjs" uses --${flagM[1]}, absent from its own USAGE`);
+        }
+      }
+    }
+  }
+  return offenders;
+}
+
+test('the doc-vs-USAGE scan actually catches dead syntax: a dropped command and a dropped flag', () => {
+  const scratch = join(SCRIPTS_DIR, 'tests', '.tmp-docs-scan-fixture.md');
+  const assertCatches = (body, expectSubstr) => {
+    writeFileSync(scratch, body);
+    const found = docOffenders([scratch]);
+    unlinkSync(scratch);
+    assert.ok(found.some((o) => o.includes(expectSubstr)), `expected an offender mentioning "${expectSubstr}", got:\n${found.join('\n')}`);
+  };
+  assertCatches('Run `escalate.mjs sweep --horde h` after every wave.', 'no such command');
+  assertCatches('Run `escalate.mjs recurring --min 2 --dry-run --horde h` after every wave.', 'uses --dry-run');
+
+  writeFileSync(scratch, 'Run `escalate.mjs recurring --min 2 --horde h` after every wave.');
+  const clean = docOffenders([scratch]);
+  unlinkSync(scratch);
+  assert.deepEqual(clean, [], `a real command/flag pair should not be flagged, got:\n${clean.join('\n')}`);
+});
+
+test('every documented <script>.mjs subcommand and flag exists in that script\'s own USAGE', () => {
+  const docFiles = [
+    join(SKILL_DIR, 'SKILL.md'),
+    join(SCRIPTS_DIR, 'README.md'),
+    ...walk(join(SKILL_DIR, 'reference')),
+  ];
+  const offenders = docOffenders(docFiles);
+  assert.deepEqual(offenders, [], `dead doc syntax:\n${offenders.join('\n')}`);
 });
