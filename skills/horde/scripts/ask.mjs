@@ -8,11 +8,12 @@
 // weaken a rule: demote, an added yg-suppress marker, a moved review_by, an aspect detached from a
 // node. `charter` — a mission-card change: the goal, an exclusion, an evidence-catalogue row.
 //
-// Filing one never touches the queue, and an open one never stops the mission: tick.mjs holds only
-// what depends on the answer — "stop" the dispatch list, "stuck" that ticket, "charter" the tickets
-// earning the evidence rows the question names, "lower" that branch's landing — and hands out the
-// rest. The four readings live where they are acted on (tick.mjs, "what an open question holds
-// up"), not here, so there is one statement of them rather than two that can drift apart.
+// Filing one never touches the queue, and an open one holds only what depends on the answer:
+// "stop" everything — nothing new goes out, nothing merges, no wave closes — "stuck" that ticket,
+// "charter" the tickets earning the evidence rows the question names, "lower" that branch's
+// landing. Everything else keeps moving. The four readings live where they are acted on (tick.mjs,
+// "what an open question holds up"), not here, so there is one statement of them rather than two
+// that can drift apart.
 //
 // State: hordes/<horde>/asks.json (source of truth) + asks.md (rendered) — same writeJSON(path,
 // doc, {render}) mechanism escalations.json and dissents.json used, which is the only thing that

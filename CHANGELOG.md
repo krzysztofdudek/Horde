@@ -80,6 +80,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - A repository keeping its promises directory somewhere other than one of the usual four spots is now found correctly, once the evidence package is installed, instead of being read as having no evidence at all.
 - Two permission-based tests no longer fail with a false alarm when the test suite runs as an administrator account, which ignores file permissions by design.
 - The plan review now refuses with a plain reason when the plan itself can't be built, instead of crashing with a raw error.
+- An unanswered question now holds back exactly what depends on the answer and nothing else: a stalled ticket holds itself; a question about the mission card holds the tickets earning the proofs it names; a request to weaken a rule holds that one change at the door. A worker who ran out of spec holds everything — nothing starts, nothing merges even when it is finished and passing, and the mission does not close — until you answer. An open question used to hold nothing at all, and a change waiting on your word could be sent back to a worker round after round for failing a rule only you could lift.
 
 ### Migrating a mission already in flight
 

@@ -610,6 +610,90 @@ test('tick.mjs holds: an open "stop" holds the whole dispatch list, and answerin
   });
 });
 
+// "stop" is the widest kind on the list, and a landing is provably a holdable thing — "lower"
+// holds one. So "stop" holds every landing too, or it would be narrower than "lower" on the one
+// axis they share. It has to hold BEFORE the gate is started: the gate merges the branch into its
+// parent itself, so a run that starts one has already landed it by the time a result exists.
+test('tick.mjs holds: an open "stop" holds a ready branch at the gate, and answering it lands the same branch', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+
+  const id = mkTicket(dir, 'ready-to-land', { files: 'src/ready.ts' });
+  run('queue.mjs', ['add', id], dir);
+  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'w'], dir);
+  git(['-C', running.json.worktree, 'commit', '--allow-empty', '-qm', 'work'], dir);
+  const sha = git(['-C', running.json.worktree, 'rev-parse', 'HEAD'], dir);
+  run('queue.mjs', ['set', id, 'landed'], dir);
+  // The gate's own green record about exactly this tip: without a hold, tick merges it on sight.
+  writeLandResult(dir, id, {
+    ticket: id, branch: running.json.branch, sha, ok: true, checks: [], pairs: [], brief: null, landed: { ticket: id, sha },
+  });
+  const ask = askOpen(dir, 'the refund rule contradicts the spec — stop before this merges', 'stop');
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+
+  await t.test('nothing merges while the question stands, and the item is exactly where it was', () => {
+    assert.ok(!r.json.landed.some((l) => l.ticket === id), `no gate step ran for it (${JSON.stringify(r.json.landed)})`);
+    assert.equal(itemOf(dir, id).state, 'landed');
+    const entry = heldFor(r, id);
+    assert.ok(entry, `the branch says which question holds it (${JSON.stringify(r.json.held)})`);
+    assert.equal(entry.kind, 'stop');
+    assert.equal(entry.holds, 'landing');
+    assert.equal(entry.ask, ask);
+  });
+
+  await t.test('and the wave does not close underneath it either', () => {
+    assert.equal(r.json.close, false);
+    assert.equal(r.json.closeCommand, null);
+  });
+
+  await t.test('the client answering it lands the same branch on the next run', () => {
+    const answered = run('ask.mjs', ['answer', ask, 'the spec is right — land it'], dir);
+    assert.equal(answered.code, 0, answered.stderr);
+    const again = tick(dir);
+    assert.equal(again.code, 0, again.stderr);
+    assert.deepEqual(again.json.held, []);
+    const step = again.json.landed.find((l) => l.ticket === id);
+    assert.ok(step, `the gate's green record is acted on now (${JSON.stringify(again.json.landed)})`);
+    assert.equal(step.action, 'merged');
+    assert.equal(itemOf(dir, id).state, 'merged');
+  });
+});
+
+test('tick.mjs holds: an open "stop" holds the close of a queue that holds nothing unmerged', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+
+  const id = mkTicket(dir, 'the-last-one', { files: 'src/last.ts' });
+  run('queue.mjs', ['add', id], dir);
+  const doc = readQueue(dir);
+  doc.items.find((i) => i.ticket === id).state = 'merged';
+  writeQueue(dir, doc);
+  const ask = askOpen(dir, 'the migration may have to be reversed — hold everything', 'stop');
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.close, false, 'an unanswered stop is not a wave that can close');
+  assert.equal(r.json.closeCommand, null);
+  const entry = r.json.held.find((h) => h.holds === 'close');
+  assert.ok(entry, `the close says which question holds it (${JSON.stringify(r.json.held)})`);
+  assert.equal(entry.kind, 'stop');
+  assert.equal(entry.ask, ask);
+
+  await t.test('answering it raises the flag and names the command, on the very next run', () => {
+    const answered = run('ask.mjs', ['answer', ask, 'no reversal needed'], dir);
+    assert.equal(answered.code, 0, answered.stderr);
+    const again = tick(dir);
+    assert.equal(again.code, 0, again.stderr);
+    assert.equal(again.json.close, true);
+    assert.match(again.json.closeCommand, /wave\.mjs close/);
+    assert.deepEqual(again.json.held, []);
+  });
+});
+
 test('tick.mjs holds: an open "stuck" holds that one ticket and the rest of the queue goes out', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));

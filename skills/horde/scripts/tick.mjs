@@ -65,9 +65,10 @@ askClient: [{id, kind, why}], held: [{ticket, ask, kind, holds, note}], close: <
 on "spawn" has had its branch and worktree cut already, so the brief command on it renders against a
 tree that exists; tick does not start the agent, because the caller is what starts agents.
 
-An open ask holds only what depends on its answer, and "held" says what each one held: "stop" the
-whole dispatch list, "stuck" that one ticket, "charter" every ticket earning an evidence row the
-question names, "lower" that one branch's landing. Everything else goes out as usual.
+An open ask holds only what depends on its answer, and "held" says what each one held: "stop"
+everything — the dispatch list, every landing and the close — "stuck" that one ticket, "charter"
+every ticket earning an evidence row the question names, "lower" that one branch's landing.
+Everything else goes out as usual.
 
 --stack also hands out a ticket whose unmerged dependencies are all on a branch in this horde,
 started from one of those tips. Such an entry carries the line "STACKED, parent t-NNN unmerged" so
@@ -78,7 +79,9 @@ starts each worker itself through config.runner.spawn. "session" (the default) s
 caller does.
 
 --watch repeats the run every config.tick.interval seconds until the queue empties or a signal
-arrives. A signal exits cleanly: no lock left held, nothing half-written.
+arrives — an open "stop" holds the close, so it keeps waiting rather than exiting on an emptied
+queue the client still has a question about. A signal exits cleanly: no lock left held, nothing
+half-written.
 
 options: --json  --help`;
 
@@ -125,9 +128,12 @@ function fileAsk(horde, { kind, ticket, why, log }) {
 // must not cost the mission the work that question has nothing to do with. So each kind holds up
 // exactly what depends on the answer, and tick hands out the rest:
 //
-//   stop     the dispatch list, whole. A worker ran out of spec, so the ground under the next
-//            ticket is the thing being asked about — nothing new goes out until the client rules.
-//            What is already running still settles and what is already green still lands.
+//   stop     everything, unqualified — the widest kind there is, and the ruling on it is exactly
+//            that: the dispatch list, every branch's landing, and the close. A worker ran out of
+//            spec, so the ground the next step would stand on is the thing being asked about, and
+//            nothing new goes out, nothing merges and no wave closes until the client rules. A
+//            call already in flight still comes back and reconciles — that is a branch settling,
+//            not the mission taking another step.
 //   stuck    that one ticket. Its fix rounds are spent; the rest of the queue never knew.
 //   charter  every ticket that earns an evidence row the question names, read by id off the
 //            charter's own catalogue the way `charter edit` reads it. A ticket the question does
@@ -139,6 +145,13 @@ function fileAsk(horde, { kind, ticket, why, log }) {
 //
 // Nothing here writes: a hold is a fact about what is open right now, recomputed every run, so an
 // answered question releases what it held on the next tick with no state to unwind.
+//
+// Holding a landing means not asking the gate, not refusing to write the answer down afterwards:
+// land.mjs merges the branch into its parent ITSELF the moment every item comes back green. By the
+// time a result file exists the merge has already happened, so the only place a landing can be
+// held is before the gate is started at all. The same reading spares the ticket its fix rounds: a
+// gate that came back red would count one and put the ticket back out, which is the mission taking
+// a step on a question nobody in it can answer.
 
 function firstLine(text) {
   return String(text || '').split('\n')[0].trim();
@@ -256,10 +269,11 @@ function landTheLanded(horde, cfg, root, holds) {
   const held = [];
   for (const item of doc.items) {
     if (item.state !== 'landed') continue;
-    // The one thing a "lower" question holds: this branch's landing. The gate is not asked, so no
-    // round is counted and the item stays exactly where it is — a red law guard would otherwise
-    // spend this ticket's fix rounds on a question no worker can answer.
-    const heldBy = holds.landing.get(item.ticket);
+    // A "lower" question holds this one branch's landing; a "stop" holds every one of them, being
+    // the wider kind. Either way the gate is not asked, so nothing merges, no round is counted and
+    // the item stays exactly where it is — a red law guard would otherwise spend this ticket's fix
+    // rounds on a question no worker can answer.
+    const heldBy = holds.landing.get(item.ticket) || holds.everything[0];
     if (heldBy) {
       held.push(heldEntry(heldBy, {
         ticket: item.ticket, holds: 'landing', note: holdNote(heldBy, `${item.ticket} waits at the gate`),
@@ -524,7 +538,15 @@ function runOnce(horde, cfg, flags, runner) {
     const doc = readQueue(horde);
     const judge = judgeList(horde, cfg, doc);
 
-    const close = doc.items.every((i) => i.state === 'merged');
+    // A queue holding nothing unmerged is a wave that CAN close — and a "stop" holds that too,
+    // being the kind that holds everything. Without this, a mission whose last ticket merged just
+    // before the client was asked would raise the close flag anyway, and --watch would exit its
+    // loop on it, leaving the question standing with nobody left to relay the answer to.
+    const emptied = doc.items.every((i) => i.state === 'merged');
+    const closeHeld = emptied
+      ? holds.everything.map((ask) => heldEntry(ask, { holds: 'close', note: holdNote(ask, 'the wave does not close') }))
+      : [];
+    const close = emptied && !closeHeld.length;
     const external = runner === 'external' ? externalStart(horde, cfg, spawn.out, root) : [];
 
     return withProvenance({
@@ -532,7 +554,7 @@ function runOnce(horde, cfg, flags, runner) {
       runner,
       reconciled,
       landed: landed.results,
-      held: [...landed.held, ...spawn.held],
+      held: [...landed.held, ...spawn.held, ...closeHeld],
       spawn: spawn.out.map((s) => ({
         ticket: s.ticket, model: s.model, brief: s.brief, stacked: s.stacked, worktree: s.worktree, branch: s.branch,
       })),
@@ -566,7 +588,9 @@ function render(out) {
   for (const j of out.judge) lines.push(`judge ${j.ticket}: ${j.pairs.length} prose pair(s) waiting`);
   for (const a of out.askClient) lines.push(`ask client ${a.id} (${a.kind}): ${a.why}`);
   for (const e of out.external) lines.push(`started ${e.ticket}: ${e.started ? e.command : e.note}`);
-  lines.push(out.close ? `close: the queue holds nothing unmerged — ${out.closeCommand}` : 'close: not yet');
+  const closeHeld = out.held.find((h) => h.holds === 'close');
+  if (out.close) lines.push(`close: the queue holds nothing unmerged — ${out.closeCommand}`);
+  else lines.push(closeHeld ? `close: held — ${closeHeld.note}` : 'close: not yet');
   lines.push(provenanceLine({ path: out.tree, branch: out.branch, sha: out.sha }));
   return lines.join('\n');
 }

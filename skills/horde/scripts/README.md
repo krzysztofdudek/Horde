@@ -648,9 +648,9 @@ marker, a moved `review_by`, an aspect detached from a node — requires `--aspe
 State: `hordes/<horde>/asks.json` (source of truth) + `asks.md` (rendered).
 
 Filing one never touches the queue. What an open one holds up is `tick.mjs`'s ruling, and it holds
-only what depends on the answer — `stop` the dispatch list, `stuck` that ticket, `charter` the
-tickets earning the evidence rows it names, `lower` that branch's landing. The table is in the
-`tick.mjs` section below.
+only what depends on the answer — `stop` everything, `stuck` that ticket, `charter` the tickets
+earning the evidence rows it names, `lower` that branch's landing. The table is in the `tick.mjs`
+section below.
 
 ## escalate.mjs — the recurring-answer scan
 
@@ -1043,27 +1043,37 @@ then it exits — nothing lives between runs, so there is no roster and no minut
 cost the mission the work their question has nothing to do with, so each kind of open ask holds one
 thing and tick hands out the rest:
 
-| open ask  | what it holds                                                      | what still moves |
+| open ask  | what it holds                                                                | what still moves |
 |---|---|---|
-| `stop`    | the dispatch list, whole — nothing new goes out                    | what is already running still settles, what is already green still lands |
-| `stuck`   | that one ticket                                                    | every other ticket in the queue |
-| `charter` | every ticket earning an evidence row the question names            | tickets earning rows it does not name, and tickets earning none |
-| `lower`   | that one branch's landing — the gate is not asked, no round counted | the whole queue, that ticket's own branch included once the answer comes |
+| `stop`    | everything — the dispatch list, every branch's landing, and the close        | a call already in flight still comes back and reconciles |
+| `stuck`   | that one ticket                                                              | every other ticket in the queue |
+| `charter` | every ticket earning an evidence row the question names                      | tickets earning rows it does not name, and tickets earning none |
+| `lower`   | that one branch's landing — the gate is not asked, no round counted          | the whole queue, that branch included once the answer comes |
 
-A `charter` question names its rows by id (`E1`, `E2`) in its own text, read off the charter's
-catalogue exactly the way `charter edit --ask` reads it; one naming no row holds nothing. A `lower`
-question is why the gate is not even asked about its branch: the law guard would come back red on a
-rule only the client can agree to weaken, and the ticket would spend its fix rounds on a question no
-worker can answer. Nothing here writes: a hold is worked out fresh every run from what is open right
-now, so an answered question releases what it held on the next tick with no state to unwind. `held`
-in the JSON is one entry per thing held — `{ticket, ask, kind, holds, note}`, where `holds` is
-`dispatch` or `landing` and `ticket` is `null` for the `stop` that holds the list itself.
+`stop` is the widest kind and holds accordingly: it is the one a worker files when the spec has run
+out under it, so nothing new goes out, nothing merges, and a queue holding nothing unmerged does not
+raise the close flag (nor does `--watch` exit its loop on it) until the client has ruled. A `charter`
+question names its rows by id (`E1`, `E2`) in its own text, read off the charter's catalogue exactly
+the way `charter edit --ask` reads it; one naming no row holds nothing.
+
+Holding a landing means not asking the gate at all, rather than declining to write the answer down
+afterwards: the gate merges the branch into its parent itself the moment every item comes back
+green, so by the time there is a result to read the merge has already happened. Not asking it is
+also what spares the ticket its fix rounds — a `lower` question is exactly the case where the law
+guard comes back red on a rule only the client can agree to weaken, and a round spent on that is a
+round spent on a question no worker can answer.
+
+Nothing here writes: a hold is worked out fresh every run from what is open right now, so an
+answered question releases what it held on the next tick with no state to unwind. `held` in the JSON
+is one entry per thing held — `{ticket, ask, kind, holds, note}`, where `holds` is `dispatch`,
+`landing` or `close`, and `ticket` is `null` where the thing held is not one ticket.
 
 **Under `session` (the default), tick never spawns — the caller does.** `--runner` only names who
 the caller is, and only `external` changes what this script does: with nobody in front of it,
 tick.mjs spawns each worker itself, through `config.runner.spawn` (`<class>` and `<brief>` filled
 in). Under `session` it starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds until the
-queue empties or a signal arrives; a signal exits cleanly, holding no lock. A refused pass does not
+queue empties or a signal arrives — an open `stop` holds the close, so it keeps waiting rather than
+exiting on an emptied queue the client still has a question about; a signal exits cleanly, holding no lock. A refused pass does not
 end the loop: the refusal goes to stderr and to the mission journal (`plan.md`) as one
 `tick refused:` line, and the next interval asks again.
 
