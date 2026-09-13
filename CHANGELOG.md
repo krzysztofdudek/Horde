@@ -62,6 +62,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - Raising a rule now credits the person who did the review, not the area of the codebase it covers.
 - The worker brief now states the ticket log's actual location, including the horde-scoped path segment it was missing before.
 - Copied straight from the documentation, the first commands for raising an architect, a worker or a territory's own rule-writer used to be refused. Every example in the docs now runs as shown.
+- The evidence package's named pairing now requires the name to land on a real test case's title, not just appear anywhere in the file — a comment or a piece of prose mentioning the same words no longer counts as proof.
 
 ### Migrating a mission already in flight
 

@@ -60,6 +60,7 @@ const REFUSALS = [
   { id: 'no mirror', drill: 'has-evidence/violates-mirror-missing', test: 'an implemented promise with no mirror in the suite is refused' },
   { id: 'malformed named reference', drill: 'has-evidence/violates-named-malformed', test: 'a named pairing that is not file-and-name is refused' },
   { id: 'named target absent', drill: 'has-evidence/violates-named-target-absent', test: 'a promise whose named evidence is not there is refused' },
+  { id: 'named reference is only a substring', drill: 'has-evidence/violates-named-substring-only', test: 'a named pairing that only occurs as a substring, not a test case title, is refused' },
   { id: 'self with no status', drill: 'has-evidence/violates-self-no-status', test: 'a promise that is its own evidence and says no status is refused' },
   { id: 'artefact missing a field', drill: 'has-evidence/violates-artefact-missing-field', test: 'an artefact with no hash recorded is refused' },
   { id: 'artefact hash is not one', drill: 'has-evidence/violates-artefact-bad-sha', test: 'an artefact whose hash is not a hash is refused' },
@@ -431,6 +432,14 @@ test('a promise whose named evidence is not there is refused', () => {
     promises: { 'orders-are-confirmed.md': promise({ extra: ['evidence: suite/missing.mjs#confirmation'] }) },
   });
   assert.match(out, /is not among the files these rules were pointed at/);
+});
+
+test('a named pairing that only occurs as a substring, not a test case title, is refused', () => {
+  const out = refusal({
+    promises: { 'orders-are-confirmed.md': promise({ extra: ['evidence: suite/orders-are-confirmed.test.mjs#confirmed'] }) },
+    suite: { 'orders-are-confirmed.test.mjs': "// keeping the order confirmed\nexport function run() {}\n" },
+  });
+  assert.match(out, /names nothing called 'confirmed' as a test case's own title/);
 });
 
 test('a promise that is its own evidence and says no status is refused', () => {

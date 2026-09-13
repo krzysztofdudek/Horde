@@ -49,6 +49,13 @@ config:
     parked_markers:
       type: string
       default: "planned, disabled"
+    # Under `named`: the positions a name is accepted at, comma separated — a closed set, one entry
+    # per language convention a test runner's own report can show a case's title at. A repository
+    # narrows this list to the conventions its own suite actually uses; it cannot add one this rule
+    # does not know.
+    named_case_patterns:
+      type: string
+      default: "test(, it(, Scenario:, def test_, func Test"
   evidence-matches-promise:
     evidence:
       type: string
