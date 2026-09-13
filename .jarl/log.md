@@ -294,3 +294,5 @@
 - 2026-09-13 21:38 · 035 evidence row · grep -rIln jarl skills/horde/ (shipped skill has zero .jarl awareness); read .jarl/decisions.md
 - 2026-09-13 21:38 · 035 review approve · Correct: this issue describes a process guarantee already implemented by jarl.mjs's own close command (refuses while open, removes .jarl/ as the last commit). Nothing in skills/horde/ itself references .jarl/, so there is no shipped-code gap to fix.
 - 2026-09-13 21:38 · 035 → done · already implemented by jarl.mjs close; no shipped-code gap
+- 2026-09-13 21:39 · filed 086 · horde.mjs README section still cites deleted wave.mjs audit-plan
+- 2026-09-13 21:39 · filed 087 · wave.mjs carries an orphaned mulberry32 comment for deleted seededRandom/cmdAuditPlan
