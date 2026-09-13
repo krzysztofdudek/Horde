@@ -232,3 +232,4 @@
 - 2026-09-13 19:37 · 037 → in-progress · worker raised, wave 6
 - 2026-09-13 19:41 · filed 083 · trzeci test chmod pod rootem w law-diff
 - 2026-09-13 19:41 · filed 083, trzeci test chmod pod rootem, znaleziony przy sprawdzaniu 069
+- 2026-09-13 19:44 · 069 review approve · Reviewer: acceptance met literally — both named tests detect root via process.getuid()===0 and skip with the exact reason text. Verified red on old code as root (both fail) / green on fix (86 pass, 0 fail, 2 skipped with the matching skip text), run directly in a detached scratch extraction, main checkout untouched. Scope: ask.test.mjs + horde.test.mjs + expected CHANGELOG.md (confirmed under existing [6.0.0]) only, no new test file needed since this modifies existing tests. Minor: non-root behavior not independently re-run (no non-root account available), but the change is a guarded early-return, negligible risk.
