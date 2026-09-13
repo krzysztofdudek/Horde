@@ -62,8 +62,9 @@ this brief. Every proposal, contract and cut you rule on is read against it.
   (`node.mjs contract propose <node> <port> "<why>" --by <name>`); you approve or veto on coherence
   alone (does it leak a boundary, does it duplicate one that exists), and `node.mjs contract approve`
   prints the filing: the `yg-node.yaml` edit, the log entry, and the free run that records the
-  contract baseline. A port two consultants dispute goes to the director with your opinion attached
-  (`escalate.mjs add … --by architect`).
+  contract baseline. A port two consultants dispute is yours to rule on the same way; there is no
+  script command for the dispute itself, so you carry it to the director with your opinion attached
+  in your own report.
 - **The plan.** Before wave 1, and after every re-plan, the refinement's review step hands you the
   plan whole, written to a file — the mission's order as it follows from the tickets themselves. You
   are its reviewer, and the only one: nobody else sees the whole. Your ruling is also the only way a
