@@ -682,7 +682,7 @@ says so whenever `--node` is given, and prints the `yg log add` command instead.
 ## wave.mjs — the journal
 
 Appends to `hordes/<horde>/plan.md` (team waves to `teams/<team>/plan.md`): `start [n] [--team t]`,
-`note "…"`, `merged NNN <sha>`, `audit NNN clean|findings "…"`, `audit-plan [--seed <n>] [--team t]`,
+`note "…"`, `merged NNN <sha>`,
 `close [--gate green|red] [--sha <tip>]
 [--evidence E5,…] [--team t]` (renders `templates/wave-close.md` with counts from the queue and the
 evidence catalogue; `--gate` with `--sha` records the level's gate at that tip in
@@ -700,21 +700,12 @@ tickets at that moment (imported, never a second derivation of the DAG), the par
 layer allows within `config.parallelism`, and the instant the wave opened — the three things the
 close reads back to say what the wave planned, and to know which rulings belong to it.
 
-Beyond the counts it always carried, `close` states five figures the chairman reads:
+Beyond the counts it always carried, `close` states four figures the chairman reads:
 
 - **parallelism** — planned (the bullet above) against achieved (the most tickets this wave landed
   on any one day; a journal bullet is dated, not stamped, so the day is the grain the record has);
 - **keys transferred** — the reviews this wave did not have to buy twice, summed from the bullets
   a pre-migration checklist wrote when a ticket's keys survived a catch-up;
-- **the audit** as a sample, not a ritual: `hordes/<horde>/audit.json` holds every audited ticket
-  with its verdict plus the current rate. The close turns this wave's `audit` bullets into samples
-  (once per wave and ticket, so re-closing never double-counts), then lets the samples set the
-  rate: a refutation among the last five doubles it, up to auditing every merged ticket; fifty
-  clean samples in a row halve it, never below one per wave. It publishes refutations over samples
-  with a Wilson 95% interval — because "0 of 3 refuted" and "0 of 300 refuted" are the same
-  percentage and nothing like the same evidence.
-  `audit-plan` prints how many of the last wave's merged tickets to audit next and draws them from
-  those merges at random; `--seed` makes the draw reproducible.
 - **decisions per merged ticket** — the escalations ruled since this wave opened, over the tickets
   it merged, with the trend across the closes before it. It is meant to fall: a horde needing as
   many rulings per ticket in wave six as in wave one has learned nothing.

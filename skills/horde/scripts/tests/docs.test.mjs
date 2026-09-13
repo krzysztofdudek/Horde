@@ -697,3 +697,39 @@ test('scripts/README.md\'s propose entry names --node/--boundary and says move-b
   assert.match(bullet, /move-boundary[\s\S]{0,120}requires/,
     'README\'s propose entry does not say move-boundary requires anything');
 });
+
+// ---- issue 060: wave.mjs's own README section names only commands wave.mjs's USAGE has --------
+
+// The general doc-vs-USAGE scan above only flags a "script.mjs subcommand --flag" phrase written
+// together on one line; wave.mjs's own README section instead opens with a bare list of
+// backtick-quoted commands ("`start [n] [--team t]`, `note "…"`, … `audit-plan [--seed <n>]
+// [--team t]`, …") with no repeated "wave.mjs" prefix on each one, so that scan never sees it.
+// `audit` and `audit-plan` were deleted from wave.mjs by the seat-cassation migration (2c8ed09,
+// "Audit sampling … is gone from both a wave's close and a mission's done check") but survived
+// in this opening list. Read both sides live: wave.mjs's own USAGE commands, and every backtick
+// span in the section's opening paragraph that has the shape of a command definition (a bare,
+// optionally hyphenated word followed by a space, "[", a quote, or the end of the span) — the
+// shape every real command here takes, and no file path, flag or `module.mjs` mention does.
+function commandLikeSpans(text) {
+  return [...text.matchAll(/`([^`]+)`/g)]
+    .map((m) => /^([a-z]+(?:-[a-z]+)*)(?=[\s["]|$)/.exec(m[1]))
+    .filter(Boolean)
+    .map((m) => m[1]);
+}
+
+test('scripts/README.md\'s wave.mjs command list names only commands wave.mjs\'s own USAGE has', () => {
+  const usage = scriptUsage('wave');
+  assert.ok(usage, 'wave.mjs no longer has a recognizable USAGE block');
+  const known = usageCommands(usage);
+  assert.ok(known.size > 0, 'no command could be read out of wave.mjs\'s own USAGE');
+
+  const readme = readText(join(SCRIPTS_DIR, 'README.md'));
+  const waveSection = section(readme, '## wave.mjs — the journal').trim();
+  const opening = waveSection.split('\n\n')[0];
+  const named = [...new Set(commandLikeSpans(opening))];
+  assert.ok(named.includes('start') && named.includes('close'),
+    'this test\'s premise moved: the opening paragraph no longer lists start/close');
+
+  const offenders = named.filter((n) => !known.has(n));
+  assert.deepEqual(offenders, [], `scripts/README.md names wave.mjs command(s) absent from its own USAGE: ${offenders.join(', ')} (USAGE has: ${[...known].join(', ')})`);
+});
