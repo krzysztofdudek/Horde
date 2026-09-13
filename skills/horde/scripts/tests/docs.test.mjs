@@ -277,3 +277,66 @@ test('the frontmatter scan actually catches what it is for: no frontmatter, and 
   assert.equal(hasValidFrontmatter('---\nname: horde\n---\n\n# horde\n'), false, 'a frontmatter with no description is still caught');
   assert.equal(hasValidFrontmatter('---\nname: horde\ndescription: does the thing\n---\n\n# horde\n'), true);
 });
+
+// ---- every brief.mjs example carries every flag USAGE marks required ------------------------
+//
+// brief.mjs's own USAGE line is the one source of which flags a role invocation cannot omit: a
+// flag outside "[...]" is required, one inside is optional. Read off USAGE directly rather than
+// hardcoding "--name" here, so a future required flag is caught by this test without editing it.
+// A doc example that shows a role invocation without a flag USAGE marks required would make a
+// director's very first copied command refuse — this is exactly the failure 044 found.
+
+function briefRequiredFlags() {
+  const text = readText(join(SCRIPTS_DIR, 'brief.mjs'));
+  const m = /usage: brief\.mjs <role> ([^`\n]+)/.exec(text);
+  assert.ok(m, 'brief.mjs no longer has a recognizable "usage: brief.mjs <role> ..." USAGE line');
+  const rest = m[1];
+  // required flags: a "--flag" token that is not inside a "[...]" optional group
+  const withoutOptional = rest.replace(/\[[^\]]*\]/g, '');
+  return [...withoutOptional.matchAll(/--([a-z-]+)/g)].map((x) => x[1]);
+}
+
+// Extracts every text run that shows brief.mjs invoked with a real role name (not a placeholder
+// like "<role>") — both inline `code spans` (which may wrap across a markdown line break) and
+// lines inside fenced ``` code blocks — as the unit a reader would copy verbatim.
+function briefInvocationSnippets(text) {
+  const rolePattern = '(?:architect|worker|legislate|retro)';
+  const snippets = [];
+  for (const m of text.matchAll(/`([^`]+)`/gs)) {
+    if (new RegExp(`brief\\.mjs\\s+${rolePattern}\\b`).test(m[1])) snippets.push(m[1]);
+  }
+  for (const m of text.matchAll(/```[a-z]*\n([\s\S]*?)```/g)) {
+    for (const line of m[1].split('\n')) {
+      if (new RegExp(`brief\\.mjs\\s+${rolePattern}\\b`).test(line)) snippets.push(line);
+    }
+  }
+  return snippets;
+}
+
+test('brief.mjs invocation examples in SKILL.md and scripts/README.md carry every flag USAGE requires', () => {
+  const required = briefRequiredFlags();
+  assert.ok(required.includes('name'), 'USAGE no longer requires --name — this test\'s premise moved');
+
+  const files = [
+    join(SKILL_DIR, 'SKILL.md'),
+    join(SCRIPTS_DIR, 'README.md'),
+  ];
+  const failures = [];
+  for (const path of files) {
+    const text = readText(path);
+    for (const snippet of briefInvocationSnippets(text)) {
+      for (const flag of required) {
+        if (!new RegExp(`--${flag}\\b`).test(snippet)) {
+          failures.push(`${path}: "${snippet.trim()}" is missing --${flag}`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(failures, [], failures.join('\n'));
+});
+
+test('the brief.mjs example scan actually catches what it is for: an example missing a required flag', () => {
+  const text = 'Spawn a worker (`brief.mjs worker NNN`), one ticket each.';
+  const snippets = briefInvocationSnippets(text);
+  assert.deepEqual(snippets, ['brief.mjs worker NNN']);
+});

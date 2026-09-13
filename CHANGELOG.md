@@ -42,6 +42,10 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - Mission-wide numbering (work, architect decisions, questions for you) now comes from one sequence instead of three, so a bare number is never ambiguous.
 - The conflict-of-interest guard can no longer be waived. A change that sharpens a rule and changes the code that rule judges, in one landing, is refused every time; splitting it into two landings is the only way through.
 
+### Fixed
+
+- Copied straight from the documentation, the first commands for raising an architect, a worker or a territory's own rule-writer used to be refused. Every example in the docs now runs as shown.
+
 ### Removed
 
 - Ports carry no version. `<node>/<port>@<version>` is refused; `contract propose` no longer takes `--version`/`--as`.

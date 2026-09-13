@@ -173,7 +173,7 @@ its folder and of the `id:` its issue.md carries.
   and prints it (`config.fixRounds`, defaults `resume` 3, `fresh` 2). Rounds 1..`resume`: resume
   the same worker with the findings. Rounds `resume`+1..`resume`+`fresh`: the result says "fresh
   worker, class up" — a new one, one class heavier (`config.classes`), briefed with `brief.mjs
-  worker NNN --takeover`. Beyond that cap the command refuses outright — there is no next command
+  worker NNN --name <n> --takeover`. Beyond that cap the command refuses outright — there is no next command
   to propose yet. `log NNN "text"`, `grep <re>`.
 - `review-request NNN [--delta <path>]` — appends to the log with a timestamp; `--delta` names the
   file a scoped re-review was written to, so the log records which kind of review was asked for.

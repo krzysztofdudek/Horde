@@ -156,16 +156,16 @@ more — refining files every ticket, through its consultants — so what is lef
 the agents that carry the plan out:
 
 - Spawn the **architect** as your subagent (Opus, cross-cutting, no node of its own;
-  `brief.mjs architect`), a fresh one for each graph ruling, starting at refining — it rebuilds its
+  `brief.mjs architect --name <n>`), a fresh one for each graph ruling, starting at refining — it rebuilds its
   context from the files every time, so there is nothing to keep alive between rulings. The
   architect approves or vetoes every change to the graph — new nodes, moved boundaries, new or
   changed ports — rules the whole plan once before wave 1, and files graph changes into the graph.
   The user sees them at wave close.
-- Spawn a **worker** per ticket as your subagent (`brief.mjs worker NNN`), one ticket each —
+- Spawn a **worker** per ticket as your subagent (`brief.mjs worker NNN --name <n>`), one ticket each —
   `tick.mjs`'s own dispatch list says which, in what order, and to which class. A
   worker that needs another round after `tk.mjs status NNN changes` is resumed the same way, or
   replaced one class up past `config.fixRounds`.
-- Spawn **legislate** as a one-shot per territory (`brief.mjs legislate <territory>`) after a wave
+- Spawn **legislate** as a one-shot per territory (`brief.mjs legislate <territory> --name <n>`) after a wave
   closes, or whenever a worker's ticket log flags a pattern nothing enforces. It reads what its own
   territory's landings were refused for and writes the rule down, in its own branch, raising it on
   evidence with `node.mjs promote`. Adding a rule needs nobody's permission; taking one away or making
