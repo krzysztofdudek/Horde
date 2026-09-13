@@ -57,3 +57,6 @@
 - 2026-09-13 15:52 · filed 044 · readme i skill pomijaja wymagane name w brief
 - 2026-09-13 15:52 · filed 045 · has-evidence bez bloku scope
 - 2026-09-13 15:52 · filed 046 · product-language bez drilla dla url-path
+- 2026-09-13 15:53 · filed 047 · land liczy wpis cache bramki i nigdy go nie zapisuje
+- 2026-09-13 15:53 · filed 048 · retro drugi sedzia bierze pierwszy werdykt z listy
+- 2026-09-13 15:53 · filed 049 · refine review buduje plan bez oslony na blad
