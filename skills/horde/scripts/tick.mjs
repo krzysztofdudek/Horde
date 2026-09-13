@@ -14,12 +14,13 @@
 // whole point — the two mission reports this closes are closed by removing the mechanism that
 // needed tuning, not by tuning it.
 //
-// **Tick never spawns.** Whoever calls it spawns. Under the default runner the caller is the
-// session itself: it runs tick, issues the calls on the dispatch list in one turn, and runs tick
-// again once they come back. With `--runner external` the caller is a process outside any agent at
-// all, starting workers through the host's own headless CLI (`config.runner.spawn`) so the loop
-// survives a closed session. That is the entire difference the two runners make: WHO starts what
-// this hands out, not whether the work can happen. Everything below is the same either way.
+// **Under `session` (the default), tick never spawns — the caller does.** Your own turn runs tick,
+// issues the calls on the dispatch list, and runs tick again once they come back. **Under
+// `--runner external`, tick.mjs spawns each worker itself**, through the host's own headless CLI
+// (`config.runner.spawn`), because nobody outside any agent is there to take a dispatch list and
+// issue the calls — so the loop survives a closed session. That is the entire difference the two
+// runners make: WHO starts what this hands out, not whether the work can happen. Everything below
+// is the same either way.
 //
 // What tick does write: the queue (reconcile's settlements, the gate's verdicts, and the state of
 // what it just handed out), the fix-round counter on a ticket that came back red, and `asks.json`

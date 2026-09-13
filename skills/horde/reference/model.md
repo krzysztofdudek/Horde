@@ -276,7 +276,8 @@ way.
 the same under both. Under the default runner the driver is the session itself — your own turn calls
 `tick.mjs`, reads its dispatch list, and spawns each worker on it as a subagent of yours.
 `--runner external` drives the loop outside any agent altogether — a cron job, a script, whatever
-starts one worker at a time from `config.runner.spawn` — so the loop survives a closed session, at
-the cost of nobody being there to answer an ask. That is the whole of the difference the two make:
-**who starts what the loop hands out**, never whether a mission can run at all. `tick.mjs` itself
-spawns nothing under either.
+calls `tick.mjs`, which then starts one worker at a time itself from `config.runner.spawn` — so the
+loop survives a closed session, at the cost of nobody being there to answer an ask. That is the
+whole of the difference the two make: **who starts what the loop hands out**, never whether a
+mission can run at all. Under `session`, tick never spawns — the caller does; under `external`,
+tick.mjs spawns each worker itself.
