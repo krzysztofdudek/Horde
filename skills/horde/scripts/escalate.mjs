@@ -4,8 +4,11 @@
 // What is left once ask.mjs (019) folded escalation and dissent into the one channel to the
 // client: the second trigger for legislation (the first is the consultant at refine.mjs, the
 // third is legislate.mjs after a wave close). The same answer given three times over one
-// territory is a rule nobody wrote down — so this groups the ANSWERED asks by (kind, territory)
-// and hands a group past the threshold to whoever works that territory as a rule proposal.
+// territory is a rule nobody wrote down — so this groups the ANSWERED asks by (kind, territory,
+// normalized answer text) and hands a group past the threshold to whoever works that territory as
+// a rule proposal. Three different answers to the same kind of question on one territory are three
+// different answers, not a rule; the tool counts what was actually said, not how many times the
+// question came up.
 //
 // No state of its own: it reads hordes/<horde>/asks.json (ask.mjs) and only ever proposes, never
 // files — filing a rule is the territory's own agent's move, through node.mjs promote or a new
@@ -19,12 +22,14 @@ import { ygCommand } from './node.mjs';
 
 const USAGE = `usage: escalate.mjs recurring [--min <n>] [--horde h]
 
-the answered asks grouped by kind and by territory; a group of <n> (default 3) or more is an
-answer this horde keeps giving the client by hand, so it prints the rule proposal: the answers as
-evidence, one line of rule text, and — where the group has a territory — the steps that file it:
-create the rule in the graph, then record why in its own log. It prints those steps rather than
-running them — the agent that works that territory files the rule, in its own branch, and raises
-it on evidence with node.mjs promote.
+the answered asks grouped by kind, by territory and by the normalized text of the answer itself
+(lower-case, whitespace collapsed, trailing punctuation dropped); a group of <n> (default 3) or
+more is the same answer this horde keeps giving the client by hand, so it prints the rule
+proposal: the answers as evidence, one line of rule text, and — where the group has a territory —
+the steps that file it: create the rule in the graph, then record why in its own log. Different
+answers to the same kind of question on one territory stay separate groups and never propose a
+rule on their own. It prints those steps rather than running them — the agent that works that
+territory files the rule, in its own branch, and raises it on evidence with node.mjs promote.
 
 options: --json  --help`;
 
@@ -32,6 +37,17 @@ const NO_TERRITORY = '(no territory)';
 
 function firstLine(text) {
   return String(text || '').split('\n').map((l) => l.trim()).find(Boolean) || '';
+}
+
+// Groups answers by what was actually said, not just by kind and territory: lower-case,
+// whitespace collapsed to single spaces, and trailing punctuation dropped, so two answers that
+// differ only in casing, spacing or a trailing period still count as the same answer.
+function normalizeAnswer(text) {
+  return firstLine(text)
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.,;:!?]+$/, '');
 }
 
 // The command that files the proposal. Where the group has a territory, this IS proposing a rule
@@ -58,7 +74,8 @@ function cmdRecurring(horde, positional, flags) {
   const byKey = new Map();
   for (const it of answered) {
     const territory = it.territory || NO_TERRITORY;
-    const key = `${it.kind} ${territory}`;
+    const normalized = normalizeAnswer(it.answer);
+    const key = JSON.stringify([it.kind, territory, normalized]);
     if (!byKey.has(key)) byKey.set(key, { kind: it.kind, territory, asks: [] });
     byKey.get(key).asks.push({
       id: it.id, at: it.answeredAt || it.at, ticket: it.ticket || null, answer: firstLine(it.answer),
