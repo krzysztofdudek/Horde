@@ -202,6 +202,16 @@ States: `proposed queued waiting running landed blocked merged escalated dropped
 nobody has ruled on: listed and counted like any other, and never a candidate for `next`. A
 consultant files its own tickets and adds them with `add --proposed`; `refine.mjs --step review` is
 the only thing that moves one to `queued`.
+
+Every command that changes `queue.json` — here, in `tick.mjs`, and in `audit.mjs`'s own ticket
+filing — reads it, changes it and writes it back under one lock, `withQueueLock` (`_lib.mjs`), the
+same exclusive-create trick `decide.mjs`'s own lock uses: `<queue.json>.lock`, one per
+horde+team, held for exactly that read-modify-write and nothing longer, so two processes racing a
+change to one team's queue (two sessions on one horde, a `tick` racing a hand-run `queue.mjs set`)
+can no longer each read the same document and have one silently overwrite the other's write.
+Same take-over rule as the gate lock below: the file names the pid that holds it, and a pid no
+longer running — including one that just refused via `fail()`, which exits before its own `finally`
+can release the lock — is taken over immediately rather than waited on.
 - `list [--state s]`, `add NNN [--depends dep,…] [--proposed]`, `set NNN <state> [--sha x] [--agent name] [--note "…"]`,
   `next [--class c] [--why] [--stack]` — ready = queued, every dependency merged, and clear of every
   `running` ticket's own lock: a ticket declaring `**Files:**` collides only on an overlapping
