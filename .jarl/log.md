@@ -296,3 +296,5 @@
 - 2026-09-13 21:38 · 035 → done · already implemented by jarl.mjs close; no shipped-code gap
 - 2026-09-13 21:39 · filed 086 · horde.mjs README section still cites deleted wave.mjs audit-plan
 - 2026-09-13 21:39 · filed 087 · wave.mjs carries an orphaned mulberry32 comment for deleted seededRandom/cmdAuditPlan
+- 2026-09-13 21:44 · filed 088 · CHANGELOG chmod/root skip wording will say 'two' when three tests now carry the guard
+- 2026-09-13 21:44 · 083 review approve · Reviewer (standard tier): acceptance met literally, red-before/green-after independently reproduced as root, scope exactly law-diff.test.mjs only (git show 106616a --stat, 1 file). Minor: notes the already-merged 069 CHANGELOG line will read stale ('Two' tests) once this lands as the third; filed as its own follow-up issue rather than touched here (083's own scope is test-only, correctly no CHANGELOG entry of its own).
