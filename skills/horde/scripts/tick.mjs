@@ -33,7 +33,7 @@ import { execFileSync, spawn as spawnProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit,
-  isMain, resolveHorde, git, resolveTree, withProvenance, provenanceLine,
+  isMain, resolveHorde, git, resolveTree, withProvenance, provenanceLine, withQueueLock,
 } from './_lib.mjs';
 import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine,
@@ -267,45 +267,50 @@ function landTheLanded(horde, cfg, root) {
 
   const reds = plan.filter((s) => s.action === 'red');
   if (reds.length) {
-    const fresh = readQueue(horde);
-    for (const step of reds) {
-      const item = fresh.items.find((i) => i.ticket === step.ticket);
-      if (!item) continue;
-      const ticket = findTicket(horde, step.ticket);
-      const roundInfo = ticket ? changesRoundInfo(horde, ticket) : { refused: false, round: 1 };
-      if (roundInfo.refused) {
-        // The rounds are spent, including the ones a fresh worker was given, so another round would
-        // be a state pretending to be progress. The ticket stops here and the client is asked —
-        // there is no escalation path to take instead, and inventing one would only be this tool
-        // ruling on a product decision that was never its to rule on.
-        item.state = 'blocked';
-        item.notes.push({ at: nowIso(), text: `tick: ${roundInfo.message}` });
-        if (ticket) transitionStatus(ticket, 'blocked', `fix rounds spent — ${step.words}`);
-        const { ask, filed } = fileAsk(horde, {
-          kind: 'stuck',
-          ticket: step.ticket,
-          why: `${roundInfo.message} The gate's last words: ${step.words}`,
-          log: ticket ? ticket.logPath : null,
-        });
+    // Read, mutate every red item and write back, all under the queue lock: two ticks landing
+    // red gates on one team at once must not each read the same queue and overwrite the other's
+    // update.
+    withQueueLock(horde, TEAM, () => {
+      const fresh = readQueue(horde);
+      for (const step of reds) {
+        const item = fresh.items.find((i) => i.ticket === step.ticket);
+        if (!item) continue;
+        const ticket = findTicket(horde, step.ticket);
+        const roundInfo = ticket ? changesRoundInfo(horde, ticket) : { refused: false, round: 1 };
+        if (roundInfo.refused) {
+          // The rounds are spent, including the ones a fresh worker was given, so another round would
+          // be a state pretending to be progress. The ticket stops here and the client is asked —
+          // there is no escalation path to take instead, and inventing one would only be this tool
+          // ruling on a product decision that was never its to rule on.
+          item.state = 'blocked';
+          item.notes.push({ at: nowIso(), text: `tick: ${roundInfo.message}` });
+          if (ticket) transitionStatus(ticket, 'blocked', `fix rounds spent — ${step.words}`);
+          const { ask, filed } = fileAsk(horde, {
+            kind: 'stuck',
+            ticket: step.ticket,
+            why: `${roundInfo.message} The gate's last words: ${step.words}`,
+            log: ticket ? ticket.logPath : null,
+          });
+          results.push({
+            ticket: step.ticket, action: 'blocked', ask: ask.id, note: `${roundInfo.message}${filed ? ` Filed as ${ask.id} (stuck).` : ` Already filed as ${ask.id}.`}`,
+          });
+          continue;
+        }
+        // A round the landing gate already counted is not counted again here: the gate writes the
+        // ticket's "changes" line with the round number in it the moment it comes back red, and a
+        // second write would tick the counter for one red gate twice. The status is only written
+        // when nothing wrote it — a result read back after a run that died before recording it.
+        if (ticket && parseField(ticket.text, 'Status') !== 'changes') {
+          transitionStatus(ticket, 'changes', step.words, roundInfo);
+        }
+        item.state = 'queued';
+        item.notes.push({ at: nowIso(), text: `tick: gate red (round ${roundInfo.round}/${roundInfo.cap} — ${roundInfo.label}) — ${step.words}` });
         results.push({
-          ticket: step.ticket, action: 'blocked', ask: ask.id, note: `${roundInfo.message}${filed ? ` Filed as ${ask.id} (stuck).` : ` Already filed as ${ask.id}.`}`,
+          ticket: step.ticket, action: 'changes', round: roundInfo.round, note: `gate red, round ${roundInfo.round}/${roundInfo.cap} (${roundInfo.label}) — ${step.words}`,
         });
-        continue;
       }
-      // A round the landing gate already counted is not counted again here: the gate writes the
-      // ticket's "changes" line with the round number in it the moment it comes back red, and a
-      // second write would tick the counter for one red gate twice. The status is only written
-      // when nothing wrote it — a result read back after a run that died before recording it.
-      if (ticket && parseField(ticket.text, 'Status') !== 'changes') {
-        transitionStatus(ticket, 'changes', step.words, roundInfo);
-      }
-      item.state = 'queued';
-      item.notes.push({ at: nowIso(), text: `tick: gate red (round ${roundInfo.round}/${roundInfo.cap} — ${roundInfo.label}) — ${step.words}` });
-      results.push({
-        ticket: step.ticket, action: 'changes', round: roundInfo.round, note: `gate red, round ${roundInfo.round}/${roundInfo.cap} (${roundInfo.label}) — ${step.words}`,
-      });
-    }
-    saveQueue(horde, TEAM, fresh);
+      saveQueue(horde, TEAM, fresh);
+    });
   }
 
   return results;

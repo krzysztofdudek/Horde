@@ -512,6 +512,73 @@ export function teamPath(horde, team, ...parts) {
   return hordePath(horde, ...resolved.flatMap((s) => ['teams', s]), ...parts);
 }
 
+// ---- the queue lock (queue-single-writer) ------------------------------------------------------
+//
+// queue.json is read whole, changed in memory, and written back whole — a plain read-modify-write.
+// Two processes doing that at once (two sessions on one horde, a tick racing a hand-run `queue.mjs
+// set`) can each read the same document, apply their own change, and write it back: whichever
+// write lands second wins outright and the other's change is gone with no trace and no error. The
+// same exclusive-create trick decide.mjs's `withDecisionsLock` uses closes it — every command that
+// changes queue.json wraps its read, its change and its write in one call to `withQueueLock`, so
+// no two ever interleave.
+//
+// A fourth hand-rolled copy of this lock (decide.mjs, land.mjs's `acquireGateLock` and retro.mjs
+// already each have their own) is what this is instead of: one shared primitive in `_lib.mjs`,
+// scoped per horde+team so two different queues never wait on each other.
+//
+// Every queue command that refuses mid-change does it through `fail()`, which calls
+// `process.exit()` straight away — the `finally` releasing this lock never gets to run, because
+// the process is gone before the stack unwinds that far. A dead holder must not wedge every later
+// command on this queue forever, so — exactly like `acquireGateLock` and `acquireRetroLock` — the
+// lock file names the pid that took it, and a pid no longer running is taken over immediately
+// rather than waited out.
+const QUEUE_LOCK_WAIT_MS = 15000;
+const QUEUE_LOCK_POLL_MS = 20;
+
+function queueLockPath(horde, team) {
+  return `${teamPath(horde, team, 'queue.json')}.lock`;
+}
+
+function queueLockProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+export function withQueueLock(horde, team, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
+  const path = queueLockPath(horde, team);
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, `${JSON.stringify({ pid: process.pid, horde, team, at: nowIso() }, null, 2)}\n`, { flag: 'wx' });
+      break;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+    let held = null;
+    try { held = JSON.parse(readFileSync(path, 'utf8')); } catch { held = null; }
+    // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
+    // like a dead one: taken over rather than waited on.
+    if (!held || !queueLockProcessAlive(held.pid)) {
+      try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
+      continue;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`queue.json for team "${team}" is locked by another process (pid ${held.pid}, taken ${held.at || 'at an unrecorded time'}) — timed out waiting for ${path}`);
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, QUEUE_LOCK_POLL_MS);
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      const holder = JSON.parse(readFileSync(path, 'utf8'));
+      if (holder.pid !== process.pid) throw new Error('not ours');
+      rmSync(path, { force: true });
+    } catch { /* unreadable, already gone, or already taken over by someone else: nothing to do */ }
+  }
+}
+
 // ---- cross-horde leases (node-lease-across-hordes) -------------------------------------------
 // Exclusive ownership across every live horde on one repository: `.horde/leases.json` maps a
 // SUBJECT to the horde currently bound to it and since when. A subject is a node id (`node.mjs

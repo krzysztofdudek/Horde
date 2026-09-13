@@ -1,13 +1,32 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import {
   mkdirSync, readFileSync, writeFileSync, existsSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde,
 } from './helpers.mjs';
+
+const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
+
+// spawnAdd(dir, ticket) — the same "queue.mjs add <ticket> --json" a real caller would run, but as
+// a genuinely separate process the test can start without waiting for it to finish, so two of them
+// can be in flight over the same queue.json at once.
+function spawnAdd(dir, ticket) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [join(SCRIPTS_DIR, 'queue.mjs'), 'add', ticket, '--json'], {
+      cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('close', (code) => resolve({ code, stdout, stderr }));
+  });
+}
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -701,4 +720,82 @@ test('queue.mjs: "proposed" — in the queue, counted, and never a candidate', a
     assert.equal(r.json.state, 'queued');
     assert.equal(run('queue.mjs', ['next'], dir).json.ticket, proposal);
   });
+});
+
+// ---- concurrent writers: one lock, no lost item --------------------------------------------
+//
+// queue.json is a whole-file read-modify-write. Two processes racing that — two sessions on one
+// horde, a tick racing a hand-run "queue.mjs set" — must not silently drop whichever wrote first;
+// every write goes through the shared queue lock (_lib.mjs withQueueLock) so the two never
+// interleave.
+
+test('queue.mjs add: two processes writing the queue at once lose neither item', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const idA = readyTicket(dir, 'race-a');
+  const idB = readyTicket(dir, 'race-b');
+
+  const [ra, rb] = await Promise.all([spawnAdd(dir, idA), spawnAdd(dir, idB)]);
+  assert.equal(ra.code, 0, ra.stderr);
+  assert.equal(rb.code, 0, rb.stderr);
+
+  const tickets = run('queue.mjs', ['list'], dir).json.map((i) => i.ticket).sort();
+  assert.deepEqual(tickets, [idA, idB].sort(), 'both concurrent writers\' items must survive — neither queue.json write may overwrite the other');
+});
+
+// The pair above races two real processes and, being fast local file I/O, is not guaranteed to
+// hit the interleaving that loses an item on every run of every machine — a flaky red is not the
+// same evidence as a reliable one. This second case proves the mechanism directly instead: a
+// process holding the queue lock is made to sit on it for a measured stretch, and a second
+// "queue.mjs add" started while it holds the lock is asserted to have waited at least that long
+// before it got its own turn — the lock is what stands between the two writers, not luck.
+test('queue.mjs add: a second writer waits out a held queue lock rather than writing alongside it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const waiting = readyTicket(dir, 'lock-waiter');
+
+  const HOLD_MS = 500;
+  const markerPath = join(dir, '.lock-held-marker');
+  const libPath = join(SCRIPTS_DIR, '_lib.mjs');
+  const holderScript = [
+    `import { withQueueLock } from ${JSON.stringify(libPath)};`,
+    `import { writeFileSync } from 'node:fs';`,
+    `withQueueLock('mission1', 'trunk', () => {`,
+    `  writeFileSync(${JSON.stringify(markerPath)}, 'held');`,
+    `  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${HOLD_MS});`,
+    `});`,
+  ].join('\n');
+
+  const holder = spawn(process.execPath, ['--input-type=module', '-e', holderScript], {
+    cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let holderErr = '';
+  holder.stderr.on('data', (d) => { holderErr += d; });
+  const holderDone = new Promise((resolve) => holder.on('close', (code) => resolve(code)));
+
+  // Wait for the holder to actually be inside the lock before racing the second writer against
+  // it — otherwise this test could win a race of its own against the holder's own startup.
+  const deadline = Date.now() + 5000;
+  while (!existsSync(markerPath)) {
+    if (Date.now() > deadline) throw new Error(`lock-holder never took the lock (stderr: ${holderErr})`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+
+  const start = Date.now();
+  const waiterResult = await spawnAdd(dir, waiting);
+  const elapsedMs = Date.now() - start;
+  const holderCode = await holderDone;
+
+  assert.equal(holderCode, 0, `lock-holder process failed: ${holderErr}`);
+  assert.equal(waiterResult.code, 0, waiterResult.stderr);
+  // Some slack below HOLD_MS for scheduling jitter, but a writer that did not wait for the lock
+  // at all would return in well under half the hold time.
+  assert.ok(elapsedMs >= HOLD_MS * 0.7, `second writer returned after ${elapsedMs}ms — expected it to wait out most of the ${HOLD_MS}ms held lock`);
+
+  const tickets = run('queue.mjs', ['list'], dir).json.map((i) => i.ticket);
+  assert.deepEqual(tickets, [waiting], 'the writer that waited out the lock still got its item recorded');
 });

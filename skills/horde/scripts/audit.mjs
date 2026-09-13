@@ -68,7 +68,7 @@
 
 import { execFileSync } from 'node:child_process';
 import {
-  asArray, readTerritories, leaseHolderForNode, today, qualityPolicy, firstClass,
+  asArray, readTerritories, leaseHolderForNode, today, qualityPolicy, firstClass, withQueueLock,
 } from './_lib.mjs';
 import {
   ygJson, ygCommand, readAuditLedger, recordAudit, readAspectLedger, listAllNodes,
@@ -343,9 +343,11 @@ function fileTicket(horde, cfg, team, {
     team,
   });
   setTicketBody(horde, created.id, body, nodes[0]);
-  const doc = loadQueue(horde, team);
-  doc.items.push(newQueueItem(findTicket(horde, created.id)));
-  saveQueue(horde, team, doc);
+  withQueueLock(horde, team, () => {
+    const doc = loadQueue(horde, team);
+    doc.items.push(newQueueItem(findTicket(horde, created.id)));
+    saveQueue(horde, team, doc);
+  });
   return created.id;
 }
 

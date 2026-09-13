@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, leaseHolderForNode,
-  resolveTree, provisionTree, provenanceLine, withProvenance, firstClass,
+  resolveTree, provisionTree, provenanceLine, withProvenance, firstClass, withQueueLock,
 } from './_lib.mjs';
 import {
   findTicket, parseField, padId, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, createTicket, setTicketBody, acceptanceLines,
@@ -187,20 +187,23 @@ function cmdAdd(horde, positional, flags) {
   if (acceptanceLines(ticket.text).length === 0) {
     fail(`ticket ${ticket.id} has no acceptance line — nothing a verifier could reproduce, so nothing could ever prove it done. Add at least one "- [ ] …" line under "## Acceptance" (tk.mjs new --evidence "<what a verifier reproduces>", or edit the issue), then add it to the queue.`);
   }
-  const doc = load(horde, team);
-  if (doc.items.some((i) => i.ticket === ticket.id)) fail(`ticket ${ticket.id} is already queued in team ${team}`);
-  let dependsOn = [];
-  if (flags.depends) {
-    const raws = String(flags.depends).split(',').map((s) => s.trim()).filter(Boolean);
-    for (const raw of raws) {
-      const ref = resolveDepRef(horde, raw, team);
-      if (!ref.item) fail(`no such dependency: "${raw}" (team ${ref.team})`);
-      dependsOn.push(ref.canonical);
+  const item = withQueueLock(horde, team, () => {
+    const doc = load(horde, team);
+    if (doc.items.some((i) => i.ticket === ticket.id)) fail(`ticket ${ticket.id} is already queued in team ${team}`);
+    let dependsOn = [];
+    if (flags.depends) {
+      const raws = String(flags.depends).split(',').map((s) => s.trim()).filter(Boolean);
+      for (const raw of raws) {
+        const ref = resolveDepRef(horde, raw, team);
+        if (!ref.item) fail(`no such dependency: "${raw}" (team ${ref.team})`);
+        dependsOn.push(ref.canonical);
+      }
     }
-  }
-  const item = newQueueItem(ticket, dependsOn, flags.proposed ? 'proposed' : 'queued');
-  doc.items.push(item);
-  save(horde, team, doc);
+    const created = newQueueItem(ticket, dependsOn, flags.proposed ? 'proposed' : 'queued');
+    doc.items.push(created);
+    save(horde, team, doc);
+    return created;
+  });
   emit(item, flags, () => `${item.state}: ${item.ticket}`);
 }
 
@@ -433,9 +436,11 @@ function cmdQuality(horde, positional, flags) {
     });
     setTicketBody(horde, created.id, adviceTicketBody(item, source), owner);
     const ticket = findTicket(horde, created.id);
-    const qdoc = load(horde, team);
-    qdoc.items.push(newQueueItem(ticket));
-    save(horde, team, qdoc);
+    withQueueLock(horde, team, () => {
+      const qdoc = load(horde, team);
+      qdoc.items.push(newQueueItem(ticket));
+      save(horde, team, qdoc);
+    });
     already.add(key);
     recordAdvisory(horde, {
       key, node, owner, kind, ticket: created.id, source,
@@ -527,11 +532,14 @@ function applyMerged(horde, team, doc, item, key, sha, { tree } = {}) {
 // The landing gate's own way in: it has already made the merge commit, so all that is left is the
 // record. Returns the journal bullet the wave close reads, exactly as `set <t> merged` does.
 export function recordMerged(horde, team, key, sha, { tree } = {}) {
-  const { doc, item } = findItem(horde, team, key);
-  if (!item) fail(`no queue item: ${key}`);
-  applyMerged(horde, team, doc, item, key, String(sha), { tree });
-  item.state = 'merged';
-  save(horde, team, doc);
+  const item = withQueueLock(horde, team, () => {
+    const found = findItem(horde, team, key);
+    if (!found.item) fail(`no queue item: ${key}`);
+    applyMerged(horde, team, found.doc, found.item, key, String(sha), { tree });
+    found.item.state = 'merged';
+    save(horde, team, found.doc);
+    return found.item;
+  });
   return { item, journal: noteMerged(horde, team, key, String(sha)) };
 }
 
@@ -572,13 +580,15 @@ function provisionRunning(horde, team, key, item, { tree, on } = {}) {
 // worktree made already — that is what lets the brief beside it render against a tree that exists,
 // and what stops the next run, or a second tick racing this one, from handing it out twice.
 export function startRunning(horde, team, key, { tree, on, agent } = {}) {
-  const { doc, item } = findItem(horde, team, key);
-  if (!item) fail(`no queue item: ${key}`);
-  provisionRunning(horde, team, key, item, { tree, on });
-  item.state = 'running';
-  if (agent) item.agent = agent;
-  save(horde, team, doc);
-  return item;
+  return withQueueLock(horde, team, () => {
+    const { doc, item } = findItem(horde, team, key);
+    if (!item) fail(`no queue item: ${key}`);
+    provisionRunning(horde, team, key, item, { tree, on });
+    item.state = 'running';
+    if (agent) item.agent = agent;
+    save(horde, team, doc);
+    return item;
+  });
 }
 
 function cmdSet(horde, positional, flags) {
@@ -587,24 +597,27 @@ function cmdSet(horde, positional, flags) {
   if (!STATES.includes(state)) fail(`unknown state: ${state} (allowed: ${STATES.join(', ')})`);
   const team = flags.team || 'trunk';
   const key = normalizeKey(rawKey);
-  const { doc, item } = findItem(horde, team, key);
-  if (!item) fail(`no queue item: ${key}`);
-  if (flags.on !== undefined && state !== 'running') {
-    fail('--on only goes with "set <ticket> running" — it says which branch the ticket is cut from, and nothing else cuts one');
-  }
+  const item = withQueueLock(horde, team, () => {
+    const found = findItem(horde, team, key);
+    if (!found.item) fail(`no queue item: ${key}`);
+    if (flags.on !== undefined && state !== 'running') {
+      fail('--on only goes with "set <ticket> running" — it says which branch the ticket is cut from, and nothing else cuts one');
+    }
 
-  if (state === 'running') provisionRunning(horde, team, key, item, { tree: flags.tree, on: flags.on });
+    if (state === 'running') provisionRunning(horde, team, key, found.item, { tree: flags.tree, on: flags.on });
 
-  if (state === 'merged') {
-    if (!flags.sha) fail('set merged requires --sha');
-    applyMerged(horde, team, doc, item, key, String(flags.sha), { tree: flags.tree });
-  }
+    if (state === 'merged') {
+      if (!flags.sha) fail('set merged requires --sha');
+      applyMerged(horde, team, found.doc, found.item, key, String(flags.sha), { tree: flags.tree });
+    }
 
-  item.state = state;
-  if (flags.agent) item.agent = flags.agent;
-  if (flags.sha && state !== 'merged') item.sha = flags.sha;
-  if (flags.note) item.notes.push({ at: nowIso(), text: flags.note });
-  save(horde, team, doc);
+    found.item.state = state;
+    if (flags.agent) found.item.agent = flags.agent;
+    if (flags.sha && state !== 'merged') found.item.sha = flags.sha;
+    if (flags.note) found.item.notes.push({ at: nowIso(), text: flags.note });
+    save(horde, team, found.doc);
+    return found.item;
+  });
 
   // A merge is one event, so it costs one write. The queue is where the state lives; the journal
   // is where the wave close reads from when it works out which evidence rows this wave turned
@@ -642,21 +655,23 @@ function dependsTransitively(doc, from, target, seen = new Set()) {
 // `plan` refused. Returns the item it changed.
 export function addDependency(horde, team, ticket, on) {
   const key = normalizeKey(ticket);
-  const { doc, item } = findItem(horde, team, key);
-  if (!item) fail(`no queue item: ${key} (in team ${team}) — a dependency hangs off a queued ticket; add it to the queue first`);
+  return withQueueLock(horde, team, () => {
+    const { doc, item } = findItem(horde, team, key);
+    if (!item) fail(`no queue item: ${key} (in team ${team}) — a dependency hangs off a queued ticket; add it to the queue first`);
 
-  const ref = resolveDepRef(horde, on, team);
-  if (!ref.item) fail(`no such dependency: "${on}" (team ${ref.team})`);
-  if (ref.canonical === key) fail(`cannot depend on itself: ${key}`);
-  if (dependsTransitively(doc, ref.canonical, key)) fail(`adding this dependency would create a cycle: ${ref.canonical} already depends on ${key}`);
+    const ref = resolveDepRef(horde, on, team);
+    if (!ref.item) fail(`no such dependency: "${on}" (team ${ref.team})`);
+    if (ref.canonical === key) fail(`cannot depend on itself: ${key}`);
+    if (dependsTransitively(doc, ref.canonical, key)) fail(`adding this dependency would create a cycle: ${ref.canonical} already depends on ${key}`);
 
-  if (!item.dependsOn.includes(ref.canonical)) item.dependsOn.push(ref.canonical);
-  if (item.state === 'running' && ref.item.state !== 'merged') {
-    item.state = 'queued';
-    item.notes.push({ at: nowIso(), text: `dep: gained dependency on ${ref.canonical} — back to queued until it merges` });
-  }
-  save(horde, team, doc);
-  return { item, on: ref.canonical };
+    if (!item.dependsOn.includes(ref.canonical)) item.dependsOn.push(ref.canonical);
+    if (item.state === 'running' && ref.item.state !== 'merged') {
+      item.state = 'queued';
+      item.notes.push({ at: nowIso(), text: `dep: gained dependency on ${ref.canonical} — back to queued until it merges` });
+    }
+    save(horde, team, doc);
+    return { item, on: ref.canonical };
+  });
 }
 
 function cmdDep(horde, positional, flags) {
@@ -1253,20 +1268,22 @@ function cmdPlan(horde, positional, flags) {
 // in the queue for that — a proposal that isn't queued yet has nothing to hang the edge on, and
 // the result says so rather than pretending it landed.
 function applyOrder(horde, team, plan) {
-  const doc = load(horde, team);
-  const applied = [];
-  for (const conflict of plan.lockConflicts) {
-    const [first, second] = conflict.order;
-    const item = doc.items.find((i) => i.ticket === second);
-    const firstItem = doc.items.find((i) => i.ticket === first);
-    if (!item || !firstItem) continue;
-    if (item.dependsOn.includes(first)) continue;
-    item.dependsOn.push(first);
-    item.notes.push({ at: nowIso(), text: `plan: ordered after ${first} — both declare ${conflict.files.join(', ')}` });
-    applied.push({ ticket: second, on: first, files: conflict.files });
-  }
-  if (applied.length) save(horde, team, doc);
-  return applied;
+  return withQueueLock(horde, team, () => {
+    const doc = load(horde, team);
+    const applied = [];
+    for (const conflict of plan.lockConflicts) {
+      const [first, second] = conflict.order;
+      const item = doc.items.find((i) => i.ticket === second);
+      const firstItem = doc.items.find((i) => i.ticket === first);
+      if (!item || !firstItem) continue;
+      if (item.dependsOn.includes(first)) continue;
+      item.dependsOn.push(first);
+      item.notes.push({ at: nowIso(), text: `plan: ordered after ${first} — both declare ${conflict.files.join(', ')}` });
+      applied.push({ ticket: second, on: first, files: conflict.files });
+    }
+    if (applied.length) save(horde, team, doc);
+    return applied;
+  });
 }
 
 function cmdRm(horde, positional, flags) {
@@ -1274,18 +1291,22 @@ function cmdRm(horde, positional, flags) {
   if (!idRaw) fail('rm requires <ticket>');
   const team = flags.team || 'trunk';
   const key = normalizeKey(idRaw);
-  const doc = load(horde, team);
-  const before = doc.items.length;
-  doc.items = doc.items.filter((i) => i.ticket !== key);
-  if (doc.items.length === before) fail(`no queue item: ${key}`);
-  save(horde, team, doc);
+  withQueueLock(horde, team, () => {
+    const doc = load(horde, team);
+    const before = doc.items.length;
+    doc.items = doc.items.filter((i) => i.ticket !== key);
+    if (doc.items.length === before) fail(`no queue item: ${key}`);
+    save(horde, team, doc);
+  });
   emit({ ticket: key }, flags, () => `removed: ${key}`);
 }
 
 function cmdRender(horde, positional, flags) {
   const team = flags.team || 'trunk';
-  const doc = load(horde, team);
-  save(horde, team, doc);
+  withQueueLock(horde, team, () => {
+    const doc = load(horde, team);
+    save(horde, team, doc);
+  });
   emit({ team }, flags, () => queuePath(horde, team).replace(/\.json$/, '.md'));
 }
 
@@ -1295,6 +1316,10 @@ function cmdRender(horde, positional, flags) {
 // that still knows what happened. Three answers, and each says out loud what was salvaged, because
 // the caller reading this is usually reading it after somebody else's crash.
 export function reconcileRunning(horde, team, { tree } = {}) {
+  return withQueueLock(horde, team, () => reconcileRunningLocked(horde, team, { tree }));
+}
+
+function reconcileRunningLocked(horde, team, { tree } = {}) {
   const doc = load(horde, team);
   const root = resolveTree({ tree }).path;
   const results = [];
