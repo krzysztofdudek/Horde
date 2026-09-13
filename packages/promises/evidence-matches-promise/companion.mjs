@@ -97,7 +97,10 @@ export function companion(ctx) {
 function namedTarget(ctx, subject, front) {
   const raw = front.fields.evidence ?? '';
   const hash = raw.indexOf('#');
-  if (hash <= 0) {
+  // Same malformed test as check.mjs's own checkNamed: a hash with nothing after it names no case
+  // any more than one with nothing before it names a file, and the two rules have to agree on what
+  // "malformed" means or one of them would pair something the other has already refused.
+  if (hash <= 0 || hash === raw.length - 1) {
     throw new Error(
       `Promise '${front.fields.id ?? subject.path}' names '${raw}' as what keeps it, which is not '<file>#<name>'.`,
     );

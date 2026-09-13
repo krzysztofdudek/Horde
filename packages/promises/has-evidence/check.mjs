@@ -21,6 +21,22 @@ export const ARTEFACT_FIELDS = ['path', 'sha256', 'accepted_by', 'at'];
 const DEFAULT_EVIDENCE = 'auto';
 const DEFAULT_SPEC_SUFFIX = '.test';
 const DEFAULT_PARKED = 'planned, disabled';
+const DEFAULT_NAMED_PATTERNS = 'test(, it(, Scenario:, def test_, func Test';
+
+/**
+ * Where a name is allowed to land under a named pairing: the position a test runner's own report
+ * carries as the case's title, one closed pattern per language convention. A name found anywhere
+ * else in the file — a comment, a variable, a piece of prose — is not evidence, because the same
+ * title is what an e2e run's own report shows, and that is the only place a reader can cross-check
+ * the promise against a real result.
+ */
+const NAMED_PATTERN_MATCHERS = {
+  'test(': (name) => new RegExp(`\\btest\\s*\\(\\s*[\`'"]${escapeRegExp(name)}[\`'"]`),
+  'it(': (name) => new RegExp(`\\bit\\s*\\(\\s*[\`'"]${escapeRegExp(name)}[\`'"]`),
+  'Scenario:': (name) => new RegExp(`Scenario:[ \\t]*${escapeRegExp(name)}[ \\t]*$`, 'm'),
+  'def test_': (name) => new RegExp(`\\bdef\\s+test_${escapeRegExp(toIdentifier(name))}\\s*\\(`),
+  'func Test': (name) => new RegExp(`\\bfunc\\s+Test${escapeRegExp(toPascal(name))}\\s*\\(`),
+};
 
 export function check(ctx) {
   const files = ctx.files;
@@ -31,6 +47,7 @@ export function check(ctx) {
   const setting = String(ctx.config?.evidence ?? DEFAULT_EVIDENCE).trim();
   const suffix = String(ctx.config?.spec_suffix ?? DEFAULT_SPEC_SUFFIX);
   const parked = new Set(splitList(ctx.config?.parked_markers ?? DEFAULT_PARKED));
+  const namedPatterns = namedPatternsOf(ctx.config?.named_case_patterns);
 
   if (!EVIDENCE_SETTINGS.includes(setting)) {
     return [
@@ -55,7 +72,7 @@ export function check(ctx) {
 
   for (const promise of live) {
     if (promise.adapter === 'mirror') checkMirror(promise, others, suffix, out);
-    else if (promise.adapter === 'named') checkNamed(promise, files, out);
+    else if (promise.adapter === 'named') checkNamed(promise, files, out, namedPatterns);
     else if (promise.adapter === 'self') checkSelf(promise, out);
     else if (promise.adapter === 'artefact') checkArtefact(promise, out);
   }
@@ -93,7 +110,7 @@ function checkMirror(promise, others, suffix, out) {
   }
 }
 
-function checkNamed(promise, files, out) {
+function checkNamed(promise, files, out, namedPatterns) {
   const raw = promise.front.fields.evidence;
   const line = promise.front.lineOf.evidence ?? 1;
   const hash = raw.indexOf('#');
@@ -116,11 +133,11 @@ function checkNamed(promise, files, out) {
     });
     return;
   }
-  if (!file.content.includes(name)) {
+  if (!namedPatterns.some((p) => NAMED_PATTERN_MATCHERS[p](name).test(file.content))) {
     out.push({
       file: promise.file.path,
       line,
-      message: `'${target}' contains nothing called '${name}'. The named pairing has to land on something that is actually in the file, or a rename leaves the promise pointing at a gap.`,
+      message: `'${target}' names nothing called '${name}' as a test case's own title. A named pairing has to land on the title a runner's report would show — after ${namedPatterns.join(', ')} — not on the word appearing somewhere else in the file, or a rename leaves the promise pointing at a gap the report never mentions.`,
     });
   }
 }
@@ -230,6 +247,38 @@ function splitList(raw) {
     .split(',')
     .map((s) => s.trim())
     .filter((s) => s !== '');
+}
+
+/**
+ * The named-pairing positions this run accepts: the configured list, narrowed to the closed set
+ * this rule knows how to look for — a repository may turn some off, never invent a new one — and
+ * falling back to the full closed list when narrowing it would leave nothing to check against.
+ */
+function namedPatternsOf(raw) {
+  const configured = splitList(raw ?? DEFAULT_NAMED_PATTERNS).filter((p) => NAMED_PATTERN_MATCHERS[p] !== undefined);
+  return configured.length > 0 ? configured : splitList(DEFAULT_NAMED_PATTERNS);
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** A name as a `snake_case` identifier — the shape a Python `def test_<name>` carries. */
+function toIdentifier(name) {
+  return String(name)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+/** A name as a `PascalCase` identifier — the shape a Go `func Test<Name>` carries. */
+function toPascal(name) {
+  return String(name)
+    .split(/[^a-zA-Z0-9]+/)
+    .filter((w) => w !== '')
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join('');
 }
 
 function stemOf(filePath) {
