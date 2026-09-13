@@ -385,7 +385,7 @@ test('land.mjs: the revert test refuses when this repository\'s test convention 
   assert.match(item.note, /"not looked", not "none"/);
 });
 
-test('land.mjs: the revert test says what it looked for when a diff really carries no new tests', async (t) => {
+test('land.mjs: the revert test refuses a diff that carries no new or changed test and declares no exemption', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   const { branch } = setupLandable(dir, '010');
@@ -397,8 +397,103 @@ test('land.mjs: the revert test says what it looked for when a diff really carri
 
   const r = run('land.mjs', [branch, '--no-gate'], dir);
   const item = byName(r)['revert test'];
+  assert.equal(item.ok, false, item.note);
+  assert.match(item.note, /no new or changed test files in diff \(looked for/);
+  assert.match(item.note, /\*\*No new tests:\*\* <reason>/);
+});
+
+// Rewrites an already-written issue.md to add a header ahead of the acceptance section — the same
+// insertion point addMutateField uses below, generalised to any "**Field:** value" line.
+function addField(dst, line) {
+  const path = join(dst, 'issue.md');
+  const text = readFileSync(path, 'utf8');
+  writeFileSync(path, text.replace('## Acceptance', `${line}\n\n## Acceptance`));
+}
+
+test('land.mjs: a declared "**No new tests:**" reason passes the revert test when the diff adds or changes none', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: dst } = setupLandable(dir, '074');
+  git(['checkout', branch], dir);
+  git(['rm', '-q', 'feature-074.test.mjs'], dir);
+  git(['commit', '-qm', 'no test after all'], dir);
+  git(['checkout', 'mission1/trunk'], dir);
+  addField(dst, '**No new tests:** pure rename, behaviour covered by existing evidence rows');
+
+  const r = run('land.mjs', [branch, '--no-gate'], dir);
+  const item = byName(r)['revert test'];
   assert.equal(item.ok, true, item.note);
-  assert.match(item.note, /no new test files in diff \(looked for/);
+  assert.match(item.note, /declared no-new-tests: pure rename/);
+});
+
+test('land.mjs: a declared "**No new tests:**" header with no reason after it still refuses', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: dst } = setupLandable(dir, '075');
+  git(['checkout', branch], dir);
+  git(['rm', '-q', 'feature-075.test.mjs'], dir);
+  git(['commit', '-qm', 'no test after all'], dir);
+  git(['checkout', 'mission1/trunk'], dir);
+  addField(dst, '**No new tests:**');
+
+  const r = run('land.mjs', [branch, '--no-gate'], dir);
+  const item = byName(r)['revert test'];
+  assert.equal(item.ok, false, item.note);
+  assert.match(item.note, /no new or changed test files in diff/);
+});
+
+// A test file that already existed on the parent branch, modified (not added) on the ticket
+// branch — the case the revert point used to wave through as "no new test files".
+function makeModifiedTestFixture(dir, id) {
+  git(['checkout', 'develop'], dir);
+  writeFileSync(join(dir, `feature-${id}.mjs`), 'export function add(a, b) { return a + b; }\n');
+  writeFileSync(join(dir, `feature-${id}.test.mjs`), [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    `import { add } from './feature-${id}.mjs';`,
+    "test('add', () => { assert.equal(add(1, 2), 3); });",
+    '',
+  ].join('\n'));
+  git(['add', `feature-${id}.mjs`, `feature-${id}.test.mjs`], dir);
+  git(['commit', '-qm', 'existing feature and test'], dir);
+  initHorde(dir); // mission1/trunk branches off this develop tip — inherits both files
+  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
+  addAspect(dir, 'no-marker', {
+    description: 'Source files must not carry an unfinished-work marker.',
+    check: MARKER_CHECK,
+  });
+  addNode(dir, 'feature', { mapping: [`feature-${id}.mjs`, `feature-${id}.test.mjs`], aspects: ['no-marker'] });
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+  commitGraph(dir);
+
+  git(['checkout', '-b', `mission1/t-${id}`], dir);
+  writeFileSync(join(dir, `feature-${id}.mjs`), 'export function add(a, b, c = 0) { return a + b + c; }\n');
+  writeFileSync(join(dir, `feature-${id}.test.mjs`), [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    `import { add } from './feature-${id}.mjs';`,
+    "test('add', () => { assert.equal(add(1, 2), 3); });",
+    "test('add three', () => { assert.equal(add(1, 2, 3), 6); });",
+    '',
+  ].join('\n'));
+  git(['add', `feature-${id}.mjs`, `feature-${id}.test.mjs`], dir);
+  git(['commit', '-qm', `ticket ${id}`], dir);
+  git(['checkout', 'mission1/trunk'], dir);
+  return `mission1/t-${id}`;
+}
+
+test('land.mjs: a modified existing test file is checked for red the same as a new one', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const branch = makeModifiedTestFixture(dir, '076');
+  const dst = writeIssue(dir, 'trunk', '076', {});
+  writeTicketLog(dst);
+  seedQueueItem(dir, 'trunk', '076', branch);
+
+  const r = run('land.mjs', [branch, '--no-gate'], dir);
+  const item = byName(r)['revert test'];
+  assert.equal(item.ok, true, item.note);
+  assert.match(item.note, /feature-076\.test\.mjs: 1 fail/);
 });
 
 // A contract test that pins a surface already true on the parent branch by design — green there
@@ -956,8 +1051,18 @@ function libWithLines(changes) {
   return `${lines.join('\n')}\n`;
 }
 
+// The issue directory tk.mjs new created for a ticket id — its slug isn't known to the caller,
+// so this finds it by the id prefix the same way the fixture's own log-reading assertions do.
+function findIssueDir(dir, team, id) {
+  const base = join(dir, '.horde', 'hordes', 'mission1', 'teams', team, 'issues');
+  const entry = readdirSync(base).find((d) => d.startsWith(`${id}-`));
+  return join(base, entry);
+}
+
 // The parent ticket running on its own branch with one line of the file changed, and the child
-// queued behind it — dependency recorded, so the stack can follow it.
+// queued behind it — dependency recorded, so the stack can follow it. Neither changes a test file
+// (only lib.mjs), so each declares "**No new tests:**" up front — this fixture is about the stack
+// mechanics, not the revert test, and its evidence rows already cover the line each ticket changes.
 function chainOfTwo(dir, { parentLine = 5, childLine = 30 } = {}) {
   initHorde(dir);
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
@@ -971,6 +1076,7 @@ function chainOfTwo(dir, { parentLine = 5, childLine = 30 } = {}) {
   commitGraph(dir);
 
   const parentId = run('tk.mjs', ['new', 'the-first-link', '--title', 'First link', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
+  addField(findIssueDir(dir, 'trunk', parentId), '**No new tests:** a constant\'s value only, covered by the evidence row');
   run('queue.mjs', ['add', parentId], dir);
   const parent = run('queue.mjs', ['set', parentId, 'running', '--agent', 'worker1'], dir).json;
   writeFileSync(join(parent.worktree, 'lib.mjs'), libWithLines({ [parentLine]: 500 }));
@@ -979,6 +1085,7 @@ function chainOfTwo(dir, { parentLine = 5, childLine = 30 } = {}) {
   run('tk.mjs', ['log', parentId, 'ready to land'], dir);
 
   const childId = run('tk.mjs', ['new', 'the-second-link', '--title', 'Second link', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
+  addField(findIssueDir(dir, 'trunk', childId), '**No new tests:** a constant\'s value only, covered by the evidence row');
   run('queue.mjs', ['add', childId, '--depends', parentId], dir);
   const started = run('queue.mjs', ['set', childId, 'running', '--agent', 'worker2', '--on', parentId], dir);
   assert.equal(started.code, 0, started.stderr);
