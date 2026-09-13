@@ -61,7 +61,10 @@ at the end of this brief; read them before your first commit.
 - **Prove it red-green.** New tests fail on the base and pass after — or, if the ticket carries a
   **Mutate:** command, fail once that command has broken your own implementation, and pass again once
   you undo it; the ticket's evidence exists as the charter names it (a test, a scenario, a film, a
-  screenshot) and is runnable by someone who is not you.
+  screenshot) and is runnable by someone who is not you. Run only the test file(s) your change
+  touches, in the foreground, with your shell tool's own timeout set explicitly — never the whole
+  gate or suite: that is landing's job, run once over the merged result, not yours to repeat on
+  every ticket.
 - The repository's rules hold: comments explain why and never narrate history; nothing references tickets
   or plans; protected paths are untouched (`{{protectedPaths}}`).
 - Never `git push`, `git stash`, checkout another branch, or restore a file from a whole-file backup.
