@@ -778,8 +778,14 @@ export function stackedLine(stackOn) {
 // collides with nothing another pick on the same list already holds. `next` answers one at a time,
 // so the running locks are enough for it; a list of things to start at once is not, because
 // nothing on it is running yet and two of its entries could otherwise be handed the same file.
+//
+// `exclude` is a Map of ticket id to the reason that ticket may not be started right now — tick's
+// open-question holds are the one caller. It has to be applied HERE rather than by striking entries
+// off the answer afterwards: an excluded ticket takes no place in `picked` and holds none of the
+// files it declares, so what is behind it moves up instead of being locked out by something that
+// was never going to start.
 export function rankedCandidates(horde, team, {
-  stack = false, cls = null, tree, limit,
+  stack = false, cls = null, tree, limit, exclude = null,
 } = {}) {
   const doc = load(horde, team);
   const cfg = readConfig() || {};
@@ -795,6 +801,8 @@ export function rankedCandidates(horde, team, {
     .map((item, idx) => ({ item, idx }))
     .filter(({ item }) => item.state === 'queued')
     .map(({ item, idx }) => {
+      const heldBy = exclude ? exclude.get(item.ticket) : null;
+      if (heldBy) return { item, idx, eligible: false, reason: heldBy };
       const unmet = (item.dependsOn || []).filter((d) => !dependencySatisfied(horde, doc, team, d));
       // A ticket whose unmet dependencies are all running or landed in this team, each on a
       // branch, can be started now on top of one of those tips instead of after the wave that

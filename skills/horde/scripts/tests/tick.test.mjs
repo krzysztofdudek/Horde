@@ -18,13 +18,13 @@ function git(args, cwd) {
 
 function mkTicket(dir, slug, opts = {}) {
   const {
-    node = 'core', class: cls = 'standard', severity, files, depends,
+    node = 'core', class: cls = 'standard', severity, files, depends, evidence = 'it works',
   } = opts;
   const flags = ['--node', node, '--class', cls];
   if (severity) flags.push('--severity', severity);
   if (files) flags.push('--files', files);
   if (depends) flags.push('--depends', depends);
-  const r = run('tk.mjs', ['new', slug, '--title', slug, ...flags, '--evidence', 'it works'], dir);
+  const r = run('tk.mjs', ['new', slug, '--title', slug, ...flags, '--evidence', evidence], dir);
   if (r.code !== 0) throw new Error(`tk new (${slug}) failed: ${r.stderr}`);
   return r.json.id;
 }
@@ -548,6 +548,172 @@ test('tick.mjs: asks.json that does not exist is an empty in-tray, not a refusal
   const r = tick(dir);
   assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(r.json.askClient, []);
+});
+
+// ---- what an open question holds up ------------------------------------------------------------
+//
+// An open ask is a question the client has not answered yet, and a client away from their desk must
+// not cost the mission the work that question has nothing to do with. Each kind holds exactly what
+// depends on the answer — "stop" the whole dispatch list, "stuck" that one ticket, "charter" every
+// ticket earning an evidence row it names, "lower" that one branch's landing — and tick hands out
+// the rest.
+
+function askOpen(dir, why, kind, extra = []) {
+  const r = run('ask.mjs', ['add', why, '--kind', kind, ...extra], dir);
+  if (r.code !== 0) throw new Error(`ask add (${kind}) failed: ${r.stderr}`);
+  return r.json.id;
+}
+
+function charterEdit(dir, text) {
+  return execFileSync('node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit', '--json'], { cwd: dir, input: text, encoding: 'utf8' });
+}
+
+function heldFor(r, ticket) {
+  return r.json.held.find((h) => h.ticket === ticket);
+}
+
+test('tick.mjs holds: an open "stop" holds the whole dispatch list, and answering it releases it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+
+  const one = mkTicket(dir, 'stop-one', { files: 'src/one.ts' });
+  const two = mkTicket(dir, 'stop-two', { files: 'src/two.ts' });
+  run('queue.mjs', ['add', one], dir);
+  run('queue.mjs', ['add', two], dir);
+  const ask = askOpen(dir, 'the spec runs out at the checkout boundary', 'stop', ['--ticket', one]);
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+
+  await t.test('nothing goes out at all while the question stands', () => {
+    assert.deepEqual(r.json.spawn, []);
+    const entry = r.json.held.find((h) => h.kind === 'stop');
+    assert.ok(entry, `the stop is on the held list (${JSON.stringify(r.json.held)})`);
+    assert.equal(entry.holds, 'dispatch');
+    assert.equal(entry.ask, ask);
+    assert.match(entry.note, /the spec runs out at the checkout boundary/);
+  });
+
+  await t.test('and nothing was cut for it — both items are exactly where they were', () => {
+    assert.equal(itemOf(dir, one).state, 'queued');
+    assert.equal(itemOf(dir, two).state, 'queued');
+  });
+
+  await t.test('the client answering it puts the whole list back out on the next run', () => {
+    const answered = run('ask.mjs', ['answer', ask, 'build the narrow one'], dir);
+    assert.equal(answered.code, 0, answered.stderr);
+    const again = tick(dir);
+    assert.equal(again.code, 0, again.stderr);
+    assert.deepEqual(again.json.held, []);
+    assert.deepEqual(again.json.spawn.map((s) => s.ticket).sort(), [one, two].sort());
+  });
+});
+
+test('tick.mjs holds: an open "stuck" holds that one ticket and the rest of the queue goes out', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+
+  const held = mkTicket(dir, 'going-nowhere', { files: 'src/held.ts' });
+  const moving = mkTicket(dir, 'still-moving', { files: 'src/moving.ts' });
+  run('queue.mjs', ['add', held], dir);
+  run('queue.mjs', ['add', moving], dir);
+  const ask = askOpen(dir, 'fix rounds spent. The gate\'s last words: two cases still fail', 'stuck', ['--ticket', held]);
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(!r.json.spawn.some((s) => s.ticket === held), 'the ticket the question is about is not handed out');
+  assert.ok(r.json.spawn.some((s) => s.ticket === moving), 'everything else is');
+  const entry = heldFor(r, held);
+  assert.ok(entry, `the held ticket says which question holds it (${JSON.stringify(r.json.held)})`);
+  assert.equal(entry.kind, 'stuck');
+  assert.equal(entry.ask, ask);
+  assert.equal(entry.holds, 'dispatch');
+  assert.equal(itemOf(dir, held).state, 'queued', 'and it was left exactly as it stood');
+});
+
+test('tick.mjs holds: an open "charter" holds the tickets earning the evidence rows it names, and no others', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+
+  charterEdit(dir, [
+    '# Mission · m', '', '## Acceptance — the evidence catalogue', '',
+    '| id | evidence | node | reproduced by |', '|---|---|---|---|',
+    '| E1 | the suite is green | core | |',
+    '| E2 | the page renders | core | |', '',
+  ].join('\n'));
+
+  // "E1: …" is the documented shape: the id fills the ticket's Evidence field and the rest is the
+  // acceptance line a verifier reproduces, so one flag says both.
+  const onE1 = mkTicket(dir, 'earns-e1', { files: 'src/e1.ts', evidence: 'E1: the suite is green' });
+  const onE2 = mkTicket(dir, 'earns-e2', { files: 'src/e2.ts', evidence: 'E2: the page renders' });
+  const noRow = mkTicket(dir, 'earns-no-row', { files: 'src/plain.ts' });
+  for (const id of [onE1, onE2, noRow]) run('queue.mjs', ['add', id], dir);
+  const ask = askOpen(dir, 'is E2 still promised? nobody can reproduce that page', 'charter');
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+
+  await t.test('the ticket earning the named row waits', () => {
+    assert.ok(!r.json.spawn.some((s) => s.ticket === onE2));
+    const entry = heldFor(r, onE2);
+    assert.ok(entry, `it says which question holds it (${JSON.stringify(r.json.held)})`);
+    assert.equal(entry.kind, 'charter');
+    assert.equal(entry.ask, ask);
+  });
+
+  await t.test('a ticket earning a row the question does not name goes out, and so does one earning no row at all', () => {
+    assert.ok(r.json.spawn.some((s) => s.ticket === onE1));
+    assert.ok(r.json.spawn.some((s) => s.ticket === noRow));
+    assert.equal(r.json.held.length, 1, 'one question, one ticket held');
+  });
+
+  await t.test('a charter question naming no row at all holds nothing', () => {
+    const fresh = makeRepo();
+    t.after(() => quietRm(fresh));
+    initHorde(fresh);
+    const id = mkTicket(fresh, 'untouched', { files: 'src/u.ts' });
+    run('queue.mjs', ['add', id], fresh);
+    askOpen(fresh, 'should the goal paragraph say "checkout" or "basket"?', 'charter');
+    const out = tick(fresh);
+    assert.equal(out.code, 0, out.stderr);
+    assert.deepEqual(out.json.held, []);
+    assert.ok(out.json.spawn.some((s) => s.ticket === id));
+  });
+});
+
+test('tick.mjs holds: an open "lower" holds that branch at the gate and nothing else', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+
+  const waiting = mkTicket(dir, 'weakens-a-rule', { files: 'src/w.ts' });
+  const moving = mkTicket(dir, 'plain-work', { files: 'src/p.ts' });
+  run('queue.mjs', ['add', waiting], dir);
+  run('queue.mjs', ['add', moving], dir);
+  const running = run('queue.mjs', ['set', waiting, 'running', '--agent', 'w'], dir);
+  git(['-C', running.json.worktree, 'commit', '--allow-empty', '-qm', 'work'], dir);
+  run('queue.mjs', ['set', waiting, 'landed'], dir);
+  const ask = askOpen(dir, 'this cannot pass without suppressing the rule — may we?', 'lower', ['--ticket', waiting, '--aspect', 'plain-language']);
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+
+  await t.test('the gate is never asked about that branch, and no round is counted against it', () => {
+    assert.ok(!r.json.landed.some((l) => l.ticket === waiting), `nothing gated it (${JSON.stringify(r.json.landed)})`);
+    assert.equal(itemOf(dir, waiting).state, 'landed', 'the item is exactly where it was');
+    const entry = heldFor(r, waiting);
+    assert.ok(entry, `it says which question holds it (${JSON.stringify(r.json.held)})`);
+    assert.equal(entry.kind, 'lower');
+    assert.equal(entry.ask, ask);
+    assert.equal(entry.holds, 'landing', 'a "lower" holds the landing, never the queue');
+  });
+
+  await t.test('the queue keeps moving underneath it', () => {
+    assert.ok(r.json.spawn.some((s) => s.ticket === moving));
+  });
 });
 
 test('tick.mjs: two ticks racing on one repository bill one worker once and leave one branch behind', async (t) => {

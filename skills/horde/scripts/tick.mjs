@@ -41,10 +41,11 @@ import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine,
 } from './queue.mjs';
 import {
-  findTicket, parseField, changesRoundInfo, transitionStatus,
+  findTicket, parseField, changesRoundInfo, transitionStatus, ticketEvidence,
 } from './tk.mjs';
 import { readLandResult, acquireGateLock, gateLockWaitMs } from './land.mjs';
 import { asksPath, loadAsks, addAsk } from './ask.mjs';
+import { parseEvidenceRows, mentionsEvidenceId } from './wave.mjs';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 // Sub-teams are gone, so there is one queue and it is the trunk's. Nothing here takes --team: a
@@ -60,9 +61,13 @@ what to start now, and say whether the queue has emptied. Then it exits — noth
 runs.
 
 --json prints {tree, branch, sha, spawn: [{ticket, model, brief}], judge: [{ticket, pairs, brief}],
-askClient: [{id, kind, why}], close: <bool>}. Everything on "spawn" has had its branch and worktree
-cut already, so the brief command on it renders against a tree that exists; tick does not start the
-agent, because the caller is what starts agents.
+askClient: [{id, kind, why}], held: [{ticket, ask, kind, holds, note}], close: <bool>}. Everything
+on "spawn" has had its branch and worktree cut already, so the brief command on it renders against a
+tree that exists; tick does not start the agent, because the caller is what starts agents.
+
+An open ask holds only what depends on its answer, and "held" says what each one held: "stop" the
+whole dispatch list, "stuck" that one ticket, "charter" every ticket earning an evidence row the
+question names, "lower" that one branch's landing. Everything else goes out as usual.
 
 --stack also hands out a ticket whose unmerged dependencies are all on a branch in this horde,
 started from one of those tips. Such an entry carries the line "STACKED, parent t-NNN unmerged" so
@@ -112,6 +117,80 @@ function fileAsk(horde, { kind, ticket, why, log }) {
   if (existing) return { ask: existing, filed: false };
   const ask = addAsk(horde, { kind, ticket, why, log });
   return { ask, filed: true };
+}
+
+// ---- what an open question holds up ---------------------------------------------------------
+//
+// An open ask is a question the client has not answered yet, and a client who is not at their desk
+// must not cost the mission the work that question has nothing to do with. So each kind holds up
+// exactly what depends on the answer, and tick hands out the rest:
+//
+//   stop     the dispatch list, whole. A worker ran out of spec, so the ground under the next
+//            ticket is the thing being asked about — nothing new goes out until the client rules.
+//            What is already running still settles and what is already green still lands.
+//   stuck    that one ticket. Its fix rounds are spent; the rest of the queue never knew.
+//   charter  every ticket that earns an evidence row the question names, read by id off the
+//            charter's own catalogue the way `charter edit` reads it. A ticket the question does
+//            not name goes out as usual, and a question naming no row holds nothing.
+//   lower    the landing of that one branch, and nothing else. The work is done and the only
+//            question is whether a rule may be weakened to let it in, so the branch waits at the
+//            gate while the queue keeps moving — and the fix rounds a red law guard would spend on
+//            it are not spent on a question only the client can answer.
+//
+// Nothing here writes: a hold is a fact about what is open right now, recomputed every run, so an
+// answered question releases what it held on the next tick with no state to unwind.
+
+function firstLine(text) {
+  return String(text || '').split('\n')[0].trim();
+}
+
+function holdNote(ask, what) {
+  return `${what} while ask ${ask.id} (${ask.kind}) is open: ${firstLine(ask.why)}`;
+}
+
+// The catalogue ids a "charter" question names. Read by word-boundary match against the charter's
+// own rows — the same reading horde.mjs's `charter edit --ask` already does, so "E1" means the
+// same row in the question there and here.
+function rowsNamedBy(rowIds, ask) {
+  return rowIds.filter((id) => mentionsEvidenceId(ask.why || '', id));
+}
+
+function askHolds(horde, doc) {
+  const open = loadAsksSafe(horde).items.filter((a) => a && a.state === 'open');
+  const everything = open.filter((a) => a.kind === 'stop');
+  const dispatch = new Map();
+  const landing = new Map();
+
+  for (const ask of open) {
+    if (!ask.ticket) continue;
+    if (ask.kind === 'stuck') dispatch.set(String(ask.ticket), ask);
+    if (ask.kind === 'lower') landing.set(String(ask.ticket), ask);
+  }
+
+  const charterAsks = open.filter((a) => a.kind === 'charter');
+  if (charterAsks.length) {
+    const rowIds = parseEvidenceRows(readText(hordePath(horde, 'charter.md')) || '')
+      .map((r) => r.id).filter(Boolean);
+    const naming = charterAsks
+      .map((ask) => ({ ask, ids: rowsNamedBy(rowIds, ask) }))
+      .filter((n) => n.ids.length);
+    for (const item of doc.items) {
+      if (dispatch.has(item.ticket)) continue;
+      const ticket = findTicket(horde, item.ticket);
+      if (!ticket) continue;
+      const earns = ticketEvidence(ticket.text);
+      const by = naming.find((n) => earns.some((id) => n.ids.includes(id)));
+      if (by) dispatch.set(item.ticket, by.ask);
+    }
+  }
+
+  return { everything, dispatch, landing };
+}
+
+function heldEntry(ask, { ticket, holds, note }) {
+  return {
+    ticket: ticket || null, ask: ask.id, kind: ask.kind, holds, note,
+  };
 }
 
 // ---- the queue, read once and named when it is broken ------------------------------------
@@ -169,13 +248,24 @@ function assertLandedBranches(horde, doc, root) {
   }
 }
 
-function landTheLanded(horde, cfg, root) {
+function landTheLanded(horde, cfg, root, holds) {
   const doc = readQueue(horde);
   assertLandedBranches(horde, doc, root);
 
   const plan = [];
+  const held = [];
   for (const item of doc.items) {
     if (item.state !== 'landed') continue;
+    // The one thing a "lower" question holds: this branch's landing. The gate is not asked, so no
+    // round is counted and the item stays exactly where it is — a red law guard would otherwise
+    // spend this ticket's fix rounds on a question no worker can answer.
+    const heldBy = holds.landing.get(item.ticket);
+    if (heldBy) {
+      held.push(heldEntry(heldBy, {
+        ticket: item.ticket, holds: 'landing', note: holdNote(heldBy, `${item.ticket} waits at the gate`),
+      }));
+      continue;
+    }
     if (!item.branch) {
       plan.push({ ticket: item.ticket, action: 'skipped', note: 'landed with no branch — nothing to put through the gate' });
       continue;
@@ -274,7 +364,7 @@ function landTheLanded(horde, cfg, root) {
     });
   }
 
-  return results;
+  return { results, held };
 }
 
 // ---- 3. the dispatch list ------------------------------------------------------------------
@@ -303,8 +393,27 @@ function priorRounds(horde, ticketId) {
   return { prior: Math.max(0, info.round - 1), ticket, info };
 }
 
-function dispatch(horde, cfg, root, flags) {
+function dispatch(horde, cfg, root, flags, holds) {
   const doc = readQueue(horde);
+  const held = [];
+
+  // "stop" is the one kind that holds the list whole, and it holds it before anything is ranked:
+  // no branch is cut, no worktree is made, nothing is written. A later run with the question
+  // answered starts from exactly the state this one found.
+  if (holds.everything.length) {
+    for (const ask of holds.everything) {
+      held.push(heldEntry(ask, { holds: 'dispatch', note: holdNote(ask, 'nothing new goes out') }));
+    }
+    return { out: [], held };
+  }
+
+  const exclude = new Map();
+  for (const [ticket, ask] of holds.dispatch) {
+    const note = holdNote(ask, `${ticket} is not handed out`);
+    exclude.set(ticket, note);
+    held.push(heldEntry(ask, { ticket, holds: 'dispatch', note }));
+  }
+
   const parallelism = Number(cfg.parallelism ?? 6);
   const running = doc.items.filter((i) => i.state === 'running').length;
   // The knob says how many workers run at once, so what is already running counts against it —
@@ -312,7 +421,7 @@ function dispatch(horde, cfg, root, flags) {
   // mean nothing at all.
   const budget = Math.max(0, parallelism - running);
   const { picked } = rankedCandidates(horde, TEAM, {
-    stack: !!flags.stack, tree: root, limit: budget,
+    stack: !!flags.stack, tree: root, limit: budget, exclude,
   });
 
   const out = [];
@@ -337,7 +446,7 @@ function dispatch(horde, cfg, root, flags) {
       round: prior,
     });
   }
-  return out;
+  return { out, held };
 }
 
 // Every prose pair the landing gate handed back rather than judged. Only under `config.judge:
@@ -405,23 +514,26 @@ function runOnce(horde, cfg, flags, runner) {
   try {
     // Read before anything is written: a queue.json caught half-written refuses here, cleanly,
     // naming the file, while every other read below is safe because this one passed.
-    readQueue(horde);
+    // The holds are worked out off this same read, once, so the landing gate and the dispatch list
+    // rule on one in-tray rather than on two reads of a file the client could answer between.
+    const holds = askHolds(horde, readQueue(horde));
     const reconciled = reconcileRunning(horde, TEAM, { tree: root });
-    const landed = landTheLanded(horde, cfg, root);
-    const spawn = dispatch(horde, cfg, root, flags);
+    const landed = landTheLanded(horde, cfg, root, holds);
+    const spawn = dispatch(horde, cfg, root, flags, holds);
 
     const doc = readQueue(horde);
     const judge = judgeList(horde, cfg, doc);
 
     const close = doc.items.every((i) => i.state === 'merged');
-    const external = runner === 'external' ? externalStart(horde, cfg, spawn, root) : [];
+    const external = runner === 'external' ? externalStart(horde, cfg, spawn.out, root) : [];
 
     return withProvenance({
       horde,
       runner,
       reconciled,
-      landed,
-      spawn: spawn.map((s) => ({
+      landed: landed.results,
+      held: [...landed.held, ...spawn.held],
+      spawn: spawn.out.map((s) => ({
         ticket: s.ticket, model: s.model, brief: s.brief, stacked: s.stacked, worktree: s.worktree, branch: s.branch,
       })),
       judge,
@@ -439,6 +551,7 @@ function render(out) {
   const lines = [];
   for (const r of out.reconciled) lines.push(`reconciled ${r.ticket} -> ${r.state} · ${r.note}`);
   for (const l of out.landed) lines.push(`gate ${l.ticket}: ${l.action} · ${l.note}`);
+  for (const h of out.held) lines.push(`held (${h.holds}): ${h.note}`);
   if (out.spawn.length) {
     lines.push(`spawn (${out.spawn.length}):`);
     for (const s of out.spawn) {
@@ -446,7 +559,9 @@ function render(out) {
       if (s.stacked) lines.push(`  ${s.stacked}`);
     }
   } else {
-    lines.push('spawn: (nothing ready)');
+    lines.push(out.held.some((h) => h.holds === 'dispatch' && !h.ticket)
+      ? 'spawn: (held — see above)'
+      : 'spawn: (nothing ready)');
   }
   for (const j of out.judge) lines.push(`judge ${j.ticket}: ${j.pairs.length} prose pair(s) waiting`);
   for (const a of out.askClient) lines.push(`ask client ${a.id} (${a.kind}): ${a.why}`);

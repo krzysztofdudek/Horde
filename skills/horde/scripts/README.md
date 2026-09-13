@@ -647,6 +647,11 @@ marker, a moved `review_by`, an aspect detached from a node — requires `--aspe
 
 State: `hordes/<horde>/asks.json` (source of truth) + `asks.md` (rendered).
 
+Filing one never touches the queue. What an open one holds up is `tick.mjs`'s ruling, and it holds
+only what depends on the answer — `stop` the dispatch list, `stuck` that ticket, `charter` the
+tickets earning the evidence rows it names, `lower` that branch's landing. The table is in the
+`tick.mjs` section below.
+
 ## escalate.mjs — the recurring-answer scan
 
 Everything else the old escalation channel did — a build decision (a contract, a boundary, a
@@ -1033,6 +1038,26 @@ then it exits — nothing lives between runs, so there is no roster and no minut
    an empty in-tray, never a refusal.
 4. **Close.** A queue holding nothing but `merged` items gives `close: true` and the command that
    closes the wave. Tick prints that command and never runs it.
+
+**An open question holds only what depends on its answer.** A client away from their desk does not
+cost the mission the work their question has nothing to do with, so each kind of open ask holds one
+thing and tick hands out the rest:
+
+| open ask  | what it holds                                                      | what still moves |
+|---|---|---|
+| `stop`    | the dispatch list, whole — nothing new goes out                    | what is already running still settles, what is already green still lands |
+| `stuck`   | that one ticket                                                    | every other ticket in the queue |
+| `charter` | every ticket earning an evidence row the question names            | tickets earning rows it does not name, and tickets earning none |
+| `lower`   | that one branch's landing — the gate is not asked, no round counted | the whole queue, that ticket's own branch included once the answer comes |
+
+A `charter` question names its rows by id (`E1`, `E2`) in its own text, read off the charter's
+catalogue exactly the way `charter edit --ask` reads it; one naming no row holds nothing. A `lower`
+question is why the gate is not even asked about its branch: the law guard would come back red on a
+rule only the client can agree to weaken, and the ticket would spend its fix rounds on a question no
+worker can answer. Nothing here writes: a hold is worked out fresh every run from what is open right
+now, so an answered question releases what it held on the next tick with no state to unwind. `held`
+in the JSON is one entry per thing held — `{ticket, ask, kind, holds, note}`, where `holds` is
+`dispatch` or `landing` and `ticket` is `null` for the `stop` that holds the list itself.
 
 **Under `session` (the default), tick never spawns — the caller does.** `--runner` only names who
 the caller is, and only `external` changes what this script does: with nobody in front of it,
