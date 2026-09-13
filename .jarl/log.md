@@ -167,3 +167,4 @@
 - 2026-09-13 18:38 · filed 079 · status mjs powinien widziec branch bez wpisu w kolejce
 - 2026-09-13 18:38 · filed 080 · land mjs moglby scalac paczke biletow pod jednym przebiegiem bramki
 - 2026-09-13 18:38 · filed 081 · recenzja przed done jako odmowa narzedzia w Hordzie
+- 2026-09-13 18:39 · 077 review approve · Reviewer flagged Important (brief.mjs's HORDE_TEST_ROLES_DIR override) but the issue's own acceptance line explicitly names this as one of two sanctioned approaches ('kopii... albo na atrapę, którą brief.mjs czyta przez wstrzykniętą ścieżkę') — this IS the injected-path mock it names, not undeclared scope. Reviewer confirmed no-op for any normal invocation, no other read of the env var, pure fallback. Reproduced 3/3 green on node --test tests/brief.test.mjs tests/docs.test.mjs. Scope otherwise: brief.mjs + brief.test.mjs + helpers.mjs (env passthrough) + expected CHANGELOG.md. Approving; reeve's call per the jarl's request to weigh this one directly.
