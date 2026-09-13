@@ -1,6 +1,6 @@
 # 065 · product language s description omits two of the four
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard

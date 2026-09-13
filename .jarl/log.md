@@ -126,3 +126,8 @@
 - 2026-09-13 17:57 · 053 evidence · npm test: 901 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha 94c51cc
 - 2026-09-13 17:57 · 053 → done · merged
 - 2026-09-13 17:57 · merged 053 94c51cc
+- 2026-09-13 18:01 · 054 → in-progress · worker raised, wave 3
+- 2026-09-13 18:01 · 067 → in-progress · worker raised, wave 3
+- 2026-09-13 18:01 · 014 → in-progress · worker raised, wave 3
+- 2026-09-13 18:01 · 015 → in-progress · worker raised, wave 3
+- 2026-09-13 18:01 · 065 → in-progress · worker raised, wave 3

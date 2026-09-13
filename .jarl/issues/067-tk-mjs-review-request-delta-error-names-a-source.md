@@ -1,6 +1,6 @@
 # 067 · tk mjs review request delta error names a source
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard

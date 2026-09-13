@@ -1,6 +1,6 @@
 # 015 · has evidence named dopasowanie
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard

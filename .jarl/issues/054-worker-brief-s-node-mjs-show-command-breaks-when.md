@@ -1,6 +1,6 @@
 # 054 · worker brief s node mjs show command breaks when
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 1
 **Tier:** standard
