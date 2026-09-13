@@ -65,7 +65,7 @@ at the end of this brief; read them before your first commit.
 - The repository's rules hold: comments explain why and never narrate history; nothing references tickets
   or plans; protected paths are untouched (`{{protectedPaths}}`).
 - Never `git push`, `git stash`, checkout another branch, or restore a file from a whole-file backup.
-  Under `.horde/` you write only `{{issueDir}}/log.md`, and only through `tk.mjs log`.
+  Under `.horde/` you write only `hordes/{{horde}}/{{issueDir}}/log.md`, and only through `tk.mjs log`.
 - The repository's own instructions (its CLAUDE.md and AGENTS.md) apply to you in full. Run
   `yg check --approve --only-deterministic` in your worktree first — the deterministic cache is not
   committed and starts empty here, and rebuilding it is free and needs no key. Follow the `yg prime`
