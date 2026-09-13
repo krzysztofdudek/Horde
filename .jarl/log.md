@@ -163,3 +163,7 @@
 - 2026-09-13 18:33 · filed 078 · brief mjs powinien pisac brief do pliku zamiast tylko stdout
 - 2026-09-13 18:33 · 075 → in-progress · worker raised, ruling confirmed by repeated stalls
 - 2026-09-13 18:33 · 078 → in-progress · worker raised, portability ruling
+- 2026-09-13 18:38 · 075 review approve · Reviewer: acceptance met literally — worker.md's Prove-it-red-green bullet now covers every clause (scoped to touched test file(s), foreground, explicit shell-tool timeout, full suite left to landing/merger). Verified red on base worker.md / green on branch via docs.test.mjs test #9, run directly. Scope: worker.md + expected CHANGELOG.md + docs.test.mjs only. No findings beyond nominal Minor (none).
+- 2026-09-13 18:38 · filed 079 · status mjs powinien widziec branch bez wpisu w kolejce
+- 2026-09-13 18:38 · filed 080 · land mjs moglby scalac paczke biletow pod jednym przebiegiem bramki
+- 2026-09-13 18:38 · filed 081 · recenzja przed done jako odmowa narzedzia w Hordzie
