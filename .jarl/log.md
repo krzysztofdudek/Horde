@@ -1,0 +1,43 @@
+# Log
+
+- 2026-09-13 15:45 · opened · Poprawki do Hordy 6.0.0: dokumentacja i kod mówią to samo, kruchości usunięte, luki wobec wizji misji domknięte, koszt usunięty w całości. Wydanie 6.0.0 zrobione od nowa jako jedyne.
+- 2026-09-13 15:46 · filed 001 · tick nigdy nie spawnia
+- 2026-09-13 15:46 · filed 002 · brief konsultanta port z wersja
+- 2026-09-13 15:46 · filed 003 · resztki modelu podzespolow
+- 2026-09-13 15:46 · filed 004 · straz konfliktu martwy wyjatek
+- 2026-09-13 15:46 · filed 005 · escalate liczy zamiast porownywac
+- 2026-09-13 15:46 · filed 006 · retro losowanie bez ziarna
+- 2026-09-13 15:46 · filed 007 · retro dopasowanie jednostki przez includes
+- 2026-09-13 15:46 · filed 008 · jeden parser na dokument
+- 2026-09-13 15:46 · filed 009 · fail w bibliotece
+- 2026-09-13 15:46 · filed 010 · kolejka bez blokady
+- 2026-09-13 15:46 · filed 011 · bramki z pierwszego ekosystemu
+- 2026-09-13 15:46 · filed 012 · reset trunku po cichu
+- 2026-09-13 15:46 · filed 013 · stale maja pochodzenie
+- 2026-09-13 15:46 · filed 014 · test rewersji tylko nowe pliki
+- 2026-09-13 15:46 · filed 015 · has evidence named dopasowanie
+- 2026-09-13 15:46 · filed 016 · dokumentacja i kod w jednym tescie
+- 2026-09-13 15:46 · filed 017 · reconcile bez wpisu w logu
+- 2026-09-13 15:46 · filed 018 · nieznana polityka jakosci domyslnie autonomous
+- 2026-09-13 15:46 · filed 019 · git polyka bledy
+- 2026-09-13 15:46 · filed 020 · katalog obietnic zgadywany
+- 2026-09-13 15:46 · filed 021 · nic co chroni nie slabnie
+- 2026-09-13 15:46 · filed 022 · dowod wykonany na czubku
+- 2026-09-13 15:46 · filed 023 · obietnica zyje
+- 2026-09-13 15:46 · filed 024 · pola klasa i wykonawca obietnicy
+- 2026-09-13 15:46 · filed 025 · pushback na bilet spoza charteru
+- 2026-09-13 15:46 · filed 026 · bilet prototyp
+- 2026-09-13 15:46 · filed 027 · ksiega misji czytelna dla nastepnej
+- 2026-09-13 15:46 · filed 028 · pytania nie blokuja reszty
+- 2026-09-13 15:46 · filed 029 · los biletu w misji
+- 2026-09-13 15:46 · filed 030 · sygnal rozmiaru
+- 2026-09-13 15:46 · filed 031 · warstwa none jest glosna
+- 2026-09-13 15:46 · filed 032 · granica srodowiska w skill
+- 2026-09-13 15:46 · filed 033 · e2e rodziny dla kontraktu
+- 2026-09-13 15:46 · filed 034 · changelog 6 0 0 i re release
+- 2026-09-13 15:46 · filed 035 · wip znika przed merge
+- 2026-09-13 15:46 · filed 036 · koszt wylatuje w calosci
+- 2026-09-13 15:46 · decided koszt-wylatuje
+- 2026-09-13 15:46 · decided jedno-wydanie-6-0-0
+- 2026-09-13 15:46 · decided srodowisko-poza-horda
+- 2026-09-13 15:46 · decided jarl-tylko-na-galezi
