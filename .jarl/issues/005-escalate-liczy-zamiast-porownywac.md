@@ -1,6 +1,6 @@
 # 005 · escalate liczy zamiast porownywac
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Model:** sonnet

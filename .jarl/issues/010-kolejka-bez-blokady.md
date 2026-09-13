@@ -1,6 +1,6 @@
 # 010 · kolejka bez blokady
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 1
 **Model:** sonnet

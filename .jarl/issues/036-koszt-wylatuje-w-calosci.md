@@ -1,6 +1,6 @@
 # 036 · koszt wylatuje w calosci
 
-**Status:** open
+**Status:** in-progress
 **Kind:** cleanup
 **Priority:** 1
 **Model:** sonnet

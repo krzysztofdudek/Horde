@@ -41,3 +41,8 @@
 - 2026-09-13 15:46 · decided jedno-wydanie-6-0-0
 - 2026-09-13 15:46 · decided srodowisko-poza-horda
 - 2026-09-13 15:46 · decided jarl-tylko-na-galezi
+- 2026-09-13 15:47 · 036 → in-progress · worker raised, wave 1
+- 2026-09-13 15:47 · 002 → in-progress · worker raised, wave 1
+- 2026-09-13 15:47 · 004 → in-progress · worker raised, wave 1
+- 2026-09-13 15:47 · 010 → in-progress · worker raised, wave 1
+- 2026-09-13 15:47 · 005 → in-progress · worker raised, wave 1

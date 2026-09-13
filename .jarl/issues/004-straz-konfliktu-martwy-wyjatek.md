@@ -1,6 +1,6 @@
 # 004 · straz konfliktu martwy wyjatek
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 1
 **Model:** sonnet
