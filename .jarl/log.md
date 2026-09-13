@@ -159,3 +159,5 @@
 - 2026-09-13 18:25 · merged 036 95904ce75bf23422ae01af3f64ef34a544bb7f5d
 - 2026-09-13 18:27 · 014 review approve · Reviewer: acceptance met literally — checkRevertTest now filters on A or M status (was A only), routing a modified existing test through the same red-check path as a new one; noNewTestsReason requires a non-empty reason after the header, empty/missing falls through to refusal. Verified red on parent (4 fail, exactly the 4 new/changed tests) / green on branch (52/0) via land.test.mjs, independently reproduced. Scope: land.mjs + expected CHANGELOG.md + land.test.mjs. chainOfTwo fixture fix confirmed honest, not a weakened assertion. Minor: README.md stale section already filed as 074; issue file's own Status field still in-progress (bookkeeping, not code).
 - 2026-09-13 18:32 · filed 077 · brief test mutuje prawdziwy plik roli, powodując losowe czerwone CI
+- 2026-09-13 18:32 · 077 → in-progress · worker raised, red CI fix
+- 2026-09-13 18:33 · filed 078 · brief mjs powinien pisac brief do pliku zamiast tylko stdout

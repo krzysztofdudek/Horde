@@ -1,6 +1,6 @@
 # 077 · brief test mutuje prawdziwy plik roli, powodując losowe czerwone CI
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 1
 **Tier:** standard
