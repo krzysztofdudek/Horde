@@ -561,6 +561,37 @@ test('product-language\'s yg-aspect.yaml description names every category label 
   assert.deepEqual(missing, [], `description names no word for: ${missing.join(', ')}\ndescription: "${descriptionLine[1]}"`);
 });
 
+// ---- issue 063: CHANGELOG's version note matches node.mjs's actual floor, never a major ceiling -
+
+// node.mjs checks the graph's machine documents by schema name (`parsed.schema === schema`), never
+// by comparing version numbers — YG_DOCUMENTS_AFTER names only the floor a refusal message points
+// an adopter at. Read live rather than hardcoded, so a future floor bump is caught here too.
+function ygDocumentsAfter() {
+  const text = readText(join(SCRIPTS_DIR, 'node.mjs'));
+  const m = /const YG_DOCUMENTS_AFTER = '([\d.]+)';/.exec(text);
+  assert.ok(m, 'node.mjs no longer declares YG_DOCUMENTS_AFTER the way this test expects');
+  return m[1];
+}
+
+function topChangelogSection(changelog) {
+  const start = changelog.search(/^## \[\d+\.\d+\.\d+\]/m);
+  assert.ok(start !== -1, 'CHANGELOG.md has no top "## [x.y.z]" section');
+  const rest = changelog.slice(start);
+  const next = rest.slice(1).search(/^## \[/m);
+  return next === -1 ? rest : rest.slice(0, next + 1);
+}
+
+test('CHANGELOG\'s top released section states the Yggdrasil floor as "<version> or newer", never a same-major ceiling', () => {
+  const floor = ygDocumentsAfter();
+  const topSection = topChangelogSection(readText(join(REPO_ROOT, 'CHANGELOG.md')));
+
+  assert.match(topSection, new RegExp(`Yggdrasil ${floor.replace(/\./g, '\\.')} or newer`),
+    `top released section does not state the Yggdrasil floor as "${floor} or newer", matching node.mjs's own YG_DOCUMENTS_AFTER`);
+  assert.doesNotMatch(topSection, /\bsame major\b/i,
+    'top released section claims a same-major-only gate — node.mjs checks the documents\' schema name, '
+    + 'not a version-number comparison, so a newer major keeps working');
+});
+
 // ---- issue 016: every documented <script>.mjs command/flag exists in that script's own USAGE --
 
 // Issue 001 and issue 002 were one class of bug: a doc line invoking a subcommand or flag the
