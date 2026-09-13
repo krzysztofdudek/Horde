@@ -338,7 +338,7 @@ test('brief.mjs legislate: one territory\'s own law, and nothing from anyone els
   await t.test('it says which branch its edits land on, and that lowering is never its move', () => {
     assert.match(brief, /mission1\/legislate-heart/);
     assert.match(brief, /Taking a rule away, or making it\s+bite less, is the opposite direction and is never yours/);
-    assert.match(brief, /node\.mjs promote <rule> --by heart/);
+    assert.match(brief, /node\.mjs promote <rule> --by mission1-legislate-heart-1/, 'promote credits the legislator\'s own name, not the territory');
     assert.match(brief, /\*\*2\*\* closed waves reaching nothing/, 'config.law.retireAfterWaves, at its default');
   });
 
