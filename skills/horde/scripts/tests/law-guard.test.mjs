@@ -56,7 +56,10 @@ function baseGraph(dir, { scope = WIDE_SCOPE, status = 'enforced', reviewBy = '2
 
 // A repository with a graph on its trunk and a ticket branch that has not changed the graph yet.
 // `mutate` is what this branch does to the law; it runs inside the branch's own worktree.
-function lawFixture(dir, id, mutate, { declared = DECLARED, graph = {}, extraBase = null } = {}) {
+function lawFixture(dir, id, mutate, {
+  declared = DECLARED, graph = {}, extraBase = null,
+  noNewTests = 'synthetic law-guard fixture — proves the law guard, not the revert test',
+} = {}) {
   initHorde(dir);
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
   run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
@@ -93,7 +96,9 @@ function lawFixture(dir, id, mutate, { declared = DECLARED, graph = {}, extraBas
     '**Status:** landed',
     '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',
     `**Depends on:** none · **Branch:** ${branch}`,
-    `**Files:** ${declared.join(', ')}`, '',
+    `**Files:** ${declared.join(', ')}`,
+    ...(noNewTests ? [`**No new tests:** ${noNewTests}`] : []),
+    '',
     '## Acceptance — evidence', '', '- [ ] does the thing', '',
   ].join('\n'));
   writeFileSync(join(dst, 'log.md'), `- ${new Date().toISOString()} status: landed — ready to land\n`);
