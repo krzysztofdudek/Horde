@@ -90,3 +90,4 @@
 - 2026-09-13 16:25 · 052 → in-progress · worker raised, wave 2
 - 2026-09-13 16:25 · 053 → in-progress · worker raised, wave 2
 - 2026-09-13 16:42 · 051 review approve · Reviewer: acceptance met literally, new docs.test.mjs test verified red on base architect.md / green on branch's fix, scope limited to architect.md + expected CHANGELOG.md + the new test file. Minor only: regression test is intentionally general across reference/roles/, CHANGELOG entry checked against register rules.
+- 2026-09-13 16:46 · 042 review approve · Reviewer: acceptance met literally — tk.mjs has no review subcommand, replaced with real log+status commands matching drill.mjs's reviewLines() format. Verified red on base review.md / green on branch's fix via docs.test.mjs. Scope: only review.md + CHANGELOG.md + docs.test.mjs touched. Minor only: new ### Fixed subsection is first of its kind under [6.0.0]; the doc-block regex parser is narrow but acceptable.
