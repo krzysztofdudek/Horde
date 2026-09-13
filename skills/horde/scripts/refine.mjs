@@ -814,7 +814,18 @@ function stepReview(horde, flags) {
   const rulings = readHandback(reviewPath(horde), "the architect's ruling");
 
   if (rulings === null) {
-    const plan = buildPlan(horde, team, cfg, { tree: info.path });
+    // buildPlan reads every ticket, port and the team's own queue.json to derive the DAG — any of
+    // that can be unreadable (a queue.json caught half-written, a ticket in a shape it cannot
+    // parse) for a reason that has nothing to do with a dependency circle, which is the only case
+    // handled below. wave.mjs's planAtStart guards the same call for the same reason (a plan that
+    // cannot be built there must not block a wave from opening); review cannot proceed either way,
+    // but it can still refuse with a reason instead of crashing raw.
+    let plan;
+    try {
+      plan = buildPlan(horde, team, cfg, { tree: info.path });
+    } catch (e) {
+      fail(`the plan could not be built: ${e.message}\nFix whatever ticket, port, or queue data this points at, then run this step again.`);
+    }
     if (plan.cycles.length && plan.cycles[0] && plan.cycles[0].length) {
       fail(
         `the tickets depend on each other in a circle: ${plan.cycles[0].join(' → ')}\n`

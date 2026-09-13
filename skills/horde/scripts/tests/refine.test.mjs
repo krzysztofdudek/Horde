@@ -562,6 +562,33 @@ test('refine.mjs --step review: a circle is refused, and the circle travels with
   assert.match(r.stderr, new RegExp(`${a}.*→.*${b}|${b}.*→.*${a}`));
 });
 
+test('refine.mjs --step review: a plan that cannot be built for a reason other than a circle is refused, not crashed', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  initHorde(dir, 'm1');
+  seedCharter(dir, 'm1', [{ id: 'E1', evidence: 'a signed-in user reaches /me', node: 'auth' }]);
+
+  const a = fileTicket(dir, 'm1', [
+    'first', '--title', 'First', '--node', 'auth', '--class', 'standard',
+    '--files', 'src/auth/login.mjs', '--evidence', 'E1', '--evidence', 'a signed-in user reaches /me',
+  ]);
+  assert.equal(run('queue.mjs', ['add', a, '--proposed', '--horde', 'm1'], dir).code, 0);
+
+  // A shape buildPlan cannot read at all (the team's own queue.json, caught half-written) — unlike
+  // a circle, which the branch just above already catches by reading the plan's own data, never by
+  // catching a throw.
+  const queueFile = join(dir, '.horde', 'hordes', 'm1', 'teams', 'trunk', 'queue.json');
+  writeFileSync(queueFile, readFileSync(queueFile, 'utf8').slice(0, 10));
+
+  const r = run('refine.mjs', ['--step', 'review', '--horde', 'm1'], dir);
+  assert.equal(r.code, 1);
+  // A refusal with a reason — the same "error: ..." line runMain prints for every other fail() in
+  // this file — never a raw stack trace from an uncaught throw.
+  assert.match(r.stderr, /^error: the plan could not be built/);
+  assert.match(r.stderr, /queue\.json/);
+});
+
 test('refine.mjs --step frame: three sections, in the client\'s words and nobody else\'s', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
