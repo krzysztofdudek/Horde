@@ -291,3 +291,6 @@
 - 2026-09-13 21:37 · 046 evidence row · 3 targeted existing tests + a real 'yg drill --aspect .../product-language' run
 - 2026-09-13 21:37 · 046 review approve · Worker's evidence is conclusive and independently checkable: git blame/log shows the exact drill case (violates-url-path/orders-are-confirmed) predates the issue's own filing date. No fabricated/redundant test warranted.
 - 2026-09-13 21:37 · 046 → done · issue was stale — the acceptance criteria was already met before it was filed
+- 2026-09-13 21:38 · 035 evidence row · grep -rIln jarl skills/horde/ (shipped skill has zero .jarl awareness); read .jarl/decisions.md
+- 2026-09-13 21:38 · 035 review approve · Correct: this issue describes a process guarantee already implemented by jarl.mjs's own close command (refuses while open, removes .jarl/ as the last commit). Nothing in skills/horde/ itself references .jarl/, so there is no shipped-code gap to fix.
+- 2026-09-13 21:38 · 035 → done · already implemented by jarl.mjs close; no shipped-code gap
