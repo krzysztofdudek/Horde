@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, initHorde, addNode, run, yg,
 } from './helpers.mjs';
-import { wilson } from '../retro.mjs';
+import { wilson, ticketDeclares } from '../retro.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -49,8 +49,12 @@ function seedTicket(dir, horde, id, {
   const ticketDir = join(issues, `${id}-${slug}`);
   mkdirSync(ticketDir, { recursive: true });
   writeFileSync(join(ticketDir, 'issue.md'), [
-    `# ${id} · ${slug}`, '', '**Status:** merged', '',
-    ...(files.length ? ['## Files', '', ...files.map((f) => `- ${f}`), ''] : []),
+    `# ${id} · ${slug}`, '', '**Status:** merged',
+    // The real **Files:** bold field (templates/ticket.md), not a heading — ticketFiles() parses
+    // this exact shape, and a fixture that wrote something else would let a substring match pass
+    // a test that a real ticket's issue.md never could.
+    ...(files.length ? [`**Files:** ${files.join(', ')}`] : []),
+    '',
     '## Acceptance', '', '- [x] it works', '',
   ].join('\n'));
   if (!noLog) {
@@ -535,6 +539,26 @@ test('retro.mjs: two judges that disagree come back with the count and the inter
   assert.equal(r.json.judge.pairs[0].agrees, false);
   assert.deepEqual(r.json.judge.interval, wilson(1, 1));
   assert.ok(r.json.judge.interval.low > 0 && r.json.judge.interval.high <= 1);
+});
+
+test('ticketDeclares: a verdict\'s unit belongs to a ticket by its declared Files, never by substring', (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ticketDir = join(dir, '001-a-ticket');
+  mkdirSync(ticketDir, { recursive: true });
+  // "src/ab" contains "src/a" as a substring — the exact trap the old text.includes(unit) fell
+  // into. A ticket that declared only src/ab must never be credited with a verdict on src/a.
+  writeFileSync(join(ticketDir, 'issue.md'), [
+    '# 001 · a-ticket', '', '**Status:** merged', '**Files:** src/ab', '',
+    '## Acceptance', '', '- [x] it works', '',
+  ].join('\n'));
+
+  assert.equal(
+    ticketDeclares(dir, {}, ticketDir, 'src/a'),
+    false,
+    'src/a must not match a ticket that only declared src/ab',
+  );
+  assert.equal(ticketDeclares(dir, {}, ticketDir, 'src/ab'), true, 'the declared file itself still matches');
 });
 
 // ---- broken states -------------------------------------------------------------------------------
