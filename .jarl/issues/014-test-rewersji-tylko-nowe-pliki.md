@@ -1,6 +1,6 @@
 # 014 · test rewersji tylko nowe pliki
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -23,4 +23,5 @@ Dowód, którego oczekuję: skills/horde/scripts/tests/land.test.mjs.
 ## Evidence
 
 Merged as 46bee4b then reverted as 03155bb: breaks 15 of tests/law-guard.test.mjs's fixtures (they build synthetic land.mjs tickets with no test files and no `**No new tests:**` declaration). Isolated rerun: `node --test tests/law-guard.test.mjs` — 17/32 red on 46bee4b, 32/32 green after the revert. Needs 014 to also update law-guard.test.mjs's fixtures before it can land again.
+- **ran:** git log --oneline cd69320 -1; node --test tests/land.test.mjs tests/law-guard.test.mjs (from skills/horde/scripts) · **saw:** merge commit cd69320 present on branch tip; round-2 reviewer already approved 19:55 — bookkeeping only, catching up after this session's own agents died mid-wave-6 without closing it out
 

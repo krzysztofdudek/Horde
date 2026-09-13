@@ -248,3 +248,16 @@
 - 2026-09-13 20:39 · 085 review approve · the three named reasons are supported by other sections of model.md already (one-branch-one-worker, Trust is manufactured in one place, portability across hosts) — this just names them where the topology is justified
 - 2026-09-13 20:40 · 085 → in-progress · editing model.md's flat-topology justification
 - 2026-09-13 20:40 · 085 → done · rewrote justification per Fable review; docs.test.mjs green
+- 2026-09-13 21:02 · 014 evidence row · git log --oneline cd69320 -1; node --test tests/land.test.mjs tests/law-guard.test.mjs (from skills/horde/scripts)
+- 2026-09-13 21:02 · 014 → done · merged as cd69320, confirmed present in branch history; bookkeeping was left open when the wave-6 merger process was interrupted
+- 2026-09-13 21:02 · 020 evidence row · git log --oneline 8d2fa42 -1
+- 2026-09-13 21:02 · 020 → done · merged as 8d2fa42, confirmed present in branch history; bookkeeping was left open when the wave-6 merger process was interrupted
+- 2026-09-13 21:02 · 016 evidence row · git log --oneline cefc760 -1
+- 2026-09-13 21:02 · 016 → done · merged as cefc760, confirmed present in branch history; bookkeeping was left open when the wave-6 merger process was interrupted
+- 2026-09-13 21:09 · 011 review approve · Reviewer: acceptance met literally — detectGates now maps every detected ecosystem (not just the first) to its commit-lane and gate command and joins each list with && , feeding commit/team/trunk alike; cmdInit's charter gate note lists every ecosystem name joined with ' + ' instead of ecosystems[0] alone. New test builds a pom.xml+go.mod fixture and asserts both the human charter text and the --json gates.team/gates.trunk/testGlobs. Verified red on merge-base 596744d / green on fa02914 via a git-archive scratch extraction, main checkout untouched. Full suite run directly (node --test tests/horde.test.mjs): 58 tests, 57 pass, 1 fail — the fail is the known root-chmod false failure tracked as 069/083, nothing else red. Scope: horde.mjs + horde.test.mjs + expected CHANGELOG.md only. CHANGELOG bullet is plain-language and adopter-facing. Minor: the JSON assertion checks gates.team/gates.trunk but not gates.commit explicitly — same map+join code path, not a real gap.
+- 2026-09-13 21:10 · 037 evidence row · git log --oneline; node --test tests/plan.test.mjs
+- 2026-09-13 21:10 · 069 evidence row · node --test tests/ask.test.mjs tests/horde.test.mjs
+- 2026-09-13 21:10 · 037 → done · merged and reviewed already; bookkeeping catch-up after the wave-6 merger was interrupted
+- 2026-09-13 21:10 · 069 → done · merged and reviewed already; bookkeeping catch-up after the wave-6 merger was interrupted
+- 2026-09-13 21:10 · 011 evidence row · node --test tests/horde.test.mjs (combined with 069's fix, from skills/horde/scripts)
+- 2026-09-13 21:10 · 011 → done · reviewed approve (independent reviewer, full acceptance verified against red-before/green-after); merged

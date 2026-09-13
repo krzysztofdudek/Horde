@@ -1,6 +1,6 @@
 # 011 · bramki z pierwszego ekosystemu
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -21,4 +21,6 @@ Wszystkie wykryte ekosystemy złożone w jedną komendę bramki, albo init pyta 
 Dowód, którego oczekuję: skills/horde/scripts/tests/horde.test.mjs (nowy przypadek).
 
 ## Evidence
+
+- **ran:** node --test tests/horde.test.mjs (combined with 069's fix, from skills/horde/scripts) · **saw:** 58 tests, 57 pass, 0 fail, 1 skipped — merged as e5ea00b
 

@@ -1,6 +1,6 @@
 # 016 · dokumentacja i kod w jednym tescie
 
-**Status:** in-progress
+**Status:** done
 **Kind:** test
 **Priority:** 1
 **Tier:** standard
@@ -21,4 +21,6 @@ Test wyciąga z dokumentów każde `<skrypt>.mjs <podkomenda> --flag` i sprawdza
 Dowód, którego oczekuję: skills/horde/scripts/tests/docs.test.mjs.
 
 ## Evidence
+
+- **ran:** git log --oneline cefc760 -1 · **saw:** merge commit cefc760 present on branch tip; reviewer already approved 19:44 — bookkeeping only, same interrupted-merger catch-up
 

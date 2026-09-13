@@ -1,6 +1,6 @@
 # 037 · plan i quality czytaja cwd zamiast trunku
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -19,4 +19,6 @@ Plan liczony na cudzym checkout zamiast na trunku misji: porty i konsumenci z ni
 Obie komendy podają do resolveTree rozwiązaną hordę. Test: jedna horda, główny checkout na obcej gałęzi, `queue.mjs plan` bez flag czyta graf z trunku.
 
 ## Evidence
+
+- **ran:** git log --oneline; node --test tests/plan.test.mjs · **saw:** merged as a4ef9f4
 

@@ -1,6 +1,6 @@
 # 069 · testy chmod zaklada brak roota
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -19,4 +19,6 @@ Suita jest czerwona w środowisku, gdzie testy uruchamia root, mimo że produkt 
 Oba testy wykrywają uruchomienie jako root (np. `process.getuid && process.getuid() === 0`) i albo pomijają się z nazwaną przyczyną, albo dowodzą odrzucenia inną metodą niezależną od uid. `npm test` w `skills/horde/scripts/` zielone zarówno jako root, jak i jako zwykły użytkownik.
 
 ## Evidence
+
+- **ran:** node --test tests/ask.test.mjs tests/horde.test.mjs · **saw:** 88 pass, 0 fail, 2 skipped (chmod-as-root tests now correctly skip); merged as c40a418
 
