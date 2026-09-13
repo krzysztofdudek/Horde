@@ -75,6 +75,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - Recovering a crashed worker's dirty, uncommitted work now writes a line to that ticket's own log, with the reason and the commit it saved — not only to the internal queue record.
 - Status now also shows a ticket's work branch when its queue entry has been lost, labelled as needing attention, instead of hiding it.
 - Landing a change that edits an existing test without adding a new one used to pass silently. It is now refused unless the change says plainly that it adds no test, with a reason — and an edited test is checked the same way a new one is.
+- A repository keeping its promises directory somewhere other than one of the usual four spots is now found correctly, once the evidence package is installed, instead of being read as having no evidence at all.
 
 ### Migrating a mission already in flight
 
