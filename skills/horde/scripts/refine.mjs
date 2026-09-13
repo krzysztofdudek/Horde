@@ -770,6 +770,26 @@ function stepConsult(horde, flags) {
     brief: consultBrief(horde, info.path, cfg, info, charter, t),
   }));
 
+  // --out <dir>: each territory's brief is a separate spawn, so one path is a directory — one
+  // file per territory, written as <dir>/<territory>.md — and stdout carries only the paths
+  // instead of every brief's full text (the same reasoning as brief.mjs's own --out, and
+  // queue.mjs plan --out before it: a director's context is what this spends).
+  if (flags.out) {
+    const dir = String(flags.out);
+    const written = spawns.map((s) => {
+      const path = join(dir, `${s.territory}.md`);
+      writeText(path, `${s.brief}\n`);
+      return { territory: s.territory, class: s.class, path };
+    });
+    emit(withProvenance({ step: 'consult', horde, spawns: written }, info), flags, () => [
+      `${written.length} consultant brief(s) written — one per territory, all at once, in one message:`,
+      '',
+      ...written.map((w) => `- ${w.territory} (class ${w.class}) → ${w.path}`),
+      provenanceLine(info),
+    ].join('\n'));
+    return;
+  }
+
   emit(withProvenance({ step: 'consult', horde, spawns }, info), flags, () => [
     `${spawns.length} consultant(s) — one per territory, all at once, in one message.`,
     '',

@@ -397,6 +397,44 @@ test('brief.mjs: a role whose template file was deleted refuses naming the missi
   assert.equal(r.stdout.trim(), '', 'nothing is printed as a brief when the template is missing');
 });
 
+test('brief.mjs --out: writes the rendered brief to a file and prints only its path', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
+
+  const withoutOut = run('brief.mjs', ['architect', '--name', 'mission1-architect-1'], dir);
+  assert.equal(withoutOut.code, 0, withoutOut.stderr);
+  const expectedBrief = withoutOut.json.brief;
+
+  const outPath = join(dir, 'out', 'architect-brief.md');
+  const withOut = run(
+    'brief.mjs',
+    ['architect', '--name', 'mission1-architect-1', '--out', outPath],
+    dir,
+    { json: false },
+  );
+  assert.equal(withOut.code, 0, withOut.stderr);
+  // stdout carries only the path, never the brief's own text.
+  assert.match(withOut.stdout, new RegExp(outPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(withOut.stdout, /You are \*\*mission1-architect-1\*\*, the architect/);
+  // The file on disk carries exactly what stdout would have printed without --out.
+  assert.equal(readFileSync(outPath, 'utf8'), `${expectedBrief}\n`);
+
+  await t.test('--json --out prints a short summary, with the brief field replaced by the path', () => {
+    const r = run('brief.mjs', ['architect', '--name', 'mission1-architect-1', '--out', outPath], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.brief, `written to ${outPath}`);
+    assert.equal(r.json.role, 'architect');
+  });
+
+  await t.test('without --out, behaviour is unchanged: the full brief prints to stdout', () => {
+    const r = run('brief.mjs', ['architect', '--name', 'mission1-architect-1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.brief, expectedBrief);
+  });
+});
+
 test('brief.mjs: a role whose template has a key nothing fills refuses, naming that key', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
