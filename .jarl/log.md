@@ -146,3 +146,4 @@
 - 2026-09-13 18:06 · merged 004 322436f
 - 2026-09-13 18:06 · merged 005 f1230d3
 - 2026-09-13 18:06 · merged 010 f60e3c3
+- 2026-09-13 18:08 · 065 review approve · Reviewer: acceptance met literally — yg-aspect.yaml description now names all 8 category labels check.mjs's CATEGORIES table refuses (table name and field name added). Verified red on parent (old yaml) / green on branch via docs.test.mjs, worktree untouched. Scope: yg-aspect.yaml + expected CHANGELOG.md + docs.test.mjs only. Minor only: the test's coverage check is a coarse but honest substring heuristic, openly noted in its own comment.
