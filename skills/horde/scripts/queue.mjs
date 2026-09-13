@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, leaseHolderForNode,
-  resolveTree, provisionTree, provenanceLine, withProvenance, firstClass, withQueueLock,
+  resolveTree, provisionTree, provenanceLine, withProvenance, firstClass, withQueueLock, appendText,
 } from './_lib.mjs';
 import {
   findTicket, parseField, padId, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, createTicket, setTicketBody, acceptanceLines,
@@ -1344,9 +1344,14 @@ function reconcileRunningLocked(horde, team, { tree } = {}) {
     if (dirty) {
       git(['add', '-A'], item.worktree);
       git(['commit', '-m', 'wip: reclaimed'], item.worktree);
+      const reclaimedSha = git(['rev-parse', 'HEAD'], item.worktree);
       item.state = 'queued';
       item.notes.push({ at: nowIso(), text: 'reconcile: worktree was dirty — committed as "wip: reclaimed"' });
       results.push({ ticket: item.ticket, state: item.state, note: `worktree was dirty — committed as "wip: reclaimed" on ${item.branch}, and the worktree is kept` });
+      const ticket = findTicket(horde, item.ticket);
+      if (ticket) {
+        appendText(ticket.logPath, `- ${nowIso()} status: queued — reconcile: worktree was dirty, committed as "wip: reclaimed" (${reclaimedSha})\n`);
+      }
       continue;
     }
     item.state = 'queued';

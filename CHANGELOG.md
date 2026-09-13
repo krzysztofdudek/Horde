@@ -72,6 +72,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - A test suite that used to occasionally fail for no reason, when its tests ran alongside others touching the same files, now runs clean every time.
 - The documentation on who starts a worker under each runner now says the same thing as the mission loop actually does.
 - The sample drawn for the two-judges measurement is now reproducible: run the retrospective twice over the same landed work and it draws the same tickets both times, and the retrospective document records what drew it.
+- Recovering a crashed worker's dirty, uncommitted work now writes a line to that ticket's own log, with the reason and the commit it saved — not only to the internal queue record.
 
 ### Migrating a mission already in flight
 

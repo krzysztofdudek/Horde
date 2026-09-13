@@ -207,6 +207,16 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
     assert.ok(eighthItem.notes.some((n) => /dirty/.test(n.text)));
     const log = git(['-C', runningEighth.json.worktree, 'log', '-1', '--format=%s'], dir);
     assert.equal(log, 'wip: reclaimed');
+    const reclaimedSha = git(['-C', runningEighth.json.worktree, 'rev-parse', 'HEAD'], dir);
+
+    // The ticket's own log.md must carry this reconciliation too, with the reason and the sha of
+    // the reclaiming commit — not only the queue.json note.
+    const ticketLogFile = execFileSync('find', [dir, '-path', `*${eighth}-*/log.md`], { encoding: 'utf8' }).trim();
+    assert.ok(ticketLogFile, 'expected to find the ticket log.md for the reclaimed ticket');
+    const ticketLog = readFileSync(ticketLogFile, 'utf8');
+    assert.match(ticketLog, /reconcile/);
+    assert.match(ticketLog, /wip: reclaimed/);
+    assert.ok(ticketLog.includes(reclaimedSha), 'ticket log.md should record the reclaiming commit sha');
   });
 });
 
