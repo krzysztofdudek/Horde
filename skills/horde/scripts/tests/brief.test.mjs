@@ -2,15 +2,26 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  mkdirSync, readFileSync, writeFileSync, rmSync,
+  mkdirSync, readFileSync, writeFileSync, rmSync, cpSync, mkdtempSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
+const REAL_ROLES_DIR = join(SCRIPTS_DIR, '..', 'reference', 'roles');
+
+// A scratch copy of reference/roles/, so a test that deletes or corrupts a role template never
+// touches the real file on disk — brief.mjs is pointed at the copy via HORDE_TEST_ROLES_DIR, kept
+// only for the duration of the one test that needs it.
+function scratchRolesDir() {
+  const dir = mkdtempSync(join(tmpdir(), 'horde-roles-'));
+  cpSync(REAL_ROLES_DIR, dir, { recursive: true });
+  return dir;
+}
 
 function writeRoster(dir, horde, entries) {
   const path = join(dir, '.horde', 'hordes', horde, 'roster.json');
@@ -384,12 +395,11 @@ test('brief.mjs: a role whose template file was deleted refuses naming the missi
   seedNode(dir, 'nodeA', ['src/a/**']);
   seedTerritories(dir, 'mission1', { heart: { nodes: ['nodeA'], class: 'standard', why: 'the middle' } });
 
-  const rolePath = join(SCRIPTS_DIR, '..', 'reference', 'roles', 'legislate.md');
-  const original = readFileSync(rolePath, 'utf8');
-  t.after(() => writeFileSync(rolePath, original));
-  rmSync(rolePath);
+  const rolesDir = scratchRolesDir();
+  t.after(() => rmSync(rolesDir, { recursive: true, force: true }));
+  rmSync(join(rolesDir, 'legislate.md'));
 
-  const r = run('brief.mjs', ['legislate', 'heart', '--name', 'mission1-legislate-heart-1'], dir);
+  const r = run('brief.mjs', ['legislate', 'heart', '--name', 'mission1-legislate-heart-1'], dir, { env: { HORDE_TEST_ROLES_DIR: rolesDir } });
   assert.equal(r.code, 1);
   assert.match(r.stderr, /has no template file/);
   assert.match(r.stderr, /legislate\.md is missing/);
@@ -406,12 +416,13 @@ test('brief.mjs: a role whose template has a key nothing fills refuses, naming t
 
   // The real role file, with one placeholder nothing fills added to it — the refusal under test is
   // renderRole's, and it has to name the key rather than print "{{…}}" into an agent's prompt.
-  const rolePath = join(SCRIPTS_DIR, '..', 'reference', 'roles', 'legislate.md');
+  const rolesDir = scratchRolesDir();
+  t.after(() => rmSync(rolesDir, { recursive: true, force: true }));
+  const rolePath = join(rolesDir, 'legislate.md');
   const original = readFileSync(rolePath, 'utf8');
-  t.after(() => writeFileSync(rolePath, original));
   writeFileSync(rolePath, `${original}\nSomething nobody fills: {{aKeyNothingFills}}\n`);
 
-  const r = run('brief.mjs', ['legislate', 'heart', '--name', 'mission1-legislate-heart-1'], dir);
+  const r = run('brief.mjs', ['legislate', 'heart', '--name', 'mission1-legislate-heart-1'], dir, { env: { HORDE_TEST_ROLES_DIR: rolesDir } });
   assert.equal(r.code, 1);
   assert.match(r.stderr, /brief for "legislate" has unfilled placeholder\(s\): aKeyNothingFills/);
   assert.doesNotMatch(r.stdout, /\{\{/);

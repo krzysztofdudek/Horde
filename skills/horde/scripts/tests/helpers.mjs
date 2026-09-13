@@ -43,11 +43,11 @@ function safeJSON(s) {
 // `json` (default true) appends --json so stdout parses cleanly; pass false to inspect the
 // human-readable rendering instead. Never throws on a non-zero exit — the result's `code` and
 // `stderr` are how a test asserts a refusal.
-export function run(toolName, args, cwd, { json = true } = {}) {
+export function run(toolName, args, cwd, { json = true, env } = {}) {
   const fullArgs = json ? [...args, '--json'] : args;
   try {
     const stdout = execFileSync('node', [join(SCRIPTS_DIR, toolName), ...fullArgs], {
-      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : process.env,
     });
     return { code: 0, stdout, stderr: '', json: safeJSON(stdout) };
   } catch (e) {

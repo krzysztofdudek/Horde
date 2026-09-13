@@ -28,7 +28,11 @@ import {
 } from './node.mjs';
 import { collectRetroInput, classesPath } from './retro.mjs';
 
-const ROLES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'roles');
+// HORDE_TEST_ROLES_DIR lets the test suite point this at a scratch copy instead of the real
+// reference/roles/ on disk, so a test exercising a missing or malformed role template never
+// mutates the file every other process (docs.test.mjs included) reads concurrently.
+const ROLES_DIR = process.env.HORDE_TEST_ROLES_DIR
+  || join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'roles');
 const DISCIPLINE_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'reference', 'discipline');
 
 // The role and discipline files address the skill's own scripts as
