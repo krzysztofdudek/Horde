@@ -52,3 +52,8 @@
 - 2026-09-13 15:51 · filed 039 · readme done obiecuje odmowe za brak audytu
 - 2026-09-13 15:51 · filed 040 · tk new waliduje granice wobec cwd
 - 2026-09-13 15:51 · filed 041 · tick rozwiazuje drzewo bez hordy
+- 2026-09-13 15:52 · filed 042 · dyscyplina review kaze uruchomic tk review
+- 2026-09-13 15:52 · filed 043 · readme i escalate nazywaja nieistniejacy legislate mjs
+- 2026-09-13 15:52 · filed 044 · readme i skill pomijaja wymagane name w brief
+- 2026-09-13 15:52 · filed 045 · has-evidence bez bloku scope
+- 2026-09-13 15:52 · filed 046 · product-language bez drilla dla url-path
