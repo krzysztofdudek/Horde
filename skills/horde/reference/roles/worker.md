@@ -34,7 +34,7 @@ git merge-base --is-ancestor {{parentBranch}} HEAD && git status --porcelain
 Before you touch a line of it, read the rules that govern this node:
 
 ```
-node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs show {{node}}
+{{nodeShowCmd}}
 ```
 
 Its **Rules** block lists every rule in force here with the word that says what breaking one costs:

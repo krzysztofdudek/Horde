@@ -394,6 +394,12 @@ function cmdWorker(horde, cfg, positional, flags) {
     name, horde, team: t.team,
     ticketId: t.id, ticketTitle: title,
     node: nodes.join(', ') || null,
+    // node.mjs show reads one node id per call (cmdShow: positional[0]) — a ticket naming two
+    // nodes (tk.mjs new's --node is repeatable, up to two) must render one command per node,
+    // never `{{node}}`'s comma-joined string as a single shell argument.
+    nodeShowCmd: nodes.length
+      ? nodes.map((n) => `node \${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs show ${n}`).join('\n')
+      : null,
     parentBranch: parent.branch,
     stackNote: stackNoteFor(parent),
     worktree,
