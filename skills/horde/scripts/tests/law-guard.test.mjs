@@ -111,11 +111,10 @@ function lawFixture(dir, id, mutate, { declared = DECLARED, graph = {}, extraBas
 // land.mjs's law guard now points to. `answer: null` leaves the ask open (filed, never
 // answered), which is what "nobody has answered yet" means for the guard.
 //
-// Kind "conflict" (the conflict-of-interest guard, further down this file) is NOT one of
-// ask.mjs's four kinds (019 defines stop/stuck/lower/charter only, and inventing a fifth was
-// explicitly out of scope) — flagged in land.mjs's own header comment as a real gap. Until that
-// is resolved, its only path is decisions.md written directly, exactly as ask.mjs's answerAsk
-// would shape it, which is what this branch does.
+// Kind "conflict" is not one of ask.mjs's four kinds (019 defines stop/stuck/lower/charter
+// only) and the conflict-of-interest guard (further down this file) has no waiver at all — this
+// helper can still write a "conflict"-kind block by hand, shaped exactly as ask.mjs's answerAsk
+// would shape a real one, so the guard-always-refuses test below can prove the guard ignores it.
 function recordAnswer(dir, {
   kind = 'lower', aspect = 'no-marker', scope = 'once', answer = 'approved — we agreed this rule is superseded.',
 } = {}) {
@@ -445,18 +444,21 @@ test('conflict guard: sharpening a rule and changing code it reaches in one land
   assert.match(out, /one ticket for the code, one for the rule/, 'and the way out');
 });
 
-test('conflict guard: the same branch lands once the client has answered the conflict ask', async (t) => {
+test('conflict guard: a hand-written "conflict"-kind decision lets nothing through — there is no waiver', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   const { branch } = lawFixture(dir, '142', (dir2) => {
     writeFileSync(join(dir2, '.yggdrasil', 'aspects', 'no-marker', 'check.mjs'), MARKER_CHECK.replace('UNFINISHED', 'TODO'));
     write(dir2, 'src/a.mjs', 'export const a = 11;\n');
   });
+  // Nobody can answer a "lower" ask their way past the conflict guard, because it never reads
+  // asks — only a decisions.md entry written by hand even claims to be an approved "conflict"
+  // decision, and the guard still refuses: there is no sanctioned or unsanctioned path through it.
   recordAnswer(dir, { kind: 'conflict', scope: 'mission', answer: 'approved — the rule and the fix were agreed together.' });
 
   const r = run('land.mjs', [branch], dir);
-  assert.doesNotMatch(said(r), /conflict of interest/, said(r));
-  assert.equal(r.code, 0, said(r));
+  assert.equal(r.code, 1, said(r));
+  assert.match(said(r), /conflict of interest/, said(r));
 });
 
 test('conflict guard: a brand-new rule is not a conflict, whatever code lands beside it', async (t) => {

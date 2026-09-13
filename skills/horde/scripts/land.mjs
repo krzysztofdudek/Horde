@@ -795,12 +795,10 @@ function checkJournal(text, branch) {
 // "once" (used up by one landing, and this file records which) or "mission" (stands until the
 // mission closes). An ask with no Answer is still open and passes nothing.
 //
-// The conflict-of-interest guard further down (conflictGuard) also calls findAnswer, with kind
-// "conflict" — a branch that sharpens a rule and changes the code it judges in one landing. That
-// is not one of ask.mjs's four kinds (019 only defines stop/stuck/lower/charter), so there is
-// today no sanctioned path that produces a "conflict" block: only a decisions.md entry written by
-// hand (decide.mjs add <slug> "**Kind:** conflict · **Aspect:** <id> ...") satisfies it. Flagged,
-// not fixed here — inventing a fifth ask kind is exactly what 019 says not to do on its own.
+// The conflict-of-interest guard further down (conflictGuard) has no exception of its own: a
+// branch that sharpens a rule and changes the code that rule reaches, in one landing, is refused
+// every time — there is no ask kind that waives it and none is coming. The refusal's own message
+// says what to do instead: split the rule and the code into two landings.
 function decisionsPath(horde) { return hordePath(horde, 'decisions.md'); }
 
 function parseAsks(text) {
@@ -1078,7 +1076,7 @@ function lawGuard(cfg, horde, baseTree, headTree) {
 // passed the code. Changing what the rule SAYS, while changing code it reaches, is.
 const ASPECT_TEXT_FILE = /^\.yggdrasil\/aspects\/([^/]+)\/(content\.md|check\.mjs|companion\.mjs|yg-aspect\.yaml)$/;
 
-function conflictGuard(cfg, horde, baseTree, headTree, changedFiles, headReach) {
+function conflictGuard(cfg, baseTree, headTree, changedFiles, headReach) {
   const baseAspects = aspectsById(baseTree, cfg);
   const touched = new Map();
   for (const f of changedFiles) {
@@ -1113,7 +1111,6 @@ function conflictGuard(cfg, horde, baseTree, headTree, changedFiles, headReach) 
     const reach = headReach.get(id) || new Set();
     const reached = codeFiles.filter((f) => reach.has(`file:${f}`) || (ownerOf.get(f) && reach.has(`node:${ownerOf.get(f)}`)));
     if (reached.length === 0) continue;
-    if (findAnswer(horde, 'conflict', id)) continue;
     refusals.push({
       aspect: id,
       case: 'conflict of interest',
@@ -1365,7 +1362,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       const law = lawGuard(cfg, horde, base.path, head.path);
       if (law.stopped) fail(law.stopped);
       guards.push(...law.refusals);
-      const conflict = conflictGuard(cfg, horde, base.path, head.path, changedFiles, law.headReach);
+      const conflict = conflictGuard(cfg, base.path, head.path, changedFiles, law.headReach);
       guards.push(...conflict.refusals);
       if (guards.length) {
         fail(`${guards.length} refusal(s) — this branch may not land as it stands:\n${guards.map((g) => `- ${g.aspect} (${g.case}): ${g.note}`).join('\n')}`);
