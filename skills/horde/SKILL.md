@@ -123,6 +123,12 @@ this repository**. `refine.mjs --step cut` writes the paragraph when the cut is 
 file precisely so a person can correct it, and every ticket's evidence rows refer back to it. The
 next mission judges again from scratch.
 
+The test environment is supplied from outside Horde — the runtime, the test runner, fixtures, CI
+wiring, whatever a promises package needs installed. Horde never builds any of it: it works with
+whatever it finds and nothing more. What it found goes in the charter, under **Evidence in this
+repository**; what is missing or thin goes in the frame, so the client hears about the gap before
+wave 1 starts, not a ticket quietly filed to close it.
+
 The signals, in the order they beat each other:
 
 - **A directory of promises** — markdown, one file per promise, each carrying a status field, and a

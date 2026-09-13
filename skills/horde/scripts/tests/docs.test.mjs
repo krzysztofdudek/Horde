@@ -76,6 +76,41 @@ test('reference/topology.md no longer exists, and reference/model.md carries Mec
   assert.match(model, /^## Runner$/m);
 });
 
+// ---- the test-environment boundary: supplied from outside, Horde never builds it (issue 032) --
+
+// A boundary no document names gets crossed sooner or later — here, by a worker who finds a thin
+// or missing test environment and tries to "fix" it. The sentence has to say all of it: the
+// environment is supplied from outside Horde, Horde only ever works with what it finds, and never
+// builds one itself — in both SKILL.md and model.md. The charter's own Evidence section carries the
+// same boundary, since that is the one paragraph a worker reads to learn what the mission's proof
+// rests on: what the mission found, never what Horde built to get there.
+const SUPPLIED_OUTSIDE_RE = /supplied\s+from\s+outside\s+Horde/i;
+const NEVER_BUILDS_RE = /\bnever\s+builds\b/i;
+
+test('SKILL.md and reference/model.md both say the test environment is supplied from outside Horde and Horde never builds it', () => {
+  const skill = readText(join(SKILL_DIR, 'SKILL.md'));
+  const model = readText(join(SKILL_DIR, 'reference', 'model.md'));
+  for (const [name, text] of [['SKILL.md', skill], ['reference/model.md', model]]) {
+    assert.match(text, SUPPLIED_OUTSIDE_RE, `${name} does not say the test environment is supplied from outside Horde`);
+    assert.match(text, NEVER_BUILDS_RE, `${name} does not say Horde never builds the test environment`);
+  }
+});
+
+test('SKILL.md ties the boundary to the split that keeps a worker from closing the gap itself: charter records what it found, frame reports what is missing', () => {
+  const skill = readText(join(SKILL_DIR, 'SKILL.md'));
+  const evidenceLayer = section(skill, '## Recognising the evidence layer');
+  assert.match(evidenceLayer, SUPPLIED_OUTSIDE_RE, 'the evidence-layer section does not name the environment boundary');
+  assert.match(evidenceLayer, /\bcharter\b/i, 'the evidence-layer section does not tie the boundary to the charter');
+  assert.match(evidenceLayer, /\bframe\b/i, 'the evidence-layer section does not tie the boundary to the frame');
+});
+
+test('templates/charter.md\'s Evidence section says it records what the mission found, never what Horde built', () => {
+  const charter = readText(join(SKILL_DIR, 'templates', 'charter.md'));
+  const evidence = section(charter, '## Evidence in this repository');
+  assert.match(evidence, SUPPLIED_OUTSIDE_RE, 'charter.md\'s Evidence section does not name the environment boundary');
+  assert.match(evidence, NEVER_BUILDS_RE, 'charter.md\'s Evidence section does not say Horde never builds the environment');
+});
+
 // ---- no file names Agent Teams, and no file says "teammate" ---------------------------------
 
 // The skill runs on plain subagents and nothing else: there is no runner built on Claude Code's
