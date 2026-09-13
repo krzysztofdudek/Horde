@@ -1,6 +1,6 @@
 # 004 · straz konfliktu martwy wyjatek
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 1
 **Tier:** standard
@@ -22,5 +22,5 @@ Dowód, którego oczekuję: skills/horde/scripts/tests/law-guard.test.mjs (nowy 
 
 ## Evidence
 
-npm test (split in two): # tests 310 # pass 306 # fail 4 (root-permission-only, pre-existing/environmental) + # tests 594 # pass 593 # fail 0 # skipped 1; merged as 322436f
+Merge commit 322436f removed the dead conflict-guard exception; guard now always refuses when a branch changes both rule and code it governs; merged
 

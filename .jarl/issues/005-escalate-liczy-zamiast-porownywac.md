@@ -1,6 +1,6 @@
 # 005 · escalate liczy zamiast porownywac
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -22,5 +22,5 @@ Dowód, którego oczekuję: skills/horde/scripts/tests/escalate.test.mjs (dwa no
 
 ## Evidence
 
-npm test (split in two): # tests 310 # pass 306 # fail 4 (root-permission-only, pre-existing/environmental) + # tests 594 # pass 593 # fail 0 # skipped 1; merged as f1230d3
+Merge commit f1230d3 fixed escalate recurring to group by kind, territory and normalized answer text instead of only counting; merged
 

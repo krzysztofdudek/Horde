@@ -1,6 +1,6 @@
 # 002 · brief konsultanta port z wersja
 
-**Status:** in-progress
+**Status:** done
 **Kind:** cleanup
 **Priority:** 1
 **Tier:** standard
@@ -22,5 +22,5 @@ Dowód, którego oczekuję: skills/horde/scripts/tests/refine.test.mjs (nowy prz
 
 ## Evidence
 
-npm test (split in two): # tests 310 # pass 306 # fail 4 (root-permission-only, pre-existing/environmental) + # tests 594 # pass 593 # fail 0 # skipped 1; merged as 23144c2
+Merge commit 23144c2 fixed the consultant brief's --consumes syntax to match tk.mjs's accepted port@version form; merged
 

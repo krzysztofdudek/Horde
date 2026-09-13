@@ -134,3 +134,15 @@
 - 2026-09-13 18:04 · 044 evidence · npm test: 903 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha d2f4b1f
 - 2026-09-13 18:04 · 044 → done · merged
 - 2026-09-13 18:04 · merged 044 d2f4b1f
+- 2026-09-13 18:05 · 002 evidence · Merge commit 23144c2 fixed the consultant brief's --consumes syntax to match tk.mjs's accepted port@version form; merged
+- 2026-09-13 18:05 · 002 → done · merged
+- 2026-09-13 18:05 · 004 evidence · Merge commit 322436f removed the dead conflict-guard exception; guard now always refuses when a branch changes both rule and code it governs; merged
+- 2026-09-13 18:05 · 004 → done · merged
+- 2026-09-13 18:05 · 005 evidence · Merge commit f1230d3 fixed escalate recurring to group by kind, territory and normalized answer text instead of only counting; merged
+- 2026-09-13 18:06 · 005 → done · merged
+- 2026-09-13 18:06 · 010 evidence · Merge commit f60e3c3 introduced withQueueLock covering every queue.json read-modify-write site (queue.mjs, tick.mjs, audit.mjs); merged
+- 2026-09-13 18:06 · 010 → done · merged
+- 2026-09-13 18:06 · merged 002 23144c2
+- 2026-09-13 18:06 · merged 004 322436f
+- 2026-09-13 18:06 · merged 005 f1230d3
+- 2026-09-13 18:06 · merged 010 f60e3c3

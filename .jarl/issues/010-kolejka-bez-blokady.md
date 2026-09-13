@@ -1,6 +1,6 @@
 # 010 · kolejka bez blokady
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 1
 **Tier:** standard
@@ -22,5 +22,5 @@ Dowód, którego oczekuję: skills/horde/scripts/tests/queue.test.mjs (nowy przy
 
 ## Evidence
 
-Reviewer verified withQueueLock covers every queue.json read-modify-write site (queue.mjs, tick.mjs, audit.mjs), red on f60e3c3^1 (import of withQueueLock fails) / green on f60e3c3, 51/51 in queue.test.mjs. Merge commit f60e3c3 also carries stray .jarl/ bookkeeping (issue 071 + log lines) from an unrelated shared-checkout race — see decision stray-jarl-state-in-merges; not a defect in this diff, and .jarl/ never reaches main.
+Merge commit f60e3c3 introduced withQueueLock covering every queue.json read-modify-write site (queue.mjs, tick.mjs, audit.mjs); merged
 
