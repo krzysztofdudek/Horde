@@ -4,3 +4,13 @@ reviewer:
   type: deterministic
 status: enforced
 errs: exact
+# Unlike its siblings, this rule is not about the promise document alone: it pairs
+# a promise with the thing that keeps it, and that thing is almost never markdown
+# (a test file, a script, an artefact record). Filtering to *.md here would hide
+# every one of them, so this carries no files: filter on purpose — every file
+# mapped onto the node enters ctx.files, promises and evidence alike. Written out
+# rather than left absent so a reader never has to hold Yggdrasil's own default
+# (`yg schemas read aspect`: absent scope resolves to exactly per: node, no files
+# filter) in their head to know what this rule sees.
+scope:
+  per: node
