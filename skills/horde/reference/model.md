@@ -68,10 +68,21 @@ than kept alive behind a flag.
 | retro | Opus, once per mission | one-shot, at the very end | the whole mission's unread gate refusals and log remarks | rule / taste / inexpressible, for every one of them | writing the sentence the client reads |
 
 Every agent in that cast is a subagent, and the top-level session spawns all of them directly: the
-architect, a fresh one per graph ruling; a worker, one per ticket; and each one-shot. A subagent is
-reachable and resumable by the agent that spawned it and by nobody else — that is the director, for
-all of them. Depth is not used below that: nothing here raises anything of its own, and a one-shot
-answers to whoever spawned it and to nobody else.
+architect, a fresh one per graph ruling; a worker, one per ticket; and each one-shot. Depth is not
+used below that: nothing here raises anything of its own, and a one-shot answers to whoever spawned
+it and to nobody else. The flatness is a deliberate choice, held for three reasons, not one:
+
+- **One writer per worktree.** A worker's worktree and branch are its own; a second agent raised
+  inside it would be a second writer in the same tree, which is exactly the collision the
+  one-branch-one-worker rule exists to prevent.
+- **Evidence lives in files, not in relayed reports.** Trust here is manufactured by reading a
+  ticket's own evidence and gate output off disk, never by taking a report on faith — see "Trust is
+  manufactured in one place" below. A grandchild's work would reach the director only inside its
+  parent's one-shot report, one layer removed from the file evidence the whole model is built to
+  check instead.
+- **Portability.** A worker, an architect or a consultant must run unchanged on a host that forbids
+  nested spawning at all — flatness is the one topology every host supports, so the skill never has
+  to special-case one.
 
 ## Context is the currency
 

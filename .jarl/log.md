@@ -243,3 +243,8 @@
 - 2026-09-13 20:20 · 009 evidence · npm test: 902 pass, 4 fail (pre-existing chmod/root), merge d1bd06a
 - 2026-09-13 20:20 · 009 → done · merged
 - 2026-09-13 20:20 · merged 009 d1bd06a
+- 2026-09-13 20:39 · filed 085 · flat-topology justification conflates platform contingency with context scoping
+- 2026-09-13 20:39 · 085 evidence row · node --test skills/horde/scripts/tests/docs.test.mjs
+- 2026-09-13 20:39 · 085 review approve · the three named reasons are supported by other sections of model.md already (one-branch-one-worker, Trust is manufactured in one place, portability across hosts) — this just names them where the topology is justified
+- 2026-09-13 20:40 · 085 → in-progress · editing model.md's flat-topology justification
+- 2026-09-13 20:40 · 085 → done · rewrote justification per Fable review; docs.test.mjs green
