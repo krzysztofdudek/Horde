@@ -73,6 +73,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - A test suite that used to occasionally fail for no reason, when its tests ran alongside others touching the same files, now runs clean every time.
 - The documentation on who starts a worker under each runner now says the same thing as the mission loop actually does.
 - The sample drawn for the two-judges measurement is now reproducible: run the retrospective twice over the same landed work and it draws the same tickets both times, and the retrospective document records what drew it.
+- The two-judges measurement no longer credits a ticket with verdicts that actually belong to a different ticket, just because one ticket's declared files or component happened to be a text fragment of the other's name.
 - Recovering a crashed worker's dirty, uncommitted work now writes a line to that ticket's own log, with the reason and the commit it saved — not only to the internal queue record.
 - Status now also shows a ticket's work branch when its queue entry has been lost, labelled as needing attention, instead of hiding it.
 - Landing a change that edits an existing test without adding a new one used to pass silently. It is now refused unless the change says plainly that it adds no test, with a reason — and an edited test is checked the same way a new one is.
