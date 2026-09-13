@@ -1,6 +1,6 @@
 # 007 · retro dopasowanie jednostki przez includes
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -21,4 +21,6 @@ Dopasowanie po polach Files i Node biletu (ticketFiles/ticketNodes) i granicy w�
 Dowód, którego oczekuję: skills/horde/scripts/tests/retro.test.mjs.
 
 ## Evidence
+
+Merged 13d258e into claude/autonomous-self-evolving-system-oiveiz. Sub-batch A check (057+007+045+058): node --test tests/*.test.mjs from skills/horde/scripts, HORDE_TEST_RATATOSKR_DIR set — 923 tests, 920 pass, 0 fail, 3 skipped (root-bypass chmod, pre-existing/expected), 0 cancelled, exit 0.
 

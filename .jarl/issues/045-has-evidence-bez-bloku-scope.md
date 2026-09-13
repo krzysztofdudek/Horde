@@ -1,6 +1,6 @@
 # 045 · has-evidence bez bloku scope
 
-**Status:** in-progress
+**Status:** done
 **Kind:** research
 **Priority:** 2
 **Tier:** standard
@@ -19,4 +19,6 @@ Reguła może cicho widzieć inny zbiór plików niż siostry, albo dostawać ct
 Sprawdzić przez yg schemas/knowledge, co znaczy brak scope; jeśli has-evidence potrzebuje tego samego zbioru co siostry (a musi widzieć też pliki testów, więc być może celowo szerszego), zapisać to jawnie w yaml z komentarzem i przepuścić drills przez prawdziwą instalację pakietu, nie tylko check().
 
 ## Evidence
+
+Merged e9e1214 into claude/autonomous-self-evolving-system-oiveiz. Sub-batch A check (057+007+045+058): node --test tests/*.test.mjs from skills/horde/scripts, HORDE_TEST_RATATOSKR_DIR set — 923 tests, 920 pass, 0 fail, 3 skipped (root-bypass chmod, pre-existing/expected), 0 cancelled, exit 0.
 

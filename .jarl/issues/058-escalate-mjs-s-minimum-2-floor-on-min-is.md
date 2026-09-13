@@ -1,6 +1,6 @@
 # 058 · escalate mjs s minimum 2 floor on min is
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Run `escalate.mjs recurring --min 1` — refused wit
 Refuterzy: Confirmed. USAGE in escalate.mjs (template literal starting line 20, body text at line 22) says only \"a group of <n> (default 3) or more is an answer...\" with no floor mentioned. The code at line 54 | Confirmed but at the wrong line. USAGE (lines 20-29 of escalate.mjs) says only "a group of <n> (default 3) or more is an answer..." with no mention of a floor. The enforcement `if (!Number.isFinite(mi
 
 ## Evidence
+
+Merged cb03740 into claude/autonomous-self-evolving-system-oiveiz. Sub-batch A check (057+007+045+058): node --test tests/*.test.mjs from skills/horde/scripts, HORDE_TEST_RATATOSKR_DIR set — 923 tests, 920 pass, 0 fail, 3 skipped (root-bypass chmod, pre-existing/expected), 0 cancelled, exit 0.
 

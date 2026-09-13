@@ -1,6 +1,6 @@
 # 057 · node mjs propose s node boundary flags required for
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Run `node.mjs propose move-boundary "…" --by archi
 Refuterzy: Verified against both sides. skills/horde/scripts/node.mjs USAGE (line 65-66) requires --node/--boundary for move-boundary. skills/horde/scripts/README.md line 462 documents `propose <kind> \"…\" --by | Confirmed, but at a different location than cited. The repo-root README.md (233 lines total) has no node.mjs section and doesn't mention `propose` at all — line 462 there doesn't exist as described. H
 
 ## Evidence
+
+Merged 5a14054 into claude/autonomous-self-evolving-system-oiveiz. Sub-batch A check (057+007+045+058): node --test tests/*.test.mjs from skills/horde/scripts, HORDE_TEST_RATATOSKR_DIR set — 923 tests, 920 pass, 0 fail, 3 skipped (root-bypass chmod, pre-existing/expected), 0 cancelled, exit 0.
 
