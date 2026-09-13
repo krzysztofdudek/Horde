@@ -57,7 +57,20 @@ function teamDigest(horde, team) {
         state: it.state, category: branchCategory(it.state),
       };
     });
-  return { name: team, branch, tip: tip || '-', byState, ticketBranches };
+  const allBranches = items.filter((it) => it.branch).map((it) => it.branch);
+  return { name: team, branch, tip: tip || '-', byState, ticketBranches, allBranches };
+}
+
+// orphanedBranches(horde, knownBranches) — every local branch under `<horde>/t-*` that
+// knownBranches (the branch names read out of queue.json across the horde's teams) does not
+// name. The model judges liveness by branches, not by silence in a queue, so a ticket branch
+// whose queue entry was lost must still surface — as an orphan needing attention, not as
+// nothing at all.
+function orphanedBranches(horde, knownBranches) {
+  const out = git(['for-each-ref', '--format=%(refname:short)', `refs/heads/${horde}/t-*`]);
+  if (!out) return [];
+  const known = new Set(knownBranches);
+  return out.split('\n').filter(Boolean).filter((b) => !known.has(b)).sort();
 }
 
 function queueTotals(horde) {
@@ -98,6 +111,9 @@ function hordeDigest(horde, cfg, teamFilter) {
   const evidenceByState = {};
   for (const r of evidenceRows) evidenceByState[r.state] = (evidenceByState[r.state] || 0) + 1;
 
+  const knownBranches = teams.flatMap((t) => t.allBranches);
+  const orphans = orphanedBranches(horde, knownBranches);
+
   return {
     name: horde,
     base: (cfg && cfg.base) || null,
@@ -109,6 +125,7 @@ function hordeDigest(horde, cfg, teamFilter) {
     lastGate,
     leases: { foreign: foreignLeases },
     evidence: { total: evidenceRows.length, byState: evidenceByState, rows: evidenceRows },
+    orphanedBranches: orphans,
   };
 }
 
@@ -136,6 +153,10 @@ function printHorde(h) {
       const g = h.lastGate[lvl];
       console.log(`  last gate (${lvl}): ${g.result} · sha ${g.sha} · count ${g.count} · at ${g.at}`);
     }
+  }
+  if (h.orphanedBranches.length > 0) {
+    console.log('  orphaned branches (no queue entry):');
+    for (const b of h.orphanedBranches) console.log(`    ${b}`);
   }
   if (h.leases.foreign.length > 0) {
     console.log('  leases held by other hordes on nodes this one touches:');

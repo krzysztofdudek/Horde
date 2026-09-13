@@ -66,6 +66,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - The rule against code-shaped writing in a promise now names every kind of writing it actually refuses, table and field names included, instead of leaving two of them unexplained.
 - Asking a ticket owner for a scoped re-review no longer points at a place that never had the file it asked for; it now says how to produce that file yourself.
 - The evidence package's named pairing now requires the name to land on a real test case's title, not just appear anywhere in the file — a comment or a piece of prose mentioning the same words no longer counts as proof.
+- Status now also shows a ticket's work branch when its queue entry has been lost, labelled as needing attention, instead of hiding it.
 
 ### Migrating a mission already in flight
 

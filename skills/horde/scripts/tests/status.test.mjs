@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
 
 test('status.mjs: no horde, then a populated digest', async (t) => {
@@ -138,6 +139,26 @@ test('status.mjs: leases held by other hordes on nodes this one touches', async 
     const r = run('status.mjs', ['--horde', 'beta'], dir);
     assert.deepEqual(r.json.hordes[0].leases.foreign, []);
   });
+});
+
+// 079 — a ticket branch whose queue.json entry is gone must still surface, as an orphan, not
+// vanish. Liveness is judged by branches, not by silence in the queue.
+test('status.mjs: a ticket branch with no queue entry shows up as orphaned', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir, 'mission1');
+
+  // A branch under the ticket-branch pattern that queue.json never mentions (its entry was lost).
+  execFileSync('git', ['branch', 'mission1/t-999', 'mission1/trunk'], { cwd: dir });
+
+  const r = run('status.mjs', ['--horde', 'mission1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const h = r.json.hordes[0];
+  assert.deepEqual(h.orphanedBranches, ['mission1/t-999']);
+
+  const human = run('status.mjs', ['--horde', 'mission1'], dir, { json: false });
+  assert.match(human.stdout, /orphaned branches \(no queue entry\)/);
+  assert.match(human.stdout, /mission1\/t-999/);
 });
 
 // E13 — status.mjs's evidence block: every charter row in one of five states, derived from
