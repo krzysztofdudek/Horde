@@ -338,7 +338,11 @@ test('ask.mjs: broken states', async (t) => {
     assert.equal((decisions.match(new RegExp(`ask-${opened.json.id}`, 'g')) || []).length, 1);
   });
 
-  await t.test('a read-only decisions.md refuses, naming the file, and the item is not marked answered', () => {
+  await t.test('a read-only decisions.md refuses, naming the file, and the item is not marked answered', (t) => {
+    if (process.getuid && process.getuid() === 0) {
+      t.skip('root bypasses file-mode permissions — chmod cannot force a write to fail as root');
+      return;
+    }
     const dir = makeRepo();
     t.after(() => rmRepo(dir));
     initHorde(dir);
