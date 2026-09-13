@@ -22,7 +22,7 @@ const DEFAULT_EVIDENCE = 'auto';
 const DEFAULT_SPEC_SUFFIX = '.test';
 const DEFAULT_MAX_DEPTH = 3;
 const DEFAULT_MAX_BYTES = 32000;
-const PARKED = new Set(['planned', 'disabled']);
+const DEFAULT_PARKED = 'planned, disabled';
 
 /** Extensions tried, in order, when an import names no extension of its own. */
 const EXTENSIONS = ['', '.mjs', '.js', '.ts', '.tsx', '.jsx', '.cjs', '/index.mjs', '/index.js', '/index.ts'];
@@ -33,7 +33,8 @@ export function companion(ctx) {
 
   const front = readFrontmatter(subject.content);
   if (front === null) return []; // not a promise; the shape rule has this one
-  if (PARKED.has(front.fields.status)) return []; // nothing runs it yet
+  const parked = new Set(splitList(ctx.config?.parked_markers ?? DEFAULT_PARKED));
+  if (parked.has(front.fields.status)) return []; // nothing runs it yet
 
   const setting = String(ctx.config?.evidence ?? DEFAULT_EVIDENCE).trim();
   const suffix = String(ctx.config?.spec_suffix ?? DEFAULT_SPEC_SUFFIX);
@@ -211,6 +212,14 @@ function stemOf(filePath) {
   const base = filePath.split('/').pop() ?? filePath;
   const dot = base.lastIndexOf('.');
   return dot > 0 ? base.slice(0, dot) : base;
+}
+
+/** A comma-separated setting as its trimmed, non-empty entries — same reading has-evidence gives its own `parked_markers`. */
+function splitList(raw) {
+  return String(raw)
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s !== '');
 }
 
 function adapterOf(front) {
