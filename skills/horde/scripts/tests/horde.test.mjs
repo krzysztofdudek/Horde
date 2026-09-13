@@ -726,3 +726,65 @@ test('E10 — init refuses without Yggdrasil, creates the graph with it, and min
     assert.deepEqual(run('node.mjs', ['bind', '--horde', 'second'], dir).json.nodes, ['kept']);
   });
 });
+
+// When the `promises` package is installed, its doc-shape rule is mapped onto wherever the
+// repository chose to keep its promises — not necessarily one of the four guessed paths. The
+// evidence layer has to read that off the graph (`yg aspects --json --reach`) rather than guess.
+test('detectEvidenceLayer: with the promises package installed, the promises directory is read off the graph, not guessed', async (t) => {
+  const { detectEvidenceLayer } = await import('../horde.mjs');
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  // A promises directory at a path none of the guessed fallbacks name.
+  const promisesDir = join(dir, 'documentation', 'vows');
+  mkdirSync(promisesDir, { recursive: true });
+  writeFileSync(
+    join(promisesDir, 'orders-are-confirmed.md'),
+    '# Orders are confirmed\n\n**status:** implemented\n',
+  );
+
+  // Fake graph presence, and a stub Yggdrasil CLI answering `aspects --json --reach` with the
+  // doc-shape rule reaching exactly that one file.
+  mkdirSync(join(dir, '.yggdrasil'), { recursive: true });
+  const stub = join(dir, 'yg-stub-reach.mjs');
+  writeFileSync(stub, [
+    "const args = process.argv.slice(2);",
+    "if (args[0] === 'aspects' && args.includes('--reach')) {",
+    '  process.stdout.write(JSON.stringify({',
+    "    schema: 'yg-aspects/1',",
+    '    aspects: [{',
+    "      id: 'krzysztofdudek/Horde/promises/doc-shape',",
+    '      reach: { units: [{ unit: { kind: "file", path: "documentation/vows/orders-are-confirmed.md" }, node: "docs" }] },',
+    '    }],',
+    '  }));',
+    '  process.exit(0);',
+    '}',
+    'process.exit(1);',
+    '',
+  ].join('\n'));
+
+  const cfg = { ygCommand: `node ${stub}` };
+  const layer = detectEvidenceLayer(dir, cfg);
+  assert.equal(layer.kind, 'promises');
+  assert.equal(layer.promises.dir, 'documentation/vows');
+  assert.equal(layer.promises.count, 1);
+});
+
+// No graph at all, or a CLI/answer that cannot say where doc-shape reaches: the guessed list of
+// four paths still works as the fallback it always was.
+test('detectEvidenceLayer: with no graph, the guessed promises paths are still the fallback', async (t) => {
+  const { detectEvidenceLayer } = await import('../horde.mjs');
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  const promisesDir = join(dir, 'promises');
+  mkdirSync(promisesDir, { recursive: true });
+  writeFileSync(
+    join(promisesDir, 'orders-are-confirmed.md'),
+    '# Orders are confirmed\n\n**status:** implemented\n',
+  );
+
+  const layer = detectEvidenceLayer(dir, {});
+  assert.equal(layer.kind, 'promises');
+  assert.equal(layer.promises.dir, 'promises');
+});

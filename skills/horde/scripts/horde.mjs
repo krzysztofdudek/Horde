@@ -25,6 +25,7 @@ import {
 } from './wave.mjs';
 import { writeLawDiff } from './law.mjs';
 import { RETRO_SCHEMA, collectRetroInput, missionState } from './retro.mjs';
+import { ygJson } from './node.mjs';
 
 const USAGE = `usage: horde.mjs <command> [options]
 
@@ -217,7 +218,37 @@ function findPromiseMirror(root, names) {
   return seen[0] || null;
 }
 
-function detectPromises(root) {
+// Where the `promises` package's own doc-shape rule (`packages/promises/doc-shape/yg-aspect.yaml`)
+// is actually mapped, read off the graph rather than guessed. `yg aspects --json --reach` names
+// every file each rule judges; doc-shape judges every promise, so the directory those files share
+// is the repository's own answer to "where do promises live" — installed once, at whatever path
+// the repository chose, never one of the four this tool would otherwise guess from. Read softly:
+// no graph, no CLI, an older CLI that does not know `--reach`, the package not installed, or a
+// judged set spread across more than one directory all fall back to the guessed list below rather
+// than stopping `init` over an answer this is free to do without.
+function promiseDirFromGraph(root, cfg) {
+  if (!existsSync(join(root, '.yggdrasil'))) return null;
+  const res = ygJson(root, cfg, ['aspects', '--json', '--reach'], 'yg-aspects/1');
+  if (res.state !== 'ok') return null;
+  const aspects = Array.isArray(res.doc && res.doc.aspects) ? res.doc.aspects : [];
+  const docShape = aspects.find((a) => a && typeof a.id === 'string' && /(^|\/)doc-shape$/.test(a.id));
+  if (!docShape) return null;
+  const units = Array.isArray(docShape.reach && docShape.reach.units) ? docShape.reach.units : [];
+  const paths = units.map((u) => u && u.unit && u.unit.path).filter(Boolean);
+  if (!paths.length) return null;
+  const dirs = [...new Set(paths.map((p) => dirname(p)))];
+  return dirs.length === 1 ? dirs[0] : null;
+}
+
+function detectPromises(root, cfg = {}) {
+  const fromGraph = promiseDirFromGraph(root, cfg);
+  if (fromGraph) {
+    const names = markdownFilesIn(join(root, fromGraph));
+    const withStatus = names.filter((n) => {
+      try { return PROMISE_STATUS.test(readFileSync(join(root, fromGraph, n), 'utf8')); } catch { return false; }
+    });
+    if (withStatus.length) return { dir: fromGraph, count: withStatus.length, mirror: findPromiseMirror(root, withStatus) };
+  }
   for (const rel of PROMISE_DIRS) {
     const names = markdownFilesIn(join(root, rel));
     const withStatus = names.filter((n) => {
@@ -245,7 +276,7 @@ export function detectEvidenceLayer(root, cfg = {}) {
   const ecosystems = detectEcosystems(root);
   const configured = Array.isArray(cfg.testGlobs) ? cfg.testGlobs.filter(Boolean) : [];
   const globs = configured.length ? configured : detectTestGlobs(root);
-  const promises = detectPromises(root);
+  const promises = detectPromises(root, cfg);
   const suites = ecosystems.map((e) => ({ name: e.name, gate: e.gate, testGlobs: e.testGlobs }));
 
   if (promises) return { kind: 'promises', promises, suites, globs };
