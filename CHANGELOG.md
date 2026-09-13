@@ -71,6 +71,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - Landing a change that edits an existing test without adding a new one used to pass silently. It is now refused unless the change says plainly that it adds no test, with a reason — and an edited test is checked the same way a new one is.
 - A test suite that used to occasionally fail for no reason, when its tests ran alongside others touching the same files, now runs clean every time.
 - The documentation on who starts a worker under each runner now says the same thing as the mission loop actually does.
+- The sample drawn for the two-judges measurement is now reproducible: run the retrospective twice over the same landed work and it draws the same tickets both times, and the retrospective document records what drew it.
 
 ### Migrating a mission already in flight
 

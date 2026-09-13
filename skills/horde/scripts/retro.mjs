@@ -276,6 +276,30 @@ function logTaste(root, cfg, items, alreadyLogged) {
 
 // ---- the judge measurement --------------------------------------------------------------------
 
+// A seed derived deterministically from the mission's own state (`missionState`, the sorted
+// "ticket@sha" list), so two runs against the same landed set draw the same sample — the sample
+// can be read back and argued with, which a seed pulled from the clock or the process could never
+// support. FNV-1a turns the state string into a 32-bit integer; mulberry32 turns that integer into
+// a repeatable stream of [0, 1) draws with no dependency beyond the two numbers it starts from.
+function seedFromState(state) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < state.length; i += 1) {
+    h ^= state.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function sampleRate(cfg) {
   const raw = Number(cfg && cfg.retro && cfg.retro.judgeSampleRate);
   if (!Number.isFinite(raw) || raw <= 0) return 0;
@@ -297,27 +321,30 @@ function ticketDeclares(dir, unit) {
 function measureJudge(horde, root, cfg, tickets, landed) {
   const rate = sampleRate(cfg);
   const tier = (cfg && cfg.retro && cfg.retro.judgeTier) || null;
+  const seed = seedFromState(missionState(landed));
   if (rate === 0) {
     return {
-      sampled: 0, tickets: [], pairs: [], disagreements: 0, interval: null, tier, skipped: [], pending: [],
+      sampled: 0, seed, tickets: [], pairs: [], disagreements: 0, interval: null, tier, skipped: [], pending: [],
       note: 'config.retro.judgeSampleRate is 0 — nothing was put to a second judge. Set a fraction between 0 and 1 to measure how far two judges agree on this repository.',
     };
   }
   if (landed.length === 0) {
     return {
-      sampled: 0, tickets: [], pairs: [], disagreements: 0, interval: null, tier, skipped: [], pending: [],
+      sampled: 0, seed, tickets: [], pairs: [], disagreements: 0, interval: null, tier, skipped: [], pending: [],
       note: 'nothing landed on this mission, so there is no judged work to put to a second judge.',
     };
   }
 
   const size = Math.min(landed.length, Math.max(1, Math.round(rate * landed.length)));
-  // Sampled without replacement from the landed tickets alone, in the order they landed — the
-  // sample is declared by size and by which tickets are in it, so it can be read back and argued
-  // with rather than taken on the tool's word.
+  // Sampled without replacement from the landed tickets alone, in the order they landed, drawn by
+  // a seed derived from the mission's own state — the sample is declared by size, by which tickets
+  // are in it, and by the seed that drew it, so it can be reproduced, read back and argued with
+  // rather than taken on the tool's word.
+  const draw = mulberry32(seed);
   const pool = [...landed];
   const picked = [];
   for (let i = 0; i < size; i += 1) {
-    const at = Math.floor(Math.random() * pool.length);
+    const at = Math.floor(draw() * pool.length);
     picked.push(pool.splice(at, 1)[0]);
   }
 
@@ -325,6 +352,7 @@ function measureJudge(horde, root, cfg, tickets, landed) {
   if (inventory.state !== 'ok') {
     return {
       sampled: size,
+      seed,
       tickets: picked.map((p) => p.ticket),
       pairs: [],
       disagreements: 0,
@@ -395,6 +423,7 @@ function measureJudge(horde, root, cfg, tickets, landed) {
 
   return {
     sampled: size,
+    seed,
     tickets: picked.map((p) => p.ticket),
     pairs,
     disagreements,
