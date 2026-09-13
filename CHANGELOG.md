@@ -42,6 +42,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - The conflict-of-interest guard can no longer be waived. A change that sharpens a rule and changes the code that rule judges, in one landing, is refused every time; splitting it into two landings is the only way through.
 - A consultant's brief shows the port syntax the ticket tool actually accepts, with no version suffix, instead of a form that gets refused.
 - Every write to the queue now goes through a single lock, so two sessions changing the same horde's queue at once can no longer silently drop one another's item.
+- A worker proves its own change by running only the test(s) it touched, not the whole suite — the full suite runs once, at landing.
 
 ### Removed
 

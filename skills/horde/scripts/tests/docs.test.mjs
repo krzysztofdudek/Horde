@@ -197,6 +197,19 @@ test('scripts/README.md\'s land.mjs item list matches land.mjs\'s own CHECK_ORDE
   assert.deepEqual(docs, code, 'the items differ in name or order between land.mjs and its own docs');
 });
 
+// ---- worker brief scopes test runs to the touched file(s), in the foreground, with a timeout --
+
+test('reference/roles/worker.md tells the worker to run only the touched test file(s), in the foreground, with an explicit timeout, and leaves the full suite to landing', () => {
+  const worker = readText(join(SKILL_DIR, 'reference', 'roles', 'worker.md'));
+  const prove = section(worker, '**Prove it red-green.**', /^- \*\*/m);
+  assert.match(prove, /\bforeground\b/i, 'worker.md does not say to run tests in the foreground');
+  assert.match(prove, /timeout/i, 'worker.md does not mention setting the shell tool\'s timeout explicitly');
+  assert.match(prove, /\btest file\(s\)|touch(?:es|ed)? test file/i,
+    'worker.md does not scope the run to the test file(s) the change touches');
+  assert.match(prove, /\bnever\b.*\b(whole|full)\b.*(gate|suite)|(landing|merger).*\bjob\b/i,
+    'worker.md does not say the whole gate/suite is landing\'s job, not the worker\'s');
+});
+
 // ---- reference/roles/ is exactly the ROLES brief.mjs knows ---------------------------------
 
 function briefRoles() {
