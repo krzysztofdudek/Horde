@@ -29,6 +29,7 @@ import { execFileSync, execSync } from 'node:child_process';
 import {
   repoRoot, hordePath, teamPath, readJSON, writeJSON, readText, readConfig, git, nowIso,
   fail, parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf,
+  runMain,
 } from './_lib.mjs';
 import { findTicket, ticketFiles } from './tk.mjs';
 import {
@@ -766,4 +767,4 @@ function main() {
   }
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

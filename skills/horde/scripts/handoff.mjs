@@ -11,6 +11,7 @@
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, git, nowIso, fail, parseArgs, emit, isMain,
   resolveHorde, asArray,
+  runMain,
 } from './_lib.mjs';
 
 const USAGE = `usage: handoff.mjs <command> [options]
@@ -161,4 +162,4 @@ function main() {
   }
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

@@ -29,6 +29,7 @@ import {
   hordePath, readJSON, readText, writeText, readConfig, fail, parseArgs, emit, isMain,
   resolveHorde, resolveTree, git, claimLease, assertLeaseAvailable, provenanceLine, withProvenance,
   firstClass,
+  runMain,
 } from './_lib.mjs';
 import {
   ygCommand, ygNode, ygContext, nodeExists, nodeBoundary, nodeRules, renderRules, listAllNodes,
@@ -1007,4 +1008,4 @@ function main() {
   return stepFrame(horde, flags);
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

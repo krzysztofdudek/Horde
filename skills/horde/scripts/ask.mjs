@@ -22,6 +22,7 @@
 
 import {
   hordePath, readJSON, writeJSON, allocateId, nowIso, fail, parseArgs, emit, isMain, resolveHorde,
+  runMain,
 } from './_lib.mjs';
 import { appendDecision } from './decide.mjs';
 
@@ -233,4 +234,4 @@ function main() {
   }
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

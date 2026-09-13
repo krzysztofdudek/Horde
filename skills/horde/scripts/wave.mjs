@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import {
   hordePath, teamPath, readText, writeText, appendText, readJSON, writeJSON, readConfig, today,
   nowIso, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy, resolveTree,
+  runMain,
 } from './_lib.mjs';
 // queue.mjs imports this file too (noteMerged, parseEvidenceRows). The cycle is deliberate and
 // safe — every binding on both sides is a hoisted function declaration and neither module calls
@@ -952,4 +953,4 @@ function main() {
   }
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

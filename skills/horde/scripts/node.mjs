@@ -25,6 +25,7 @@ import {
   fail, parseArgs, asArray, emit, isMain, resolveHorde, claimLease, qualityPolicy,
   resolveTree, assertGraphWritable, provenanceLine, withProvenance,
   allocateId, idNumber, migrationNote,
+  runMain,
 } from './_lib.mjs';
 
 const USAGE = `usage: node.mjs <command> [options]
@@ -2092,4 +2093,4 @@ function main() {
   fail(`unknown command: ${cmd} (see --help)`);
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

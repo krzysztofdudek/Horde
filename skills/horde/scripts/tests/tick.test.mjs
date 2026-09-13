@@ -667,3 +667,30 @@ test('tick.mjs --watch: a signal ends the loop without leaving the gate lock hel
   assert.ok(!existsSync(join(dir, '.horde', 'gate.lock')), 'and it left no lock held');
   assert.ok(!readQueue(dir).items.some((i) => i.state === 'running' && !i.branch), 'and no running item without a branch');
 });
+
+test('tick.mjs --watch: a refusal in one pass is written down, not the end of the loop', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'tick.interval', '1'], dir);
+  const id = mkTicket(dir, 'refused', { files: 'src/r.ts' });
+  run('queue.mjs', ['add', id], dir);
+  // A queue the loop cannot read: every pass refuses, for a reason a later pass could find gone.
+  writeFileSync(queuePath(dir), '{ not json at all');
+
+  const watcher = spawn('node', [join(SCRIPTS_DIR, 'tick.mjs'), '--watch'], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+  let err = '';
+  watcher.stderr.on('data', (d) => { err += d; });
+  watcher.stdout.on('data', () => {});
+  const exited = new Promise((resolve) => { watcher.on('close', (code) => resolve(code)); });
+  await new Promise((resolve) => { setTimeout(resolve, 3500); });
+  watcher.kill('SIGINT');
+  const code = await exited;
+
+  assert.equal(code, 0, 'the watcher outlived the refusal and ended on the signal, not on it');
+  assert.match(err, /invalid JSON in/, 'and said why it refused');
+  const journal = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
+  const refusals = journal.split('\n').filter((l) => l.includes('tick refused:'));
+  assert.ok(refusals.length >= 2, `the journal holds a line per refused pass (got ${refusals.length})`);
+  assert.ok(!existsSync(join(dir, '.horde', 'gate.lock')), 'and no pass left the gate lock held');
+});

@@ -18,6 +18,7 @@ import {
 } from 'node:fs';
 import {
   hordePath, readConfig, readText, appendText, today, fail, parseArgs, emit, isMain, resolveHorde,
+  runMain,
 } from './_lib.mjs';
 import { ygCommand } from './node.mjs';
 
@@ -183,4 +184,4 @@ function main() {
   }
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

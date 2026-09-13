@@ -16,6 +16,7 @@
 
 import {
   readConfig, fail, parseArgs, emit, isMain, resolveHorde,
+  runMain,
 } from './_lib.mjs';
 import { loadAsks } from './ask.mjs';
 import { ygCommand } from './node.mjs';
@@ -138,4 +139,4 @@ function main() {
   }
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

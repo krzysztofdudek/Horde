@@ -35,6 +35,7 @@ import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit,
   isMain, resolveHorde, git, resolveTree, withProvenance, provenanceLine, withQueueLock,
+  runMain, appendText,
 } from './_lib.mjs';
 import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine,
@@ -461,6 +462,20 @@ function render(out) {
 // inside runOnce, so a signal between passes finds nothing held; a signal during one is handled
 // after that pass's own `finally` has already let go. Interrupted, this exits 0 with the queue
 // exactly as the last completed pass left it.
+// A refused pass, written down: one line in the mission journal and one on stderr, so the run is
+// visible both to whoever is watching and to whoever reads the journal afterwards.
+function recordRefusal(horde, e, flags) {
+  const message = e && e.message ? e.message : String(e);
+  const line = `- ${nowIso()} tick refused: ${message.split('\n')[0]}`;
+  console.error(`error: ${message}`);
+  try {
+    appendText(hordePath(horde, 'plan.md'), `${line}\n`);
+  } catch {
+    // The journal being unwritable is not a reason to stop either — stderr already carried it.
+  }
+  if (flags.json) console.log(JSON.stringify({ horde, refused: message, at: nowIso() }, null, 2));
+}
+
 async function watch(horde, cfg, flags, runner) {
   const seconds = Number((cfg.tick && cfg.tick.interval) ?? 300);
   const interval = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 300000;
@@ -473,10 +488,22 @@ async function watch(horde, cfg, flags, runner) {
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
   for (;;) {
-    const out = runOnce(horde, cfg, flags, runner);
-    if (flags.json) console.log(JSON.stringify(out, null, 2));
-    else console.log(render(out));
-    if (stop || out.close) break;
+    let out = null;
+    try {
+      out = runOnce(horde, cfg, flags, runner);
+    } catch (e) {
+      // A refusal is not the end of the loop. One pass can be refused by something that is gone
+      // by the next one — a lock another run is holding, a file being written as this read it —
+      // and a steward that died on it would leave the queue to nobody. So it goes in the mission
+      // journal, where the next reader finds it, and the loop waits out the interval and asks
+      // again.
+      recordRefusal(horde, e, flags);
+    }
+    if (out) {
+      if (flags.json) console.log(JSON.stringify(out, null, 2));
+      else console.log(render(out));
+    }
+    if (stop || (out && out.close)) break;
     // eslint-disable-next-line no-await-in-loop
     await new Promise((resolve) => {
       const timer = setTimeout(resolve, interval);
@@ -504,12 +531,9 @@ function main() {
       + `  node ${join(SCRIPTS, 'horde.mjs')} config set runner.spawn "claude -p --model <class> < <brief>"`);
   }
 
-  if (flags.watch) {
-    watch(horde, cfg, flags, runner).catch((e) => fail(e.message));
-    return;
-  }
+  if (flags.watch) return watch(horde, cfg, flags, runner);
   const out = runOnce(horde, cfg, flags, runner);
-  emit(out, flags, () => render(out));
+  return emit(out, flags, () => render(out));
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

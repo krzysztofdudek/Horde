@@ -29,6 +29,7 @@ import {
   hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, git, fail, parseArgs,
   asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine, withProvenance,
   nowIso,
+  runMain,
 } from './_lib.mjs';
 import {
   ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, verdictCommandsFor,
@@ -1551,4 +1552,4 @@ function main() {
   run(horde, root, cfg, arg, level, !!flags['no-gate'], flags);
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

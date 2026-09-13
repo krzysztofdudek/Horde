@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readJSON, readText, readConfig, fail, parseArgs, asArray, emit,
   isMain, resolveHorde, parentBranchOf, resolveTree, writeText,
+  runMain,
 } from './_lib.mjs';
 import {
   nodeExists, readNodePortsText, ticketNodes, ygCheckJson, ygAspectsJson,
@@ -622,4 +623,4 @@ function main() {
   }
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);

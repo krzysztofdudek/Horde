@@ -27,6 +27,7 @@ import { join, relative, resolve } from 'node:path';
 import {
   hordeRoot, hordePath, teamPath, listHordes, readConfig, readJSON, readText, git, fail,
   parseArgs, emit, isMain, resolveTree,
+  runMain,
 } from './_lib.mjs';
 import {
   allTickets, nodesOf, parseField,
@@ -524,4 +525,4 @@ function main() {
   });
 }
 
-if (isMain(import.meta.url)) main();
+if (isMain(import.meta.url)) runMain(main);
