@@ -662,17 +662,44 @@ test('retro.mjs: two retrospectives at once leave one document and one line in t
   seedTicket(dir, 'mission1', '001', { remarks: ['ordering the cheap check first cut the failing path from 40s to 2s'] });
   writeClasses(dir, 'mission1', { 'log:001:1': { class: 'taste', node: 'auth' } });
 
-  const spawnRetro = () => new Promise((resolve) => {
+  function spawnRetro() {
     const child = spawn('node', [join(SCRIPTS_DIR, 'retro.mjs'), '--tree', dir, '--json'], {
       cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
     });
     let out = ''; let err = '';
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err += d; });
-    child.on('close', (code) => resolve({ code, out, err }));
-  });
+    const done = new Promise((resolve) => { child.on('close', (code) => resolve({ code, out, err })); });
+    return { pid: child.pid, done };
+  }
 
-  const both = await Promise.all([spawnRetro(), spawnRetro()]);
+  // Two retros are safe together because the second one finds the first one's lock file already
+  // on disk, never because `spawn` happened to start both close enough together to collide by
+  // luck — hoping for that is exactly what made this test flaky under machine load (a slow
+  // process start can let one finish before the other even begins, or let a loaded machine widen
+  // the window between them unpredictably either way). So: let the first retro run alone until
+  // its lock file is actually on disk and names its own pid — a fact read off the filesystem, not
+  // a guess about how fast two processes start — then start the second. It now always meets a
+  // genuinely held lock, on any machine, at any load.
+  const lockFile = hordeFile(dir, 'mission1', 'retro.lock');
+  async function waitHeldBy(pid, timeoutMs = 30000) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (existsSync(lockFile)) {
+        try {
+          if (JSON.parse(readFileSync(lockFile, 'utf8')).pid === pid) return;
+        } catch { /* the write is still in flight; keep polling instead of calling it absent */ }
+      }
+      if (Date.now() >= deadline) throw new Error(`${lockFile} never showed pid ${pid} holding it`);
+      await new Promise((r) => { setTimeout(r, 10); });
+    }
+  }
+
+  const first = spawnRetro();
+  await waitHeldBy(first.pid);
+  const second = spawnRetro();
+
+  const both = await Promise.all([first.done, second.done]);
   for (const r of both) assert.equal(r.code, 0, r.err);
 
   const log = yg(dir, ['log', 'read', '--node', 'auth']);
