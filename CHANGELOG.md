@@ -52,6 +52,10 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - No escalation/dissent mechanism — superseded by the one channel above.
 - Claude Code's experimental Agent Teams feature is not used anywhere in this skill.
 
+### Fixed
+
+- The example a reviewer is shown for sending work back with findings now runs, instead of naming a command that no longer exists.
+
 ### Migrating a mission already in flight
 
 Finish a mission started on an earlier release the old way — it still reads its own state and files itself away. Start fresh from the same mission card afterward; the new run rebuilds its work from the evidence the old one left, at the cost of one conversation per component touched.

@@ -17,8 +17,9 @@ something a later ticket would have swept up for free.
 Critical and Important are recorded as a change request and the ticket goes back:
 
 ```
-node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tk.mjs review NNN changes \
-  "Critical: <file:line> — <what is wrong> — <why it matters>" --by <your name>
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tk.mjs log NNN \
+  "review: <node> changes by <your name> — Critical: <file:line> — <what is wrong> — <why it matters>"
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tk.mjs status NNN changes "<one-line summary>"
 ```
 
 Minor goes to the ticket's log and nowhere else (`tk.mjs log NNN "Minor: …"`), where the next ticket
