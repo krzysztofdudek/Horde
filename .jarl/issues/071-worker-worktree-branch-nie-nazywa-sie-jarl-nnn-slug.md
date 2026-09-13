@@ -1,6 +1,6 @@
 # 071 · worker worktree branch nie nazywa sie jarl NNN slug
 
-**Status:** open
+**Status:** dropped
 **Kind:** process
 **Priority:** 3
 **Tier:** standard
@@ -19,5 +19,5 @@ Gdyby jarl (lub reeve) polegał wyłącznie na `jarl.mjs branches` bez ręcznej 
 Zbadać, czy brief powinien kazać workerowi zweryfikować `git branch --show-current` po `checkout -b` i poprawić, jeśli się nie zgadza, albo czy `jarl.mjs branches`/`check` powinno też przyjmować dowolną nazwę gałęzi z commitami ponad bazę (nie tylko wzorzec `jarl/NNN-*`), żeby nic nie ginęło po cichu. Decyzja należy do jarla.
 
 ## Evidence
-Dropped/otwarte — decyzja jarla potrzebna, nie ma tu kodu do zmiany bez jego słowa.
+Dropped: naprawione w narzędziu Jarla, nie w Hordzie
 
