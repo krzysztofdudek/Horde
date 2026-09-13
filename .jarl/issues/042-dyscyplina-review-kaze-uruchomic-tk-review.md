@@ -1,6 +1,6 @@
 # 042 · dyscyplina review kaze uruchomic tk review
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 1
 **Tier:** standard

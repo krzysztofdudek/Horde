@@ -1,6 +1,6 @@
 # 053 · worker brief s issuedir omits the hordes horde path
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 1
 **Tier:** standard

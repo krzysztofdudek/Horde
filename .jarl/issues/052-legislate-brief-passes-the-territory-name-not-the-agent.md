@@ -1,6 +1,6 @@
 # 052 · legislate brief passes the territory name not the agent
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 1
 **Tier:** standard

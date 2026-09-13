@@ -84,3 +84,8 @@
 - 2026-09-13 16:23 · filed 069 · testy chmod zaklada brak roota
 - 2026-09-13 16:23 · filed 070 · retro podwojny bieg blokada niestabilna pod obciazeniem
 - 2026-09-13 16:23 · filed 069 i 070 z raportu workera 036 (Found)
+- 2026-09-13 16:25 · 042 → in-progress · worker raised, wave 2
+- 2026-09-13 16:25 · 044 → in-progress · worker raised, wave 2
+- 2026-09-13 16:25 · 051 → in-progress · worker raised, wave 2
+- 2026-09-13 16:25 · 052 → in-progress · worker raised, wave 2
+- 2026-09-13 16:25 · 053 → in-progress · worker raised, wave 2

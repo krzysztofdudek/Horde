@@ -1,6 +1,6 @@
 # 044 · readme i skill pomijaja wymagane name w brief
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 1
 **Tier:** standard

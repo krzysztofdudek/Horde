@@ -1,6 +1,6 @@
 # 051 · architect brief tells the architect to run a nonexistent
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 1
 **Tier:** standard
