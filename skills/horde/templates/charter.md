@@ -26,6 +26,9 @@ found" and what a row in the catalogue below has to name instead. Every row belo
 through what this paragraph names. The next mission judges again from scratch; nothing here is
 carried forward.
 
+The test environment behind it is supplied from outside Horde; Horde never builds it, and this
+paragraph records only what the mission found.
+
 ## Acceptance — the evidence catalogue
 
 The mission is done when every item below is green. Each item is something a verifier can reproduce:

@@ -176,6 +176,9 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
   rewritten and put back, not argued over.
 - A port change propagates: know who consumes it before it lands (`node.mjs contracts`).
 - The first cut of the graph is a judgement the director makes with the user, not alone.
+- The test environment is supplied from outside Horde: it works with whatever it finds and never
+  builds one itself. A repository with a thin or missing evidence layer gets an honest line in the
+  charter and in the frame, never a worker sent to build the missing piece.
 
 ## Mechanics
 
