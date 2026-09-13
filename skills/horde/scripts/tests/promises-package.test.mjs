@@ -214,6 +214,23 @@ test('no rule in the package reaches outside the package', () => {
   }
 });
 
+test('has-evidence declares its scope explicitly, wider on purpose than its markdown-only siblings', () => {
+  const yaml = readFileSync(join(PACKAGE_DIR, 'has-evidence', 'yg-aspect.yaml'), 'utf8');
+  assert.match(
+    yaml,
+    /^scope:\s*$/m,
+    'has-evidence has no scope: block, so a reader cannot tell what it sees under the default apart from a rule that never considered scope at all',
+  );
+  assert.match(yaml, /^\s*per:\s*node\s*$/m, 'has-evidence has to review a whole node in one pass to pair a promise with its evidence');
+  const code = yaml.split('\n').filter((line) => !line.trim().startsWith('#')).join('\n');
+  assert.doesNotMatch(
+    code,
+    /^\s*files:/m,
+    'the thing that keeps a promise is almost never markdown — a files: filter here would hide it from ctx.files',
+  );
+  assert.match(yaml, /no files: filter on purpose/, 'the yaml does not say WHY it carries no files: filter');
+});
+
 // ── layer one: the package's rules against their own corpus, through yg drill ─
 
 for (const aspect of DETERMINISTIC) {
