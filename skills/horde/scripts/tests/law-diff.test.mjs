@@ -392,6 +392,10 @@ test('a CLI that takes the reach flag and ignores it: refused, not read as every
 });
 
 test('an unwritable law/ directory: a refusal naming the path', async (t) => {
+  if (process.getuid && process.getuid() === 0) {
+    t.skip('root bypasses file-mode permissions — chmod cannot force a write to fail as root');
+    return;
+  }
   const yg = requireYg();
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
