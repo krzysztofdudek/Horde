@@ -1,6 +1,6 @@
 # 065 · product language s description omits two of the four
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Read packages/promises/product-language/yg-aspect.ya
 Refuterzy: Confirmed. yg-aspect.yaml:2 reads: "A promise says what the software does in the product's own words — never an identifier, a path, an address, a verb and a code, or a selector." This covers camel/sna | Confirmed. yg-aspect.yaml line 2 description ("never an identifier, a path, an address, a verb and a code, or a selector") maps to camel/snake/pascal-case identifiers, file-path, url-path, http-verb, 
 
 ## Evidence
+
+check clean, batch suite green (pre-existing root-perm fails only + 1 known flake, isolated rerun green); merge 9fff711
 

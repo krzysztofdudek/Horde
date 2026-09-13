@@ -1,6 +1,6 @@
 # 015 · has evidence named dopasowanie
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -21,4 +21,6 @@ Nazwa dopasowana jako tytuł przypadku w pozycji test(, it(, Scenario:, def test
 Dowód, którego oczekuję: packages/promises/has-evidence/drills/*; yg aspects drill zielony.
 
 ## Evidence
+
+check clean (files-outside-declared list explained: drill fixture + package manifest inherent to fix), batch suite green (pre-existing root-perm fails only + 1 known flake, isolated rerun green); merge 3920484
 

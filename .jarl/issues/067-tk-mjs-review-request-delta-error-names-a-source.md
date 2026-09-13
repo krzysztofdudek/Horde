@@ -1,6 +1,6 @@
 # 067 · tk mjs review request delta error names a source
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Run `land.mjs <ticket>` (or read through land.mjs en
 Refuterzy: Confirmed as stated. tk.mjs:699 (and the usage text at 104-106) tells the caller that "the merge checklist" writes/prints the --delta path. The merge checklist is land.mjs (per reference/discipline/RE | Confirmed exactly as stated. tk.mjs:699 (and the usage text at ~104-106, and scripts/README.md:178) all claim `--delta <path>` is obtained from output "the merge checklist writes it and prints its pat
 
 ## Evidence
+
+check clean, batch suite green (pre-existing root-perm fails only + 1 known flake, isolated rerun green); merge a5b9227
 

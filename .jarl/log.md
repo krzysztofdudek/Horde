@@ -169,3 +169,15 @@
 - 2026-09-13 18:38 · filed 081 · recenzja przed done jako odmowa narzedzia w Hordzie
 - 2026-09-13 18:39 · 077 review approve · Reviewer flagged Important (brief.mjs's HORDE_TEST_ROLES_DIR override) but the issue's own acceptance line explicitly names this as one of two sanctioned approaches ('kopii... albo na atrapę, którą brief.mjs czyta przez wstrzykniętą ścieżkę') — this IS the injected-path mock it names, not undeclared scope. Reviewer confirmed no-op for any normal invocation, no other read of the env var, pure fallback. Reproduced 3/3 green on node --test tests/brief.test.mjs tests/docs.test.mjs. Scope otherwise: brief.mjs + brief.test.mjs + helpers.mjs (env passthrough) + expected CHANGELOG.md. Approving; reeve's call per the jarl's request to weigh this one directly.
 - 2026-09-13 18:42 · 078 review approve · Reviewer: acceptance met literally — brief.mjs's emitBrief writes byte-identical brief content to --out and prints only the path (or a --json summary), unchanged behavior without the flag across all four roles; refine.mjs --step consult gained an analogous --out per territory. Verified red on merge-base / green on branch tip via brief.test.mjs, throwaway worktrees, main checkout untouched. Scope: brief.mjs + refine.mjs + expected SKILL.md/model.md sentence + CHANGELOG.md (confirmed under existing [6.0.0]/### Added, not Unreleased) + brief.test.mjs. Minor: refine.mjs's --out path has no dedicated test (not required by the issue's stated acceptance); CHANGELOG bullet folds two code paths into one line, still accurate.
+- 2026-09-13 18:47 · 054 evidence · check clean, batch suite green (pre-existing root-perm fails only + 1 known flake, isolated rerun green); merge 00b4597
+- 2026-09-13 18:47 · 054 → done · merged
+- 2026-09-13 18:47 · 065 evidence · check clean, batch suite green (pre-existing root-perm fails only + 1 known flake, isolated rerun green); merge 9fff711
+- 2026-09-13 18:47 · 065 → done · merged
+- 2026-09-13 18:47 · 067 evidence · check clean, batch suite green (pre-existing root-perm fails only + 1 known flake, isolated rerun green); merge a5b9227
+- 2026-09-13 18:47 · 067 → done · merged
+- 2026-09-13 18:47 · 015 evidence · check clean (files-outside-declared list explained: drill fixture + package manifest inherent to fix), batch suite green (pre-existing root-perm fails only + 1 known flake, isolated rerun green); merge 3920484
+- 2026-09-13 18:47 · 015 → done · merged
+- 2026-09-13 18:47 · merged 054 00b4597
+- 2026-09-13 18:47 · merged 065 9fff711
+- 2026-09-13 18:47 · merged 067 a5b9227
+- 2026-09-13 18:47 · merged 015 3920484

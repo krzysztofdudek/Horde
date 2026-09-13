@@ -1,6 +1,6 @@
 # 054 · worker brief s node mjs show command breaks when
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 1
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Create a ticket with `tk.mjs new … --node billing 
 Refuterzy: Verified against both sides. worker.md:37 renders `node.mjs show {{node}}`. brief.mjs:396 sets the `node` template variable to `nodes.join(', ') || null` — a comma-joined string when a ticket has mult | Verified both sides: worker.md:37 (`node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs show {{node}}`) is templated with brief.mjs:396's `node: nodes.join(', ') || null`, so a two-node 
 
 ## Evidence
+
+check clean, batch suite green (pre-existing root-perm fails only + 1 known flake, isolated rerun green); merge 00b4597
 
