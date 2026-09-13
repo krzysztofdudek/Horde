@@ -11,8 +11,12 @@ import assert from 'node:assert/strict';
 import {
   readFileSync, readdirSync, existsSync,
 } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  makeRepo, rmRepo, run, initHorde, addNode,
+} from './helpers.mjs';
 
 const SKILL_DIR = join(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
 const REPO_ROOT = join(SKILL_DIR, '..', '..');
@@ -303,4 +307,70 @@ test('the frontmatter scan actually catches what it is for: no frontmatter, and 
   assert.equal(hasValidFrontmatter('# horde\n\nno frontmatter here at all.\n'), false);
   assert.equal(hasValidFrontmatter('---\nname: horde\n---\n\n# horde\n'), false, 'a frontmatter with no description is still caught');
   assert.equal(hasValidFrontmatter('---\nname: horde\ndescription: does the thing\n---\n\n# horde\n'), true);
+});
+
+// ---- the change-request syntax reference/discipline/review.md shows actually runs ----------
+
+// review.md's own code block is not prose about a command — it is the command an agent reading
+// the discipline literally pastes into a shell (a legislate or retro brief carries the whole file
+// verbatim under "## Law"). Parsed and executed here against a real ticket, standing in for the
+// general docs-vs-USAGE scan (issue 016) until that lands: this is the one case it would have
+// caught — `tk.mjs review` was removed and review.md kept calling it.
+function reviewMdCommands() {
+  const text = readText(join(SKILL_DIR, 'reference', 'discipline', 'review.md'));
+  const m = /and the ticket goes back:\n\n```\n([\s\S]*?)```/.exec(text);
+  assert.ok(m, 'review.md no longer has a fenced command block after "and the ticket goes back:"');
+  const joined = m[1].replace(/\\\n\s*/g, ' ').trim();
+  const prefix = '${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/';
+  return joined.split('\n').map((line) => line.trim()).filter(Boolean).map((line) => {
+    assert.ok(line.startsWith(`node ${prefix}`), `unexpected command line in review.md: ${line}`);
+    const rest = line.slice(`node ${prefix}`.length);
+    // A minimal tokenizer for the doc's own shape: bare words, or one "double-quoted" argument.
+    const tokens = [];
+    const re = /"([^"]*)"|(\S+)/g;
+    let t;
+    while ((t = re.exec(rest)) !== null) tokens.push(t[1] !== undefined ? t[1] : t[2]);
+    return tokens;
+  });
+}
+
+test('reference/discipline/review.md\'s change-request commands run against a real ticket', () => {
+  const commands = reviewMdCommands();
+  assert.ok(commands.length >= 2, 'expected the log line and the status transition');
+
+  const dir = makeRepo();
+  try {
+    initHorde(dir, 'mission1');
+    addNode(dir, 'core', { mapping: ['src/**'] });
+    execFileSync('git', ['checkout', '-q', 'mission1/trunk'], { cwd: dir });
+    execFileSync('git', ['add', '.yggdrasil'], { cwd: dir });
+    execFileSync('git', ['-c', 'user.email=test@test.com', '-c', 'user.name=Test User', 'commit', '-qm', 'graph'], { cwd: dir });
+
+    const created = run('tk.mjs', ['new', 'retry', '--title', 'Retry a failed call', '--node', 'core', '--class', 'standard',
+      '--evidence', 'node --test src/retry.test.mjs prints 1 pass'], dir);
+    assert.equal(created.code, 0, created.stderr);
+    const id = created.json.id;
+
+    const placeholders = {
+      NNN: id,
+      '<node>': 'core',
+      '<your name>': 'reviewer1',
+      '<file:line>': 'src/retry.mjs:5',
+      '<what is wrong>': 'the retry count is off by one',
+      '<why it matters>': 'the last attempt never runs',
+      '<one-line summary>': 'sent back for a Critical finding',
+    };
+    const substitute = (arg) => Object.entries(placeholders).reduce((s, [k, v]) => s.split(k).join(v), arg);
+
+    for (const [tool, ...args] of commands) {
+      const r = run(tool, args.map(substitute), dir);
+      assert.equal(r.code, 0, `${tool} ${args.join(' ')} failed: ${r.stderr}`);
+    }
+
+    const drill = run('drill.mjs', ['check', 'review', '--repo', dir, '--ticket', id], dir);
+    assert.equal(drill.code, 0, drill.stdout + drill.stderr);
+    assert.equal(drill.json.ok, true);
+  } finally {
+    rmRepo(dir);
+  }
 });

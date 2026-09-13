@@ -58,6 +58,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 
 - A rule proposal is only raised when the same answer has actually been given repeatedly. Three different answers to the same kind of question in one place no longer get treated as one recurring answer.
 - The architect's instructions no longer point it at a step that always failed when a disputed port needed the director's attention.
+- The example a reviewer is shown for sending work back with findings now runs, instead of naming a command that no longer exists.
 
 ### Migrating a mission already in flight
 
