@@ -81,3 +81,6 @@
 - 2026-09-13 16:16 · filed 067 · tk mjs review request delta error names a source
 - 2026-09-13 16:16 · filed 068 · status mjs branchcategory tests queue item state for values
 - 2026-09-13 16:20 · handoff · Pętla poprawek do Hordy 6.0.0 otwarta na gałęzi claude/autonomous-self-evolving-system-oiveiz. 68 spraw: 35 z własnego czytania, 13 od trzech czytelników, 18 z workflow z refuterami, 1 stress testy na koniec, 1 usunięcie kosztu. Fala pierwsza w locie: 036, 002, 004, 010, 005; workerzy stawali na testach w tle, merger (jeden długowieczny agent) przejmuje ich gałęzie, weryfikuje, scala, ustawia done. Narzędzie: node /home/user/jarlskill/skills/jarl/scripts/jarl.mjs. Sesja otwierająca pracowała na mocnym modelu; pętla może iść dalej na standardowym. Zasady: wpisy CHANGELOG pod [6.0.0], wersja bez zmian, JarlSkill zostaje 0.1.0, .jarl/ znika przed merge do main, gałęzie workerów nigdy nie są pushowane, koszt wylatuje w całości, środowisko testowe poza Hordą.
+- 2026-09-13 16:23 · filed 069 · testy chmod zaklada brak roota
+- 2026-09-13 16:23 · filed 070 · retro podwojny bieg blokada niestabilna pod obciazeniem
+- 2026-09-13 16:23 · filed 069 i 070 z raportu workera 036 (Found)
