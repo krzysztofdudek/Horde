@@ -61,6 +61,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - The example a reviewer is shown for sending work back with findings now runs, instead of naming a command that no longer exists.
 - Raising a rule now credits the person who did the review, not the area of the codebase it covers.
 - The worker brief now states the ticket log's actual location, including the horde-scoped path segment it was missing before.
+- Copied straight from the documentation, the first commands for raising an architect, a worker or a territory's own rule-writer used to be refused. Every example in the docs now runs as shown.
 
 ### Migrating a mission already in flight
 
