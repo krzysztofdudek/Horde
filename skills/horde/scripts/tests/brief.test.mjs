@@ -93,6 +93,20 @@ test('brief.mjs: renders worker and architect from a seeded ticket, queue and ro
     assert.match(r.stderr, /--name/);
   });
 
+  await t.test('worker: a ticket naming two nodes renders one node.mjs show line per node, not a comma-joined single argument', () => {
+    seedNode(dir, 'nodeB', ['src/b/**']);
+    seedTicket(dir, 'mission1', 'trunk', '002', {
+      node: 'nodeA, nodeB', branch: 'mission1/t-002', worktree: '.horde/worktrees/mission1/t-002',
+    });
+    const r = run('brief.mjs', ['worker', '002', '--name', 'mission1-worker-trunk-2'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.json.brief, /node .*\/scripts\/node\.mjs show nodeA\n/);
+    assert.match(r.json.brief, /node .*\/scripts\/node\.mjs show nodeB/);
+    // Never a single comma-joined argument — that is the bug: `node.mjs show nodeA, nodeB`.
+    assert.doesNotMatch(r.json.brief, /node\.mjs show nodeA, nodeB/);
+    assert.doesNotMatch(r.json.brief, /\{\{/);
+  });
+
   await t.test('reportsTo carries the agent id, once a pre-migration roster.json still names the steward being reported to', () => {
     writeRoster(dir, 'mission1', [
       {
