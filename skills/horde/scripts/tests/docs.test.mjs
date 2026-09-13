@@ -272,6 +272,33 @@ test('SKILL.md itself has a frontmatter with a name and a description', () => {
   assert.equal(hasValidFrontmatter(skill), true);
 });
 
+// ---- reference/roles/ never invokes an escalate.mjs subcommand that does not exist ----------
+
+// escalate.mjs's whole command surface is one subcommand, `recurring` — read live off its own
+// switch statement rather than hardcoded, so a future subcommand added there does not need this
+// test touched. A role brief that tells an agent to run `escalate.mjs <anything else>` is telling
+// it to run a command that fails outright.
+function escalateCommands() {
+  const text = readText(join(SCRIPTS_DIR, 'escalate.mjs'));
+  const names = [...text.matchAll(/case '([a-zA-Z]+)':/g)].map((m) => m[1]);
+  assert.ok(names.length > 0, 'no case label could be read out of escalate.mjs\'s dispatch — the switch moved');
+  return new Set(names);
+}
+
+test('reference/roles/ invokes escalate.mjs only with a subcommand escalate.mjs actually has', () => {
+  const known = escalateCommands();
+  const files = walk(join(SKILL_DIR, 'reference', 'roles'));
+  assert.ok(files.length > 0, 'expected a real reference/roles/ tree');
+  const offenders = [];
+  for (const file of files) {
+    const text = readText(file);
+    for (const m of text.matchAll(/escalate\.mjs\s+([a-zA-Z]+)/g)) {
+      if (!known.has(m[1])) offenders.push(`${file}: "escalate.mjs ${m[1]}" — escalate.mjs has no such command (only: ${[...known].join(', ')})`);
+    }
+  }
+  assert.deepEqual(offenders, [], `escalate.mjs invoked with a nonexistent subcommand:\n${offenders.join('\n')}`);
+});
+
 test('the frontmatter scan actually catches what it is for: no frontmatter, and one missing description', () => {
   assert.equal(hasValidFrontmatter('# horde\n\nno frontmatter here at all.\n'), false);
   assert.equal(hasValidFrontmatter('---\nname: horde\n---\n\n# horde\n'), false, 'a frontmatter with no description is still caught');
