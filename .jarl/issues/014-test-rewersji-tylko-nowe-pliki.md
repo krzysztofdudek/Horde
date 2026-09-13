@@ -1,6 +1,6 @@
 # 014 · test rewersji tylko nowe pliki
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard

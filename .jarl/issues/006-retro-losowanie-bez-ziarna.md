@@ -1,6 +1,6 @@
 # 006 · retro losowanie bez ziarna
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -21,4 +21,6 @@ Ziarno wyprowadzone deterministycznie ze stanu misji (missionState). Dwa uruchom
 Dowód, którego oczekuję: skills/horde/scripts/tests/retro.test.mjs (nowy przypadek: dwa przebiegi, ta sama próbka).
 
 ## Evidence
+
+suite: 887 pass / 21 fail (chmod-permission tests + pre-existing law-guard/014 fixture issue, unrelated to this branch); merge sha 069ee20
 

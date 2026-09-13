@@ -210,3 +210,18 @@
 - 2026-09-13 19:32 · merged 077 5d99ccb
 - 2026-09-13 19:32 · merged 078 32e933a
 - 2026-09-13 19:33 · reverted 014 merge 46bee4b as 03155bb: breaks law-guard.test.mjs fixtures, round 1 filed
+- 2026-09-13 19:34 · 014 → in-progress · fresh worker raised, round 1 rework
+- 2026-09-13 19:35 · filed 082 · martwe galezie worktree agent zostaja po scaleniu
+- 2026-09-13 19:35 · filed 082, martwe galezie worktree-agent po scaleniu (porzadkowe)
+- 2026-09-13 19:35 · 001 evidence · suite: 887 pass / 21 fail (chmod-permission tests + pre-existing law-guard/014 fixture issue, unrelated to this branch); merge sha 1a9e16a
+- 2026-09-13 19:35 · 001 → done · merged
+- 2026-09-13 19:35 · merged 001 1a9e16a
+- 2026-09-13 19:35 · 006 evidence · suite: 887 pass / 21 fail (chmod-permission tests + pre-existing law-guard/014 fixture issue, unrelated to this branch); merge sha 069ee20
+- 2026-09-13 19:35 · 006 → done · merged
+- 2026-09-13 19:36 · merged 006 069ee20
+- 2026-09-13 19:36 · 017 evidence · suite: 887 pass / 21 fail (chmod-permission tests + pre-existing law-guard/014 fixture issue, unrelated to this branch); merge sha e6f8f13
+- 2026-09-13 19:36 · 017 → done · merged
+- 2026-09-13 19:36 · merged 017 e6f8f13
+- 2026-09-13 19:36 · 079 evidence · suite: 887 pass / 21 fail (chmod-permission tests + pre-existing law-guard/014 fixture issue, unrelated to this branch); merge sha cdbd5fe
+- 2026-09-13 19:36 · 079 → done · merged
+- 2026-09-13 19:36 · merged 079 cdbd5fe

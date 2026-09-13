@@ -1,6 +1,6 @@
 # 017 · reconcile bez wpisu w logu
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -21,4 +21,6 @@ log.md dostaje wpis stanu z powodem i sha commita odzyskania. Test.
 Dowód, którego oczekuję: skills/horde/scripts/tests/queue.test.mjs.
 
 ## Evidence
+
+suite: 887 pass / 21 fail (chmod-permission tests + pre-existing law-guard/014 fixture issue, unrelated to this branch); merge sha e6f8f13
 

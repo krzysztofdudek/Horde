@@ -1,6 +1,6 @@
 # 001 · tick nigdy nie spawnia
 
-**Status:** in-progress
+**Status:** done
 **Kind:** cleanup
 **Priority:** 1
 **Tier:** standard
@@ -21,4 +21,6 @@ Jedno prawdziwe zdanie o tym, kto startuje workerów pod każdym runnerem, w trz
 Dowód, którego oczekuję: skills/horde/scripts/tests/docs.test.mjs (nowy przypadek) + grep po „never spawns”.
 
 ## Evidence
+
+suite: 887 pass / 21 fail (chmod-permission tests + pre-existing law-guard/014 fixture issue, unrelated to this branch); merge sha 1a9e16a
 
