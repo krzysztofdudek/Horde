@@ -40,6 +40,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - A ticket with no acceptance line cannot be queued.
 - Quality advisories file tickets only for nodes this horde leases; `--all` overrides.
 - Mission-wide numbering (work, architect decisions, questions for you) now comes from one sequence instead of three, so a bare number is never ambiguous.
+- The conflict-of-interest guard can no longer be waived. A change that sharpens a rule and changes the code that rule judges, in one landing, is refused every time; splitting it into two landings is the only way through.
 
 ### Removed
 

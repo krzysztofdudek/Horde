@@ -844,8 +844,9 @@ needed it to. Adding a new rule is not this — it judged nothing before. Raisin
 status is not this either — the text judging this code is the one that already judged it. Changing
 what a rule *says* (`content.md`, `check.mjs`, `companion.mjs`, `when`, `scope`) while changing a
 file it reaches is. The refusal names the rule, the file, and the way out: one ticket for the code,
-one for the rule, landing separately so each is judged by a law it did not write. An answered ask of
-kind `conflict` naming the rule lets it through.
+one for the rule, landing separately so each is judged by a law it did not write. Nothing waives
+this guard — no ask kind, no answer in `decisions.md` lets it through; the split is the only way
+out.
 
 ### the lock
 
