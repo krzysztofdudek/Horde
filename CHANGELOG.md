@@ -77,6 +77,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - Landing a change that edits an existing test without adding a new one used to pass silently. It is now refused unless the change says plainly that it adds no test, with a reason — and an edited test is checked the same way a new one is.
 - A repository keeping its promises directory somewhere other than one of the usual four spots is now found correctly, once the evidence package is installed, instead of being read as having no evidence at all.
 - The plan and the quality-advisory filing now read the mission's own tree by default, instead of whatever the main checkout happened to be sitting on.
+- Two permission-based tests no longer fail with a false alarm when the test suite runs as an administrator account, which ignores file permissions by design.
 
 ### Migrating a mission already in flight
 
