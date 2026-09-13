@@ -62,6 +62,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - Raising a rule now credits the person who did the review, not the area of the codebase it covers.
 - The worker brief now states the ticket log's actual location, including the horde-scoped path segment it was missing before.
 - Copied straight from the documentation, the first commands for raising an architect, a worker or a territory's own rule-writer used to be refused. Every example in the docs now runs as shown.
+- Landing a change that edits an existing test without adding a new one used to pass silently. It is now refused unless the change says plainly that it adds no test, with a reason — and an edited test is checked the same way a new one is.
 
 ### Migrating a mission already in flight
 
