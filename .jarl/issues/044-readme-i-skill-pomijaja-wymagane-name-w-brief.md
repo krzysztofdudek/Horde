@@ -1,6 +1,6 @@
 # 044 · readme i skill pomijaja wymagane name w brief
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 1
 **Tier:** standard
@@ -19,4 +19,6 @@ Pierwsza komenda, jaką dyrektor kopiuje ze skilla, nie działa.
 Każdy przykład brief.mjs w SKILL.md, README i rolach niesie --name; test docs sprawdza wymagane flagi z USAGE w przykładach.
 
 ## Evidence
+
+npm test: 903 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha d2f4b1f
 

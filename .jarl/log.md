@@ -131,3 +131,6 @@
 - 2026-09-13 18:01 · 014 → in-progress · worker raised, wave 3
 - 2026-09-13 18:01 · 015 → in-progress · worker raised, wave 3
 - 2026-09-13 18:01 · 065 → in-progress · worker raised, wave 3
+- 2026-09-13 18:04 · 044 evidence · npm test: 903 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha d2f4b1f
+- 2026-09-13 18:04 · 044 → done · merged
+- 2026-09-13 18:04 · merged 044 d2f4b1f
