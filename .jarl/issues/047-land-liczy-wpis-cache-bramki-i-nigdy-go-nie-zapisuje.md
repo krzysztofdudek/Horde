@@ -20,3 +20,5 @@ land zapisuje wpis last-gate.json dla swojego poziomu po każdym pomiarze bramki
 
 ## Evidence
 
+Corroborated independently by worker 003 (issue 003), while removing seat-model leftovers: land.mjs's checkGate builds a {sha,result,count} cache object that only horde.mjs done and wave.mjs close ever persist to cache/last-gate.json -- a landing's own gate result is never cached by land.mjs itself. Same finding as this issue's own Where:, from a second, independent source.
+
