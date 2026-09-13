@@ -439,6 +439,48 @@ test('retro.mjs: at a positive rate the sample has a declared size and comes onl
   assert.ok(['001', '002'].includes(r.json.judge.tickets[0]));
 });
 
+test('retro.mjs: the sample is seeded from mission state, so two runs on the same landed set draw the same sample', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  initHorde(dir);
+  // Four landed tickets and a rate below 1, so the draw actually has to choose among them — a
+  // fixed seed that always kept the whole set would hide the bug this proves against.
+  seedTicket(dir, 'mission1', '001', { refusals: ['gate: red'], landed: true, files: ['src/auth/login.mjs'] });
+  seedTicket(dir, 'mission1', '002', { refusals: ['gate: red'], landed: true, files: ['src/api/routes.mjs'] });
+  seedTicket(dir, 'mission1', '003', { refusals: ['gate: red'], landed: true, files: ['src/auth/login.mjs'] });
+  seedTicket(dir, 'mission1', '004', { refusals: ['gate: red'], landed: true, files: ['src/api/routes.mjs'] });
+  writeClasses(dir, 'mission1', {
+    'gate:001:0': { class: 'inexpressible' },
+    'gate:002:0': { class: 'inexpressible' },
+    'gate:003:0': { class: 'inexpressible' },
+    'gate:004:0': { class: 'inexpressible' },
+  });
+  run('horde.mjs', ['config', 'set', 'retro.judgeSampleRate', '0.5'], dir);
+  recordingYg(dir, { verdicts: [] });
+
+  const runs = [];
+  for (let i = 0; i < 4; i += 1) {
+    const r = run('retro.mjs', ['--tree', dir], dir);
+    assert.equal(r.code, 0, r.stderr);
+    runs.push(r.json.judge);
+  }
+
+  const [first, ...rest] = runs;
+  assert.equal(first.sampled, 2);
+  assert.ok(Number.isInteger(first.seed), 'the document names the seed the sample was drawn with');
+  for (const j of rest) {
+    assert.equal(j.seed, first.seed, 'the same mission state must derive the same seed');
+    assert.deepEqual(j.tickets, first.tickets, 'the same seed over the same pool must draw the same sample, in the same order');
+  }
+
+  // The written document is the one this reads back on the next run — the seed and the sample it
+  // drew must both be on it, not only on the command's own stdout.
+  const doc = JSON.parse(readFileSync(hordeFile(dir, 'mission1', 'retro.json'), 'utf8'));
+  assert.equal(doc.judge.seed, first.seed);
+  assert.deepEqual(doc.judge.tickets, first.tickets);
+});
+
 test('retro.mjs: a packaging refusal on a sampled pair is a reason the sample was skipped, and retro still ends green', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
