@@ -1,6 +1,6 @@
 # 042 · dyscyplina review kaze uruchomic tk review
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 1
 **Tier:** standard
@@ -19,4 +19,6 @@ Agent wykonujący dyscyplinę dosłownie dostaje unknown command.
 review.md pokazuje działającą składnię (tk.mjs log z linią recenzji w formacie, który drill review czyta). Test docs (016) łapie tę klasę; do tego czasu jeden przypadek w docs.test.mjs uruchamia komendę z review.md na fixture.
 
 ## Evidence
+
+npm test: 901 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha 8f89a97
 

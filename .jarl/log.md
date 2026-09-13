@@ -117,3 +117,6 @@
 - 2026-09-13 17:38 · 036 review approve · Reviewer: forbidden set (limit-reached, Limit:, reviewerCalls, cost.mjs/json, sumEntries, bookCost, measureCost, writeCostRuns, plan.cost) confirmed zero hits by grepping the branch tree; 'cost' survives only as ordinary English prose or 6 deliberate regression guards; classes correctly kept for non-cost model-selection reasons. done no longer requires cost.json. Round 2's fix confirmed minimal and correct; lib.test.mjs 28/0, horde.test.mjs 55/54/1 (the 1 = pre-existing root-chmod issue 069, confirmed identical on base branch too). All other touched suites green. Minor only: dead imports in tick.mjs, a stale template-key example in _lib.mjs, ragged line wrapping in a few edited comments, config.parallelism named in a user-facing FAQ answer, horde-plan/1 and horde-retro/1 document shape changed without a schema id bump.
 - 2026-09-13 17:38 · filed 073 · 036 sprzatanie po recenzji drobiazgi
 - 2026-09-13 17:38 · filed 073 z drobiazgow recenzenta 036
+- 2026-09-13 17:44 · 042 evidence · npm test: 901 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha 8f89a97
+- 2026-09-13 17:44 · 042 → done · merged
+- 2026-09-13 17:44 · merged 042 8f89a97
