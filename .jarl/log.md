@@ -154,3 +154,6 @@
 - 2026-09-13 18:17 · filed 075 · worker brief hordy powinien kazac uruchamiac tylko dotkniete testy
 - 2026-09-13 18:17 · filed 076 · jarl evidence powinno przyjmowac strukturalne wiersze
 - 2026-09-13 18:17 · filed 074 z raportu workera 014 (Found); filed 075 i 076 z ruling jarla po ocenie Opus (przegląd przenośności) — 076 dotyczy narzędzia JarlSkill, nie kodu Hordy, nie do podjęcia przez workera w tym repo
+- 2026-09-13 18:25 · 036 evidence · npm test: 886 tests, 881 pass, 4 fail (pre-existing root-permission chmod tests, issue 069), 1 skipped; merged as 95904ce75bf23422ae01af3f64ef34a544bb7f5d
+- 2026-09-13 18:25 · 036 → done · merged
+- 2026-09-13 18:25 · merged 036 95904ce75bf23422ae01af3f64ef34a544bb7f5d

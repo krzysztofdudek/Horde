@@ -1,6 +1,6 @@
 # 036 · koszt wylatuje w calosci
 
-**Status:** in-progress
+**Status:** done
 **Kind:** cleanup
 **Priority:** 1
 **Tier:** standard
@@ -21,4 +21,6 @@ Decyzja klienta: koszt nie jest tematem Hordy. Pół usunięty koszt to dwie pra
 Dowód, którego oczekuję: grep -ri "cost\|limit-reached\|reviewerCalls" skills/ packages/ daje zero; npm test zielone.
 
 ## Evidence
+
+npm test: 886 tests, 881 pass, 4 fail (pre-existing root-permission chmod tests, issue 069), 1 skipped; merged as 95904ce75bf23422ae01af3f64ef34a544bb7f5d
 
