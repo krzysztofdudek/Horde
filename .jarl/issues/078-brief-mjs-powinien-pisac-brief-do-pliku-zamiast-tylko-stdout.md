@@ -1,6 +1,6 @@
 # 078 · brief mjs powinien pisac brief do pliku zamiast tylko stdout
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 2
 **Tier:** standard

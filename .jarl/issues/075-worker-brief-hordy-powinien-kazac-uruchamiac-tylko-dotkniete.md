@@ -1,6 +1,6 @@
 # 075 · worker brief hordy powinien kazac uruchamiac tylko dotkniete testy
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 1
 **Tier:** standard

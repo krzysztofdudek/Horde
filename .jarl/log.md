@@ -161,3 +161,5 @@
 - 2026-09-13 18:32 · filed 077 · brief test mutuje prawdziwy plik roli, powodując losowe czerwone CI
 - 2026-09-13 18:32 · 077 → in-progress · worker raised, red CI fix
 - 2026-09-13 18:33 · filed 078 · brief mjs powinien pisac brief do pliku zamiast tylko stdout
+- 2026-09-13 18:33 · 075 → in-progress · worker raised, ruling confirmed by repeated stalls
+- 2026-09-13 18:33 · 078 → in-progress · worker raised, portability ruling
