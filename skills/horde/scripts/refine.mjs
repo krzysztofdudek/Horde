@@ -471,7 +471,7 @@ function consultBrief(horde, root, cfg, info, charter, territory) {
     '',
     '```',
     `node ${here()}/tk.mjs new <slug> --title "<t>" --node <component> --class <class> \\`,
-    '    --files <path>[,path…] --consumes <component>/<port>@<v> --produces <component>/<port>@<v> \\',
+    '    --files <path>[,path…] --consumes <component>/<port> --produces <component>/<port> \\',
     `    --evidence <E-id or "what a verifier reproduces"> --horde ${horde}`,
     `node ${here()}/queue.mjs add <NNN> --proposed --horde ${horde}`,
     `node ${here()}/tk.mjs edit <NNN> --depends <NNN>,<MMM> --by <your name> --horde ${horde}`,
