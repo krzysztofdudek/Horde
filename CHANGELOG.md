@@ -70,6 +70,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - The evidence package's named pairing now requires the name to land on a real test case's title, not just appear anywhere in the file — a comment or a piece of prose mentioning the same words no longer counts as proof.
 - Landing a change that edits an existing test without adding a new one used to pass silently. It is now refused unless the change says plainly that it adds no test, with a reason — and an edited test is checked the same way a new one is.
 - A test suite that used to occasionally fail for no reason, when its tests ran alongside others touching the same files, now runs clean every time.
+- The documentation on who starts a worker under each runner now says the same thing as the mission loop actually does.
 
 ### Migrating a mission already in flight
 

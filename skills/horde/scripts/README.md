@@ -1032,10 +1032,10 @@ then it exits — nothing lives between runs, so there is no roster and no minut
 4. **Close.** A queue holding nothing but `merged` items gives `close: true` and the command that
    closes the wave. Tick prints that command and never runs it.
 
-**Tick never spawns.** The caller spawns. `--runner` only names who the caller is, and only
-`external` changes what this script does: with nobody in front of it, it starts each worker itself
-through `config.runner.spawn` (`<class>` and `<brief>` filled in). Under `session` (the default) it
-starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds until the
+**Under `session` (the default), tick never spawns — the caller does.** `--runner` only names who
+the caller is, and only `external` changes what this script does: with nobody in front of it,
+tick.mjs spawns each worker itself, through `config.runner.spawn` (`<class>` and `<brief>` filled
+in). Under `session` it starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds until the
 queue empties or a signal arrives; a signal exits cleanly, holding no lock.
 
 It holds the landing gate's own lock — `.horde/gate.lock`, not a second one — so two ticks on one

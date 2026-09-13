@@ -210,6 +210,45 @@ test('reference/roles/worker.md tells the worker to run only the touched test fi
     'worker.md does not say the whole gate/suite is landing\'s job, not the worker\'s');
 });
 
+// ---- who spawns under each runner: docs must match tick.mjs's own code ----------------------
+
+// tick.mjs's externalStart() is the one place any of this script's own code calls spawnProcess,
+// and it only runs when runner === 'external' (see runOnce). So the code's own truth is: under
+// `session`, tick.mjs spawns nothing; under `external`, tick.mjs spawns each worker itself. Three
+// prose spots claim to state that same fact — tick.mjs's own header, model.md's Runner section,
+// and scripts/README.md — and this test checks each one asserts it, not the stale "tick never
+// spawns" blanket claim that ignored the external runner entirely.
+test('tick.mjs, model.md and README all describe who spawns under each runner, matching the code', () => {
+  const tickSrc = readText(join(SCRIPTS_DIR, 'tick.mjs'));
+  const modelSrc = readText(join(SKILL_DIR, 'reference', 'model.md'));
+  const readmeSrc = readText(join(SCRIPTS_DIR, 'README.md'));
+
+  // The code fact: spawnProcess is called only inside externalStart, gated on runner === 'external'.
+  assert.match(tickSrc, /function externalStart\(/);
+  assert.match(tickSrc, /spawnProcess\(/);
+  assert.match(tickSrc, /runner === 'external' \? externalStart\(/);
+
+  const files = [['tick.mjs', tickSrc], ['model.md', modelSrc], ['README.md', readmeSrc]];
+
+  // No file may still carry the old blanket claim that tick never spawns under either runner.
+  for (const [name, src] of files) {
+    assert.ok(!/spawns nothing under either/.test(src),
+      `${name} still claims tick.mjs spawns nothing under either runner`);
+  }
+
+  // Each file must say plainly that under `session` tick never spawns (the caller does).
+  for (const [name, src] of files) {
+    assert.match(src, /session.{0,40}tick never spawns|tick never spawns.{0,80}session/is,
+      `${name} does not say tick never spawns under session`);
+  }
+
+  // Each file must say plainly that under `external` tick.mjs spawns each worker itself.
+  for (const [name, src] of files) {
+    assert.match(src, /external.{0,200}spawns each worker itself|spawns each worker itself.{0,200}external/is,
+      `${name} does not say tick.mjs itself spawns each worker under external`);
+  }
+});
+
 // ---- reference/roles/ is exactly the ROLES brief.mjs knows ---------------------------------
 
 function briefRoles() {
