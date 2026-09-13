@@ -142,6 +142,23 @@ for (const [label, files, gate, glob] of ECOSYSTEMS) {
   });
 }
 
+test('horde.mjs init: a repository with two ecosystems composes both gate commands into one, and the charter says so', async (t) => {
+  const dir = ecoRepo({
+    'pom.xml': '<project/>\n',
+    'go.mod': 'module x\n',
+  });
+  t.after(() => rmRepo(dir));
+  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG], dir, { json: false });
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /gate: `mvn -B test && go test \.\/\.\.\.`/);
+  assert.match(r.stdout, /Maven \+ Go/);
+  const asJson = run('horde.mjs', ['init', 'mission2', '--base', 'develop', ...YG], dir);
+  assert.equal(asJson.json.gates.team, 'mvn -B test && go test ./...');
+  assert.equal(asJson.json.gates.trunk, 'mvn -B test && go test ./...');
+  assert.ok(asJson.json.testGlobs.includes('**/*Test.java'));
+  assert.ok(asJson.json.testGlobs.includes('**/*_test.go'));
+});
+
 test('horde.mjs init: an unrecognised repository is told so, and asked, rather than left with an empty gate', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

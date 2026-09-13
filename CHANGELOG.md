@@ -65,6 +65,7 @@ Needs Yggdrasil 6.x — the same major, refused otherwise.
 - Raising a rule now credits the person who did the review, not the area of the codebase it covers.
 - The worker brief now states the ticket log's actual location, including the horde-scoped path segment it was missing before.
 - Copied straight from the documentation, the first commands for raising an architect, a worker or a territory's own rule-writer used to be refused. Every example in the docs now runs as shown.
+- Setting up a repository built with more than one language or build tool now runs every one of their test suites at every gate, instead of only the first one found.
 - A worker whose ticket names two components used to be handed a first step that always failed. It now works for one component or two, the same as everywhere else the ticket system allows both.
 - The rule against code-shaped writing in a promise now names every kind of writing it actually refuses, table and field names included, instead of leaving two of them unexplained.
 - Asking a ticket owner for a scoped re-review no longer points at a place that never had the file it asked for; it now says how to produce that file yourself.
