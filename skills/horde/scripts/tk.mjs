@@ -101,9 +101,10 @@ commands:
   log <ticket> "<text>" [--horde h]
   grep <regex> [--horde h]
   review-request <ticket> [--delta <path>] [--horde h]
-      appends a timestamped log entry. --delta names the file holding the difference between
-      what was approved before and what is on the branch now (the merge checklist writes it and
-      prints its path), so a re-review reads that instead of the whole change again.
+      appends a timestamped log entry. --delta names a diff file you write yourself (e.g.
+      \`git diff <approved-sha>..HEAD -- <files> > path/to/diff\`), holding the difference between
+      what was approved before and what is on the branch now, so a re-review reads that instead
+      of the whole change again.
   edit <ticket> --by <name> [--files a,b] [--consumes …] [--produces …] [--evidence E1,…]
       [--depends NNN,MMM] [--horde h]
       rewrites the body (everything from "## What" on) from stdin, leaving the header block —
@@ -691,12 +692,13 @@ function cmdGrep(horde, positional, flags) {
 }
 
 // --delta <path> — the file holding the difference between what the owner already approved and
-// what is on the branch now, written by land.mjs when a ticket's diff moved after the review.
+// what is on the branch now. Nothing in this tool set writes it: the caller generates it
+// themselves (e.g. `git diff <approved-sha>..HEAD -- <files> > path/to/diff`) and passes its path.
 // Logged by path rather than by content: the owner reads the file, and the log keeps the record of
 // which re-review this request was, so a later reader can tell a scoped one from a full one.
 function cmdReviewRequest(horde, positional, flags) {
   const ticket = requireTicket(horde, positional[0]);
-  if (flags.delta === true) fail('--delta requires the path of the file to re-review (the merge checklist prints it)');
+  if (flags.delta === true) fail('--delta requires the path of a diff file you generate yourself (e.g. `git diff <approved-sha>..HEAD -- <files> > path/to/diff`) recording what changed since the last approval');
   const delta = typeof flags.delta === 'string' ? flags.delta : null;
   appendLog(ticket, delta ? `review requested — scoped re-review: ${delta}` : 'review requested');
   emit(
