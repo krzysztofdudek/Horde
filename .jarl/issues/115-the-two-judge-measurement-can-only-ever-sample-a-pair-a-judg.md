@@ -1,6 +1,6 @@
 # 115 · The two-judge measurement can only ever sample a pair a judge refused, never one they passed
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -25,3 +25,5 @@ Either the document says plainly which pairs a comparison was possible on and wh
 Dowód, którego oczekuję: a fixture where the first judge records a PASS that stays in force, driven through the same one-slot stand-in CLI `retro.test.mjs` now uses, showing the pair skipped and never compared; then either the document reporting that class of skip in its own right, or the Yggdrasil-side change that lets a second judge record on it.
 
 ## Evidence
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/retro.test.mjs skills/horde/scripts/tests/docs.test.mjs · **saw:** 84/84 pass on rebased branch tip and again on merged main; independently reviewed the passInForce detection logic (v.verdict === 'pass' && v.inForce, matching the inventory's own already-classified fields) and the note/render wording before merging
+
