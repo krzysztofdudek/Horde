@@ -1,6 +1,6 @@
 # 030 · sygnal rozmiaru
 
-**Status:** open
+**Status:** done
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong
@@ -21,4 +21,6 @@ Test plan-out: ranga liczona i drukowana; brak jakiejkolwiek stałej progowej w 
 Dowód, którego oczekuję: skills/horde/scripts/tests/plan-out.test.mjs.
 
 ## Evidence
+
+- **ran:** node --test tests/plan-out.test.mjs tests/queue.test.mjs tests/wave.test.mjs tests/docs.test.mjs tests/land.test.mjs (rebased tip, then merged main) · **saw:** 130/130 and 71/71 pass, both runs
 
