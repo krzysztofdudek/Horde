@@ -480,6 +480,109 @@ test('tick.mjs gate results: unparsable is absent, stale is ignored, and a green
   });
 });
 
+// ---- 080: one land.mjs call for the whole ready set, not one per ticket --------------------
+//
+// One real, passing node per ticket (never one shared node — see land.test.mjs's own
+// setupBatchLandable for why), landed the way `queue.mjs set running` really cuts a worktree
+// rather than a hand-cut branch, since this is the one tick.mjs test that has to prove something
+// about the process boundary itself: that dispatch's own gate step is ONE call over the whole
+// ready set, not N. land.test.mjs's own batch tests already cover the batching mechanic itself
+// (the overlap exclusion, the red-gate fallback, the per-ticket attribution) in depth; this is the
+// one place that proves tick.mjs actually hands land.mjs the ready set in one call to get there.
+//
+// Each node's own yg-node.yaml is written and committed on ITS ticket's own branch, beside the
+// files it maps — never pre-committed to trunk ahead of them. Yggdrasil refuses a mapping whose
+// path does not yet exist on the tree being checked ("mapping-path-missing"), and checking one
+// ticket's own tree in isolation is exactly what land.mjs does for every ticket, batched or not —
+// a node pre-declared on trunk for a file only ANOTHER, not-yet-merged ticket adds would refuse
+// every one of them outright, for a reason that has nothing to do with what this test measures.
+// Each ticket declares its own "**Files:**" too, for the same reason: the scope check's node-
+// boundary fallback reads the node off trunk (this land.mjs run's own tree), and a brand-new node
+// that only exists on the ticket's own branch is never going to be found there.
+//
+// The one thing committed to trunk before any ticket branch is cut is .yggdrasil/model/.gitkeep:
+// git tracks files, never empty directories, so a model/ directory `yg init` merely left on disk
+// would vanish the moment any branch without a node in it is checked out — trunk itself, until a
+// ticket's own node lands on top of it — and Yggdrasil reads that missing directory as "no
+// .yggdrasil/ project here at all" rather than the real answer, "no node by that name yet".
+function setupTickBatchLandable(dir, n) {
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
+  git(['checkout', 'mission1/trunk'], dir);
+  mkdirSync(join(dir, '.yggdrasil', 'model'), { recursive: true });
+  writeFileSync(join(dir, '.yggdrasil', 'model', '.gitkeep'), '');
+  git(['add', '.yggdrasil'], dir);
+  git(['commit', '-qm', 'graph: keep .yggdrasil/model/ a real, tracked path'], dir);
+
+  const ids = [];
+  for (let i = 0; i < n; i += 1) {
+    const slug = `batch-${i}`;
+    const nodePath = `.yggdrasil/model/feature-${slug}/yg-node.yaml`;
+    const ticketId = mkTicket(dir, slug, {
+      node: `feature-${slug}`,
+      files: [nodePath, `feature-${slug}.mjs`, `feature-${slug}.test.mjs`].join(','),
+    });
+    run('queue.mjs', ['add', ticketId], dir);
+    const running = run('queue.mjs', ['set', ticketId, 'running', '--agent', 'w'], dir);
+    const wt = running.json.worktree;
+    const nodeDir = join(wt, '.yggdrasil', 'model', `feature-${slug}`);
+    mkdirSync(nodeDir, { recursive: true });
+    writeFileSync(join(nodeDir, 'yg-node.yaml'), [
+      `name: feature-${slug}`,
+      'type: module',
+      `description: Fixture component feature-${slug}.`,
+      'mapping:',
+      `  - "feature-${slug}.mjs"`,
+      `  - "feature-${slug}.test.mjs"`,
+      'relations: []',
+      '',
+    ].join('\n'));
+    writeFileSync(join(wt, `feature-${slug}.mjs`), 'export function add(a, b) { return a + b; }\n');
+    writeFileSync(join(wt, `feature-${slug}.test.mjs`), [
+      "import test from 'node:test';",
+      "import assert from 'node:assert/strict';",
+      `import { add } from './feature-${slug}.mjs';`,
+      "test('add', () => { assert.equal(add(1, 2), 3); });",
+      '',
+    ].join('\n'));
+    git(['-C', wt, 'add', '--', `feature-${slug}.mjs`, `feature-${slug}.test.mjs`, '.yggdrasil'], dir);
+    git(['-C', wt, 'commit', '-qm', `ticket ${ticketId}`], dir);
+    appendFileSync(ticketLogPath(dir, ticketId), `- ${new Date().toISOString()} status: landed — ready to land\n`);
+    run('queue.mjs', ['set', ticketId, 'landed'], dir);
+    ids.push(ticketId);
+  }
+  return ids;
+}
+
+test('tick.mjs dispatch: two non-overlapping ready tickets share one gate run through land.mjs, not one each', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  const ids = setupTickBatchLandable(dir, 2);
+  const gateLog = join(dir, 'gate-calls.log');
+  run('horde.mjs', ['config', 'set', 'gates.team', `echo run >> "${gateLog}"`], dir);
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+  for (const id of ids) {
+    const step = r.json.landed.find((l) => l.ticket === id);
+    assert.ok(step, `${id} was not put through the gate`);
+    assert.equal(step.action, 'gate');
+  }
+
+  const deadline = Date.now() + 90000;
+  let allMerged = false;
+  while (Date.now() < deadline && !allMerged) {
+    const items = readQueue(dir).items;
+    allMerged = ids.every((id) => items.find((i) => i.ticket === id)?.state === 'merged');
+    if (!allMerged) await new Promise((resolve) => { setTimeout(resolve, 200); });
+  }
+  assert.ok(allMerged, `both tickets landed (queue: ${JSON.stringify(readQueue(dir).items.map((i) => [i.ticket, i.state]))})`);
+
+  const callCount = () => (existsSync(gateLog) ? readFileSync(gateLog, 'utf8').trim().split('\n').filter(Boolean).length : 0);
+  assert.equal(callCount(), 1, 'one land.mjs call for the whole ready set shared one run of the repository\'s own gate command');
+});
+
 test('tick.mjs: a queue.json caught half-written is refused by name and never written over', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));

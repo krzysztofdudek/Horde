@@ -1980,3 +1980,331 @@ test('land.mjs --fate: --horde written out resolves to that horde\'s own trunk t
   assert.equal(existsSync(trunkWorktree), true, '--horde written out on --fate provisions trunk\'s own worktree too');
   assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], dir), 'develop');
 });
+
+// ---- batching (080): several ready tickets share one run of the expensive items ------------
+//
+// One node per ticket (never one shared node the way setupLandable's own callers do) — every id
+// gets its own component, its own pair of files, its own mapping — so "non-overlapping" is the
+// fixture's own construction rather than something asserted after the fact, and calling this
+// helper for several ids in one test never has one id's addNode overwrite another's mapping the
+// way a shared node would.
+//
+// Each node's own yg-node.yaml lands on ITS ticket's own branch, beside the first file it maps —
+// never pre-committed to trunk ahead of the file it names. That is not a fixture nicety: Yggdrasil
+// itself refuses a mapping whose path does not yet exist on the tree being checked
+// ("mapping-path-missing"), so checking one ticket's own tree in isolation — exactly what land.mjs
+// does for every ticket, batched or not — would refuse it outright if another ticket's not-yet-
+// merged node sat on trunk already. Only the aspect goes on trunk before any ticket branches: it
+// reaches nothing yet, so nothing about it depends on any one ticket's files existing. And because
+// every node this way is genuinely new (none of them exist on trunk yet), every ticket declares its
+// own "**Files:**" rather than leaning on the node-boundary fallback: that fallback reads the node
+// off `root` (trunk, this land.mjs run's own tree), which a brand-new node introduced on the
+// ticket's own branch is never going to be found on — a declared list is the only boundary a
+// ticket that introduces its own component can give the scope check.
+//
+// .yggdrasil/model/.gitkeep, committed with the aspect, keeps model/ itself a real, git-tracked
+// path: git tracks files, never empty directories, so a model/ directory `yg init` merely created
+// on disk would vanish the moment any branch without a node in it is checked out — exactly what
+// every ticket branch here is, on trunk, until its own node lands. Without it, Yggdrasil reads a
+// directory that is not there as "no .yggdrasil/ project here at all", a confusing stand-in for
+// the real answer ("no node by that name yet") that has nothing to do with land.mjs itself.
+function setupBatchLandable(dir, ids, { judge = 'one-shot', perTicket = {} } = {}) {
+  initHorde(dir);
+  addAspect(dir, 'no-marker', {
+    description: 'Source files must not carry an unfinished-work marker.',
+    check: MARKER_CHECK,
+  });
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+  run('horde.mjs', ['config', 'set', 'judge', judge], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  mkdirSync(join(dir, '.yggdrasil', 'model'), { recursive: true });
+  writeFileSync(join(dir, '.yggdrasil', 'model', '.gitkeep'), '');
+  git(['add', '.yggdrasil'], dir);
+  git(['commit', '-qm', 'graph: the rule this batch is judged by'], dir);
+
+  const branches = {};
+  for (const id of ids) {
+    const own = perTicket[id] || {};
+    const mapping = [`feature-${id}.mjs`, `feature-${id}.test.mjs`, ...(own.extraMapping || [])];
+    const nodePath = `.yggdrasil/model/feature${id}/yg-node.yaml`;
+    const nodeYaml = [
+      `name: feature${id}`,
+      'type: module',
+      `description: Fixture component feature${id}.`,
+      'aspects:',
+      '  - no-marker',
+      'mapping:',
+      ...mapping.map((m) => `  - "${m}"`),
+      'relations: []',
+      '',
+    ].join('\n');
+    const extraFiles = { [nodePath]: nodeYaml, ...(own.extraFiles || {}) };
+    const branch = makeTicketBranch(dir, id, { extraFiles });
+    const files = [nodePath, `feature-${id}.mjs`, `feature-${id}.test.mjs`, ...Object.keys(own.extraFiles || {})];
+    const dst = writeIssue(dir, 'trunk', id, { node: `feature${id}`, files });
+    writeTicketLog(dst);
+    seedQueueItem(dir, 'trunk', id, branch);
+    branches[id] = branch;
+  }
+  return branches;
+}
+
+function gateCallCount(gateLog) {
+  if (!existsSync(gateLog)) return 0;
+  return readFileSync(gateLog, 'utf8').trim().split('\n').filter(Boolean).length;
+}
+
+function resultFor(r, id) {
+  return (r.json.results || []).find((x) => x.ticket === id);
+}
+
+test('land.mjs batch: non-overlapping tickets ready to land share one gate run, and each still lands on its own', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ids = ['101', '102', '103'];
+  setupBatchLandable(dir, ids);
+  const gateLog = join(dir, 'gate-calls.log');
+  run('horde.mjs', ['config', 'set', 'gates.team', `echo run >> "${gateLog}"`], dir);
+  const trunkBefore = git(['rev-parse', 'mission1/trunk'], dir);
+
+  const r = run('land.mjs', [ids.join(',')], dir);
+  if (r.code !== 0) console.error(r.stdout, r.stderr);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.ok, true);
+  assert.deepEqual(r.json.tickets, ids);
+  assert.equal(r.json.results.length, 3);
+
+  assert.equal(gateCallCount(gateLog), 1, 'the repository\'s own gate command ran exactly once for the whole batch');
+
+  // Three merge commits landed, each with two parents (its own branch and whatever trunk stood at
+  // when it merged) — sequential, not folded into one.
+  assert.equal(git(['rev-list', '--count', '--merges', `${trunkBefore}..mission1/trunk`], dir), '3');
+
+  const shas = new Set();
+  for (const id of ids) {
+    const res = resultFor(r, id);
+    assert.ok(res, `no result for ${id}`);
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.ok(res.landed && res.landed.sha, `${id} carries no merge sha`);
+    shas.add(res.landed.sha);
+
+    const item = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === id);
+    assert.equal(item.state, 'merged', `${id} is not merged in the queue`);
+    assert.equal(item.sha, res.landed.sha, `${id}'s queue item does not carry the sha it actually landed as`);
+
+    assert.match(
+      readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8'),
+      new RegExp(id),
+      `${id} carries no journal bullet`,
+    );
+    assert.ok(res.full.size, `${id} carries no size figure`);
+    assert.deepEqual(res.full.checks.map((c) => c.name).slice(0, 9), ITEMS, `${id}'s own checks are not the nine items in order`);
+    for (const c of res.full.checks.slice(0, 9)) assert.equal(c.ok, true, `${id} ${c.name}: ${c.note}`);
+  }
+  assert.equal(shas.size, 3, 'three distinct merge commits — no ticket landed as another\'s sha');
+});
+
+test('land.mjs batch: an overlapping pair excludes the overlapping ticket from the batch, and the rest still batch', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ids = ['111', '112', '113'];
+  // 112 also touches 111's own file, on top of its own two — declared, so its own scope check
+  // still passes once it lands on its own. The batching precondition reads the actual diff, not
+  // the declaration, so this is enough to collide 112 with 111 without touching 113 at all.
+  setupBatchLandable(dir, ids, {
+    perTicket: {
+      112: {
+        extraFiles: { 'feature-111.mjs': 'export function add(a, b) { return a + b; } // also touched by 112\n' },
+        // 112's own node claims this file too — its own tree, checked alone once it falls back to
+        // landing on its own, must not depend on 111's separate branch (never merged with it) to
+        // say who owns it. (Declared "**Files:**" — including this one — is computed automatically
+        // from extraFiles' own keys; nothing more to say here.)
+        extraMapping: ['feature-111.mjs'],
+      },
+    },
+  });
+  const gateLog = join(dir, 'gate-calls.log');
+  run('horde.mjs', ['config', 'set', 'gates.team', `echo run >> "${gateLog}"`], dir);
+
+  const r = run('land.mjs', [ids.join(',')], dir);
+
+  // One shared run for {111, 113}, one standalone run for 112 — landed on its own precisely
+  // because it collides with 111, never because anything about it is otherwise wrong.
+  assert.equal(gateCallCount(gateLog), 2, 'the overlapping ticket ran its own gate, separate from the shared one');
+
+  // 111 and 113 batch together and both land.
+  for (const id of ['111', '113']) {
+    const res = resultFor(r, id);
+    assert.ok(res, `no result for ${id}`);
+    assert.equal(res.ok, true, JSON.stringify(res));
+    const item = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === id);
+    assert.equal(item.state, 'merged', `${id} did not land`);
+  }
+
+  // 112 is excluded from the batch and runs alone — AFTER 111 and 113 have already landed and
+  // moved the parent it was cut from, exactly as it would if a worker had spawned three separate
+  // `land.mjs` calls at once today and this one lost the race to merge: it goes stale rather than
+  // landing over content its own branch never incorporated. That is not a batching bug — it is the
+  // same base-freshness item every landing runs, correctly refusing a branch a sibling's landing
+  // has since overtaken. What this test cares about is that 112 got there on its OWN gate call
+  // (proven by the count above), and that this run reports it, honestly, for what it is.
+  assert.equal(r.code, 1, 'the run as a whole is not all-green while 112 has not actually landed');
+  const res112 = resultFor(r, '112');
+  assert.ok(res112, 'no result for 112');
+  assert.equal(res112.ok, false, 'excluded from the batch by construction, but for a stale base — not a fabricated pass');
+  const check112 = res112.full.checks.find((c) => c.name === 'base freshness');
+  assert.equal(check112.ok, false);
+  assert.match(check112.note, /STALE/);
+  const item112 = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === '112');
+  assert.equal(item112.state, 'landed', '112 is exactly where it was — nothing landed for it, nothing else touched it');
+});
+
+test('land.mjs batch: a red shared gate falls back to landing every member on its own, in the same run, with correct attribution', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ids = ['121', '122', '123'];
+  const branches = setupBatchLandable(dir, ids);
+  const gateLog = join(dir, 'gate-calls.log');
+  // Red on the first call (the shared one), green on every call after (each standalone fallback).
+  const gateCmd = `n=$(cat "${gateLog}" 2>/dev/null | wc -l); echo run >> "${gateLog}"; [ "$n" -gt 0 ]`;
+  run('horde.mjs', ['config', 'set', 'gates.team', gateCmd], dir);
+
+  const r = run('land.mjs', [ids.join(',')], dir);
+
+  assert.equal(
+    gateCallCount(gateLog),
+    4,
+    '1 shared run (red, no bisection) + 3 standalone runs — the worst case costs exactly what it costs today',
+  );
+
+  // Three tickets that all shared one parent tip, none of them merged before this run started:
+  // falling back to landing them one at a time, in sequence, is exactly what three separate
+  // `land.mjs` calls racing for the same parent would do today — the first to actually merge wins,
+  // and every one behind it finds its own branch no longer rooted at the parent's new tip (the same
+  // base-freshness item every landing runs) and goes back to "changes" rather than landing over
+  // content it never incorporated. Nothing here is a batching bug: it is "no bisection" costing
+  // exactly what today's worst case already costs, and every result below is attributed to the
+  // right ticket, never confused with a sibling's.
+  const res121 = resultFor(r, '121');
+  const res122 = resultFor(r, '122');
+  const res123 = resultFor(r, '123');
+  assert.ok(res121 && res122 && res123, 'a result for every ticket');
+
+  assert.equal(res121.ok, true, JSON.stringify(res121));
+  assert.ok(res121.landed && res121.landed.sha, '121 did not land');
+  assert.equal(res121.full.branch, branches['121']);
+  const item121 = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === '121');
+  assert.equal(item121.state, 'merged');
+  assert.equal(item121.sha, res121.landed.sha, '121\'s queue item does not carry the sha its own fallback run actually landed');
+
+  for (const [id, res] of [['122', res122], ['123', res123]]) {
+    assert.equal(res.ok, false, `${id} unexpectedly landed: ${JSON.stringify(res)}`);
+    assert.equal(res.landed, null);
+    assert.equal(res.full.branch, branches[id], `${id}'s own result names its own branch, not another ticket's`);
+    const staleness = res.full.checks.find((c) => c.name === 'base freshness');
+    assert.equal(staleness.ok, false);
+    assert.match(staleness.note, /STALE/);
+    const item = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === id);
+    assert.equal(item.state, 'landed', `${id} is exactly where it was`);
+  }
+  assert.equal(r.code, 1, 'the run as a whole is not all-green while two of the three have not actually landed');
+});
+
+test('land.mjs batch: --no-gate on two or more tickets lands each on its own, never sharing a preview tree', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ids = ['124', '125'];
+  setupBatchLandable(dir, ids);
+
+  const r = run('land.mjs', [ids.join(','), '--no-gate'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.ok, true);
+  for (const id of ids) {
+    const res = resultFor(r, id);
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(res.landed, null, '--no-gate never merges');
+    const item = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === id);
+    assert.equal(item.state, 'landed', `${id} was not supposed to merge under --no-gate`);
+  }
+});
+
+test('land.mjs batch: a batch naming exactly one ticket behaves exactly like the plain single-ticket call', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  setupLandable(dir, '130');
+
+  const r = run('land.mjs', ['130'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.ok, true);
+  assert.deepEqual(r.json.checks.map((c) => c.name).slice(0, 9), ITEMS);
+  assert.equal(r.json.landed.sha, git(['rev-parse', 'mission1/trunk'], dir));
+  // Today's single-ticket shape, never the batch envelope — no "tickets"/"results" fields at all.
+  assert.equal(r.json.tickets, undefined);
+  assert.equal(r.json.results, undefined);
+  assert.equal(r.json.ticket, '130');
+});
+
+test('land.mjs --background with two or more tickets starts one worker for the whole batch', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ids = ['141', '142'];
+  setupBatchLandable(dir, ids);
+  run('horde.mjs', ['config', 'set', 'gates.team', 'sleep 2'], dir);
+
+  const started = Date.now();
+  const r = run('land.mjs', [ids.join(','), '--background'], dir);
+  const elapsed = Date.now() - started;
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(elapsed < 2000, `it did not wait for the gate (${elapsed}ms)`);
+  assert.deepEqual(r.json.tickets, ids);
+  assert.equal(r.json.items.length, 2);
+  for (const it of r.json.items) {
+    assert.equal(it.started, true, JSON.stringify(it));
+    assert.match(it.resultFile, /\.horde\/hordes\/mission1\/land\/1(41|42)\.json$/);
+    assert.equal(existsSync(it.resultFile), false, 'nothing is written yet');
+  }
+
+  const deadline = Date.now() + 90000;
+  const docs = {};
+  while (Date.now() < deadline && Object.keys(docs).length < ids.length) {
+    for (const it of r.json.items) {
+      if (docs[it.ticket]) continue;
+      try { docs[it.ticket] = JSON.parse(readFileSync(it.resultFile, 'utf8')); } catch { /* not yet, or half-written */ }
+    }
+    if (Object.keys(docs).length < ids.length) execFileSync('sleep', ['0.25']);
+  }
+  assert.equal(Object.keys(docs).length, ids.length, 'both background results were written');
+  for (const id of ids) {
+    assert.equal(docs[id].ok, true, JSON.stringify(docs[id]));
+    assert.ok(docs[id].landed, `${id} did not land in the background`);
+  }
+});
+
+test('land.mjs --background with a batch: a ticket with no queue item is refused inline and never holds up the rest', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ids = ['151', '152'];
+  setupBatchLandable(dir, ids);
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+
+  const r = run('land.mjs', [[...ids, '999'].join(','), '--background'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.items.length, 3);
+  const missing = r.json.items.find((it) => it.ticket === '999');
+  assert.ok(missing);
+  assert.equal(missing.started, false);
+  assert.match(missing.note, /no queue item names 999/);
+  for (const id of ids) {
+    const it = r.json.items.find((x) => x.ticket === id);
+    assert.equal(it.started, true, JSON.stringify(it));
+  }
+
+  const deadline = Date.now() + 90000;
+  let bothLanded = false;
+  while (Date.now() < deadline && !bothLanded) {
+    const items = run('queue.mjs', ['list'], dir).json;
+    bothLanded = ids.every((id) => items.find((i) => i.ticket === id)?.state === 'merged');
+    if (!bothLanded) execFileSync('sleep', ['0.25']);
+  }
+  assert.ok(bothLanded, 'the two real tickets landed despite the third being unresolvable');
+});
