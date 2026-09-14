@@ -1,6 +1,6 @@
 # 031 · warstwa none jest glosna
 
-**Status:** in-progress
+**Status:** done
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong
@@ -21,4 +21,6 @@ Test na fixture bez warstwy dowodów: wynik lądowania i zamknięcie fali niosą
 Dowód, którego oczekuję: skills/horde/scripts/tests/land.test.mjs, skills/horde/scripts/tests/wave.test.mjs.
 
 ## Evidence
+
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/land.test.mjs skills/horde/scripts/tests/wave.test.mjs skills/horde/scripts/tests/retro.test.mjs skills/horde/scripts/tests/lib.test.mjs skills/horde/scripts/tests/charter-template.test.mjs skills/horde/scripts/tests/docs.test.mjs skills/horde/scripts/tests/refine.test.mjs · **saw:** 326/326 pass on rebased branch tip, again on merged main after 041 also landed; independently re-read the _lib.mjs reader (noEvidenceLayerIn/noEvidenceLayerNote, anchored to the section start to avoid the charter template's own instructional text false-triggering) and its three integration points in land.mjs/wave.mjs/retro.mjs before merging
 
