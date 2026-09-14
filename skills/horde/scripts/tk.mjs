@@ -29,7 +29,7 @@ import { join } from 'node:path';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
-  allocateId,
+  allocateId, latestChangesRound, parseAcceptanceLines, parseEvidenceRows,
   runMain,
 } from './_lib.mjs';
 import {
@@ -241,21 +241,6 @@ export function setStatus(text, status) {
 
 // --- the fix-loop breaker (config.fixRounds) ------------------------------
 
-// tk.mjs's own log line for a "changes" transition carries "(round N/cap — <label>)" — read back
-// to work out how many rounds this ticket has already been through, without a second, separate
-// counter file to keep in sync with the log.
-const ROUND_LOG_RE = /\(round (\d+)\/\d+ — /;
-
-function priorChangesRounds(ticket) {
-  const log = readText(ticket.logPath) || '';
-  let max = 0;
-  for (const line of log.split('\n')) {
-    const m = ROUND_LOG_RE.exec(line);
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  }
-  return max;
-}
-
 // What this round of "changes" means: rounds 1..resume ask the director to resume the same
 // worker with the findings; the next "fresh" rounds ask for a new one, one class heavier, briefed
 // with "brief.mjs worker NNN --takeover"; beyond resume+fresh this refuses outright — another
@@ -268,7 +253,9 @@ export function changesRoundInfo(horde, ticket) {
   const resume = Number(fixRounds.resume ?? 3);
   const fresh = Number(fixRounds.fresh ?? 2);
   const cap = resume + fresh;
-  const round = priorChangesRounds(ticket) + 1;
+  // The log's own "(round N/cap — <label>)" suffix is the counter: read back rather than kept in
+  // a second file beside the log, which would have to be held in step with it.
+  const round = latestChangesRound(readText(ticket.logPath)) + 1;
   if (round > cap) {
     return {
       refused: true,
@@ -286,7 +273,7 @@ export function changesRoundInfo(horde, ticket) {
 }
 
 // Writes the status and its log line for one transition, embedding the round suffix
-// changesRoundInfo computed (when given) so priorChangesRounds can read it back later.
+// changesRoundInfo computed (when given) so latestChangesRound can read it back later.
 export function transitionStatus(ticket, status, note, roundInfo) {
   const roundSuffix = roundInfo ? ` (round ${roundInfo.round}/${roundInfo.cap ?? roundInfo.resume + roundInfo.fresh} — ${roundInfo.label})` : '';
   writeText(ticket.issuePath, setStatus(ticket.text, status));
@@ -335,16 +322,8 @@ function allTeamPaths(horde) {
 // the template's own placeholder. A ticket with none has nothing anybody can reproduce, so
 // nothing can ever prove it done — `queue add` refuses it (a real mission found one at briefing
 // time, after the work was already written).
-const ACCEPTANCE_PLACEHOLDER = /^- \[[ x]\]\s*(…|\.\.\.)?\s*$/;
 export function acceptanceLines(issueText) {
-  const text = String(issueText || '');
-  const idx = text.indexOf('## Acceptance');
-  if (idx === -1) return [];
-  const rest = text.slice(idx);
-  const nextHeading = rest.indexOf('\n## ', 1);
-  const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
-  return section.split('\n').map((l) => l.trim())
-    .filter((l) => /^- \[[ x]\]/.test(l) && !ACCEPTANCE_PLACEHOLDER.test(l));
+  return parseAcceptanceLines(issueText).map((l) => l.raw);
 }
 export function findTicket(horde, idInput) {
   const id = padId(idInput);
@@ -377,22 +356,12 @@ function appendLog(ticket, text) {
   appendText(ticket.logPath, `- ${nowIso()} ${text}\n`);
 }
 
-// The evidence catalogue table in the horde's charter.md: | id | evidence | node | reproduced by |.
-// Read the same way wave.mjs reads it (header row, separator row, then data), but kept as its own
-// copy here rather than imported — this tool only needs the id column, and staying self-contained
-// avoids coupling two tools that are refused for merge independently of one another.
+// Every id in the horde's charter.md evidence catalogue. This tool only needs the id column, but
+// it reads the table through the catalogue's own parser: a copy of that read here is how a row
+// could go on existing for one tool and stop existing for another.
 function charterEvidenceIds(horde) {
-  const text = readText(hordePath(horde, 'charter.md')) || '';
-  const idx = text.indexOf('## Acceptance');
-  if (idx === -1) return new Set();
-  const rest = text.slice(idx);
-  const nextHeading = rest.indexOf('\n## ', 1);
-  const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
-  const lines = section.split('\n').filter((l) => l.trim().startsWith('|'));
-  const ids = lines.slice(2)
-    .map((l) => (l.split('|')[1] || '').trim())
-    .filter(Boolean);
-  return new Set(ids);
+  const rows = parseEvidenceRows(readText(hordePath(horde, 'charter.md')) || '');
+  return new Set(rows.map((r) => r.id).filter(Boolean));
 }
 
 // Every catalogue id (E1, E2, …) a ticket's --evidence values cite must already be a row in the

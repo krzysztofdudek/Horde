@@ -28,7 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync } from 'node:child_process';
 import {
   repoRoot, hordePath, teamPath, readJSON, writeJSON, readText, readConfig, git, nowIso,
-  fail, parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf,
+  fail, parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, parseVerdictBlocks,
   runMain,
 } from './_lib.mjs';
 import { findTicket, ticketFiles } from './tk.mjs';
@@ -333,27 +333,11 @@ function checkTdd(ctx) {
 
 // ---- drill: verification --------------------------------------------------------------
 
-function lastVerdictBlock(logText, ticketId) {
-  if (!logText) return null;
-  const re = new RegExp(`## Verdict · ${ticketId} ·[\\s\\S]*?(?=\\n## Verdict|$)`, 'g');
-  const blocks = logText.match(re);
-  return blocks && blocks.length ? blocks[blocks.length - 1] : null;
-}
-
-// The verdict's "| item | command | saw |" table, as rows of trimmed cells. The header and the
-// separator row are dropped; a row is a claim only when it carries both a command and what it
-// printed.
-function verdictRows(block) {
-  const lines = block.split('\n');
-  const start = lines.findIndex((l) => /^\|\s*item\s*\|/.test(l));
-  if (start === -1) return [];
-  const rows = [];
-  for (const line of lines.slice(start + 2)) {
-    if (!line.trim().startsWith('|')) break;
-    const cells = line.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim());
-    if (cells.length >= 3) rows.push({ item: cells[0], command: cells[1], saw: cells[2] });
-  }
-  return rows;
+// The most recent verdict this ticket's own log carries — its log is append-only, so the last one
+// naming this ticket is the one that counts.
+function lastVerdictFor(logText, ticketId) {
+  const mine = parseVerdictBlocks(logText).filter((b) => b.ticket === ticketId);
+  return mine.length ? mine[mine.length - 1] : null;
 }
 
 const EMPTY_CELL = /^(|—|-|–|n\/a|none|not run|tbd|\.\.\.|…)$/i;
@@ -363,17 +347,16 @@ function checkVerification(ctx) {
     root, branch, logText, ticket,
   } = ctx;
   const checks = [];
-  const block = lastVerdictBlock(logText, ticket.id);
-  if (!block) return [{ name: 'verdict', ok: false, note: `no verdict recorded on ticket ${ticket.id}` }];
+  const verdict = lastVerdictFor(logText, ticket.id);
+  if (!verdict) return [{ name: 'verdict', ok: false, note: `no verdict recorded on ticket ${ticket.id}` }];
 
-  const result = /\*\*Result:\*\*\s*(\S+)/.exec(block)?.[1] || null;
+  const { result, rows, block } = verdict;
   checks.push({
     name: 'verdict',
     ok: result === 'reproduced',
     note: result ? `result: ${result}` : 'the verdict block names no result',
   });
 
-  const rows = verdictRows(block);
   const blank = rows.filter((r) => EMPTY_CELL.test(r.command) || EMPTY_CELL.test(r.saw));
   checks.push({
     name: 'what was run and seen',

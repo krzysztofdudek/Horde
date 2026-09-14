@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit,
   isMain, resolveHorde, git, resolveTree, withProvenance, provenanceLine, withQueueLock,
-  runMain, appendText,
+  runMain, appendText, parseEvidenceRows,
 } from './_lib.mjs';
 import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine,
@@ -45,7 +45,7 @@ import {
 } from './tk.mjs';
 import { readLandResult, acquireGateLock, gateLockWaitMs } from './land.mjs';
 import { asksPath, loadAsks, addAsk } from './ask.mjs';
-import { parseEvidenceRows, mentionsEvidenceId } from './wave.mjs';
+import { mentionsEvidenceId } from './wave.mjs';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 // Sub-teams are gone, so there is one queue and it is the trunk's. Nothing here takes --team: a

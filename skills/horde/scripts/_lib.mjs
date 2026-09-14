@@ -531,6 +531,225 @@ export function qualityPolicy(horde) {
   return QUALITY_POLICIES.includes(found) ? found : 'autonomous';
 }
 
+// ---- the documents, read in one place ---------------------------------------------------------
+//
+// Four markdown documents carry state this tool set reads back: a ticket's `log.md` (its state
+// lines, and the verdict blocks standing in it), a ticket's `issue.md` (its acceptance checklist),
+// the mission's `charter.md` (its evidence catalogue, and the quality policy above) and the
+// mission's `decisions.md` (its entries). Every reader of those shapes lives here.
+//
+// It has to, and this is the whole reason: a shape written by one tool and read by three is a
+// silent measurement bug the day its wording moves. Each reader used to carry its own regex, so a
+// tool went on counting, only counting the wrong thing, with nothing wrong to see in the file. One
+// parser per document means a rewording breaks in one place or nowhere.
+//
+// Nothing here writes. The documents' formats are whatever their writers already produce; these
+// functions only read them back.
+
+// One markdown section: `heading` up to the next `## `, or the rest of the document. The ticket's
+// checklist and the charter's catalogue both live under a heading that starts `## Acceptance`, so
+// both are cut out with this.
+export function markdownSection(text, heading) {
+  const body = String(text || '');
+  const start = body.indexOf(heading);
+  if (start === -1) return '';
+  const rest = body.slice(start);
+  const next = rest.indexOf('\n## ', 1);
+  return next === -1 ? rest : rest.slice(0, next);
+}
+
+// One table row as trimmed cells: the outer pipes dropped, an escaped `\|` staying inside its own
+// cell rather than splitting it in two.
+export function markdownTableCells(line) {
+  return String(line).trim().replace(/^\|/, '').replace(/\|$/, '')
+    .split(/(?<!\\)\|/)
+    .map((c) => c.trim());
+}
+
+// --- a ticket's log.md: its state lines -------------------------------------------------------
+//
+// Two kinds of line, one shape. Everything `appendLog` writes is `- <stamp> <text>`, and
+// `transitionStatus` writes that same line with the text `status: <state>[ — <note>]`, plus
+// `(round N/cap — <label>)` when the transition is a round of the fix loop. What tells a state
+// entry from a remark is the SHAPE of the line, never its words — a remark that happens to talk
+// about a status is still a remark.
+
+const LOG_ENTRY_RE = /^-\s+(.*)$/;
+const LOG_STATUS_RE = /^(\S+)\s+status:\s(.*)$/;
+const LOG_ROUND_RE = /\(round (\d+)\/(\d+) — ([^)]*)\)/;
+
+export function parseLogEntries(logText) {
+  const entries = [];
+  String(logText || '').split('\n').forEach((raw, index) => {
+    const m = LOG_ENTRY_RE.exec(raw.trim());
+    if (!m) return;
+    const text = m[1];
+    const status = LOG_STATUS_RE.exec(text);
+    const round = LOG_ROUND_RE.exec(text);
+    const said = status ? status[2].replace(LOG_ROUND_RE, '').trim() : '';
+    const dash = said.indexOf(' — ');
+    entries.push({
+      index,
+      text,
+      isStatus: !!status,
+      stamp: status ? status[1] : null,
+      status: status ? (dash === -1 ? said : said.slice(0, dash)).trim() : null,
+      note: status && dash !== -1 ? said.slice(dash + 3).trim() : null,
+      round: round ? parseInt(round[1], 10) : null,
+      cap: round ? parseInt(round[2], 10) : null,
+      label: round ? round[3].trim() : null,
+    });
+  });
+  return entries;
+}
+
+// How many rounds of the fix loop this log already records — the counter `changesRoundInfo` reads
+// back instead of keeping a second file beside the log and having to hold the two in step.
+export function latestChangesRound(logText) {
+  let max = 0;
+  for (const line of String(logText || '').split('\n')) {
+    const m = LOG_ROUND_RE.exec(line);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return max;
+}
+
+// --- a ticket's log.md: the verdict blocks standing in it --------------------------------------
+//
+// `## Verdict · <ticket> · <date> · by <verifier> (<class>)`, then `**Result:** <result>`, then a
+// `| item | command | saw |` table of what was run and what it printed. Nothing in this tool set
+// writes one any more; they are read back off missions that ran before the verifier seat was
+// cassated, so the shape is fixed by what is already on disk. A block runs to the next verdict,
+// not to the next heading of any kind: a verdict carries subheadings of its own.
+//
+// Two shapes reach the file and both are read. A verdict written straight into log.md opens its
+// own line; one handed to the log as a remark carries the log's own `- <stamp> ` in front of the
+// heading, because that is what stamps every line it appends. The stamp is dropped and the two
+// read the same — a verdict is no less a verdict for having been logged rather than written.
+
+const VERDICT_STAMP_RE = /^-\s+\S+\s+(?=## Verdict)/;
+const VERDICT_HEADING_RE = /^## Verdict · (\S+) · (\d{4}-\d{2}-\d{2}) · by (\S+) \(([^)]+)\)/;
+const VERDICT_RESULT_RE = /^\*\*Result:\*\*\s*(\S+)/m;
+const VERDICT_TABLE_HEAD_RE = /^\|\s*item\s*\|/;
+
+function verdictRowsIn(block) {
+  const lines = block.split('\n');
+  const head = lines.findIndex((l) => VERDICT_TABLE_HEAD_RE.test(l.trim()));
+  if (head === -1) return [];
+  const rows = [];
+  for (const line of lines.slice(head + 2)) {
+    if (!line.trim().startsWith('|')) break;
+    const cells = markdownTableCells(line);
+    if (cells.length >= 3) rows.push({ item: cells[0], command: cells[1], saw: cells[2] });
+  }
+  return rows;
+}
+
+export function parseVerdictBlocks(logText) {
+  const out = [];
+  for (const raw of String(logText || '').split(/\n(?=(?:-\s+\S+\s+)?## Verdict)/)) {
+    const block = raw.trim().replace(VERDICT_STAMP_RE, '');
+    if (!block.startsWith('## Verdict')) continue;
+    const heading = VERDICT_HEADING_RE.exec(block);
+    const result = VERDICT_RESULT_RE.exec(block);
+    out.push({
+      block,
+      ticket: heading ? heading[1] : null,
+      date: heading ? heading[2] : null,
+      verifier: heading ? heading[3] : null,
+      class: heading ? heading[4] : null,
+      result: result ? result[1] : null,
+      rows: verdictRowsIn(block),
+    });
+  }
+  return out;
+}
+
+// --- a ticket's issue.md: its acceptance checklist ---------------------------------------------
+//
+// Every `- [ ]` (or `- [x]`) line under the heading that starts `## Acceptance`, minus the
+// template's own placeholder. A ticket with none of these has nothing a verifier can reproduce,
+// so nothing could ever prove it done.
+
+const ACCEPTANCE_LINE_RE = /^- \[([ xX])\]\s*(.*)$/;
+const ACCEPTANCE_PLACEHOLDER_RE = /^(…|\.\.\.)?$/;
+
+export function parseAcceptanceLines(issueText) {
+  const out = [];
+  for (const raw of markdownSection(issueText, '## Acceptance').split('\n')) {
+    const line = raw.trim();
+    const m = ACCEPTANCE_LINE_RE.exec(line);
+    if (!m) continue;
+    const text = m[2].trim();
+    if (ACCEPTANCE_PLACEHOLDER_RE.test(text)) continue;
+    out.push({ raw: line, checked: m[1].trim() !== '', text });
+  }
+  return out;
+}
+
+// --- the mission's charter.md: its evidence catalogue -------------------------------------------
+//
+// The table under the heading that starts `## Acceptance`: | id | evidence | node | reproduced by |.
+// A row counts once any cell holds text — the template ships one all-empty row, which is no row.
+
+export function parseEvidenceRows(charterText) {
+  const section = markdownSection(charterText, '## Acceptance');
+  if (!section) return [];
+  const lines = section.split('\n').filter((l) => l.trim().startsWith('|'));
+  // lines[0] = header, lines[1] = --- separator, lines[2..] = data
+  return lines.slice(2)
+    .map(markdownTableCells)
+    .filter((cells) => cells.some((c) => c.length > 0))
+    .map(([id, evidence, node, reproducedBy]) => ({
+      id, evidence, node, reproducedBy: reproducedBy || '',
+    }));
+}
+
+// --- the mission's decisions.md: its entries ---------------------------------------------------
+//
+// One block per `## ` heading: `## <date> · <slug>[ · ticket <id>][ · node <id>]`, then the body.
+// A heading in any other shape (a preamble, a lessons banner) still opens a block, with its fields
+// reading null — the two readers of this file want different halves of it. One matches entries by
+// slug and so needs the heading; the other reads an ask's bold fields out of the body and has
+// never cared what the heading above them said.
+
+const DECISION_HEADING_RE = /^## (\d{4}-\d{2}-\d{2}) · ([^\s·]+)(?: · ticket (\S+))?(?: · node (\S+))?\s*$/;
+
+export function parseDecisionEntries(text) {
+  const lines = String(text || '').split('\n');
+  const entries = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (!lines[i].startsWith('## ')) { i++; continue; }
+    const heading = lines[i];
+    const m = DECISION_HEADING_RE.exec(heading);
+    i++;
+    const raw = [];
+    while (i < lines.length && !lines[i].startsWith('## ')) { raw.push(lines[i]); i++; }
+    const body = [...raw];
+    while (body.length && body[0].trim() === '') body.shift();
+    while (body.length && body[body.length - 1].trim() === '') body.pop();
+    entries.push({
+      heading,
+      date: m ? m[1] : null,
+      slug: m ? m[2] : null,
+      ticket: m && m[3] ? m[3] : null,
+      node: m && m[4] ? m[4] : null,
+      body: body.join('\n'),
+      // The entry's own text, verbatim, so a caller can find and rewrite it inside the document.
+      block: [heading, ...raw].join('\n'),
+    });
+  }
+  return entries;
+}
+
+// One `**<Label>:**` field out of an entry's block — the middle dot separates fields on a line, so
+// a value stops at the next one.
+export function decisionField(block, label) {
+  const m = new RegExp(`\\*\\*${label}:\\*\\*\\s*([^\\n·]*)`, 'i').exec(String(block || ''));
+  return m ? m[1].trim() : '';
+}
+
 // Resolves a team's short LEAF name (e.g. "lark") to its full on-disk segment chain
 // (["trunk", "lark"]) by walking roster.json's steward entries' own `parent` links back to
 // "trunk". Pre-6.0.0 history, and read-only: nothing writes a steward entry any more and a fresh

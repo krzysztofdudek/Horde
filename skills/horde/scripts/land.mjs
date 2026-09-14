@@ -30,7 +30,7 @@ import { fileURLToPath } from 'node:url';
 import {
   hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, git, gitError, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine,
-  withProvenance, nowIso, runMain,
+  withProvenance, nowIso, parseDecisionEntries, decisionField, runMain,
 } from './_lib.mjs';
 import {
   ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, verdictCommandsFor,
@@ -826,9 +826,10 @@ function checkJournal(text, branch) {
 //   **Answer:** approved — superseded by the type-level check.
 //   **By:** client · **At:** 2026-09-11T09:00:00Z
 //
-// The fields below are read out of the block's body regardless of what the heading says — this
-// guard has never parsed the heading itself, only decide.mjs's own duplicate-slug check needs
-// that. Kind is "lower" for a rule the branch weakens, matched by the law guard below. Scope is
+// The fields below are read out of the block regardless of what the heading says — this guard has
+// never cared about the heading itself, only decide.mjs's own duplicate-slug check needs it, which
+// is why the document's parser hands back every block and not just the ones whose heading reads as
+// an entry. Kind is "lower" for a rule the branch weakens, matched by the law guard below. Scope is
 // "once" (used up by one landing, and this file records which) or "mission" (stands until the
 // mission closes). An ask with no Answer is still open and passes nothing.
 //
@@ -839,23 +840,14 @@ function checkJournal(text, branch) {
 function decisionsPath(horde) { return hordePath(horde, 'decisions.md'); }
 
 function parseAsks(text) {
-  if (!text) return [];
-  const blocks = String(text).split(/^## /m).slice(1);
-  return blocks.map((raw) => {
-    const body = `## ${raw}`;
-    const field = (label) => {
-      const m = new RegExp(`\\*\\*${label}:\\*\\*\\s*([^\\n·]*)`, 'i').exec(body);
-      return m ? m[1].trim() : '';
-    };
-    return {
-      body,
-      kind: field('Kind').toLowerCase(),
-      aspect: field('Aspect'),
-      scope: (field('Scope') || 'once').toLowerCase(),
-      answer: field('Answer'),
-      consumed: field('Consumed'),
-    };
-  });
+  return parseDecisionEntries(text).map((entry) => ({
+    body: entry.block,
+    kind: decisionField(entry.block, 'Kind').toLowerCase(),
+    aspect: decisionField(entry.block, 'Aspect'),
+    scope: (decisionField(entry.block, 'Scope') || 'once').toLowerCase(),
+    answer: decisionField(entry.block, 'Answer'),
+    consumed: decisionField(entry.block, 'Consumed'),
+  }));
 }
 
 // An answer that lets one refusal through: right kind, right aspect, actually answered, and not

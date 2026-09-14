@@ -88,6 +88,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - An unanswered question now holds back exactly what depends on the answer and nothing else: a stalled ticket holds itself; a question about the mission card holds the tickets earning the proofs it names; a request to weaken a rule holds that one change at the door. A worker who ran out of spec holds everything — nothing starts, nothing merges even when it is finished and passing, and the mission does not close — until you answer. An open question used to hold nothing at all, and a change waiting on your word could be sent back to a worker round after round for failing a rule only you could lift.
 - The status screen now flags a ticket the gate has sent back for changes as unverified, instead of still showing it as landed or unmerged.
 - Refusals that trace back to a git problem — a missing branch, a worktree that could not be made — now show what git itself reported, not just that something went wrong.
+- A ticket whose acceptance items are ticked with a capital X now counts as having them. It used to read as a ticket with no acceptance at all, and could not be queued.
 
 ### Migrating a mission already in flight
 
