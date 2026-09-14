@@ -12,8 +12,51 @@ import { fileURLToPath } from 'node:url';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
+// A commit made through this helper is signed by the sandbox's own commit-signing service
+// (global git config: commit.gpgsign=true, gpg.ssh.program) — nothing to do with the code under
+// test. Under heavy concurrent load that service intermittently answers 503, and git surfaces the
+// failure as the signing program's own stderr followed by "failed to write commit object" (full
+// trace and reproduction: land.test.mjs's own git(), fixed for the same signal). Retry ONLY that
+// one signal, a small bounded number of times with a short backoff; anything else — a real
+// conflict, a rejected commit-msg hook, a bad ref — throws on the first attempt, same as before.
+//
+// makeRepo() is the only caller of this git(), and its calls are 'init', 'config' (x2), 'add',
+// 'commit' and 'branch' — only 'commit' writes a signed commit object, so only 'commit' is retried
+// here. If a future caller ever needs 'merge' or 'revert' through this helper, port
+// land.test.mjs's commit-vs-merge/revert distinction too: a failed merge/revert has already
+// updated the index and written git's own prepared commit message, so it is finished with a plain
+// `git commit --no-edit`, never by re-issuing the original subcommand verbatim.
+const TRANSIENT_SIGNING_SIGNAL = /\b50[234]\b|service unavailable|bad gateway|gateway timeout/i;
+const SIGNING_RETRY_ATTEMPTS = 3;
+const SIGNING_RETRY_BACKOFF_SECONDS = 0.3;
+
+function isTransientSigningFailure(stderr) {
+  return /failed to write commit object/i.test(stderr) && TRANSIENT_SIGNING_SIGNAL.test(stderr);
+}
+
 function git(args, cwd) {
-  execFileSync('git', args, { cwd, stdio: 'ignore' });
+  if (args[0] !== 'commit') {
+    execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+    return;
+  }
+  for (let attempt = 1; attempt <= SIGNING_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+      return;
+    } catch (e) {
+      const stderr = e.stderr ? e.stderr.toString() : '';
+      const transient = isTransientSigningFailure(stderr);
+      if (!transient || attempt === SIGNING_RETRY_ATTEMPTS) {
+        if (transient) {
+          e.message += `\n[git commit-signing] gave up after ${attempt} attempts — stderr names a `
+            + '50x/"Service Unavailable" signal alongside "failed to write commit object", which reads as '
+            + 'the sandbox\'s signing service struggling under load, not a failure in the code under test.';
+        }
+        throw e;
+      }
+      execFileSync('sleep', [String(SIGNING_RETRY_BACKOFF_SECONDS * attempt)]);
+    }
+  }
 }
 
 // makeRepo() — a temp git repo with one commit on the default branch and a "develop" branch,
