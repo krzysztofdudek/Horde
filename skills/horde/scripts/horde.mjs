@@ -17,9 +17,10 @@ import {
   repoRoot, hordeRoot, hordePath, readConfig, writeConfig, listHordes, readJSON,
   writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
   readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
-  qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES, parseEvidenceRows,
+  qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES, parseEvidenceRows, asArray,
   runMain,
 } from './_lib.mjs';
+import { nodesOf, padId } from './tk.mjs';
 import {
   currentWaveNumber, lastWaveNumber, mentionsEvidenceId, wave1Started,
   stampMissionEvidence,
@@ -79,6 +80,12 @@ commands:
       moves hordes/<name> to hordes/_archive/<name>-<date> and marks it archived (an "archived"
       file carrying the date and the trunk sha). Branches are untouched, and nothing of it is
       committed — .horde/ carries its own .gitignore of "*".
+  history
+      every mission that has closed on this repository, newest first: what it set out to do, how
+      much of what it promised was reproduced, what its retrospective proposed as law and what it
+      found the law will not say, how many questions the client answered, and what the mission did
+      to the law. Reads the archive and writes nothing. Each consultant gets the part of this that
+      belongs to its own territory, in its own brief (refine.mjs --step consult).
   done [--horde h]
       the mission's final gate. Refuses, listing every reason, when any evidence row is not
       reproduced, the trunk gate (config.gates.trunk) is not green at the trunk tip, or the
@@ -959,6 +966,13 @@ function cmdCharter(positional, flags) {
 // mission behind. It is written whole every time: a second archive of the same mission overwrites
 // the date rather than adding a line under it.
 const ARCHIVED_MARKER = 'archived';
+// The one directory every closed mission moves under. Named once: the reader further down walks
+// exactly what this writer fills.
+const ARCHIVE = '_archive';
+
+function archiveRoot() {
+  return join(hordeRoot(), 'hordes', ARCHIVE);
+}
 
 function archiveHorde(name) {
   const src = hordePath(name);
@@ -970,7 +984,7 @@ function archiveHorde(name) {
   } catch (e) {
     fail(`${join(src, ARCHIVED_MARKER)} could not be written, so this mission cannot be marked archived: ${e.message}`);
   }
-  const dest = join(hordeRoot(), 'hordes', '_archive', `${name}-${today()}`);
+  const dest = join(archiveRoot(), `${name}-${today()}`);
   try {
     mkdirSync(dirname(dest), { recursive: true });
     renameSync(src, dest);
@@ -993,6 +1007,269 @@ function cmdArchive(positional, flags) {
     `archived: ${name} -> ${archived.to} (${archived.date}, trunk at ${short(archived.sha)})`,
     archived.releasedLeases.length ? `released lease(s): ${archived.releasedLeases.join(', ')}` : 'held no node leases',
   ].join('\n'));
+}
+
+// ---- the book of closed missions ---------------------------------------------------------
+//
+// Everything a finished mission wrote stays exactly where it wrote it, one directory along: the
+// charter as it stood at the close, its catalogue with the "reproduced by" cells filled in, the
+// retrospective's rule proposals and the things the law would not say, every question the client
+// answered, and the law diff the mission handed over at. Until this, the only reader of any of it
+// was blame.mjs walking git history for one line's custody — so a mission's whole account of what
+// it learned was written once and read by nobody, and the next mission on the same repository
+// began knowing none of it.
+//
+// Two readers now. `history` prints the book whole. refine.mjs takes, into each consultant's
+// brief, only the entries belonging to THAT consultant's own territory — a consultant shown
+// another area's rulings would be deciding its own area on somebody else's evidence, which is the
+// one thing the cut exists to stop.
+//
+// Nothing here writes, and nothing here refuses. An archived mission is history: a reader that
+// repaired what it found would be rewriting it, and a mission archived by an older release simply
+// carries fewer of these files — half a book is worth more than none, so every part that cannot be
+// read comes back null or empty and the rest is still read.
+
+// `<name>-<YYYY-MM-DD>` — the shape archiveHorde writes. A directory without that date suffix
+// (moved by hand, or left by a release that did not date it) reads as a name with no date rather
+// than having one guessed off it: without a date to end it, "release-2" would become "release".
+function missionNameOf(dirName) {
+  const m = /^(.+)-(\d{4}-\d{2}-\d{2})$/.exec(dirName);
+  return m ? { mission: m[1], date: m[2] } : { mission: dirName, date: null };
+}
+
+// The `archived` marker: one line, the date and the trunk sha the mission handed over at. A
+// mission archived with no trunk branch carries "(no trunk branch)" there, which is not a commit
+// and is read as none.
+function readArchivedMarker(dir) {
+  const text = readText(join(dir, ARCHIVED_MARKER));
+  if (text === null) return null;
+  const line = text.trim().split('\n')[0] || '';
+  const cut = line.indexOf(' ');
+  const date = (cut === -1 ? line : line.slice(0, cut)).trim();
+  const rest = cut === -1 ? '' : line.slice(cut + 1).trim();
+  return { date: date || null, sha: /^[0-9a-f]{7,40}$/i.test(rest) ? rest : null };
+}
+
+// One section of a charter, by heading. Exported because refine.mjs cuts a charter down to one
+// territory with the same read, and two copies of it would be two answers to "what is the Goal".
+export function charterSection(text, heading) {
+  const body = String(text || '');
+  const idx = body.indexOf(`## ${heading}\n`);
+  if (idx === -1) return null;
+  const rest = body.slice(idx + `## ${heading}\n`.length);
+  const next = rest.indexOf('\n## ');
+  return (next === -1 ? rest : rest.slice(0, next)).trim() || null;
+}
+
+// The law diff of the LAST wave the mission closed — `horde.mjs done` writes its final reading at
+// that wave's own path, so the highest wave number on disk is the mission's last word on the law.
+function lastLawDiff(dir) {
+  const lawDir = join(dir, 'law');
+  if (!existsSync(lawDir)) return null;
+  // A file whose wave is not a number sorts below every numbered one: it is a document, it is
+  // readable, and it is not the mission's last word while a numbered wave exists.
+  const rank = (n) => (Number.isNaN(n) ? -1 : n);
+  const waves = readdirSync(lawDir, { withFileTypes: true })
+    .filter((d) => d.isFile() && /^wave-.+\.json$/.test(d.name))
+    .map((d) => ({ file: d.name, n: Number.parseInt(d.name.replace(/^wave-/, ''), 10) }))
+    .sort((a, b) => rank(a.n) - rank(b.n));
+  if (waves.length === 0) return null;
+  const last = waves[waves.length - 1];
+  const doc = readJSON(join(lawDir, last.file), null);
+  if (!doc) return null;
+  return {
+    path: join(lawDir, last.file),
+    wave: Number.isNaN(last.n) ? null : last.n,
+    base: doc.base || null,
+    trunk: doc.trunk || null,
+    added: asArray(doc.added),
+    raised: asArray(doc.raised),
+    attached: asArray(doc.attached),
+  };
+}
+
+// Which components each of the mission's own tickets named. This is what puts a retrospective item
+// on the map: an item the law will not say carries the ticket it came off and no component of its
+// own (by construction — nothing inexpressible attaches anywhere), so the ticket's own `Node` field
+// is the only honest answer to "where did this happen".
+function ticketNodes(dir) {
+  const byTicket = new Map();
+  const visit = (teamDir) => {
+    const issues = join(teamDir, 'issues');
+    if (existsSync(issues)) {
+      for (const d of readdirSync(issues, { withFileTypes: true })) {
+        if (!d.isDirectory()) continue;
+        // `NNN-slug`, and the number is the part before the first dash — never digits pulled out
+        // of the whole name, which would read "001-fix-utf8" as ticket 18.
+        const id = ticketKey(d.name.split('-')[0]);
+        if (!id) continue;
+        byTicket.set(id, nodesOf(readText(join(issues, d.name, 'issue.md')) || ''));
+      }
+    }
+    const sub = join(teamDir, 'teams');
+    if (!existsSync(sub)) return;
+    for (const d of readdirSync(sub, { withFileTypes: true })) if (d.isDirectory()) visit(join(sub, d.name));
+  };
+  const teams = join(dir, 'teams');
+  if (existsSync(teams)) {
+    for (const d of readdirSync(teams, { withFileTypes: true })) if (d.isDirectory()) visit(join(teams, d.name));
+  }
+  return byTicket;
+}
+
+// A ticket id as the archive stores it — three digits, however it was written down (`t-7`, `007`,
+// `7`). padId is tk.mjs's own derivation; a string with no number in it is not a ticket reference
+// and comes back null rather than as a wrong one.
+function ticketKey(raw) {
+  try { return padId(raw); } catch { return null; }
+}
+
+// readArchive() — every closed mission on this repository, newest first. Sorted by the date the
+// mission was archived on, and by directory name under it so two missions closed the same day
+// still come back in one stable order.
+export function readArchive() {
+  const root = archiveRoot();
+  if (!existsSync(root)) return [];
+  const out = readdirSync(root, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => readArchivedMission(d.name));
+  return out.sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.dir.localeCompare(a.dir));
+}
+
+// One closed mission, read off its own directory. `id` is the horde id every other tool already
+// accepts for an archived mission ("_archive/<name>-<date>" — hordePath only ever joins a name
+// onto "hordes/", which is what makes an archived directory addressable at all).
+export function readArchivedMission(dirName) {
+  const dir = join(archiveRoot(), dirName);
+  const { mission, date } = missionNameOf(dirName);
+  const marker = readArchivedMarker(dir);
+  const charterText = readText(join(dir, 'charter.md'));
+  const rows = parseEvidenceRows(charterText || '');
+  const retro = readJSON(join(dir, 'retro.json'), null);
+  const asks = readJSON(join(dir, 'asks.json'), null);
+  const heading = /^#\s+(.+)$/m.exec(charterText || '');
+
+  return {
+    id: `${ARCHIVE}/${dirName}`,
+    dir: dirName,
+    path: dir,
+    mission,
+    date: (marker && marker.date) || date,
+    sha: marker ? marker.sha : null,
+    charter: charterText === null ? null : {
+      path: join(dir, 'charter.md'),
+      title: heading ? heading[1].trim() : null,
+      goal: charterSection(charterText, 'Goal'),
+    },
+    evidence: {
+      total: rows.length,
+      reproduced: rows.filter((r) => r.reproducedBy).length,
+      rows: rows.map((r) => ({
+        id: r.id, evidence: r.evidence, node: r.node || null, reproducedBy: r.reproducedBy || null,
+      })),
+    },
+    retro: retro === null ? null : {
+      path: join(dir, 'retro.json'),
+      law: asArray(retro.law),
+      inexpressible: asArray(retro.inexpressible),
+      taste: asArray(retro.taste).length,
+    },
+    answers: asArray(asks && asks.items)
+      .filter((it) => it && it.state === 'answered')
+      .map((it) => ({
+        id: it.id || null,
+        kind: it.kind || null,
+        territory: it.territory || null,
+        ticket: it.ticket || null,
+        aspect: it.aspect || null,
+        question: it.why || '',
+        answer: it.answer || '',
+        scope: it.answerScope || null,
+        at: it.answeredAt || null,
+      })),
+    law: lastLawDiff(dir),
+  };
+}
+
+// A component is in a territory when the territory names it outright, or names a root it hangs
+// under: a territory may be the root of a whole subtree, and the graph's own path is what says so.
+function nodeInTerritory(node, nodes) {
+  const n = String(node || '').trim();
+  if (!n) return false;
+  return asArray(nodes).some((t) => n === String(t) || n.startsWith(`${t}/`));
+}
+
+function sameTerritoryName(a, b) {
+  return Boolean(a) && Boolean(b) && String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+}
+
+// archiveForTerritory({territory, nodes}) — what closed missions left about THIS area, and about
+// no other. Three kinds of entry, each scoped by the only thing that honestly places it:
+//
+//   rules           a rule proposal names the component it would attach to — that component.
+//   inexpressible   it names none (nothing inexpressible attaches anywhere), so it is placed by
+//                   the ticket it came off, through that ticket's own components.
+//   answers         the client's ruling, placed by the territory it was asked about, or by the
+//                   ticket it was asked on.
+//
+// An entry that cannot be placed is left out. Handing it to everyone would be handing one
+// territory's evidence to another, which is the failure this scoping exists to prevent; an entry
+// nobody can place is simply an entry this mission has no claim on.
+export function archiveForTerritory({ territory, nodes } = {}) {
+  const want = asArray(nodes).map((n) => String(n));
+  const out = [];
+  for (const past of readArchive()) {
+    const tickets = ticketNodes(past.path);
+    const onTicket = (raw) => {
+      const key = ticketKey(raw);
+      const named = key ? tickets.get(key) : null;
+      return Array.isArray(named) && named.some((n) => nodeInTerritory(n, want));
+    };
+
+    const rules = (past.retro ? past.retro.law : [])
+      .filter((p) => p && nodeInTerritory(p.node, want))
+      .map((p) => ({
+        rule: p.rule || '', node: p.node || null, kind: p.kind || null, evidence: p.evidence || '',
+      }));
+
+    const inexpressible = (past.retro ? past.retro.inexpressible : [])
+      .filter((it) => it && onTicket(it.ticket))
+      .map((it) => ({ text: it.text || '', ticket: it.ticket || null, source: it.source || null }));
+
+    const answers = past.answers.filter(
+      (a) => sameTerritoryName(a.territory, territory) || onTicket(a.ticket),
+    );
+
+    if (rules.length || inexpressible.length || answers.length) {
+      out.push({
+        mission: past.mission, id: past.id, date: past.date, rules, inexpressible, answers,
+      });
+    }
+  }
+  return out;
+}
+
+function cmdHistory(positional, flags) {
+  if (positional.length) fail(`history takes no argument (got "${positional[0]}") — it lists every closed mission on this repository`);
+  const missions = readArchive();
+  emit(missions, flags, () => {
+    if (missions.length === 0) {
+      return 'no mission has closed on this repository yet — a mission is archived by "horde.mjs done", or by "horde.mjs archive <name>".';
+    }
+    return missions.map((m) => [
+      `${m.mission}  closed ${m.date || '(undated)'}${m.sha ? ` at ${short(m.sha)}` : ''}  ${m.path}`,
+      `  ${m.charter && m.charter.title ? m.charter.title : '(no charter on file)'}`,
+      ...(m.charter && m.charter.goal ? [`  goal: ${m.charter.goal.split('\n')[0]}`] : []),
+      `  evidence: ${m.evidence.reproduced}/${m.evidence.total} reproduced`,
+      m.retro
+        ? `  retrospective: ${m.retro.law.length} rule proposal(s), ${m.retro.inexpressible.length} the law will not say`
+        : '  retrospective: none on file',
+      `  the client ruled on: ${m.answers.length}`,
+      m.law
+        ? `  law: ${m.law.added.length} added · ${m.law.raised.length} raised · ${m.law.attached.length} newly attached`
+        : '  law: no diff on file',
+    ].join('\n')).join('\n\n');
+  });
 }
 
 // ---- done — the mission's final gate -----------------------------------------------
@@ -1157,6 +1434,7 @@ function main() {
     case 'config': return cmdConfig(positional, flags);
     case 'charter': return cmdCharter(positional, flags);
     case 'archive': return cmdArchive(positional, flags);
+    case 'history': return cmdHistory(positional, flags);
     case 'done': return cmdDone(positional, flags);
     default: fail(`unknown command: ${cmd} (see --help)`);
   }

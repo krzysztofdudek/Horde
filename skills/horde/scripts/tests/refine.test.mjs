@@ -412,6 +412,153 @@ test('refine.mjs --step consult: the brief\'s --consumes/--produces syntax is ex
   });
 });
 
+// ---- what closed missions already learned here ------------------------------------------------
+//
+// A repository that has run a mission before has already been told things about the very area a
+// new consultant is being sent into. Until now all of it sat in `_archive/` read by nobody. The
+// consultant's brief carries the part of it that belongs to ITS territory — and, the assertion
+// that actually matters, none of the part that belongs to somebody else's.
+//
+// The two archived missions below are built the way `horde.mjs done` leaves one: a real mission
+// from `horde.mjs init`, a real ticket naming a real component, a retrospective written by
+// `retro.mjs` itself over that ticket's own log, an answer recorded through `ask.mjs`, and then
+// the real `horde.mjs archive`, which moves the whole directory under `_archive/<name>-<date>`.
+function closeMission(dir, horde, {
+  node, rule, inexpressible, territory, question, answer,
+}) {
+  initHorde(dir, horde);
+  const ticket = fileTicket(dir, horde, [
+    `work-on-${node}`, '--title', `Work on ${node}`, '--node', node, '--class', 'standard',
+  ]);
+  for (const text of [`RULE ${rule}`, `NEVER ${inexpressible}`]) {
+    assert.equal(run('tk.mjs', ['log', ticket, text, '--horde', horde], dir).code, 0);
+  }
+
+  // The retrospective, through retro.mjs itself: the first run gathers what nobody read twice and
+  // prints the items with their keys; the classification answers exactly those keys; the second
+  // run writes the document.
+  const input = run('retro.mjs', ['--horde', horde], dir);
+  assert.equal(input.code, 0, input.stderr);
+  const items = {};
+  // A log remark reaches the retrospective with its own timestamp still on the front, so the
+  // marker is looked for inside the line, never at the start of it.
+  for (const it of input.json.items) {
+    items[it.key] = it.text.includes('RULE ')
+      ? {
+        class: 'rule', rule: it.text.slice(it.text.indexOf('RULE ') + 'RULE '.length), node, kind: 'check', evidence: `what ${node} kept doing`,
+      }
+      : { class: 'inexpressible' };
+  }
+  writeFileSync(hordeFile(dir, horde, 'retro-classes.json'), `${JSON.stringify({ items }, null, 2)}\n`);
+  const written = run('retro.mjs', ['--horde', horde], dir);
+  assert.equal(written.code, 0, written.stderr);
+  assert.equal(written.json.law.length, 1, 'the retrospective proposed one rule');
+  assert.equal(written.json.inexpressible.length, 1, 'and found one thing the law will not say');
+
+  const ask = run('ask.mjs', ['add', question, '--kind', 'charter', '--territory', territory, '--horde', horde], dir);
+  assert.equal(ask.code, 0, ask.stderr);
+  assert.equal(run('ask.mjs', ['answer', ask.json.id, answer, '--horde', horde], dir).code, 0);
+
+  const archived = run('horde.mjs', ['archive', horde], dir);
+  assert.equal(archived.code, 0, archived.stderr);
+  return archived.json.to;
+}
+
+// The two missions, one per territory of the cut the live mission is about to make. Every string
+// is distinctive, so "this brief carries it" and "that brief does not" are both decidable.
+const PAST_FRONT = {
+  node: 'auth',
+  rule: 'every entry point must name the session it trusts.',
+  inexpressible: 'how much friction a sign-in step is allowed to cost is a judgement nobody can write as a rule.',
+  territory: 'the front door',
+  question: 'Should a stranger reaching a locked page be sent away or asked to sign in?',
+  answer: 'Asked to sign in, and never sent away silently.',
+};
+
+const PAST_NUMBERS = {
+  node: 'reporting',
+  rule: 'every published figure must name the ledger it was taken from.',
+  inexpressible: 'which rounding a finance team finds acceptable changes per client and no rule holds it.',
+  territory: 'numbers',
+  question: 'Do the month figures close on the last calendar day or the last working day?',
+  answer: 'The last working day, and the boundary is stated on the page.',
+};
+
+test('refine.mjs --step consult: a consultant is handed its own territory\'s history, and nobody else\'s', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+
+  const frontArchive = closeMission(dir, 'past-front', PAST_FRONT);
+  const numbersArchive = closeMission(dir, 'past-numbers', PAST_NUMBERS);
+
+  await t.test('both missions really are in the archive, and nothing of them is left live', () => {
+    assert.match(frontArchive, /_archive\/past-front-/);
+    assert.match(numbersArchive, /_archive\/past-numbers-/);
+    assert.equal(existsSync(join(dir, '.horde', 'hordes', 'past-front')), false);
+    assert.equal(existsSync(join(dir, '.horde', 'hordes', 'past-numbers')), false);
+    assert.equal(existsSync(join(frontArchive, 'retro.json')), true);
+    assert.equal(existsSync(join(numbersArchive, 'asks.json')), true);
+  });
+
+  initHorde(dir, 'm1');
+  writeTerritories(dir, 'm1', TWO_TERRITORIES);
+  assert.equal(run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).code, 0);
+  const r = run('refine.mjs', ['--step', 'consult', '--horde', 'm1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const briefFor = (name) => r.json.spawns.find((s) => s.territory === name).brief;
+
+  await t.test('the brief for one territory carries that territory\'s rule proposal, inexpressible item and client answer', () => {
+    const front = briefFor('the front door');
+    assert.match(front, /## What earlier missions already learned about this area/);
+    assert.match(front, /### past-front/);
+    assert.ok(front.includes(PAST_FRONT.rule), 'the rule its retrospective proposed');
+    assert.ok(front.includes(PAST_FRONT.inexpressible), 'what it found the law will not say');
+    assert.ok(front.includes(PAST_FRONT.question), 'the question the client was asked');
+    assert.ok(front.includes(PAST_FRONT.answer), 'and the answer the client gave');
+  });
+
+  await t.test('and carries nothing at all from the other mission — the assertion this exists for', () => {
+    const front = briefFor('the front door');
+    assert.equal(front.includes('past-numbers'), false, 'the other mission is not even named');
+    assert.equal(front.includes(PAST_NUMBERS.rule), false);
+    assert.equal(front.includes(PAST_NUMBERS.inexpressible), false);
+    assert.equal(front.includes(PAST_NUMBERS.question), false);
+    assert.equal(front.includes(PAST_NUMBERS.answer), false);
+  });
+
+  await t.test('the other way round, on the other territory\'s brief', () => {
+    const numbers = briefFor('numbers');
+    assert.match(numbers, /### past-numbers/);
+    assert.ok(numbers.includes(PAST_NUMBERS.rule));
+    assert.ok(numbers.includes(PAST_NUMBERS.inexpressible));
+    assert.ok(numbers.includes(PAST_NUMBERS.question));
+    assert.ok(numbers.includes(PAST_NUMBERS.answer));
+
+    assert.equal(numbers.includes('past-front'), false);
+    assert.equal(numbers.includes(PAST_FRONT.rule), false);
+    assert.equal(numbers.includes(PAST_FRONT.inexpressible), false);
+    assert.equal(numbers.includes(PAST_FRONT.question), false);
+    assert.equal(numbers.includes(PAST_FRONT.answer), false);
+  });
+});
+
+test('refine.mjs --step consult: with nothing in the archive the brief says so, rather than leaving the question open', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  initHorde(dir, 'm1');
+  writeTerritories(dir, 'm1', TWO_TERRITORIES);
+  assert.equal(run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).code, 0);
+
+  const r = run('refine.mjs', ['--step', 'consult', '--horde', 'm1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  for (const spawn of r.json.spawns) {
+    assert.match(spawn.brief, /## What earlier missions already learned about this area/);
+    assert.match(spawn.brief, /You are the first to look at it\./);
+  }
+});
+
 test('refine.mjs: a consultant\'s ticket is a proposal — in the queue, never dispatched', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

@@ -87,6 +87,14 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
 - `archive <name>` — moves `hordes/<name>` to `hordes/_archive/<name>-<date>`; branches untouched.
   Also releases every node lease the horde held (`.horde/leases.json`) — the moment it is no longer
   live, another horde can bind its nodes with no `--take` needed.
+- `history` — every mission that has closed on this repository, newest first, read straight off
+  `hordes/_archive/`: the charter it closed on (title and goal), its evidence catalogue with how many
+  rows were reproduced, its retrospective's rule proposals and what it found the law will not say,
+  every question the client answered, and the law diff it handed over (`law/wave-<n>.json`, the
+  highest wave on disk — the reading `done` takes at the trunk it hands over). Reads and writes
+  nothing. A mission archived by an older release carries fewer of these files; what is missing reads
+  as missing (`null`) and the rest is still read — half a book is worth more than none. The same
+  reader scopes the archive into each consultant's brief (`refine.mjs --step consult`, below).
 - `done [--horde h]` — the mission's final gate (ruling `evidence-is-the-plan`: "the queue is empty"
   is never "done"). Refuses, listing every reason at once, when: any charter evidence row is not
   reproduced (first promoting whatever a merged ticket's own verdict already proved, mission-wide
@@ -382,6 +390,15 @@ guesses at an answer.
   edges) and its own law proposals (`node.mjs propose rule`). Nothing comes back as prose. It decides
   the inside of its territory; it does not decide the boundary. Grain is optional, so a brief without
   it still renders and says what is missing rather than falling over.
+- **What closed missions already learned here.** The brief also carries the part of the archive
+  (`horde.mjs history`, above) that belongs to this territory and to no other: the rule proposals
+  past retrospectives made about its nodes, the things those missions found the law will not say
+  there, and the client's own rulings over it. Each kind is placed by the only thing that honestly
+  places it — a rule proposal by the node it names; an inexpressible item by the node its own ticket
+  named, since nothing inexpressible attaches anywhere; an answer by the territory it was asked
+  about or the ticket it was asked on. An entry that cannot be placed is left out rather than shown
+  to everyone: handing one territory's evidence to another is the leak the cut exists to prevent.
+  With nothing in the archive the brief says so outright instead of leaving the question open.
 - `--step review` — first run writes the plan whole to `hordes/<horde>/plan-<team>.md` and prints a
   one-shot architect's brief carrying that file's own text (never a summary — a plan relayed as one
   has already lost the thing being looked at) and the five questions a plan is ruled by, quoted from

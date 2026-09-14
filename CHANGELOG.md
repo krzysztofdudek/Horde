@@ -39,6 +39,8 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - A promise still waiting on the client's answer to a prototype now shows on the status screen as its own state — prototyping — instead of looking identical to one real work has already started on.
 - The plan shows how big each piece of work has grown — lines and files — and ranks it against the rest of the mission. The biggest quarter comes with a suggestion to split; taking it is the architect's call, nothing happens on its own. There is no size limit to tune: the ranking is against the work in play, so the same change reads differently in a mission of small pieces than in a mission of large ones.
 - Landing a change and closing a wave both report the same size figure, so what a piece of work cost is visible where it lands and again when the wave is counted up.
+- `history` lists every mission that has finished on this repository, newest first: what it set out to do, how much of what it promised was proved, the rules it proposed and the things it found no rule will ever capture, the questions you answered, and what it changed about the rules.
+- Each agent planning an area is now handed what earlier missions already learned about that same area — and only about that area: the rules they proposed for it, what they found no rule holds there, and the answers you already gave about it. Nothing from anybody else's area reaches them.
 
 ### Changed
 

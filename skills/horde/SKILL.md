@@ -283,6 +283,13 @@ front of git. `blame.mjs` reads an archived horde exactly as it reads a live one
 outlives the mission that wrote it. `horde.mjs archive <h>` still does the same thing on its own, for a
 mission abandoned rather than finished.
 
+**What the archive is for is the next mission.** `horde.mjs history` reads it back: every closed mission,
+newest first, with the charter it closed on, how much of what it promised was reproduced, the rules its
+retrospective proposed and the things it found the law will never say, the client's own answers, and what
+it did to the law. The same reading reaches each consultant automatically — a brief from `refine.mjs
+--step consult` carries the part of the archive that belongs to that consultant's territory, and no part
+belonging to anybody else's.
+
 ### The retrospective
 
 `retro.mjs` is the last run of a mission and the only one that reads what nobody read twice: every gate

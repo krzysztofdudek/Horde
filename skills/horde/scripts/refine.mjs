@@ -43,7 +43,9 @@ import {
   EVIDENCE_SECTION, catalogueCut, upsertCharterSection,
   parsePrototypeArtifacts,
 } from './wave.mjs';
-import { detectEvidenceLayer, renderEvidenceJudgement, PROMISES_OFFER } from './horde.mjs';
+import {
+  detectEvidenceLayer, renderEvidenceJudgement, PROMISES_OFFER, archiveForTerritory, charterSection,
+} from './horde.mjs';
 import { disciplineSection, demoteHeadings } from './brief.mjs';
 
 const STEPS = ['cut', 'consult', 'review', 'frame'];
@@ -400,12 +402,55 @@ function charterForTerritory(charter, nodes) {
   return out.join('\n').trim();
 }
 
-function charterSection(text, heading) {
-  const idx = text.indexOf(`## ${heading}\n`);
-  if (idx === -1) return null;
-  const rest = text.slice(idx + `## ${heading}\n`.length);
-  const next = rest.indexOf('\n## ');
-  return (next === -1 ? rest : rest.slice(0, next)).trim() || null;
+// ---- what closed missions already learned here ------------------------------------------------
+//
+// A repository that has run a mission before has already been told things about this exact area:
+// rules a retrospective proposed for it, things it found the law will never say about it, and
+// rulings the client made over it. All of that sat in the archive, read by nobody, while every new
+// consultant started from zero.
+//
+// The scoping is the whole of the care here, and it is done in horde.mjs where the archive is read:
+// a consultant is handed the entries that belong to ITS territory and no others. The lines are
+// where they are for a reason — an area's history is evidence about that area, and handing it to
+// the agent deciding a different one is exactly the leak the cut exists to prevent.
+function archiveSection(territory) {
+  const past = archiveForTerritory(territory);
+  const lines = ['## What earlier missions already learned about this area', ''];
+  if (past.length === 0) {
+    lines.push(
+      'Nothing. No mission that has closed on this repository left a rule proposal, a "the law will not',
+      'say this", or a ruling from the client about this area. You are the first to look at it.',
+    );
+    return lines.join('\n');
+  }
+  lines.push(
+    'Closed missions, and only what they wrote about the components you hold. Read it as evidence, not',
+    'as instruction: a rule that was proposed and never adopted is still a rule somebody thought this',
+    'area needed, and a question the client already answered here is answered — do not ask it twice.',
+    '',
+  );
+  for (const m of past) {
+    lines.push(`### ${m.mission}${m.date ? ` — closed ${m.date}` : ''}`, '');
+    if (m.rules.length) {
+      lines.push('**Rules it proposed here:**', '');
+      for (const r of m.rules) lines.push(`- \`${r.node}\` — ${r.rule}${r.kind ? ` _(${r.kind})_` : ''}${r.evidence ? ` · what it saw: ${r.evidence}` : ''}`);
+      lines.push('');
+    }
+    if (m.inexpressible.length) {
+      lines.push('**What it found the law will not say here:**', '');
+      for (const it of m.inexpressible) lines.push(`- ${it.text}${it.ticket ? ` _(from its ticket ${it.ticket})_` : ''}`);
+      lines.push('');
+    }
+    if (m.answers.length) {
+      lines.push('**What the client already ruled here:**', '');
+      for (const a of m.answers) {
+        lines.push(`- ${a.question || '(the question was not written down)'}`);
+        lines.push(`  → ${a.answer}${a.scope ? ` _(${a.scope})_` : ''}`);
+      }
+      lines.push('');
+    }
+  }
+  return lines.join('\n').trimEnd();
 }
 
 function consultBrief(horde, root, cfg, info, charter, territory) {
@@ -458,6 +503,8 @@ function consultBrief(horde, root, cfg, info, charter, territory) {
         args: ['obligation', obligationPath(root, cfg, n)],
       })),
     ]),
+    '',
+    archiveSection(territory),
     '',
     ...evidenceLayerSection(),
     '',

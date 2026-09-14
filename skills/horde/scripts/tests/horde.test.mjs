@@ -1,11 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, requireYg, addNode,
+  makeRepo, rmRepo, run, initHorde, requireYg, addNode, addAspect, MARKER_CHECK,
 } from './helpers.mjs';
 
 // Horde requires Yggdrasil: `init` creates the graph when a repository has none, so every direct
@@ -622,6 +624,238 @@ test('horde.mjs archive: a horde directory that cannot be written refuses, namin
   assert.ok(r.stderr.includes(hordeDir), `the refusal names the path it could not write: ${r.stderr}`);
   // Nothing moved: a refusal at the marker leaves the mission exactly where it was.
   assert.equal(existsSync(join(hordeDir, 'charter.md')), true);
+});
+
+// ---- the book of closed missions ---------------------------------------------------------------
+//
+// Archiving keeps everything a mission wrote and, until now, nothing read any of it back. `history`
+// is the reader: every closed mission on this repository, newest first, with what it set out to do,
+// how much of what it promised was reproduced, what its retrospective proposed as law and what it
+// found the law will never say, how many questions the client answered, and what it did to the law.
+//
+// The two missions below are built the way a real close leaves one — a real charter, real tickets,
+// a retrospective written by retro.mjs itself, answers recorded through ask.mjs, a law diff written
+// by law.mjs against two real trees, and then the real archive move.
+
+function hordeFile(dir, horde, ...parts) {
+  return join(dir, '.horde', 'hordes', horde, ...parts);
+}
+
+function gitIn(args, cwd) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+function ygIn(dir, args) {
+  const parts = requireYg().split(/\s+/);
+  return execFileSync(parts[0], [...parts.slice(1), ...args], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+// A base that already carries a graph: two real components over real code, committed onto
+// `develop` before any mission starts, so what a mission later adds to the law is measured against
+// a graph rather than against nothing.
+function graphOnDevelop(dir) {
+  ygIn(dir, ['init', '--no-reviewer']);
+  mkdirSync(join(dir, 'src', 'entry'), { recursive: true });
+  mkdirSync(join(dir, 'src', 'figures'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'entry', 'door.mjs'), 'export const door = 1;\n');
+  writeFileSync(join(dir, 'src', 'figures', 'month.mjs'), 'export const month = 1;\n');
+  addNode(dir, 'entry', { description: 'Letting a request in.', mapping: ['src/entry/**'] });
+  addNode(dir, 'figures', { description: 'The month-end numbers.', mapping: ['src/figures/**'] });
+  gitIn(['add', '-A'], dir);
+  gitIn(['commit', '-qm', 'the graph the missions start from'], dir);
+  gitIn(['branch', '-f', 'develop', 'HEAD'], dir);
+}
+
+// One rule, committed onto this mission's own trunk in a worktree of its own, so what the mission
+// did to the law is a real difference between two real trees. Run before anything else provisions
+// that branch — git checks a branch out in one place at a time.
+function addRuleOnTrunk(dir, horde, aspect, description) {
+  const tree = join(dir, `.trunk-${horde}`);
+  gitIn(['worktree', 'add', '-q', tree, `${horde}/trunk`], dir);
+  addAspect(tree, aspect, { status: 'advisory', check: MARKER_CHECK, description });
+  ygIn(tree, ['aspects', 'log', 'add', '--aspect', aspect, '--reason', `Written down because ${horde} kept explaining it by hand.`]);
+  gitIn(['add', '-A'], tree);
+  gitIn(['commit', '-qm', `the rule ${horde} added`], tree);
+  gitIn(['worktree', 'remove', tree, '--force'], dir);
+}
+
+function closeMission(dir, horde, {
+  node, aspect, rule, inexpressible, territory, question, answer, evidence,
+}) {
+  initHorde(dir, horde);
+
+  // The charter as a framing session leaves it: one promised proof, already reproduced.
+  const charterPath = hordeFile(dir, horde, 'charter.md');
+  writeFileSync(charterPath, readFileSync(charterPath, 'utf8').replace('| | | |', `| E1 | ${evidence} | ${node} | a verifier |`));
+
+  addRuleOnTrunk(dir, horde, aspect, rule);
+
+  const filed = run('tk.mjs', ['new', `work-on-${node}`, '--title', `Work on ${node}`, '--node', node, '--class', 'standard', '--horde', horde], dir);
+  assert.equal(filed.code, 0, filed.stderr);
+  for (const text of [`RULE ${rule}`, `NEVER ${inexpressible}`]) {
+    assert.equal(run('tk.mjs', ['log', filed.json.id, text, '--horde', horde], dir).code, 0);
+  }
+
+  // The retrospective, through retro.mjs itself: gather, classify the keys it printed, write.
+  const input = run('retro.mjs', ['--horde', horde], dir);
+  assert.equal(input.code, 0, input.stderr);
+  const items = {};
+  for (const it of input.json.items) {
+    items[it.key] = it.text.includes('RULE ')
+      ? {
+        class: 'rule', rule: it.text.slice(it.text.indexOf('RULE ') + 'RULE '.length), node, kind: 'check', evidence: `what ${node} kept doing`,
+      }
+      : { class: 'inexpressible' };
+  }
+  writeFileSync(hordeFile(dir, horde, 'retro-classes.json'), `${JSON.stringify({ items }, null, 2)}\n`);
+  assert.equal(run('retro.mjs', ['--horde', horde], dir).code, 0);
+
+  const ask = run('ask.mjs', ['add', question, '--kind', 'charter', '--territory', territory, '--horde', horde], dir);
+  assert.equal(ask.code, 0, ask.stderr);
+  assert.equal(run('ask.mjs', ['answer', ask.json.id, answer, '--horde', horde], dir).code, 0);
+
+  const law = run('law.mjs', ['diff', '--wave', '1', '--horde', horde], dir);
+  assert.equal(law.code, 0, law.stderr);
+
+  const archived = run('horde.mjs', ['archive', horde], dir);
+  assert.equal(archived.code, 0, archived.stderr);
+  return archived.json.to;
+}
+
+test('horde.mjs history: every closed mission, with its charter, evidence, retrospective, answers and law diff', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphOnDevelop(dir);
+
+  await t.test('with nothing archived it says so rather than printing an empty list', () => {
+    const r = run('horde.mjs', ['history'], dir, { json: false });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /no mission has closed on this repository yet/);
+    assert.deepEqual(run('horde.mjs', ['history'], dir).json, []);
+  });
+
+  closeMission(dir, 'first-mission', {
+    node: 'entry',
+    aspect: 'entry-guard',
+    rule: 'every entry point must name the session it trusts.',
+    inexpressible: 'how much friction a sign-in step may cost is a judgement no rule holds.',
+    territory: 'the front door',
+    question: 'Should a stranger reaching a locked page be sent away or asked to sign in?',
+    answer: 'Asked to sign in, and never sent away silently.',
+    evidence: 'a signed-in person reaches the locked page',
+  });
+  closeMission(dir, 'second-mission', {
+    node: 'figures',
+    aspect: 'ledger-named',
+    rule: 'every published figure must name the ledger it was taken from.',
+    inexpressible: 'which rounding a finance team finds acceptable changes per client.',
+    territory: 'numbers',
+    question: 'Do the month figures close on the last calendar day or the last working day?',
+    answer: 'The last working day, and the boundary is stated on the page.',
+    evidence: 'the month figures match the ledger',
+  });
+
+  const r = run('horde.mjs', ['history'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const byMission = Object.fromEntries(r.json.map((m) => [m.mission, m]));
+
+  await t.test('both closed missions are listed, each addressable as the archived horde it is', () => {
+    assert.equal(r.json.length, 2);
+    assert.deepEqual(Object.keys(byMission).sort(), ['first-mission', 'second-mission']);
+    for (const m of r.json) {
+      assert.match(m.id, /^_archive\/(first|second)-mission-\d{4}-\d{2}-\d{2}$/);
+      assert.match(m.date, /^\d{4}-\d{2}-\d{2}$/);
+      assert.equal(m.sha, gitIn(['rev-parse', `${m.mission}/trunk`], dir));
+    }
+  });
+
+  await t.test('the charter it closed on', () => {
+    assert.match(byMission['first-mission'].charter.title, /Mission · first-mission/);
+    assert.ok(byMission['first-mission'].charter.goal, 'the goal it set out with');
+    assert.equal(existsSync(byMission['first-mission'].charter.path), true);
+  });
+
+  await t.test('what it promised to prove, and how much of it was reproduced', () => {
+    const { evidence } = byMission['second-mission'];
+    assert.equal(evidence.total, 1);
+    assert.equal(evidence.reproduced, 1);
+    assert.deepEqual(evidence.rows, [{
+      id: 'E1', evidence: 'the month figures match the ledger', node: 'figures', reproducedBy: 'a verifier',
+    }]);
+  });
+
+  await t.test('what its retrospective proposed as law, and what it found the law will not say', () => {
+    const { retro } = byMission['first-mission'];
+    assert.deepEqual(retro.law.map((p) => [p.node, p.rule]), [['entry', 'every entry point must name the session it trusts.']]);
+    assert.equal(retro.inexpressible.length, 1);
+    assert.match(retro.inexpressible[0].text, /how much friction a sign-in step may cost/);
+  });
+
+  await t.test('what the client answered', () => {
+    const { answers } = byMission['second-mission'];
+    assert.equal(answers.length, 1);
+    assert.equal(answers[0].kind, 'charter');
+    assert.equal(answers[0].territory, 'numbers');
+    assert.match(answers[0].question, /last calendar day or the last working day/);
+    assert.match(answers[0].answer, /The last working day/);
+  });
+
+  await t.test('and what it did to the law, read off the diff it handed over', () => {
+    const { law } = byMission['first-mission'];
+    assert.equal(law.wave, 1);
+    assert.equal(law.base, gitIn(['rev-parse', 'develop'], dir));
+    assert.equal(law.trunk, gitIn(['rev-parse', 'first-mission/trunk'], dir));
+    assert.deepEqual(law.added.map((i) => i.aspect), ['entry-guard']);
+    assert.deepEqual(byMission['second-mission'].law.added.map((i) => i.aspect), ['ledger-named']);
+  });
+
+  await t.test('the human rendering names each mission and every part of its account', () => {
+    const text = run('horde.mjs', ['history'], dir, { json: false }).stdout;
+    assert.match(text, /first-mission {2}closed \d{4}-\d{2}-\d{2} at [0-9a-f]{7}/);
+    assert.match(text, /second-mission {2}closed/);
+    assert.match(text, /evidence: 1\/1 reproduced/);
+    assert.match(text, /retrospective: 1 rule proposal\(s\), 1 the law will not say/);
+    assert.match(text, /the client ruled on: 1/);
+    assert.match(text, /law: 1 added · 0 raised · 0 newly attached/);
+  });
+
+  await t.test('it reads the archive and writes nothing, and refuses an argument it has no use for', () => {
+    const before = readdirSync(join(dir, '.horde', 'hordes', '_archive')).sort();
+    assert.equal(run('horde.mjs', ['history'], dir).code, 0);
+    assert.deepEqual(readdirSync(join(dir, '.horde', 'hordes', '_archive')).sort(), before);
+
+    const refused = run('horde.mjs', ['history', 'first-mission'], dir);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /history takes no argument/);
+  });
+});
+
+// A mission archived by an older release carries fewer of these files. Half a book is worth more
+// than none, so what is missing reads as missing and everything else is still read.
+test('horde.mjs history: a sparse archived mission is read as far as it goes, never refused', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir, 'mission1');
+  assert.equal(run('horde.mjs', ['archive', 'mission1'], dir).code, 0);
+
+  // A directory somebody moved in by hand: no charter, no marker, no dated name.
+  mkdirSync(join(dir, '.horde', 'hordes', '_archive', 'moved-by-hand'), { recursive: true });
+
+  const r = run('horde.mjs', ['history'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const byMission = Object.fromEntries(r.json.map((m) => [m.mission, m]));
+
+  const hand = byMission['moved-by-hand'];
+  assert.equal(hand.charter, null);
+  assert.equal(hand.retro, null);
+  assert.equal(hand.law, null);
+  assert.equal(hand.date, null);
+  assert.deepEqual(hand.answers, []);
+  assert.deepEqual(hand.evidence, { total: 0, reproduced: 0, rows: [] });
+
+  // …and the mission beside it, archived by the real thing, is read in full all the same.
+  assert.match(byMission.mission1.charter.title, /Mission · mission1/);
+  assert.match(byMission.mission1.date, /^\d{4}-\d{2}-\d{2}$/);
 });
 
 // ---- E10: the graph is Yggdrasil's, and init makes one where there is none -------------------
