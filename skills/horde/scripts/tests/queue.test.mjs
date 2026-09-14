@@ -7,7 +7,7 @@ import {
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde,
+  makeRepo, rmRepo, run, initHorde, addNode,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -839,4 +839,122 @@ test('queue.mjs add: a second writer waits out a held queue lock rather than wri
 
   const tickets = run('queue.mjs', ['list'], dir).json.map((i) => i.ticket);
   assert.deepEqual(tickets, [waiting], 'the writer that waited out the lock still got its item recorded');
+});
+
+// ---- the charter pushback: a ticket the mission never promised ---------------------------------
+//
+// The client may dictate a ticket; the mission card is what says it belongs. `add` is the door,
+// the same place a ticket with nothing a verifier could reproduce is already turned away: a ticket
+// whose nodes lie outside every territory the mission was cut into, or whose **Evidence:** earns a
+// row the charter's catalogue does not carry, does not get into the queue. The one way past it is
+// the client's own answer, recorded — an answered ask of kind "charter", named with --ask.
+
+const charterFile = (dir, horde = 'mission1') => join(dir, '.horde', 'hordes', horde, 'charter.md');
+
+function seedCatalogue(dir, horde, rows) {
+  const path = charterFile(dir, horde);
+  const body = rows.map(([id, evidence, node]) => `| ${id} | ${evidence} | ${node} |  |`).join('\n');
+  writeFileSync(path, readFileSync(path, 'utf8').replace('| | | | |', body));
+}
+
+// The charter rewritten without one of its rows — free before wave 1, and the state that leaves a
+// ticket already earning that row pointing at a promise nobody is keeping any more.
+function dropCatalogueRow(dir, horde, id) {
+  const path = charterFile(dir, horde);
+  const kept = readFileSync(path, 'utf8').split('\n').filter((l) => !l.startsWith(`| ${id} |`));
+  writeFileSync(path, kept.join('\n'));
+}
+
+function seedTerritories(dir, horde, doc) {
+  writeFileSync(join(dir, '.horde', 'hordes', horde, 'territories.json'), `${JSON.stringify(doc, null, 2)}\n`);
+}
+
+test('queue.mjs add: a ticket the mission card does not cover is refused, and an answered charter ask takes it in', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'auth', { mapping: ['src/auth/**'] });
+  addNode(dir, 'api', { mapping: ['src/api/**'] });
+  addNode(dir, 'billing', { mapping: ['src/billing/**'] });
+  seedCatalogue(dir, 'mission1', [
+    ['E1', 'a user signs in', 'auth'],
+    ['E2', 'the month figures match', 'billing'],
+  ]);
+
+  const inside = run('tk.mjs', ['new', 'sign-in', '--title', 'Let a user sign in', '--node', 'auth',
+    '--class', 'standard', '--evidence', 'E1', '--evidence', 'a user signs in'], dir).json.id;
+  const outside = run('tk.mjs', ['new', 'invoices', '--title', 'Invoices add up', '--node', 'billing',
+    '--class', 'standard', '--evidence', 'the invoices add up'], dir).json.id;
+  const stale = run('tk.mjs', ['new', 'month-end', '--title', 'Month end', '--node', 'auth',
+    '--class', 'standard', '--evidence', 'E2', '--evidence', 'the month figures match'], dir).json.id;
+
+  seedTerritories(dir, 'mission1', {
+    'the front door': { nodes: ['auth', 'api'], class: 'standard', why: 'How a request gets in.' },
+  });
+
+  await t.test('a ticket inside a territory, earning a row the charter carries, goes in as before', () => {
+    const r = run('queue.mjs', ['add', inside], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.state, 'queued');
+  });
+
+  await t.test('one whose node is outside every territory is refused, naming the node and the territories', () => {
+    const r = run('queue.mjs', ['add', outside], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /billing/);
+    assert.match(r.stderr, /the front door \(auth, api\)/);
+    assert.deepEqual(
+      run('queue.mjs', ['list'], dir).json.map((i) => i.ticket),
+      [inside],
+      'the refused ticket did not get into the queue',
+    );
+  });
+
+  await t.test('the refusal prints the charter question that changes it, and the way back in', () => {
+    const r = run('queue.mjs', ['add', outside], dir);
+    assert.match(r.stderr, new RegExp(`ask\\.mjs add "[^"]+" --kind charter --ticket ${outside}`));
+    assert.match(r.stderr, /ask\.mjs answer <id>/);
+    assert.match(r.stderr, new RegExp(`queue\\.mjs add ${outside} --ask <id>`));
+  });
+
+  await t.test('an **Evidence:** row the charter no longer carries is refused the same way', () => {
+    dropCatalogueRow(dir, 'mission1', 'E2');
+    const r = run('queue.mjs', ['add', stale], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /E2/);
+    assert.match(r.stderr, /evidence catalogue/);
+  });
+
+  let askId;
+  await t.test('--ask naming an ask that is not answered yet is refused, and so is one of another kind', () => {
+    const opened = run('ask.mjs', ['add', 'Does this mission take the billing work in?', '--kind', 'charter', '--ticket', outside], dir);
+    assert.equal(opened.code, 0, opened.stderr);
+    askId = opened.json.id;
+    const tooSoon = run('queue.mjs', ['add', outside, '--ask', askId], dir);
+    assert.equal(tooSoon.code, 1);
+    assert.match(tooSoon.stderr, /not answered yet/);
+
+    const wrongKind = run('ask.mjs', ['add', 'A worker ran out of spec.', '--kind', 'stop', '--ticket', outside], dir);
+    const refused = run('queue.mjs', ['add', outside, '--ask', wrongKind.json.id], dir);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /is kind "stop", not "charter"/);
+  });
+
+  await t.test('an --ask that names no ask at all is refused by name', () => {
+    const r = run('queue.mjs', ['add', outside, '--ask', 'a-999'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no such ask: a-999/);
+  });
+
+  await t.test('with the client\'s answer recorded, the ticket goes in — and the item says which ask took it', () => {
+    assert.equal(run('ask.mjs', ['answer', askId, 'Yes, billing is in scope now.'], dir).code, 0);
+    const r = run('queue.mjs', ['add', outside, '--ask', askId], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.state, 'queued');
+    assert.match(r.json.notes.map((n) => n.text).join('\n'), new RegExp(`ask ${askId}`));
+    assert.deepEqual(
+      run('queue.mjs', ['list'], dir).json.map((i) => i.ticket).sort(),
+      [inside, outside].sort(),
+    );
+  });
 });

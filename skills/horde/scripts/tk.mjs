@@ -412,6 +412,98 @@ function checkEvidenceIds(horde, evidence) {
   }
 }
 
+// --- what the mission promised --------------------------------------------------------------
+//
+// The mission's own cut: hordes/<horde>/territories.json, the file refine.mjs's cut step validates
+// and leases. Read here the way the evidence catalogue above is — one column of it, kept
+// self-contained — rather than imported from refine.mjs, which is refused for merge independently
+// of this one. A mission nobody has cut yet has no file; a territory naming no component promises
+// nothing about where work may go. Both read as "no cut", and nothing is checked against them.
+function missionTerritories(horde) {
+  const path = hordePath(horde, 'territories.json');
+  let doc;
+  try {
+    doc = readJSON(path, null);
+  } catch (e) {
+    fail(
+      `${path} will not parse as JSON, so the mission's territories cannot be read: ${e.message}\n`
+      + 'A file half-written by an interrupted run is not an empty one, and reading it as "no cut" '
+      + 'would let a ticket into the queue on a promise nobody can see. Fix the JSON, or run '
+      + '"refine.mjs --step cut" again for a fresh brief.',
+    );
+  }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return [];
+  return Object.entries(doc)
+    .map(([territory, spec]) => ({
+      territory,
+      nodes: (spec && Array.isArray(spec.nodes) ? spec.nodes : []).map(String).filter(Boolean),
+    }))
+    .filter((t) => t.nodes.length > 0);
+}
+
+// The two halves of a mission card a ticket can contradict on its own, read off the ticket's own
+// header. A node outside every territory of the cut is work the mission never said it would do:
+// that area has no consultant, no lease and nobody who agreed it was in. An **Evidence:** id the
+// charter's catalogue does not carry is a row that can never go green — wave.mjs counts a wave's
+// evidence out of that table, so a ticket earning a row nobody promised earns nothing.
+//
+// Each half is silent about a promise the mission never made: a mission that has not been cut has
+// no territory to be outside of, and a ticket naming no evidence id claims no row at all — ordinary
+// work, which `queue.mjs plan` already reports against the rows nobody took rather than refusing.
+// Pure on purpose: the promises come in, so the reading can be checked without a mission on disk.
+export function charterMismatches(text, { territories = [], catalogue = new Set() } = {}) {
+  const mismatches = [];
+  if (territories.length) {
+    const inside = new Set(territories.flatMap((t) => t.nodes));
+    const outside = nodesOf(text).filter((n) => !inside.has(n));
+    if (outside.length) {
+      mismatches.push({
+        field: 'Node',
+        values: outside,
+        what: `names ${outside.join(', ')}, outside every territory this mission was cut into`,
+        has: `the territories are ${territories.map((t) => `${t.territory} (${t.nodes.join(', ')})`).join(' · ')}`,
+      });
+    }
+  }
+  const unknown = ticketEvidence(text).filter((id) => !catalogue.has(id));
+  if (unknown.length) {
+    mismatches.push({
+      field: 'Evidence',
+      values: unknown,
+      what: `earns ${unknown.join(', ')}, which the charter's evidence catalogue does not carry`,
+      has: catalogue.size ? `the catalogue is ${[...catalogue].join(', ')}` : 'the catalogue has no row at all',
+    });
+  }
+  return mismatches;
+}
+
+// charterPushback(horde, ticket) — the same reading against this mission's own promises, with the
+// words the client is answered in: what does not fit, the question that would change it, and the
+// three commands that end with the ticket in the queue. Null when the ticket fits. The client may
+// dictate a ticket; the mission card is what says it belongs, and a ticket that contradicts it is
+// a charter decision, never a build one.
+export function charterPushback(horde, ticket) {
+  const mismatches = charterMismatches(ticket.text, {
+    territories: missionTerritories(horde),
+    catalogue: charterEvidenceIds(horde),
+  });
+  if (mismatches.length === 0) return null;
+  const question = `Ticket ${ticket.id} ${mismatches.map((m) => m.what).join(', and it ')}. `
+    + 'Does this mission take it in — and what changes to say so: the cut, the evidence catalogue, or the ticket?';
+  const message = [
+    `ticket ${ticket.id} is not what this mission promised:`,
+    ...mismatches.map((m) => `  · ${m.field}: it ${m.what} — ${m.has}`),
+    'The client may dictate a ticket; the mission card is what says it belongs, so this one is theirs to rule on, not a build decision. Put it to them, then bring the ticket back with their answer:',
+    `  ask.mjs add "${question}" --kind charter --ticket ${ticket.id} --horde ${horde}`,
+    `  ask.mjs answer <id> "<their answer>" --horde ${horde}`,
+    `  queue.mjs add ${ticket.id} --ask <id> --horde ${horde}`,
+    'Or change the ticket instead — tk.mjs edit --evidence, or a node the cut actually holds.',
+  ].join('\n');
+  return {
+    ticket: ticket.id, mismatches, question, message,
+  };
+}
+
 // `--evidence` says two things at once, and which one it is, is decided by what was written: a
 // value that is nothing but catalogue ids ("E2,E5") names the rows this ticket earns and fills
 // the **Evidence:** field; anything else is an acceptance line, written into the ticket's own
