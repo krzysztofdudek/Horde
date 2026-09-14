@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- A ticket that does not match what the mission agreed to no longer joins the work. One that touches an area outside the mission's scope, or that claims a proof the mission never promised, is turned back with the mismatch named and the question to put to you. Answer it and the ticket goes in.
-
 ## [6.0.0] - 2026-09-12
 
 Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to install.
@@ -37,6 +33,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - `wave close` audits the rules: overdue `review_by` rules become renew-or-retire tickets, unhandled `yg advise`/`grain advise` items are picked up, and rules nothing has hit in two waves are named.
 - One channel reaches you: a stalled worker, work sent back too many times, a request to weaken a rule, or a change to the mission card. Each answer is recorded in the mission's decision log.
 - The evidence package refuses a promise whose proof has been switched off: a promise counts as kept only while the case that keeps it actually runs. A case that is skipped, crossed out, or left behind another one marked as the only case to run is refused — unless the promise says nothing runs it yet. It knows the markers JavaScript, Python, Go and .NET suites use, and a repository can narrow that list to the ones its own suite uses.
+- A ticket that does not match what the mission agreed to no longer joins the work. One that touches an area outside the mission's scope, or that claims a proof the mission never promised, is turned back with the mismatch named and the question to put to you. Answer it and the ticket goes in.
 
 ### Changed
 
