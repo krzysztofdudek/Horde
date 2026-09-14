@@ -36,8 +36,13 @@ a test, a scenario file, a film, a screenshot, a measurement with a threshold. N
 Every row gets an id — E1, E2, E3 … — because that is how a ticket says which evidence it earns
 (`**Evidence:** E2, E5`), and how the plan names the rows no ticket has taken.
 
-| id | evidence | node | reproduced by |
-|---|---|---|---|
+A row may also name what kind of proof it rests on, in a fifth cell: e2e scenario, hermetic test,
+mutation, recorded stub, artifact, or client testimony — the same six words a promise file's own
+`class` field uses (see the evidence package, when this repository has one). Optional; a row that
+says nothing there reads as unstated, exactly like every row written before this column existed.
+
+| id | evidence | node | reproduced by | evidence class |
+|---|---|---|---|---|
 | | | | |
 
 ## Nodes

@@ -799,8 +799,17 @@ tool set takes, not this horde's trunk just because a horde was resolvable. `--h
 and `horde.mjs done` already read it (issue 114 — before it, `start` read this horde's own trunk
 unconditionally, the one `buildPlan` caller that never named its own tree).
 
-Beyond the counts it always carried, `close` states six figures the chairman reads:
+Beyond the counts it always carried, `close` states seven figures the chairman reads:
 
+- **the evidence catalogue by kind of proof** — the header line's own green/total count, sorted into
+  the six kinds of proof issue 024 fixed for a promise's own `class` field (`EVIDENCE_CLASSES` in
+  `_lib.mjs`, mirrored by hand from `packages/promises/doc-shape/check.mjs`'s own `CLASSES` — this
+  skill never imports that package), plus `unstated` for a row whose fifth cell says nothing (every
+  row written before that column existed included), plus a named-on-its-own list for a row whose
+  fifth cell says something none of those six words are — never folded into `unstated`, which would
+  hide it behind a word that means nobody has said anything yet. Never confused in anything this
+  prints with `config.classes`' own light/standard/heavy/max cost ladder — a completely different
+  `class`, reported nowhere near this block;
 - **what came back after landing** — the merges reverted and the tickets reopened in this wave,
   counted beside the merges and never folded into them, off the same journal bullets `land.mjs
   --fate` writes while recording the fate. A wave that merged six tickets and had two of them come

@@ -66,4 +66,6 @@ charter already written readable, and keeps the prototype table invisible to cat
 
 ## Evidence
 Krzysztof approved: a fifth column on the catalogue naming the evidence class outright (see .jarl/decisions.md, 120-fifth-catalogue-column). Ready for implementation dispatch. Held out of dispatch until the current wave lands — issue 124 (in progress) touches _lib.mjs, where parseEvidenceRows lives.
+- **ran:** cd skills/horde/scripts && HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" timeout 500 node --test tests/wave.test.mjs tests/lib.test.mjs tests/charter-template.test.mjs · **saw:** 112/112 tests passed, 0 failures, 0 skipped
+- **ran:** cd skills/horde/scripts && HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" timeout 500 node --test tests/horde.test.mjs tests/queue.test.mjs tests/refine.test.mjs tests/status.test.mjs tests/tk.test.mjs tests/plan-out.test.mjs tests/tick.test.mjs tests/docs.test.mjs · **saw:** extra due-diligence run (not the ticket's required minimum) over every other consumer of parseEvidenceRows/catalogueCut/the charter template plus the CHANGELOG-structure tests: 433 tests, 432 passed, 1 skipped (pre-existing, unrelated), 0 failures
 

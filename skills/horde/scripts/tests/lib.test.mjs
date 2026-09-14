@@ -428,6 +428,35 @@ test('_lib.mjs: DEFAULT_CLASSES and firstClass are host-neutral', async (t) => {
   });
 });
 
+// EVIDENCE_CLASSES (issue 120, off issue 024's own fixed vocabulary) is a hand-kept mirror of
+// packages/promises/doc-shape/check.mjs's own CLASSES export — this skill never imports that
+// package (CLAUDE.md's self-containment rule: "all behavior must be self-contained in
+// skills/horde/"), so the two lists are kept in step by hand, and this is the test that would
+// catch them drifting apart. It is also, deliberately, a completely different list from
+// DEFAULT_CLASSES above: one names a kind of proof, the other names how heavy a ticket runs.
+test('_lib.mjs: EVIDENCE_CLASSES mirrors the promises package\'s CLASSES exactly, and shares no word with DEFAULT_CLASSES', async (t) => {
+  const { EVIDENCE_CLASSES, DEFAULT_CLASSES } = await import('../_lib.mjs');
+  // tests/ -> scripts/ -> horde/ -> skills/ -> repo root -> packages/promises/doc-shape/check.mjs
+  const PACKAGE_CHECK = join(
+    dirname(dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))))),
+    'packages', 'promises', 'doc-shape', 'check.mjs',
+  );
+
+  await t.test('the same six words, in the same order, as packages/promises/doc-shape/check.mjs\'s own CLASSES', async () => {
+    const { CLASSES } = await import(PACKAGE_CHECK);
+    assert.deepEqual(EVIDENCE_CLASSES, CLASSES);
+  });
+
+  await t.test('none of the six words is a key DEFAULT_CLASSES uses, and none of DEFAULT_CLASSES\' own keys is one of the six', () => {
+    for (const word of EVIDENCE_CLASSES) {
+      assert.equal(Object.prototype.hasOwnProperty.call(DEFAULT_CLASSES, word), false, `DEFAULT_CLASSES should not key on "${word}"`);
+    }
+    for (const key of Object.keys(DEFAULT_CLASSES)) {
+      assert.equal(EVIDENCE_CLASSES.includes(key), false, `EVIDENCE_CLASSES should not carry the cost-class word "${key}"`);
+    }
+  });
+});
+
 // classUp is the fresh, one-class-heavier worker's own class — never a plain default, and never
 // something it invents when handed a class it does not recognise.
 test('_lib.mjs: classUp walks the ladder one rung, and refuses to invent one', async (t) => {
@@ -655,10 +684,10 @@ test('_lib.mjs: the charter\'s evidence catalogue is parsed in one place', async
   await t.test('the rows inside the section, the all-empty template row dropped', () => {
     assert.deepEqual(parseEvidenceRows(charter), [
       {
-        id: 'E1', evidence: 'the page renders', node: 'web', reproducedBy: 'scout',
+        id: 'E1', evidence: 'the page renders', node: 'web', reproducedBy: 'scout', evidenceClass: '',
       },
       {
-        id: 'E2', evidence: 'the audit event lands', node: 'audit', reproducedBy: '',
+        id: 'E2', evidence: 'the audit event lands', node: 'audit', reproducedBy: '', evidenceClass: '',
       },
     ]);
   });
@@ -672,6 +701,38 @@ test('_lib.mjs: the charter\'s evidence catalogue is parsed in one place', async
     assert.equal(markdownSection(charter, '## Nodes').includes('a row outside the section'), true);
     assert.equal(markdownSection(charter, '## Nowhere'), '');
     assert.deepEqual(markdownTableCells('|  a | b  |c|'), ['a', 'b', 'c']);
+  });
+
+  // issue 120: a fifth cell names the kind of proof the row rests on — optional, and a row written
+  // before the column existed (four cells, exactly the shape above) reads exactly as though the
+  // cell were left blank: 'unstated', never a parse error and never refused.
+  await t.test('a fifth cell names the kind of proof; a charter with none of that column is unaffected', () => {
+    const withClass = [
+      '# Mission',
+      '',
+      '## Acceptance — the evidence catalogue',
+      '',
+      '| id | evidence | node | reproduced by | evidence class |',
+      '|---|---|---|---|---|',
+      '| E1 | the checkout completes | web | scout | e2e scenario |',
+      '| E2 | the audit event lands | audit | | hermetic test |',
+      '| E3 | old row, no fifth cell at all | audit | keeper |',
+      '| E4 | fifth cell present but left blank | audit | | |',
+    ].join('\n');
+    assert.deepEqual(parseEvidenceRows(withClass), [
+      {
+        id: 'E1', evidence: 'the checkout completes', node: 'web', reproducedBy: 'scout', evidenceClass: 'e2e scenario',
+      },
+      {
+        id: 'E2', evidence: 'the audit event lands', node: 'audit', reproducedBy: '', evidenceClass: 'hermetic test',
+      },
+      {
+        id: 'E3', evidence: 'old row, no fifth cell at all', node: 'audit', reproducedBy: 'keeper', evidenceClass: '',
+      },
+      {
+        id: 'E4', evidence: 'fifth cell present but left blank', node: 'audit', reproducedBy: '', evidenceClass: '',
+      },
+    ]);
   });
 });
 

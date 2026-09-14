@@ -91,3 +91,46 @@ test('charter template: a charter written before the section existed gains it, r
   assert.match(again, /the promises directory/);
   assert.doesNotMatch(again, /Evidence here is the suite\./);
 });
+
+// issue 120: the catalogue's fifth cell. The template's own header and separator carry the new
+// column; the one placeholder data row is left exactly as it was (four cells, all empty) — an
+// all-empty row parses as no row regardless of its own width, so nothing about it needed to
+// change, and every one of this file's other tests (and every other test in this suite that keys
+// off the literal placeholder text) still finds exactly what it always found.
+test('charter template: the header carries the new fifth column; the placeholder row is untouched', () => {
+  assert.match(text, /^\| id \| evidence \| node \| reproduced by \| evidence class \|$/m);
+  assert.match(text, /^\|---\|---\|---\|---\|---\|$/m);
+  assert.match(text, /^\| \| \| \| \|$/m, 'the one placeholder row is still four cells, unchanged');
+});
+
+test('charter template: a five-cell row parses with its class; a five-cell row and a four-cell row stand together without tearing the catalogue', () => {
+  const filled = text.replace(
+    '| | | | |',
+    '| E1 | the checkout completes | web | scout | e2e scenario |\n| E2 | an old-shape row beside it | api | |',
+  );
+  assert.equal(catalogueCut(filled), null, 'a five-cell row and a four-cell row together: the catalogue is still whole');
+  assert.deepEqual(parseEvidenceRows(filled), [
+    {
+      id: 'E1', evidence: 'the checkout completes', node: 'web', reproducedBy: 'scout', evidenceClass: 'e2e scenario',
+    },
+    {
+      id: 'E2', evidence: 'an old-shape row beside it', node: 'api', reproducedBy: '', evidenceClass: '',
+    },
+  ]);
+});
+
+test('charter template: an accepted prototype\'s own five-cell row is never read as a second catalogue row for the same id, and never makes catalogueCut think one escaped its section', async () => {
+  const { PROTOTYPE_SECTION, recordPrototypeAcceptance } = await import('../wave.mjs');
+
+  const filled = text.replace('| | | | |', '| E1 | the checkout completes | web | scout | e2e scenario |');
+  // The prototype accepted for E1 carries E1's own id, and five cells of its own — the same width
+  // a catalogue row can now have — but stands in "## Prototypes accepted", a section of its own.
+  const withPrototype = recordPrototypeAcceptance(filled, {
+    id: 'E1', ticket: '004-shift-board', sha256: 'a'.repeat(64), acceptedBy: 'Anna Kowalska', at: '2026-01-01',
+  });
+  assert.match(withPrototype, new RegExp(`^## ${PROTOTYPE_SECTION}$`, 'm'));
+  assert.equal(catalogueCut(withPrototype), null, 'the accepted-prototype table is not mistaken for a torn catalogue');
+  const rows = parseEvidenceRows(withPrototype);
+  assert.equal(rows.length, 1, 'still exactly the one real catalogue row, not a second one from the prototype table');
+  assert.equal(rows[0].evidenceClass, 'e2e scenario');
+});
