@@ -233,6 +233,45 @@ test('tick.mjs dispatch: what goes on the list, in what order, and what never go
   });
 });
 
+// ---- the tree tick resolves to, with and without --horde written out -------------------------
+//
+// The same shared contract every other tool here reads (node.mjs main()'s own comment above its
+// resolveTree call, and tree.test.mjs): an ordinary run with neither --tree nor --horde stays on
+// cwd, whatever branch that happens to be — a resolvable horde is not by itself a second signal
+// for "read trunk instead". --horde WRITTEN OUT is the one thing that does mean this horde's own
+// trunk, exactly as queue.mjs plan/quality already read it (tree.test.mjs calls that "the one
+// place" this reads trunk). Before this test existed, tick's own resolveTree call forwarded
+// neither form of --horde at all, so the flag had no effect on the tree either way — this proves
+// both halves: the ordinary default is unchanged, and the explicit flag now actually does
+// something.
+test('tick.mjs: no --horde stays on cwd; --horde written out resolves to that horde\'s own trunk instead', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  // Neither the mission's own base branch nor mission1/trunk — a shell that ended up here has
+  // wandered somewhere tick was never told about, on purpose, matching the issue this is about.
+  git(['checkout', 'develop'], dir);
+
+  await t.test('no --horde at all: cwd, on whatever branch the main checkout is on', () => {
+    const r = tick(dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.tree, git(['rev-parse', '--show-toplevel'], dir));
+    assert.equal(r.json.branch, 'develop');
+    assert.equal(r.json.sha, git(['rev-parse', 'HEAD'], dir));
+  });
+
+  await t.test('--horde mission1 written out: this horde\'s own trunk, a different tree entirely', () => {
+    const cwdRun = tick(dir);
+    const r = tick(dir, ['--horde', 'mission1']);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.branch, 'mission1/trunk');
+    assert.notEqual(r.json.tree, cwdRun.json.tree);
+    assert.match(r.json.tree, /worktrees[\\/]mission1[\\/]trunk$/);
+    // Shared state, not part of either tree: the main checkout is left exactly where it was.
+    assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], dir), 'develop');
+  });
+});
+
 // The parent is put at "landed" rather than left "running": reconcile runs first in the same pass,
 // and a running branch with nothing on it goes straight back to the queue, which is not the state
 // this is about. "landed" is what a parent a stack can be cut from actually looks like.

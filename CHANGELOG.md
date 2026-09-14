@@ -54,6 +54,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - Every write to the queue now goes through a single lock, so two sessions changing the same horde's queue at once can no longer silently drop one another's item.
 - A worker proves its own change by running only the test(s) it touched, not the whole suite — the full suite runs once, at landing.
 - `tick --watch` no longer stops on a refusal. It records what was refused in the mission journal, prints it, and tries again at the next interval.
+- `tick --horde` now points the run at that horde's own trunk when no `--tree` is given, instead of whatever the current checkout happened to be on.
 
 ### Removed
 

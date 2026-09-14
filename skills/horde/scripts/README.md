@@ -188,8 +188,9 @@ its folder and of the `id:` its issue.md carries.
   in one place, so a later change of where the graph comes from changes one function.
   Both checks read the graph in the tree `new`/`edit` is run from (cwd) — `--horde` on either is only
   the ticket-store disambiguator (which horde's `teams/` this ticket files under), never a tree
-  switch, the same ordinary reading every `node.mjs` read takes (`queue.mjs plan`/`quality` is the
-  one place `--horde` alone also means the tip of trunk). A node the tree does not carry contributes
+  switch, the same ordinary reading every `node.mjs` read takes (`queue.mjs plan`/`quality` and
+  `tick.mjs` are where `--horde` written out alone also means the tip of trunk instead). A node the
+  tree does not carry contributes
   no boundary and no port, so a ticket named against it is accepted uncontested rather than refused —
   run `new`/`edit` from the tree whose graph state should decide the check, or land the graph change
   there first.
@@ -1120,6 +1121,17 @@ last thing landed.
 
 `tick [--runner session|external] [--watch] [--stack] [--tree p] [--horde h]`. Four things in order,
 then it exits — nothing lives between runs, so there is no roster and no minute count anywhere in it.
+
+The tree reconcile, the gate and the dispatch list all run in: `--tree` names it outright; short of
+that, cwd — whatever the calling shell happens to be sitting on — the same ordinary reading every
+`node.mjs` read takes, not this horde's trunk just because a horde was resolvable (see the top of
+this file). `--horde h` written out is the one thing that changes that default instead of only
+selecting which horde's queue, asks and charter this run reads: it resolves to that horde's own
+trunk worktree, exactly as `queue.mjs plan`/`quality` already read it — now two places, not one.
+A run launched from a shell on some other branch of the repository (or, in a multi-horde repository,
+sitting in a different horde's own tree entirely) reconciles, gates and dispatches there unless
+`--horde` says otherwise; the boot sequence's own bare `tick.mjs` call carries neither flag, so it
+inherits whatever tree the session's shell is already in.
 
 1. **Reconcile.** Every `running` item whose call has come back without landing a sha, settled from
    its branch: a commit beyond the parent goes to `landed`; a dirty worktree is committed as
