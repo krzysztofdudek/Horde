@@ -83,6 +83,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - The plan review now refuses with a plain reason when the plan itself can't be built, instead of crashing with a raw error.
 - Two states a ticket could still be moved to — one for a separate verification step, one for an escalation — belonged to the roles that are gone. Setting either is now refused, and the refusal says what replaced it. Old work already sitting in either state still reads and still shows up everywhere it used to.
 - Narrowing the status screen to a team other than the mission's own used to print a mission with nothing in it, reading as "nothing is happening here". It now says plainly that there is no such team.
+- An unanswered question now holds back exactly what depends on the answer and nothing else: a stalled ticket holds itself; a question about the mission card holds the tickets earning the proofs it names; a request to weaken a rule holds that one change at the door. A worker who ran out of spec holds everything — nothing starts, nothing merges even when it is finished and passing, and the mission does not close — until you answer. An open question used to hold nothing at all, and a change waiting on your word could be sent back to a worker round after round for failing a rule only you could lift.
 
 ### Migrating a mission already in flight
 
