@@ -117,7 +117,10 @@ through its context at all.
 Agents are biased towards their own work, and no prompt fixes that. The structure routes around it:
 
 - evidence over report: a ticket is done when its evidence exists and the merge checklist reproduces
-  it itself — red-green proof, new tests fail before, pass after;
+  it itself — red-green proof, new tests fail before, pass after. A test file that exists is not a
+  test that ran, so where the gate leaves a runner's report behind the checklist reads that too, and
+  a promise whose own paired case is missing from it, or in it as skipped or failed, is a red gate
+  naming that promise;
 - contracts are tests: a port names the test that is its promise, so a contract change is a red test
   in the neighbour, which surfaces at the next landing rather than staying a claim;
 - the merge checklist is the key: nine items, run fresh on the branch's own tip, and a change lands
@@ -232,10 +235,11 @@ file ever conflicts in a merge.
 ```
 .horde/
   .gitignore                        "*"
-  config.json                       base branch, gate commands, how to invoke the Yggdrasil and
-                                    Grain CLIs, class weights (`classes`, also used for model
-                                    selection and plan ranking), fix-round caps, protected paths,
-                                    territory size limit
+  config.json                       base branch, gate commands, the runner report a gate leaves
+                                    behind (`gates.report`: path + junit|tap|playwright-json), how
+                                    to invoke the Yggdrasil and Grain CLIs, class weights
+                                    (`classes`, also used for model selection and plan ranking),
+                                    fix-round caps, protected paths, territory size limit
   leases.json (+ .md)               subject -> {horde, since}: territories now, node ids from a
                                     pre-migration mission still read the same way — shared across
                                     every horde on this repository, never per-horde
@@ -291,6 +295,15 @@ it merges the branch itself when every item is green, and refuses when one is no
 signature to collect: a green run is the signature, and the landed sha the only trace it leaves. It
 runs in a fresh detached tree at the branch's own tip, never in the worker's, so what it measures
 cannot move under it.
+
+A gate command's exit code says the command finished, never that a particular case ran. So
+`gates.report` may name the report the command's own runner left behind in that tree — a path and
+one of `junit`, `tap` or `playwright-json` — and the landing reads it back: every live promise's own
+paired case has to be in it, passing. Missing, skipped or failed is a red gate naming the promise,
+which a worker fixes by writing the case, un-skipping it or making it pass; nothing about it is put
+to the client. Horde runs no runner and configures none — the environment and the runner are the
+repository's, and this only reads what the run left behind. With no report configured the gate says
+so, rather than reporting a green nothing confirmed.
 
 ### The gate lock
 
