@@ -526,9 +526,29 @@ export function qualityPolicyIn(charterText) {
   return m ? m[1].trim() : null;
 }
 
+// qualityPolicy(horde) — the resolved policy: `autonomous` when the charter names no policy at
+// all (no charter yet, no `## Quality` section, no `**Policy:**` line — the ruling's own default,
+// see above), otherwise exactly what the charter says. A value present but not one of
+// QUALITY_POLICIES is refused rather than quietly read as `autonomous` — the more permissive of
+// the two — mirroring the same refusal horde.mjs's `charter edit` already applies when the line is
+// WRITTEN; reading it back is held to the same discipline, not a softer one, so a charter hand-
+// edited (or written by an older release, before a rename) outside that command cannot leave the
+// horde silently running more freely than whoever wrote the line intended.
 export function qualityPolicy(horde) {
   const found = qualityPolicyIn(readText(hordePath(horde, 'charter.md')));
-  return QUALITY_POLICIES.includes(found) ? found : 'autonomous';
+  if (found === null) return 'autonomous';
+  if (!QUALITY_POLICIES.includes(found)) {
+    fail(
+      `the charter's Quality section says "**Policy:** ${found}", which is not a setting this horde has.\n`
+      + 'That line decides whether the horde improves the architecture wherever it works or sticks to the '
+      + 'tickets alone, and a word nothing recognises must not quietly read as autonomous, the more permissive '
+      + 'of the two — that would let the horde judge and file work an operator who wrote something else never '
+      + 'authorised.\n'
+      + `Fix the charter to one of: ${QUALITY_POLICIES.join(', ')} (or drop the section, which reads as `
+      + `${QUALITY_POLICIES[0]}), with horde.mjs charter edit.`,
+    );
+  }
+  return found;
 }
 
 // ---- the documents, read in one place ---------------------------------------------------------
