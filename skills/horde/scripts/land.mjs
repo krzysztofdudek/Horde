@@ -20,6 +20,9 @@
 // trunk never takes. `parentBranchOf` and the prototype guard answer that once between them, and
 // every item below is measured against their answer: the base, the diff, the tree a new test is
 // reverted onto.
+//
+// The one thing here that is not a gate run is `--fate`: what became of a ticket after it landed,
+// recorded where the landing was recorded. See "what became of a ticket after it landed" below.
 
 import {
   existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, linkSync,
@@ -37,12 +40,15 @@ import {
   globToRegExp, pathInBoundary, ticketBoundary, ygFileContext, ygAvailable, ygJson,
 } from './node.mjs';
 import {
-  ticketFiles, ticketEvidence, ticketKind, prototypeBranchOf, findTicket, changesRoundInfo,
-  transitionStatus,
+  ticketFiles, ticketEvidence, ticketKind, prototypeBranchOf, ticketReopens, findTicket,
+  changesRoundInfo, transitionStatus,
 } from './tk.mjs';
 import { recordMerged } from './queue.mjs';
+import { noteFate } from './wave.mjs';
 
 const USAGE = `usage: land.mjs <ticket|branch> [--level trunk] [--no-gate] [--background] [--horde h]
+       land.mjs <ticket> --fate reverted --by <sha> [--horde h]
+       land.mjs <ticket> --fate reopened --by <ticket> [--horde h]
 
 The gate a change lands through. Nine items, ✓/✗ per line; every one green means the branch is
 merged into its parent here and now, and a single ✗ means it is not — nobody's signature is asked
@@ -89,6 +95,13 @@ directly on <horde>/trunk. "team" here is the name of a config key kept from bef
 team you can name: passing --level team is refused outright rather than read as the default.
 --no-gate skips items 5, 6 and 7 (informational: pass) and never merges.
 --background starts the run and prints the path of the result file it will write, immediately.
+
+--fate records what became of a ticket AFTER it landed, and runs no gate: "reverted" when the merge
+was undone (--by names the commit that undid it), "reopened" when the evidence the ticket claimed
+went red again and a new ticket was filed to earn it back (--by names that ticket, which has to say
+"**Reopens:** t-NNN" itself). It goes to the ticket's own result file and to the wave journal, where
+the wave close counts it and the retrospective reads it as its own kind of input. Nothing in the
+queue moves: the merge commit still stands and the reopening is its own ticket.
 
 options: --json  --help`;
 
@@ -1401,6 +1414,97 @@ function writeLandResult(horde, ticketId, result) {
   writeJSON(resultPath(horde, ticketId), result);
 }
 
+// ---- what became of a ticket after it landed ---------------------------------------------
+//
+// A landing was the end of the record and is not the end of the story. Two things happen to merged
+// work and left no trace anywhere: the merge is REVERTED, or the evidence row the ticket claimed to
+// turn green goes red again and a new ticket is filed to earn it back — the ticket is REOPENED. A
+// return is the plainest signal there is that the evidence was not enough, and until it is written
+// down the wave close reports a merge that no longer stands and the retrospective never hears of it.
+//
+// It is written in the two places the landing itself is written: the ticket's own result file, and
+// the wave journal. Nowhere else, and nothing in the queue moves. A fate is a record of what
+// happened to work that landed, not a state the ticket goes back into — the merge commit still
+// exists (a revert is another commit on top of it), and a reopening is its own ticket with its own
+// queue item and its own landing ahead of it.
+//
+// Both fates name what carries them, and both references are checkable by whoever reads the record
+// later: a revert names the commit that undid the merge, and a reopening names the ticket that says
+// so itself in its "**Reopens:**" field. Neither is taken on the caller's word.
+export const FATES = ['reverted', 'reopened'];
+
+// The result file as a fate can extend it: the gate's own document when the gate wrote one, and a
+// bare record naming the ticket when the merge was recorded by hand and there is no run to extend.
+// Either way the fate lands in the same field of the same file, so one reader finds every fate.
+function landResultForFate(horde, ticketId) {
+  const existing = readLandResult(horde, ticketId);
+  return existing || { ticket: String(ticketId) };
+}
+
+// recordFate(horde, team, ticketId, fate, by) — the fate on the result file and in the journal, in
+// one call, because it is one event. Idempotent in both places: the same fate carried by the same
+// thing is recorded once however many times it is reported.
+export function recordFate(horde, team, ticketId, fate, by) {
+  const doc = landResultForFate(horde, ticketId);
+  const fates = asArray(doc.fates);
+  const already = fates.some((f) => f && f.fate === fate && String(f.by) === String(by));
+  const entry = { fate, by: String(by), at: nowIso() };
+  if (!already) {
+    writeLandResult(horde, ticketId, { ...doc, fates: [...fates, entry] });
+  }
+  const journal = noteFate(horde, team, ticketId, fate, String(by));
+  return {
+    ticket: String(ticketId), fate, by: String(by), recorded: !already, entry, journal,
+  };
+}
+
+// `land.mjs <ticket> --fate reverted|reopened --by <ref>`. Not a gate run at all: nothing is
+// measured, nothing is merged, and the ticket's branch is long gone by the time anybody reaches
+// for this. It is the one command that writes what happened AFTER a landing.
+function runFate(horde, root, arg, flags) {
+  const fate = String(flags.fate);
+  if (!FATES.includes(fate)) fail(`--fate must be one of: ${FATES.join(', ')}`);
+  const found = findQueueItem(horde, arg);
+  if (!found) fail(`no queue item names ${arg} — a fate says what became of work this horde landed, so the ticket has to be one it tracks`);
+  const { team, item } = found;
+  const ticketId = String(item.ticket);
+  if (item.state !== 'merged') {
+    fail(`t-${ticketId} is ${item.state}, not merged — "${fate}" says what became of a landing, and nothing has landed on this ticket yet`);
+  }
+  const rawBy = flags.by === undefined || flags.by === true ? '' : String(flags.by).trim();
+  if (!rawBy) {
+    fail(fate === 'reverted'
+      ? `--fate reverted requires --by <sha> — the commit that undid the merge. A revert nobody can point at is a claim, and this record is only worth keeping while it is checkable`
+      : `--fate reopened requires --by <ticket> — the ticket filed to earn back what t-${ticketId} claimed. A reopening with no ticket behind it is a note, not a fate`);
+  }
+
+  let by;
+  if (fate === 'reverted') {
+    by = git(['rev-parse', '--verify', `${rawBy}^{commit}`], root);
+    if (!by) {
+      fail(`--by ${rawBy}: this repository has no such commit — the revert is the evidence that the merge was undone, so it has to be one anybody reading this later can look at`);
+    }
+  } else {
+    let reopening = null;
+    try { reopening = findTicket(horde, rawBy); } catch { reopening = null; }
+    if (!reopening) fail(`--by ${rawBy}: this horde has no ticket ${rawBy} — file the reopening ticket first (tk.mjs new <slug> … --reopens ${ticketId})`);
+    if (reopening.id === ticketId) fail(`--by ${rawBy}: a ticket cannot reopen itself`);
+    const declared = ticketReopens(reopening.text);
+    if (declared !== ticketId) {
+      fail(`--by ${rawBy}: t-${reopening.id} does not say it reopens t-${ticketId}${declared ? ` — it reopens t-${declared}` : ''}. A reopening is the new ticket's own claim and this record only witnesses it; file it with "tk.mjs new <slug> … --reopens ${ticketId}", or name the ticket that does`);
+    }
+    by = `t-${reopening.id}`;
+  }
+
+  const recorded = recordFate(horde, team, ticketId, fate, by);
+  emit(recorded, flags, () => [
+    `t-${ticketId} ${fate} — ${by}`,
+    recorded.recorded ? `recorded in ${resultPath(horde, ticketId)}` : 'already recorded; nothing written twice',
+    recorded.journal.appended ? `journal: ${recorded.journal.bullet}` : `journal already carries: ${recorded.journal.bullet}`,
+  ].join('\n'));
+  return recorded;
+}
+
 // ---- main -------------------------------------------------------------------------
 
 function run(horde, root, cfg, arg, level, noGate, flags) {
@@ -1645,6 +1749,16 @@ function main() {
   if (flags.help) { console.log(USAGE); process.exit(0); }
   const arg = positional[0];
   if (!arg) fail('land requires <ticket|branch>');
+  if (flags.fate !== undefined) {
+    // A fate is about a landing that already happened, so none of the gate's own flags mean
+    // anything here — measuring a branch that no longer exists is not what is being asked for.
+    for (const bad of ['level', 'no-gate', 'background']) {
+      if (flags[bad] !== undefined) fail(`--${bad} does not go with --fate — a fate records what became of a landing, it never runs one`);
+    }
+    const root = resolveTree({ tree: flags.tree }, { cwd: process.cwd() }).path;
+    runFate(resolveHorde(flags), root, arg, flags);
+    return;
+  }
   if (flags.level === 'team') fail('--level team no longer exists — omit --level, or pass --level trunk for a branch landing directly on <horde>/trunk');
   if (flags.level !== undefined && flags.level !== 'trunk') fail('--level must be "trunk"');
   // "team" is the config key this reads the gate command from (config.gates.team) and the key the

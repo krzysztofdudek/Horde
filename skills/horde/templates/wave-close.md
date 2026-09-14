@@ -1,6 +1,7 @@
 # Wave {{n}} — close {{date}}
 
 **Merged:** {{merged}} tickets · **Escalated:** {{escalated}} · **Open:** {{open}} · **Gate on trunk:** {{gate}}
+**After landing:** {{reverted}} reverted · {{reopened}} reopened
 **Evidence catalogue:** {{green}}/{{total}} green (Δ {{delta}} since wave {{n-1}})
 **Parallelism:** planned {{plannedParallelism}} · achieved {{achievedParallelism}}
 **Keys transferred:** {{keysTransferred}} without re-review

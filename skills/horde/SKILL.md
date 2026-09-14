@@ -186,6 +186,12 @@ the agents that carry the plan out:
   weakens a rule it is judged by, and a branch that sharpens a rule while changing the code that
   rule refuses. The first goes through only on the **client's** recorded answer — put it to them,
   never rule on it yourself.
+- **A landing is not the end of a ticket.** When a merge is undone, or the evidence a ticket claimed
+  goes red again and you file a new ticket for it (`tk.mjs new … --reopens NNN`), say so:
+  `land.mjs NNN --fate reverted --by <sha>`, or `land.mjs NNN --fate reopened --by <the new
+  ticket>`. The wave close counts what came back beside what merged, and the retrospective reads it
+  as its own kind of input — a return is the plainest thing a mission can tell you about whether its
+  own evidence was ever enough.
 
 Every `brief.mjs` command (and `refine.mjs --step consult`) also takes `--out <path>`: it writes
 the brief to that file and prints only the path, instead of the whole text. When your own context

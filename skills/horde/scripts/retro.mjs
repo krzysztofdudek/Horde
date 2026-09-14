@@ -2,10 +2,16 @@
 // horde skill — retro.mjs
 //
 // The last run of a mission, and the only one that reads what nobody read twice. A mission leaves
-// two kinds of writing behind: what the landing gate refused, with the note each refusal wrote,
-// and the remarks workers left in their tickets' own logs. Both are read once, by whoever was
-// there, and then they go where logs go. This reads all of it at the end and sorts every piece
-// into exactly one of three piles.
+// three kinds of writing behind: what the landing gate refused, with the note each refusal wrote;
+// what became of a ticket after it landed, where a merge was reverted or a ticket reopened; and the
+// remarks workers left in their tickets' own logs. All three are read once, by whoever was there,
+// and then they go where logs go. This reads all of it at the end and sorts every piece into
+// exactly one of three piles.
+//
+// The returns are their own source and stay named as one, all the way to the document: a refusal is
+// the law catching something before it landed, and a return is the evidence failing after everyone
+// had agreed it was enough. Reading the second as more of the first would lose the only signal a
+// mission gives about whether its own bar was high enough.
 //
 //   rule            the law could have said this, so a rule proposal is written here and now —
 //                   its text, the component it attaches to, whether a script can decide it, and
@@ -50,18 +56,22 @@ import { ticketFiles } from './tk.mjs';
 export const RETRO_SCHEMA = 'horde-retro/1';
 export const CLASSES = ['rule', 'taste', 'inexpressible'];
 export const RULE_KINDS = ['check', 'prose'];
+// The sources that are a return — an item about what happened to a ticket AFTER it landed, as
+// against a gate refusal ("gate") or a worker's remark ("log").
+export const RETURN_SOURCES = new Set(['revert', 'reopen']);
 
 const USAGE = `usage: retro.mjs [--horde h] [--tree p] [--json]
 
 The mission's retrospective, in two runs.
 
   1. With no ${classesFileName()} on file, this gathers what the mission wrote and nobody read
-     twice — every gate refusal from .horde/hordes/<h>/land/<ticket>.json, and every remark in a
-     ticket's log.md that is not a state entry — and prints the one-shot to spawn over it:
+     twice — every gate refusal and every return after landing (a merge reverted, a ticket
+     reopened) from .horde/hordes/<h>/land/<ticket>.json, and every remark in a ticket's log.md
+     that is not a state entry — and prints the one-shot to spawn over it:
      brief.mjs retro --name <n>. Nothing is written to the document.
   2. Once that one-shot has written ${classesFileName()}, this validates it against the same
      input and writes .horde/hordes/<h>/retro.json (with retro.md beside it): the rule proposals,
-     the items the law will not express, and the judge measurement.
+     what came back after landing, the items the law will not express, and the judge measurement.
 
 A "taste" item leaves one line in its component's own log through \`yg log add\` and goes nowhere
 else. An item already logged by an earlier run is never logged twice.
@@ -107,10 +117,27 @@ function walkTeams(horde, visit, teamDir = hordePath(horde, 'teams'), teamName =
   }
 }
 
-// collectRetroInput(horde) — {tickets, items, notes, landed}. Every gate refusal and every
-// remark, in ticket order, each with a key stable across runs so a classification written against
-// one gathering still lines up with the next. A ticket that cannot be read is a note on the
-// document, never a stop: a retrospective that refuses to run is a retrospective nobody has.
+// The two fates a landing can turn out to have had, as retro reads them. They are a source of
+// their own, beside the gate's refusals and the workers' remarks, and deliberately not folded into
+// either: a refusal is the law catching something BEFORE it landed, a remark is somebody's aside,
+// and a return is the mission's own evidence failing AFTER everyone had agreed it was enough. That
+// is the strongest thing a mission writes down about itself, and it was the one thing nothing read.
+const FATE_SOURCES = {
+  reverted: {
+    source: 'revert',
+    text: (by) => `reverted at ${by} — the merge this ticket landed was undone`,
+  },
+  reopened: {
+    source: 'reopen',
+    text: (by) => `reopened by ${by} — the evidence this ticket claimed went red again, and that ticket was filed to earn it back`,
+  },
+};
+
+// collectRetroInput(horde) — {tickets, items, notes, landed}. Every gate refusal, every return
+// after landing and every remark, in ticket order, each with a key stable across runs so a
+// classification written against one gathering still lines up with the next. A ticket that cannot
+// be read is a note on the document, never a stop: a retrospective that refuses to run is a
+// retrospective nobody has.
 export function collectRetroInput(horde) {
   const tickets = [];
   walkTeams(horde, (teamName, teamDir) => {
@@ -148,6 +175,16 @@ export function collectRetroInput(horde) {
             source: 'gate',
             ticket: t.id,
             text: `${c.name} — ${c.note || '(the check left no note)'}`,
+          });
+        });
+        asArray(doc.fates).forEach((f, i) => {
+          const kind = f && FATE_SOURCES[f.fate];
+          if (!kind) return;
+          items.push({
+            key: `${kind.source}:${t.id}:${i}`,
+            source: kind.source,
+            ticket: t.id,
+            text: kind.text(f.by || '(nothing was named)'),
           });
         });
       }
@@ -565,6 +602,16 @@ function render(doc) {
   if (doc.threshold.note) lines.push(doc.threshold.note);
   lines.push('');
 
+  // Its own section, whatever each item was classified as: a return is a fact about the mission's
+  // own bar, and it is worth reading whether or not the law turned out to have anything to say
+  // about it.
+  lines.push('## What came back after landing', '');
+  if (doc.returns.length === 0) {
+    lines.push('(nothing — no merge on this mission was undone, and no ticket was filed to earn back what another had claimed)');
+  }
+  for (const it of doc.returns) lines.push(`- ticket ${it.ticket} · ${it.source} — ${it.text}`);
+  lines.push('');
+
   lines.push('## Taste', '');
   if (doc.taste.length === 0) lines.push('(nothing)');
   for (const it of doc.taste) lines.push(`- ticket ${it.ticket} · ${it.node} — ${it.text}`);
@@ -605,6 +652,8 @@ function cmdRetro(flags) {
       spawn: `brief.mjs retro --name <n> --horde ${horde}`,
     }, flags, () => [
       `${input.items.length} item(s) nobody read twice — ${input.items.filter((i) => i.source === 'gate').length} gate refusal(s), `
+        + `${input.items.filter((i) => i.source === 'reopen').length} reopen(s), `
+        + `${input.items.filter((i) => i.source === 'revert').length} revert(s), `
         + `${input.items.filter((i) => i.source === 'log').length} remark(s) across ${input.tickets.length} ticket(s).`,
       '',
       `Spawn ONE retrospective one-shot over all of it: brief.mjs retro --name <n> --horde ${horde}`,
@@ -631,6 +680,13 @@ function cmdRetro(flags) {
     const inexpressible = classified.filter((it) => it.class === 'inexpressible')
       .map((it) => ({ ticket: it.ticket, source: it.source, text: it.text }));
 
+    // Kept as a list of its own on the document, not only as a source tag inside `items`: the
+    // question "what came back on this mission" has to be answerable without filtering anything.
+    const returns = classified.filter((it) => RETURN_SOURCES.has(it.source))
+      .map((it) => ({
+        ticket: it.ticket, source: it.source, text: it.text, class: it.class,
+      }));
+
     const doc = {
       schema: RETRO_SCHEMA,
       horde,
@@ -640,6 +696,7 @@ function cmdRetro(flags) {
         key: it.key, source: it.source, ticket: it.ticket, text: it.text, class: it.class, node: it.node, proposal: it.proposal,
       })),
       law: classified.filter((it) => it.class === 'rule').map((it) => it.proposal),
+      returns,
       taste: taste.map((it) => ({ ticket: it.ticket, node: it.node, text: it.text })),
       inexpressible,
       logged: [...alreadyLogged, ...logging.logged],
@@ -650,6 +707,8 @@ function cmdRetro(flags) {
     writeJSON(retroPath(horde), doc, { render });
 
     emit(doc, flags, () => [
+      `${doc.returns.length} return(s) after landing — ${doc.returns.filter((r) => r.source === 'reopen').length} reopened, `
+        + `${doc.returns.filter((r) => r.source === 'revert').length} reverted.`,
       `${doc.law.length} rule proposal(s), ${doc.taste.length} taste item(s), ${doc.inexpressible.length} the law will not say `
         + `— ${doc.threshold.count} of ${doc.threshold.of}, a share of ${doc.threshold.share.toFixed(3)}`
         + `${doc.threshold.threshold === null ? '' : ` against a bar of ${doc.threshold.threshold}${doc.threshold.over ? ' — OVER' : ''}`}.`,

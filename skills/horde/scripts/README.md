@@ -137,7 +137,8 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
 its folder and of the `id:` its issue.md carries.
 - `new <slug> --title "…" --node n --class light|standard|heavy|max [--severity high|medium|low]
   [--kind work|quality|prototype] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
-  [--produces <node>/<port>,…] [--evidence "…"]… [--revert-base <ref>] [--mutate "<command>"]` —
+  [--produces <node>/<port>,…] [--evidence "…"]… [--revert-base <ref>] [--mutate "<command>"]
+  [--reopens NNN]` —
   from `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries
   a contract between them; three or more is refused — nothing in the graph answers for the whole of
   such a diff.
@@ -159,6 +160,10 @@ its folder and of the `id:` its issue.md carries.
   writes `**Quality:** only-the-work` on this one ticket — the single-ticket form of the charter's
   own policy, for a change delicate enough that nothing should ride along with it. Neither value ever
   permits the opposite: nothing at any setting makes a rule weaker.
+  `--reopens NNN` writes `**Reopens:** t-NNN` — this ticket is the second attempt at NNN, whose
+  evidence went red again after it landed. It refuses a number this horde never filed, and it is
+  the claim `land.mjs <NNN> --fate reopened` checks before recording that fate against NNN's own
+  landing; without it the reopening is a ticket like any other and nothing counts it as a return.
   Ticket creation itself is one exported function (`createTicket`), so a ticket the quality pass
   files is the same object, validated the same way, as one filed by hand; `setTicketBody`
   is the same for a body, and `edit`'s own write goes through it.
@@ -739,8 +744,12 @@ tickets at that moment (imported, never a second derivation of the DAG), the par
 layer allows within `config.parallelism`, and the instant the wave opened — the three things the
 close reads back to say what the wave planned, and to know which rulings belong to it.
 
-Beyond the counts it always carried, `close` states four figures the chairman reads:
+Beyond the counts it always carried, `close` states five figures the chairman reads:
 
+- **what came back after landing** — the merges reverted and the tickets reopened in this wave,
+  counted beside the merges and never folded into them, off the same journal bullets `land.mjs
+  --fate` writes while recording the fate. A wave that merged six tickets and had two of them come
+  back did not merge six;
 - **parallelism** — planned (the bullet above) against achieved (the most tickets this wave landed
   on any one day; a journal bullet is dated, not stamped, so the day is the grain the record has);
 - **keys transferred** — the reviews this wave did not have to buy twice, summed from the bullets
@@ -918,6 +927,29 @@ files. Red outside a conflict puts the ticket on `changes` with the gate's own w
 `changesRoundInfo`'s round counter. Nothing is ever written to Yggdrasil's incident register: a red
 gate is a rule doing its job, and an adopter's incident ledger is for rules that failed to.
 
+### what became of a ticket after it landed
+
+`land.mjs <ticket> --fate reverted --by <sha>` and `land.mjs <ticket> --fate reopened --by <ticket>`.
+Neither runs a gate — the branch is gone by the time either is reached — and passing a gate flag
+beside `--fate` is refused rather than ignored.
+
+A landing was the end of the record and is not the end of the story. Two things happen to merged
+work and used to leave no trace at all: the merge is **reverted**, or the evidence row the ticket
+claimed to turn green goes red again and a new ticket is filed to earn it back — the ticket is
+**reopened**. A return is the plainest signal a mission gives that its own evidence was not enough.
+
+Both are written where the landing is written: the ticket's result file, in a `fates` array beside
+the run's own items (`{fate, by, at}` — a ticket whose merge was recorded by hand and has no result
+file gets a bare `{ticket, fates}` record instead), and the wave journal, as a
+`- <date> reverted|reopened: <ticket> <by>` bullet. Idempotent in both: one fate carried by one
+thing is one record however often it is reported. Nothing in the queue moves — the merge commit
+still stands, and a reopening is its own ticket with its own landing ahead of it.
+
+Both references are checkable by whoever reads the record later, and neither is taken on the
+caller's word: a revert names a commit this repository actually has, and a reopening names a ticket
+that says `**Reopens:** t-NNN` itself (`tk.mjs new … --reopens NNN` writes that field). `wave.mjs
+close` counts both off the journal, and `retro.mjs` reads them as a source of their own.
+
 ## blame.mjs — chain of custody
 
 Read-only: `blame.mjs <file>:<line> [--horde h] [--json]`. `git blame` finds the commit that
@@ -995,12 +1027,21 @@ the work was done.
 
 The first run gathers, and reads `.horde/` alone — no tree, no graph. Its input is everything the
 mission wrote that nobody read a second time: every `checks[]` entry with `ok: false` in
-`hordes/<h>/land/<ticket>.json`, and every line of a ticket's `log.md` that is NOT a state entry. The
+`hordes/<h>/land/<ticket>.json`, every `fates[]` entry in the same file (what became of that ticket
+after it landed), and every line of a ticket's `log.md` that is NOT a state entry. The
 distinction is mechanical and is the shape of the line, never its words: `transitionStatus` writes
 `- <iso> status: <state>…` and `appendLog` writes everything else. Each item carries a key
-(`gate:<ticket>:<n>` or `log:<ticket>:<n>`) stable across runs. Nothing that cannot be read stops the
+(`gate:<ticket>:<n>`, `reopen:<ticket>:<n>`, `revert:<ticket>:<n>` or `log:<ticket>:<n>`) stable
+across runs. Nothing that cannot be read stops the
 run — an unparsable result file, a missing `log.md`, a ticket directory with no log at all — each
 becomes a note on the document instead.
+
+A **return** is its own source and stays named as one, all the way to the document: a refusal is the
+law catching something before it landed, and a return is the evidence failing after everyone had
+agreed it was enough. Reading the second as more of the first would lose the only signal a mission
+gives about whether its own bar was high enough. Returns are classified like every other item, and
+the document lists them again under `returns` — so "what came back on this mission" is answerable
+without filtering anything, whatever class each one was given.
 
 Between the two runs, one one-shot (`brief.mjs retro`) classifies every key into `rule`, `taste` or
 `inexpressible` and writes `hordes/<h>/retro-classes.json`. One one-shot for the whole mission, never
@@ -1011,7 +1052,7 @@ read it in one place.
 The second run validates that file — every key classified exactly once, a `rule` carrying its
 sentence, its component and `check`/`prose`, a `taste` carrying a component and no rule, an
 `inexpressible` carrying neither — and writes `hordes/<h>/retro.json` (`horde-retro/1`) with
-`retro.md` beside it: `{schema, horde, at, state, items, law, taste, inexpressible, logged,
+`retro.md` beside it: `{schema, horde, at, state, items, law, returns, taste, inexpressible, logged,
 judge, threshold, notes}`. A `taste` item leaves one line in its component's own log through
 `yg log add` and nowhere else; a key already on the previous document is never logged twice, and one
 retrospective runs at a time (`hordes/<h>/retro.lock`, taken over when the pid holding it is gone).
