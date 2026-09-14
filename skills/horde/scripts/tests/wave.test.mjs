@@ -412,3 +412,70 @@ test('wave.mjs close: a quality index that fell is a line in the report, not an 
   assert.match(closeBlock, /\*\*Quality index:\*\* enforced 0 [^\n]*Δ enforced -1/);
   assert.match(closeBlock, /The quality index fell this wave: enforced rules 1 → 0/);
 });
+
+// ---- what came back after landing -------------------------------------------------------------
+//
+// A wave that merged six tickets and had two of them come back did not merge six. The close counts
+// both fates beside the merges, off the journal's own bullets — the ones `land.mjs --fate` writes
+// while recording the fate, so nothing here is a figure somebody typed into a report.
+
+// A merged queue item, the shape a landing leaves behind. Seeded rather than landed: what this
+// test measures is the counting at the close, and land.test.mjs measures the recording.
+function seedMergedItem(dir, ticket, sha, horde = 'mission1') {
+  const queuePath = join(dir, '.horde', 'hordes', horde, 'teams', 'trunk', 'queue.json');
+  const doc = JSON.parse(readFileSync(queuePath, 'utf8'));
+  doc.items.push({
+    ticket, state: 'merged', class: 'standard', branch: null, dependsOn: [], agent: null, sha, notes: [], worktree: null,
+  });
+  writeFileSync(queuePath, JSON.stringify(doc, null, 2));
+}
+
+test('wave.mjs close: reverts and reopens are counted beside the merges, per wave', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const head = git(['rev-parse', 'HEAD'], dir);
+  const undone = run('tk.mjs', ['new', 'undone', '--title', 'The one that was undone', '--node', 'feature', '--class', 'standard'], dir);
+  assert.equal(undone.code, 0, undone.stderr);
+  const returning = run('tk.mjs', ['new', 'returning', '--title', 'The one that came back', '--node', 'feature', '--class', 'standard'], dir);
+  assert.equal(returning.code, 0, returning.stderr);
+  seedMergedItem(dir, undone.json.id, head);
+  seedMergedItem(dir, returning.json.id, head);
+
+  run('wave.mjs', ['start'], dir);
+  run('wave.mjs', ['merged', undone.json.id, head], dir);
+  run('wave.mjs', ['merged', returning.json.id, head], dir);
+
+  const reverted = run('land.mjs', [undone.json.id, '--fate', 'reverted', '--by', head], dir);
+  assert.equal(reverted.code, 0, reverted.stderr);
+
+  const reopening = run('tk.mjs', ['new', 'second-attempt', '--title', 'Earn it back', '--node', 'feature', '--class', 'standard', '--reopens', returning.json.id], dir);
+  assert.equal(reopening.code, 0, reopening.stderr);
+  const reopened = run('land.mjs', [returning.json.id, '--fate', 'reopened', '--by', reopening.json.id], dir);
+  assert.equal(reopened.code, 0, reopened.stderr);
+
+  await t.test('the close counts each fate on its own, and names what carries it', () => {
+    const r = run('wave.mjs', ['close', '--gate', 'green'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.merged, 2, 'the merges are still counted as merges');
+    assert.equal(r.json.reverted, 1);
+    assert.equal(r.json.reopened, 1);
+    assert.deepEqual(
+      r.json.fates.map((f) => `${f.ticket} ${f.fate} ${f.by}`).sort(),
+      [`${undone.json.id} reverted ${head}`, `${returning.json.id} reopened t-${reopening.json.id}`].sort(),
+    );
+    assert.match(readFileSync(planPath(dir), 'utf8'), /\*\*After landing:\*\* 1 reverted · 1 reopened/);
+  });
+
+  await t.test('the next wave counts its own returns and not the last wave\'s', () => {
+    run('wave.mjs', ['start'], dir);
+    const r = run('wave.mjs', ['close', '--gate', 'green'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.reverted, 0);
+    assert.equal(r.json.reopened, 0);
+    assert.deepEqual(r.json.fates, []);
+    const plan = readFileSync(planPath(dir), 'utf8');
+    assert.match(plan.slice(plan.lastIndexOf('# Wave 2 — close')), /\*\*After landing:\*\* 0 reverted · 0 reopened/);
+  });
+});

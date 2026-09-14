@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // horde skill — wave.mjs
 //
-// The wave journal: an append-only log of starts, notes, merges, key transfers and closes. The
-// mission's own wave cadence lives at hordes/<horde>/plan.md — matching the tree in
-// reference/model.md, which lists plan.md once, at the horde root.
+// The wave journal: an append-only log of starts, notes, merges, what became of a merge afterwards,
+// key transfers and closes. The mission's own wave cadence lives at hordes/<horde>/plan.md —
+// matching the tree in reference/model.md, which lists plan.md once, at the horde root.
 //
 // The close is where the journal stops being a record and becomes a report: it reads its own
 // bullets back — what the wave planned, what it merged and when, whose keys travelled — and
@@ -54,10 +54,11 @@ commands:
       trunk team) in cache/last-gate.json — the branch tip the gate ran on, so status can show it.
       --evidence names catalogue rows the wave gate itself proves (a green gate on the trunk is
       the usual one); they are filled with "wave <n> gate on <sha>" — refused when the gate is red.
-      Also states, from the wave's own record: planned against achieved parallelism, the keys
-      that carried over without a second reading, human decisions per merged ticket with its
-      trend, and — where the nodes come from a graph — the quality index with its delta since
-      the last wave. A quality index that fell is a line in this report naming what fell; it does
+      Also states, from the wave's own record: what came back after landing (merges reverted and
+      tickets reopened, counted beside the merges and never folded into them), planned against
+      achieved parallelism, the keys that carried over without a second reading, human decisions
+      per merged ticket with its trend, and — where the nodes come from a graph — the quality
+      index with its delta since the last wave. A quality index that fell is a line in this report naming what fell; it does
       not open anything of its own — provisional, pending the same "quality" ask-kind question
       019 left open.
       It also closes the loop on the quality ruling: it takes each watched rule's reading for
@@ -183,6 +184,22 @@ export function noteMerged(horde, team, ticket, sha) {
   return { path, bullet, appended: true };
 }
 
+// What became of a ticket after it landed, in the journal that reports the wave. Two fates, and
+// both mean the same thing from different directions: the evidence was not enough. "reverted"
+// carries the commit that undid the merge; "reopened" carries the ticket filed to do again what
+// this one was supposed to have finished. Exported for the same reason noteMerged is — land.mjs
+// records the fate and calls this itself, so the close reads it without anybody having to remember
+// a second command. Idempotent: one fate, carried by one thing, is one bullet however often it is
+// recorded.
+export function noteFate(horde, team, ticket, fate, by) {
+  const path = journalPath(horde, team);
+  const bullet = `${fate}: ${ticket} ${by}`;
+  const existing = readText(path) || '';
+  if (existing.includes(bullet)) return { path, bullet, appended: false };
+  append(path, `- ${today()} ${bullet}\n`);
+  return { path, bullet, appended: true };
+}
+
 // The keys this wave carried over without a second reading — summed from the bullets a
 // pre-migration checklist left in the journal. Nothing writes a new one any more; kept for a
 // wave whose journal still carries them from before this migration.
@@ -230,6 +247,22 @@ function waveMerges(spanText) {
   for (const line of spanText.split('\n')) {
     const m = /^- (\S+) merged: (\S+) /.exec(line);
     if (m) out.push({ date: m[1], ticket: m[2] });
+  }
+  return out;
+}
+
+// Every fate bullet of one wave — what came back after landing, in the wave it came back in. Read
+// the same way the merges are: off the journal's own span, so the close states a figure some other
+// tool wrote while doing its job rather than one somebody typed into the report.
+function waveFates(spanText) {
+  const out = [];
+  for (const line of spanText.split('\n')) {
+    const m = /^- (\S+) (reverted|reopened): (\S+) (\S+)$/.exec(line);
+    if (m) {
+      out.push({
+        date: m[1], fate: m[2], ticket: m[3], by: m[4],
+      });
+    }
   }
   return out;
 }
@@ -875,6 +908,11 @@ function cmdClose(horde, positional, flags) {
   const span = waveSpan(journalText, n);
   const merges = waveMerges(span);
   const mergedTickets = new Set(merges.map((m) => m.ticket));
+  // What came back after landing. Counted beside the merges rather than folded into them: a wave
+  // that merged six tickets and had two of them come back did not merge six.
+  const fates = waveFates(span);
+  const reverted = fates.filter((f) => f.fate === 'reverted');
+  const reopened = fates.filter((f) => f.fate === 'reopened');
   const { total, green } = computeEvidence(horde, team, mergedTickets);
   const delta = green - previousGreen(journalText);
 
@@ -939,6 +977,8 @@ function cmdClose(horde, positional, flags) {
     gate,
     green,
     total,
+    reverted: reverted.length,
+    reopened: reopened.length,
     delta: delta >= 0 ? `+${delta}` : String(delta),
     'n-1': String(Number(n) - 1),
     plannedParallelism,
@@ -972,6 +1012,9 @@ function cmdClose(horde, positional, flags) {
     green,
     total,
     delta,
+    reverted: reverted.length,
+    reopened: reopened.length,
+    fates,
     plannedParallelism,
     achievedParallelism: vars.achievedParallelism,
     keysTransferred,
@@ -989,6 +1032,10 @@ function cmdClose(horde, positional, flags) {
     audit,
   }, flags, () => {
     const lines = [`wave ${n} closed — gate ${gate}, ${green}/${total} evidence green`];
+    if (fates.length) {
+      lines.push(`after landing: ${reverted.length} reverted, ${reopened.length} reopened — `
+        + fates.map((f) => `${f.ticket} ${f.fate} (${f.by})`).join(', '));
+    }
     for (const p of promotions) lines.push(`rule raised: ${p.aspect} ${p.from} → ${p.to}`);
     if (qualityMerges.length) lines.push(`improvements finished: ${qualityMerges.map((q) => q.ticket).join(', ')}`);
     if (declined.length) {

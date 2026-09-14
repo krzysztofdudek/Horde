@@ -1427,3 +1427,183 @@ test('land.mjs: an adopter hook that rejects the merge costs the commit none of 
   assert.deepEqual(trailers.Ticket, ['t-063']);
   assert.deepEqual(trailers.Evidence, ['E1'], 'the retry wrote the same trailers, not fewer');
 });
+
+// ---- what became of a ticket after it landed ----------------------------------------------
+//
+// A landing used to be the end of the record. These three tests are the other end of it: a merge
+// that was undone, a ticket filed to earn back what another one had claimed, and the two places
+// either of them is written — the ticket's own result file and the wave journal the close reads.
+
+function landResultPath(dir, ticket, horde = 'mission1') {
+  return join(dir, '.horde', 'hordes', horde, 'land', `${ticket}.json`);
+}
+
+function landResult(dir, ticket, horde = 'mission1') {
+  return JSON.parse(readFileSync(landResultPath(dir, ticket, horde), 'utf8'));
+}
+
+function journal(dir, horde = 'mission1') {
+  return readFileSync(join(dir, '.horde', 'hordes', horde, 'plan.md'), 'utf8');
+}
+
+// A background landing, waited on — the way `tick.mjs` lands, and the only way a result file is
+// written at all, which is what makes this the case where a fate has a document to extend.
+function landInBackground(dir, branch) {
+  const started = run('land.mjs', [branch, '--background'], dir);
+  assert.equal(started.code, 0, started.stderr);
+  const deadline = Date.now() + 90000;
+  while (Date.now() < deadline) {
+    try { return JSON.parse(readFileSync(started.json.resultFile, 'utf8')); } catch { /* not yet */ }
+    execFileSync('sleep', ['0.25']);
+  }
+  throw new Error(`the background landing of ${branch} wrote no result`);
+}
+
+test('land.mjs --fate reverted: the undone merge extends the run\'s own result file, and the journal, once', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '070');
+
+  const result = landInBackground(dir, branch);
+  assert.equal(result.ok, true, JSON.stringify(result.checks));
+  const mergeSha = result.landed.sha;
+
+  // A real revert of that real merge — the commit the record has to be able to point at.
+  git(['checkout', '-q', '-B', 'undo-070', mergeSha], dir);
+  git(['revert', '--no-edit', '-m', '1', mergeSha], dir);
+  const revertSha = git(['rev-parse', 'HEAD'], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+
+  const r = run('land.mjs', ['070', '--fate', 'reverted', '--by', revertSha], dir);
+  assert.equal(r.code, 0, `${r.stdout}${r.stderr}`);
+  assert.equal(r.json.ticket, '070');
+  assert.equal(r.json.fate, 'reverted');
+  assert.equal(r.json.by, revertSha);
+  assert.equal(r.json.recorded, true);
+
+  // The document the gate already wrote, extended — not a second file in a shape of its own.
+  const doc = landResult(dir, '070');
+  assert.deepEqual(doc.checks.map((c) => c.name).slice(0, 9), ITEMS, 'the run\'s own items are still there');
+  assert.equal(doc.landed.sha, mergeSha, 'and so is what it landed');
+  assert.equal(doc.fates.length, 1);
+  assert.equal(doc.fates[0].fate, 'reverted');
+  assert.equal(doc.fates[0].by, revertSha);
+  assert.match(doc.fates[0].at, /^\d{4}-\d{2}-\d{2}T/);
+
+  // And the journal, which is where the wave close reads from.
+  assert.match(journal(dir), new RegExp(`^- \\S+ reverted: 070 ${revertSha}$`, 'm'));
+
+  // One fate, carried by one commit, is one record however often it is reported.
+  const again = run('land.mjs', ['070', '--fate', 'reverted', '--by', revertSha], dir);
+  assert.equal(again.code, 0, again.stderr);
+  assert.equal(again.json.recorded, false);
+  assert.equal(landResult(dir, '070').fates.length, 1);
+  assert.equal(journal(dir).split(`reverted: 070 ${revertSha}`).length - 1, 1);
+
+  // Nothing in the queue moved: the merge commit still stands, and a revert is a commit on top of
+  // it rather than a ticket going backwards.
+  const queue = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json'), 'utf8'));
+  assert.equal(queue.items.find((i) => i.ticket === '070').state, 'merged');
+});
+
+test('land.mjs --fate reopened: the new ticket has to say so itself', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '071');
+  assert.equal(run('land.mjs', [branch], dir).code, 0);
+  // A foreground landing writes no result file, which is the other half of the shape: a fate on a
+  // ticket whose merge was never written down still has somewhere to live.
+  assert.equal(existsSync(landResultPath(dir, '071')), false);
+
+  // One ticket that reopens nothing and one that reopens t-071, both filed the way an owner files
+  // one — so the "**Reopens:**" line here is the ticket template's own rendering, not a fixture's.
+  const unrelated = run('tk.mjs', ['new', 'unrelated', '--title', 'Something else', '--node', 'feature', '--class', 'standard'], dir);
+  assert.equal(unrelated.code, 0, unrelated.stderr);
+  const reopening = run('tk.mjs', ['new', 'second-attempt', '--title', 'Earn it back', '--node', 'feature', '--class', 'standard', '--reopens', '071'], dir);
+  assert.equal(reopening.code, 0, reopening.stderr);
+  assert.equal(reopening.json.reopens, 't-071');
+  const issuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${reopening.json.id}-second-attempt`, 'issue.md');
+  assert.match(readFileSync(issuePath, 'utf8'), /^\*\*Reopens:\*\* t-071$/m);
+
+  await t.test('a number this horde never filed is refused where it is written, on the ticket', () => {
+    const r = run('tk.mjs', ['new', 'nowhere', '--title', 'Nowhere', '--node', 'feature', '--class', 'standard', '--reopens', '999'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no ticket 999/);
+  });
+
+  await t.test('a fate naming a ticket that was never filed names the command that files one', () => {
+    const r = run('land.mjs', ['071', '--fate', 'reopened', '--by', '999'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no ticket 999/);
+    assert.match(r.stderr, /--reopens 071/);
+  });
+
+  await t.test('a ticket that does not claim the reopening is refused, never taken on the caller\'s word', () => {
+    const r = run('land.mjs', ['071', '--fate', 'reopened', '--by', unrelated.json.id], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /does not say it reopens t-071/);
+    assert.equal(existsSync(landResultPath(dir, '071')), false, 'nothing was written');
+  });
+
+  await t.test('the ticket that does claim it is recorded in both places', () => {
+    const r = run('land.mjs', ['071', '--fate', 'reopened', '--by', reopening.json.id], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.fate, 'reopened');
+    assert.equal(r.json.by, `t-${reopening.json.id}`);
+
+    const doc = landResult(dir, '071');
+    assert.equal(doc.ticket, '071');
+    assert.equal(doc.fates.length, 1);
+    assert.equal(doc.fates[0].fate, 'reopened');
+    assert.equal(doc.fates[0].by, `t-${reopening.json.id}`);
+    assert.match(journal(dir), new RegExp(`^- \\S+ reopened: 071 t-${reopening.json.id}$`, 'm'));
+  });
+});
+
+test('land.mjs --fate: what it refuses, and why the gate\'s own flags are not its flags', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '072');
+
+  await t.test('a ticket that has not landed has no fate yet', () => {
+    const r = run('land.mjs', ['072', '--fate', 'reverted', '--by', 'HEAD'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /is landed, not merged/);
+  });
+
+  assert.equal(run('land.mjs', [branch], dir).code, 0);
+
+  await t.test('an unknown fate names the two there are', () => {
+    const r = run('land.mjs', ['072', '--fate', 'forgotten', '--by', 'HEAD'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--fate must be one of: reverted, reopened/);
+  });
+
+  await t.test('a fate with nothing behind it is a claim, not a record', () => {
+    const r = run('land.mjs', ['072', '--fate', 'reverted'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /requires --by <sha>/);
+    const reopened = run('land.mjs', ['072', '--fate', 'reopened'], dir);
+    assert.equal(reopened.code, 1);
+    assert.match(reopened.stderr, /requires --by <ticket>/);
+  });
+
+  await t.test('a revert nobody can look at is refused, and nothing is written', () => {
+    const r = run('land.mjs', ['072', '--fate', 'reverted', '--by', 'f'.repeat(40)], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no such commit/);
+    assert.equal(existsSync(landResultPath(dir, '072')), false);
+  });
+
+  await t.test('a ticket this horde never tracked has no fate here', () => {
+    const r = run('land.mjs', ['404', '--fate', 'reverted', '--by', 'HEAD'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no queue item names 404/);
+  });
+
+  await t.test('--fate runs no gate, so a gate flag beside it is refused rather than ignored', () => {
+    const r = run('land.mjs', ['072', '--fate', 'reverted', '--by', 'HEAD', '--no-gate'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /--no-gate does not go with --fate/);
+  });
+});

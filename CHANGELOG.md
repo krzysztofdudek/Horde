@@ -29,6 +29,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - `retro` closes a piece of work with three lists: what belongs in a standing rule, what's worth saying once, and what no rule will ever capture.
 - Evidence detection: the mission works out what counts as proof in your repository (test suites, a promises directory, a scenario runner) at the start and uses it; a repository with nothing at all is offered a ready-made `promises` package (five rules, four self-proving for free, the fifth advisory).
 - Every merge commit records what it landed, what it proved, and what it did to the rules.
+- What becomes of a ticket after it lands is part of the record: a merge that was undone, and evidence that went red again with a new ticket filed to earn it back. A wave report counts both beside what merged, and the end-of-mission review reads them as a finding of their own, apart from refused checks and workers' notes.
 - A finished mission archives its own working directory automatically.
 - `wave close` audits the rules: overdue `review_by` rules become renew-or-retire tickets, unhandled `yg advise`/`grain advise` items are picked up, and rules nothing has hit in two waves are named.
 - One channel reaches you: a stalled worker, work sent back too many times, a request to weaken a rule, or a change to the mission card. Each answer is recorded in the mission's decision log.

@@ -90,7 +90,7 @@ commands:
   new <slug> --title "<t>" --node <n> [--node <n2> …] --class <c> [--severity high|medium|low]
       [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
       [--produces <node>/<port>,…] [--evidence "<…>"]… [--revert-base <ref>] [--mutate "<command>"]
-      [--team t] [--horde h]
+      [--reopens NNN] [--team t] [--horde h]
       renders templates/ticket.md; status starts "proposed". --node is repeatable, up to two —
       three or more is refused, since nobody holds the whole of such a diff.
       --kind defaults to "work"; "quality" marks a self-filed improvement outside a wave's
@@ -109,6 +109,9 @@ commands:
       of this branch's own tip: it must break the implementation the ticket's new tests exist to
       catch, and every new test must go red once it has run. Chosen from the ticket, never a
       land.mjs flag — refused together with --revert-base, since only one variant runs.
+      --reopens names the ticket this one is the second attempt at: what NNN landed did not hold,
+      so the evidence it claimed is red again. It writes "**Reopens:** t-NNN" on the ticket, and
+      refuses a number this horde has never filed.
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
       the merge checklist refuses a diff that reaches past them). --consumes/--produces name the
       ports the ticket needs and delivers, as <node>/<port>; a consumed port with no producing
@@ -145,7 +148,7 @@ commands:
   edit <ticket> --by <name> [--files a,b] [--consumes …] [--produces …] [--evidence E1,…]
       [--depends NNN,MMM] [--horde h]
       rewrites the body (everything from "## What" on) from stdin, leaving the header block —
-      the id/title heading, Status, Node/Class/Severity/Team, Depends on/Branch, Files,
+      the id/title heading, Status, Node/Class/Severity/Team, Depends on/Branch, Reopens, Files,
       Consumes/Produces, Evidence — untouched. Appends "body edited by <name>" to the log.
       What the director uses to write ticket bodies. With any of --files/--consumes/--produces/
       --evidence it changes those fields instead, each with its own log line saying who changed
@@ -199,6 +202,17 @@ export function prototypeRow(text) {
 // default, not a silent opt-out of it.
 export function ticketQuality(text) {
   return parseField(text, 'Quality') === 'only-the-work' ? 'only-the-work' : 'autonomous';
+}
+
+// The prior ticket this one exists because of — "**Reopens:** t-NNN", written by `new --reopens`
+// and empty on almost every ticket. A reopening says out loud that what t-NNN landed did not hold:
+// the evidence row it claimed went red again, and this ticket is the second attempt at it.
+// Normalized to the bare NNN every other tool names a ticket by, so a hand-written "007", "t-007"
+// and "t-7" all read as the same ticket; empty when the ticket reopens nothing.
+export function ticketReopens(text) {
+  const raw = parseField(text || '', 'Reopens');
+  if (!raw || raw === 'none' || raw === '—') return '';
+  try { return padId(raw); } catch { return ''; }
 }
 
 // --- the four structural fields ----------------------------------------
@@ -583,6 +597,13 @@ function checkConsumesHaveProducers(horde, consumes, selfId) {
 // "**Revert base:**" line then renders with nothing after it, which land.mjs reads as "use the
 // parent tip".
 //
+// `reopens` (`--reopens NNN` on `new`) is the ticket this one is the second attempt at: what NNN
+// landed did not hold, so the evidence it claimed is red again and this ticket exists to earn it
+// back. Validated here because the reference is the whole of the claim — a reopening naming a
+// ticket this horde has never had says nothing at all — and written as "t-NNN", the way a ticket
+// reads everywhere else. `land.mjs <NNN> --fate reopened --by <this ticket>` is what records it
+// against NNN's own landing, and it checks this field rather than taking the caller's word.
+//
 // `mutate` (`--mutate "<command>"` on `new`) swaps that whole revert-to-base variant for a mutation
 // one: land.mjs runs this shell command against a scratch copy of the branch's own tip instead of
 // extracting the new tests onto a base tree, and requires them red there. It answers a different
@@ -595,7 +616,7 @@ export function createTicket(horde, spec) {
   const {
     slug, title, nodes, cls, severity = 'medium', kind = 'work', quality = 'autonomous',
     team = 'trunk', evidence = [], files: fileList = [], consumes: consumesRaw,
-    produces: producesRaw, depends = [], revertBase = null, mutate = null,
+    produces: producesRaw, depends = [], revertBase = null, mutate = null, reopens = null,
   } = spec;
   if (!slug) fail('new requires <slug>');
   if (mutate && revertBase) {
@@ -637,6 +658,16 @@ export function createTicket(horde, spec) {
     acceptance.push(`${evidenceIds[0]} — the client is shown this and their acceptance is recorded: what they saw, who accepted it, when (\`tk.mjs accept\`)`);
   }
 
+  let reopensRef = null;
+  if (reopens) {
+    let reopened = null;
+    try { reopened = findTicket(horde, reopens); } catch { reopened = null; }
+    if (!reopened) {
+      fail(`--reopens ${reopens}: this horde has no ticket ${reopens} — a reopening names the ticket whose work did not hold, and a reference to a ticket that was never filed says nothing`);
+    }
+    reopensRef = `t-${reopened.id}`;
+  }
+
   const files = listFlag(fileList);
   const consumes = parsePortList(consumesRaw, 'Consumes');
   const produces = parsePortList(producesRaw, 'Produces');
@@ -661,6 +692,7 @@ export function createTicket(horde, spec) {
     quality,
     branch: '—',
     ...(depends.length ? { dependsOn: depends.join(', ') } : {}),
+    ...(reopensRef ? { reopens: reopensRef } : {}),
     ...(files.length ? { files: files.join(', ') } : {}),
     ...(consumes.length ? { consumes: consumes.map((c) => c.ref).join(', ') } : {}),
     ...(produces.length ? { produces: produces.map((p) => p.ref).join(', ') } : {}),
@@ -690,6 +722,7 @@ export function createTicket(horde, spec) {
     consumes: consumes.map((c) => c.ref),
     produces: produces.map((p) => p.ref),
     evidence: evidenceIds,
+    reopens: reopensRef,
   };
 }
 
@@ -712,6 +745,7 @@ function cmdNew(horde, positional, flags) {
     depends: flags.depends ? String(flags.depends).split(',').map((s) => s.trim()).filter(Boolean) : [],
     revertBase: flags['revert-base'] || null,
     mutate: flags.mutate || null,
+    reopens: flags.reopens || null,
   });
   emit({
     id: created.id,
@@ -724,7 +758,9 @@ function cmdNew(horde, positional, flags) {
     consumes: created.consumes,
     produces: created.produces,
     evidence: created.evidence,
-  }, flags, () => `${created.ref} created — ${created.dirName} (team ${created.team})`);
+    reopens: created.reopens,
+  }, flags, () => `${created.ref} created — ${created.dirName} (team ${created.team})`
+    + `${created.reopens ? `, reopening ${created.reopens}` : ''}`);
 }
 
 function cmdList(horde, positional, flags) {

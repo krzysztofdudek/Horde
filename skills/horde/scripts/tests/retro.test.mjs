@@ -44,7 +44,7 @@ function graphFixture(dir) {
 // gate has run — the land result file.
 function seedTicket(dir, horde, id, {
   slug = 'a-ticket', remarks = [], states = ['queued'], refusals = [], landed = false,
-  noLog = false, badResult = false, files = [],
+  noLog = false, badResult = false, files = [], fates = [],
 } = {}) {
   const issues = hordeFile(dir, horde, 'teams', 'trunk', 'issues');
   const ticketDir = join(issues, `${id}-${slug}`);
@@ -72,7 +72,7 @@ function seedTicket(dir, horde, id, {
     writeFileSync(resultPath, '{"ticket": "001", "checks": [{"name": "gate"');
     return ticketDir;
   }
-  if (refusals.length || landed) {
+  if (refusals.length || landed || fates.length) {
     mkdirSync(join(resultPath, '..'), { recursive: true });
     writeFileSync(resultPath, `${JSON.stringify({
       ticket: id,
@@ -86,6 +86,8 @@ function seedTicket(dir, horde, id, {
       pairs: [],
       brief: null,
       landed: landed ? { ticket: id, sha: `${id}`.padStart(40, 'b'), at: '2026-09-11T11:00:00.000Z' } : null,
+      // What `land.mjs --fate` appends once the landing turned out not to have been the end of it.
+      ...(fates.length ? { fates } : {}),
     }, null, 2)}\n`);
   }
   return ticketDir;
@@ -763,4 +765,118 @@ test('retro.mjs: a ticket directory named in unicode is read through without dis
   assert.match(r.json.inexpressible[0].text, /łóżko\.mjs/);
   const log = yg(dir, ['log', 'read', '--node', 'auth']);
   assert.match(log.out, /zażółć gęślą jaźń/);
+});
+
+// ---- what came back after landing --------------------------------------------------------------
+//
+// A refusal is the law catching something before it landed. A return is the evidence failing after
+// everyone had agreed it was enough — the strongest thing a mission writes down about its own bar,
+// and the one thing nothing used to read. These tests hold it to being its own source all the way
+// through: gathered under its own key, classified like everything else, and named on the document
+// whatever class it was given.
+
+test('retro.mjs: a return after landing is its own source, beside the refusals and the remarks', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  initHorde(dir);
+
+  seedTicket(dir, 'mission1', '001', {
+    slug: 'login-form',
+    refusals: ['gate: 1 test failed — tests/auth.test.mjs:12'],
+    remarks: ['naming: this area writes readX for file IO — followed that'],
+    landed: true,
+    fates: [{ fate: 'reopened', by: 't-004', at: '2026-09-12T09:00:00.000Z' }],
+  });
+  seedTicket(dir, 'mission1', '002', {
+    slug: 'routes',
+    landed: true,
+    fates: [{ fate: 'reverted', by: 'c'.repeat(40), at: '2026-09-12T10:00:00.000Z' }],
+  });
+
+  await t.test('the gathering run keys and counts returns apart from everything else', () => {
+    const r = run('retro.mjs', [], dir);
+    assert.equal(r.code, 0, r.stderr);
+
+    const bySource = (s) => r.json.items.filter((i) => i.source === s);
+    assert.equal(bySource('gate').length, 1);
+    assert.equal(bySource('log').length, 1);
+    assert.equal(bySource('reopen').length, 1);
+    assert.equal(bySource('revert').length, 1);
+
+    const [reopen] = bySource('reopen');
+    assert.equal(reopen.key, 'reopen:001:0');
+    assert.equal(reopen.ticket, '001');
+    assert.match(reopen.text, /^reopened by t-004 —/);
+    assert.match(reopen.text, /went red again/);
+
+    const [revert] = bySource('revert');
+    assert.equal(revert.key, 'revert:002:0');
+    assert.equal(revert.ticket, '002');
+    assert.match(revert.text, /^reverted at c{40} —/);
+  });
+
+  await t.test('and says so in its own words, never folded into the refusal count', () => {
+    const r = run('retro.mjs', [], dir, { json: false });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /1 gate refusal\(s\), 1 reopen\(s\), 1 revert\(s\), 1 remark\(s\)/);
+  });
+
+  await t.test('a return is classified like any other item, and one left out is refused by key', () => {
+    writeClasses(dir, 'mission1', {
+      'gate:001:0': { class: 'taste', node: 'auth' },
+      'log:001:1': { class: 'taste', node: 'auth' },
+      'revert:002:0': { class: 'inexpressible' },
+    });
+    const r = run('retro.mjs', ['--tree', dir], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /unclassified: reopen:001:0/);
+  });
+
+  await t.test('the document carries the returns as a list of their own, whatever class each got', () => {
+    writeClasses(dir, 'mission1', {
+      'gate:001:0': { class: 'taste', node: 'auth' },
+      'log:001:1': { class: 'taste', node: 'auth' },
+      'reopen:001:0': {
+        class: 'rule', rule: 'An evidence row is green only once a test reproduces it without the author.', node: 'auth', kind: 'prose',
+      },
+      'revert:002:0': { class: 'inexpressible' },
+    });
+    const r = run('retro.mjs', ['--tree', dir], dir);
+    assert.equal(r.code, 0, r.stderr);
+
+    assert.deepEqual(
+      r.json.returns.map((x) => `${x.ticket} ${x.source} ${x.class}`).sort(),
+      ['001 reopen rule', '002 revert inexpressible'],
+    );
+    // Named on the document itself, not merely recoverable by filtering the item list.
+    const md = readFileSync(hordeFile(dir, 'mission1', 'retro.md'), 'utf8');
+    const at = md.indexOf('## What came back after landing');
+    assert.ok(at !== -1, 'the document has the section');
+    const section = md.slice(at).split('\n## ')[0];
+    assert.match(section, /- ticket 001 · reopen — reopened by t-004/);
+    assert.match(section, /- ticket 002 · revert — reverted at c{40}/);
+
+    // And the classification still did its own work: the rule proposal is there, and the item the
+    // law will not say still carries the source it came from.
+    assert.equal(r.json.law.length, 1);
+    assert.equal(r.json.inexpressible[0].source, 'revert');
+  });
+});
+
+test('retro.mjs: a mission where nothing came back says so, rather than saying nothing', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  initHorde(dir);
+  seedTicket(dir, 'mission1', '001', { refusals: ['gate: it went red'], landed: true });
+
+  writeClasses(dir, 'mission1', { 'gate:001:0': { class: 'inexpressible' } });
+  const r = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.json.returns, []);
+  assert.match(
+    readFileSync(hordeFile(dir, 'mission1', 'retro.md'), 'utf8'),
+    /## What came back after landing\n\n\(nothing — no merge on this mission was undone/,
+  );
 });
