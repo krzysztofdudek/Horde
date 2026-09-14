@@ -414,13 +414,13 @@ function measureJudge(horde, root, cfg, tickets, landed) {
   const seed = seedFromState(missionState(landed));
   if (rate === 0) {
     return {
-      sampled: 0, seed, tickets: [], pairs: [], disagreements: 0, interval: null, tier, skipped: [], pending: [],
+      sampled: 0, seed, tickets: [], pairs: [], disagreements: 0, interval: null, tier, skipped: [], pending: [], passInForce: [],
       note: 'config.retro.judgeSampleRate is 0 — nothing was put to a second judge. Set a fraction between 0 and 1 to measure how far two judges agree on this repository.',
     };
   }
   if (landed.length === 0) {
     return {
-      sampled: 0, seed, tickets: [], pairs: [], disagreements: 0, interval: null, tier, skipped: [], pending: [],
+      sampled: 0, seed, tickets: [], pairs: [], disagreements: 0, interval: null, tier, skipped: [], pending: [], passInForce: [],
       note: 'nothing landed on this mission, so there is no judged work to put to a second judge.',
     };
   }
@@ -450,6 +450,7 @@ function measureJudge(horde, root, cfg, tickets, landed) {
       tier,
       skipped: [{ why: `\`${inventory.command}\` answered nothing this could read (${inventory.state})` }],
       pending: [],
+      passInForce: [],
       note: 'the sample was drawn and the verdicts already on file could not be read, so no pair was compared.',
     };
   }
@@ -459,6 +460,10 @@ function measureJudge(horde, root, cfg, tickets, landed) {
   const pairs = [];
   const skipped = [];
   const pending = [];
+  // Pairs whose first judgement is a pass that still holds — structurally out of reach, never a
+  // command that merely failed this once. See the `!held` branch below for why this is its own
+  // list and never folded into `skipped`.
+  const passInForce = [];
   let disagreements = 0;
 
   // What an earlier run wrote down. A file that will not parse is a note on the document and a
@@ -548,6 +553,27 @@ function measureJudge(horde, root, cfg, tickets, landed) {
           });
           continue;
         }
+        // A pass still in force is the one shape Yggdrasil's own `resolvePair` refuses outright,
+        // on both halves of putting a pair to a second judge: "already holds a verdict for
+        // exactly these inputs... recording a second one over it would replace a judgement that
+        // still applies with no evidence that anything changed." That is a structural fact about
+        // this pair, known from the inventory already in hand — not a command that merely failed
+        // this once — so it is never worth spending the call to find out, and it is counted apart
+        // from `skipped`'s other reasons: every pair this measurement can ever compare, or even
+        // offer to a second judge, is one whose first judge REFUSED, or whose pass had already
+        // gone stale — never one that passed and still holds. `passInForce` is how many of the
+        // sample fell here, so the count and the interval above are read against the right
+        // denominator instead of silently over the whole sample.
+        if (v.verdict === 'pass' && v.inForce) {
+          passInForce.push({
+            ticket: p.ticket,
+            aspect: v.aspect,
+            unit,
+            why: `${v.judge || 'the first judge'} passed this pair and that pass still holds — a verdict still `
+              + 'in force is one `yg verdict package` refuses outright, so this pair can never reach a second judge',
+          });
+          continue;
+        }
         // Packaging is both halves of a first run: it is what proves the pair can still be handed
         // to a judge at all, and it is where the two hashes that say whether the code moved
         // afterwards come from.
@@ -591,6 +617,22 @@ function measureJudge(horde, root, cfg, tickets, landed) {
 
   if (wrote) writeJSON(samplesFile, samples);
 
+  // What the count and interval above actually cover, so a reader never mistakes a sub-population
+  // for the whole sample. A figure exists only once `pairs` holds something — that is the one
+  // case worth a caveat about what it does and does not include. Short of that, the sample has
+  // nothing to show yet: still waiting on a second judgement where one is on `pending`, or, where
+  // nothing in it could reach that stage at all this run, a pointer to why each one couldn't.
+  const note = pairs.length > 0
+    ? 'the count and interval above cover only pairs whose first judge REFUSED, or whose pass had already '
+      + 'gone stale — never one that PASSED and still holds: a verdict still in force is one `yg verdict '
+      + `package\` refuses outright, so that pair can never reach a second judge at all. ${passInForce.length} `
+      + `of this sample's pair(s) were out of reach for exactly that reason; see \`passInForce\`.`
+    : pending.length > 0
+      ? 'the sample was drawn and no pair in it has two judgements to put side by side yet — every pair on '
+        + '`pending` has its first written down here, and is waiting for the command beside it to leave a second.'
+      : 'the sample was drawn and nothing in it reached a second judge this run — see `skipped` and '
+        + '`passInForce` for why each one couldn\'t.';
+
   return {
     sampled: size,
     seed,
@@ -600,11 +642,9 @@ function measureJudge(horde, root, cfg, tickets, landed) {
     interval: wilson(disagreements, pairs.length),
     tier,
     skipped,
+    passInForce,
     pending,
-    note: pairs.length === 0
-      ? 'the sample was drawn and no pair in it has two judgements to put side by side yet — every pair on '
-        + '`pending` has its first written down here, and is waiting for the command beside it to leave a second.'
-      : null,
+    note,
   };
 }
 
@@ -757,6 +797,7 @@ function render(doc) {
     lines.push(`sample ${doc.judge.sampled} ticket(s): ${doc.judge.tickets.join(', ')} — ${doc.judge.pairs.length} pair(s) compared, ${doc.judge.disagreements} disagreement(s)`
       + `${doc.judge.interval ? `, 95% interval [${doc.judge.interval.low.toFixed(3)}, ${doc.judge.interval.high.toFixed(3)}]` : ''}.`);
     for (const s of doc.judge.skipped) lines.push(`- skipped${s.ticket ? ` ticket ${s.ticket}` : ''}: ${s.why}`);
+    for (const s of doc.judge.passInForce) lines.push(`- out of reach${s.ticket ? ` ticket ${s.ticket}` : ''}: ${s.why}`);
     for (const p of doc.judge.pending) {
       lines.push(`- waiting on a second judgement: ${p.aspect} on ${p.unit}`
         + `${p.heldBy ? ` (${p.heldBy} said ${p.held}, written down here)` : ''} — ${p.record}`);

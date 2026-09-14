@@ -1148,6 +1148,14 @@ that as a change would drop every disagreement there is. A pair the CLI will not
 with its reason; so is one whose two judgements turn out to be about different code, and that one
 counts neither way. None of it refuses anything.
 
+A pair whose first judgement is a PASS that still holds is out of reach altogether, on `passInForce`
+rather than `skipped`: Yggdrasil refuses to package or record a verdict still in force — recording a
+second one over it would replace a judgement that still applies with no evidence anything changed —
+so that pair can never be offered to a second judge at all, and never gets a `pending` entry either.
+Because of this, `pairs`, `disagreements` and the interval are drawn only from pairs whose first
+judge REFUSED, or whose pass had already gone stale — never from one that passed and still holds —
+and the document says so itself, with the count that fell there, whenever there is a figure to read.
+
 `horde.mjs done` requires this document, and requires it to have been taken over the mission's landed
 tickets as they now stand — `state` is how it tells a current retrospective from one taken before the
 last thing landed.
