@@ -3,9 +3,16 @@
 Every tool: Node ESM, zero dependencies, `--help`, `--json`, exit non-zero on failure with one line on
 stderr. All tools resolve the repository root by walking up to `.git`, then the shared state root as
 `<git common dir>/../.horde` so a worktree and the main checkout see the same state. `--horde <name>`
-selects the horde; when only one exists it is the default. On its own (no `--tree`/`--ticket`/`--scratch`),
-`--horde` resolves to that horde's own trunk worktree — read-only for everything but `land.mjs`'s merge
-commits, and resynced to the branch's tip (`git reset --hard`) on every read. A dirty trunk tree still
+selects the horde; when only one exists it is the default. That selection is a separate question from
+which TREE a command reads: ordinarily that is cwd, whatever checkout the caller happens to be sitting
+in, the same as any other read in this tool set — a horde being resolvable, on its own, is never a
+second signal to read trunk instead. `--horde` WRITTEN OUT BY THE CALLER, with no `--tree`/`--ticket`/
+`--scratch`, is what changes that, and only for the handful of commands built to read it that way —
+`queue.mjs plan`/`quality`, `tick.mjs`, and `land.mjs` — never for a horde a command merely resolved on
+its own by other means (the sole horde in the repository, with nothing typed at all). On those commands,
+with the flag typed and no tree flag, it resolves to that horde's own trunk worktree — read-only for
+everything but `land.mjs`'s merge commits, and resynced to the branch's tip (`git reset --hard`) on
+every read. A dirty trunk tree still
 gets reset, but not silently: the resync counts what it is about to discard first and, when that is not
 zero, says so in one line on stderr before it runs. Making that tree and resyncing it both run one
 process at a time per worktree path (`<path>.lock` beside it, the holder's pid inside, a dead holder

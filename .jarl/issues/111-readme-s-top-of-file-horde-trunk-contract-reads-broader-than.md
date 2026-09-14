@@ -1,6 +1,6 @@
 # 111 · README's top-of-file --horde/trunk contract reads broader than what's implemented
 
-**Status:** open
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -21,4 +21,5 @@ Once a-002 is ruled (this issue is downstream of it, not a substitute for it —
 ## Evidence
 
 - **ran:** read skills/horde/scripts/README.md:1-19, node.mjs:2058-2068, .jarl/decisions.md's `tk-boundary-cwd-is-intentional` entry, .jarl/asks.md's a-002, and skills/horde/scripts/tests/tree.test.mjs:1-56 side by side · **saw:** the top-of-file paragraph names no exception and no "typed explicitly" condition; every other source that states the rule states both, and a-002 records the exact ambiguity is still unruled
+- **ran:** node --test skills/horde/scripts/tests/docs.test.mjs · **saw:** 34/34 pass — docs-only, comment-only reasoning change, no test asserted on the literal old wording
 

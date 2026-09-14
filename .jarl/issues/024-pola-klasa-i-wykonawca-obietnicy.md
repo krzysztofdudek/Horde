@@ -1,6 +1,6 @@
 # 024 · pola klasa i wykonawca obietnicy
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong

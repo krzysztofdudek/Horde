@@ -1,6 +1,6 @@
 # 113 · horde.mjs done's own resolveTree call uses the resolved horde, not flags.horde raw
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard

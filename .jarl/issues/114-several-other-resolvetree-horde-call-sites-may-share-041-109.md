@@ -5,7 +5,7 @@
 **Priority:** 3
 **Tier:** standard
 **Tags:** 
-**Files:** skills/horde/scripts/brief.mjs, skills/horde/scripts/wave.mjs
+**Files:** skills/horde/scripts/brief.mjs, skills/horde/scripts/wave.mjs, skills/horde/scripts/retro.mjs, skills/horde/scripts/queue.mjs
 **Found by:** issue 109 worker
 **Where:** `grep -n "resolveTree({[^}]*horde" skills/horde/scripts/*.mjs` turns up several call sites beyond 041 (tick.mjs), 109 (land.mjs) and 112 (horde.mjs done) that pass a `horde` variable into `resolveTree` rather than `flags.horde` — none independently verified past reading the enclosing function's own `horde` provenance once: `brief.mjs` `cmdArchitect`/`cmdLegislate`/`cmdRetro` (each takes `horde` as a parameter fed by `main()`'s own `const horde = resolveHorde(flags);`, so all three read as the resolved value, not the raw flag), and `wave.mjs`'s `planAtStart()` → `buildPlan(horde, team || 'trunk', cfg)` with no `tree` at all, so `buildPlan`'s own internal `resolveTree({ tree, horde })` (queue.mjs:1075) actually falls through to the `horde` branch here — unlike its other two known callers (`queue.mjs cmdPlan`, `land.mjs missionSize`), which always pass an explicit `tree` and so never reach that branch. `planAtStart`'s own `horde` parameter was not traced back to its caller in `wave.mjs`'s `cmdOpen` before filing this.
 
@@ -20,5 +20,5 @@ Once ask a-002 is ruled: audit each site named above (and re-run the grep — th
 
 ## Evidence
 
-- **ran:** `grep -n "resolveTree({[^}]*horde" skills/horde/scripts/*.mjs` (from the state land.mjs's own two call sites were fixed, issue 109) · **saw:** matches in `_lib.mjs` (display-only, excluded), `brief.mjs` (four matches: one already `flags.horde` raw at line 400, three — `cmdArchitect`, `cmdLegislate`, `cmdRetro` — using the resolved `horde` parameter), `horde.mjs` (filed separately as 112), `law.mjs` (excluded — correct as designed), `queue.mjs` (`buildPlan`'s own internal fallback, reachable live only through `wave.mjs`'s `planAtStart`, since its other two known callers always pass an explicit `tree`), `retro.mjs` (one match, resolved `horde` parameter, same shape as brief.mjs's three)
+a-002 ruled: always cwd, flags.horde only. Held out of this wave's dispatch — retro.mjs (one of this issue's own sites) is currently being touched by two other in-flight workers (115, 103+112); dispatching this too would create a third conflict point on the same file. Will dispatch once those land.
 
