@@ -470,7 +470,7 @@ function computeEvidence(horde, team, mergedTickets) {
 // ---- mission-wide, all-time evidence coverage --------------------------------------
 //
 // computeEvidence above turns rows green for one wave close: one team, one wave's own merged
-// tickets, mutating the charter as it finds a match. status.mjs's five-state digest and
+// tickets, mutating the charter as it finds a match. status.mjs's six-state digest and
 // horde.mjs's done gate both need the same judgement stretched over the whole mission's history
 // instead — this section is that shared reading, so neither reimplements "does a ticket's
 // acceptance checklist name this row, and did its verifier reproduce it".
@@ -499,21 +499,16 @@ function allHordeTickets(horde) {
 // one ticket claims the same row. "merged" here does not yet mean the charter is stamped
 // (queue.mjs's own merge refusal already requires a reproduced verdict to reach it, but
 // computeEvidence's own charter write only happens at a wave close, or here); every other active
-// state reads as "running" — in flight, neither filed-and-waiting nor done.
+// state reads as "running" — in flight, neither filed-and-waiting nor done. Ranks a prototype
+// ticket exactly like a work one; deriveRowState below decides first whether a prototype's rank
+// is even the right thing to be reading.
 const ROW_STATE_RANK = { proposed: 1, queued: 1, merged: 3 };
 
-// The state of one charter row against every ticket in the horde, without writing anything:
-// 'reproduced' when the charter cell already names who reproduced it; otherwise the strongest
-// state reached by a ticket whose own acceptance checklist names this row's id — 'merged' (a
-// merged ticket already carrying a reproduced verdict, per queue.mjs's own merge refusal, but not
-// yet written into the charter), 'running' (filed and in flight), 'queued' (filed, not started),
-// or 'no-ticket' (nothing claims it at all).
-function deriveRowState(row, tickets) {
-  if (row.reproducedBy) return { state: 'reproduced', ticket: null, verifier: null };
-  const naming = tickets.filter((t) => mentionsEvidenceId(acceptanceSection(t.text), row.id));
-  if (naming.length === 0) return { state: 'no-ticket', ticket: null, verifier: null };
+// The naming tickets' own best (highest-ranked) claim on a row — shared by deriveRowState's two
+// branches below, since each needs the same ranking over a different subset of tickets.
+function bestByRank(tickets) {
   let best = { rank: 0, ticket: null, verifier: null };
-  for (const t of naming) {
+  for (const t of tickets) {
     const rank = ROW_STATE_RANK[t.status] ?? 2;
     if (rank <= best.rank) continue;
     const verdict = rank >= 3 ? latestVerdict(t.logText) : null;
@@ -521,6 +516,31 @@ function deriveRowState(row, tickets) {
       rank, ticket: t.id, verifier: verdict && verdict.result === 'reproduced' ? verdict.verifier : null,
     };
   }
+  return best;
+}
+
+// The state of one charter row against every ticket in the horde, without writing anything:
+// 'reproduced' when the charter cell already names who reproduced it; otherwise the strongest
+// state reached by a ticket whose own acceptance checklist names this row's id — 'merged' (a
+// merged ticket already carrying a reproduced verdict, per queue.mjs's own merge refusal, but not
+// yet written into the charter), 'running' (filed and in flight), 'queued' (filed, not started),
+// 'prototyping' (every ticket naming the row is a prototype — see below), or 'no-ticket' (nothing
+// claims it at all).
+//
+// A prototype (issue 026) names a row to be shown, not to be built: it earns no verdict, and its
+// own **Status:** tracks how far the showing has got, never the row's real acceptance criteria.
+// Folded into 'queued'/'running'/'merged' it would tell a reader real work is under way on the row
+// when nobody has started it — the client may only just have been shown something, or not even
+// that yet. So a real (work/quality) ticket always wins the row the instant one exists, exactly as
+// before; only when every ticket naming the row is a prototype does it read as 'prototyping'
+// rather than borrowing a state that means somebody is building the thing itself.
+function deriveRowState(row, tickets) {
+  if (row.reproducedBy) return { state: 'reproduced', ticket: null, verifier: null };
+  const naming = tickets.filter((t) => mentionsEvidenceId(acceptanceSection(t.text), row.id));
+  if (naming.length === 0) return { state: 'no-ticket', ticket: null, verifier: null };
+  const real = naming.filter((t) => ticketKind(t.text) !== 'prototype');
+  if (real.length === 0) return { state: 'prototyping', ticket: bestByRank(naming).ticket, verifier: null };
+  const best = bestByRank(real);
   const state = best.rank >= 3 ? 'merged' : best.rank === 2 ? 'running' : 'queued';
   return { state, ticket: best.ticket, verifier: best.verifier };
 }

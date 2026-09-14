@@ -109,7 +109,8 @@ asks, the last recorded gate result per level, any lease another *live* horde
 holds on a node this
 horde's own tickets touch (node-lease-across-hordes — `.horde/leases.json`, shared by every horde
 on the repository), and an **evidence** block: every row of the charter's evidence catalogue in one
-of five states — `no-ticket` (nothing claims it), `queued` (a ticket names
+of six states — `no-ticket` (nothing claims it), `prototyping` (every ticket naming it is a
+prototype — shown to the client, not built, and not yet answered), `queued` (a real ticket names
 it, not yet started), `running` (in flight), `merged` (a merged ticket already carries a reproduced
 verdict naming it, but the charter has not been stamped yet — that happens at the next `wave.mjs
 close`, a manual `wave.mjs evidence`, or `horde.mjs done`), and `reproduced` (the charter's own
@@ -730,7 +731,7 @@ evidence catalogue; `--gate` with `--sha` records the level's gate at that tip i
 prints its path, and runs the law audit off that same reading (see `audit.mjs`). Its one-team,
 one-wave judgement of "does a ticket prove this row" is also
 exported (`evidenceCoverage`, `stampMissionEvidence`) stretched mission-wide — every team, every
-wave — for `status.mjs`'s five-state evidence digest and `horde.mjs done`'s gate, so the two never
+wave — for `status.mjs`'s six-state evidence digest and `horde.mjs done`'s gate, so the two never
 re-derive it independently.
 
 `start` also writes the wave's own plan bullet: the layer sizes `queue.mjs plan` derives from the
