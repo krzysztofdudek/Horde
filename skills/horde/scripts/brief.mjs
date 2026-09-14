@@ -226,7 +226,9 @@ function findRosterEntry(horde, name) {
   return loadRoster(horde).find((e) => e.name === name) || null;
 }
 
-// Most recent live (not dead/retired) steward for a team; null when none exists yet.
+// Most recent live (not dead/retired) steward for a team; null when none exists — which is every
+// team of every mission started at 6.0.0 or later, since nothing writes a steward entry any more.
+// Pre-6.0.0 history: see scripts/README.md.
 function stewardFor(horde, team) {
   const live = loadRoster(horde).filter((e) => e.role === 'steward' && e.team === team && e.state !== 'dead' && e.state !== 'retired');
   return live.length ? live[live.length - 1].name : null;
@@ -235,8 +237,8 @@ function stewardFor(horde, team) {
 // Agents are addressable by name only from the session that spawned them, but by their raw
 // Agent-tool id from anywhere — so a brief that names who to report to also carries that id, for a
 // report sent from a different session's context than the one that did the spawning. Nothing in
-// this tool set writes roster.json any more; this reads it only for backward compatibility with a
-// mission still carrying one from before this migration.
+// this tool set writes roster.json any more; this reads it only so a mission started before 6.0.0,
+// which still carries one, keeps working.
 function withAgentId(horde, name) {
   if (name === 'main') return name;
   const entry = findRosterEntry(horde, name);
@@ -247,8 +249,8 @@ function withAgentId(horde, name) {
 // that spawned it, and a brief that named anybody else would be telling it to reach a session it
 // has no way to reach. The architect is always a direct report of the director, whose session name
 // is always the literal "main" — the name this harness gives the top-level session. `spawnedBy` and
-// a live steward for the worker's team are only ever found in a roster.json a pre-migration mission
-// left on disk; a fresh mission never writes one, so a worker's fallback is "main" too.
+// a live steward for the worker's team are only ever found in a roster.json a mission started
+// before 6.0.0 left on disk; a fresh mission never writes one, so a worker's fallback is "main" too.
 function reportsToFor(role, horde, { team, name } = {}) {
   const entry = name ? findRosterEntry(horde, name) : null;
   if (entry && entry.spawnedBy) return withAgentId(horde, entry.spawnedBy);
@@ -389,7 +391,7 @@ function stackNoteFor(parent) {
     `**This ticket is stacked.** Ticket ${parent.stackedOn} has not merged yet and your work sits on top of it: your`,
     `base is its branch \`${parent.branch}\`, which is what the merge above names — not the team branch`,
     `\`${parent.teamBranch}\`. What ${parent.stackedOn} changed is under you already: build on it, never redo it, and`,
-    `never merge the team branch yourself. When ${parent.stackedOn} lands, the steward tells you; the team branch`,
+    `never merge the team branch yourself. When ${parent.stackedOn} lands, the director tells you; the team branch`,
     'is your base from then on, like any other ticket\'s.',
     '',
   ].join('\n');

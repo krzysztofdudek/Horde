@@ -691,7 +691,7 @@ test('queue.mjs: "proposed" — in the queue, counted, and never a candidate', a
   await t.test('the state list carries it, first, and says so when something else is asked for', () => {
     const r = run('queue.mjs', ['set', proposal, 'nonsense'], dir);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /allowed: proposed, queued, waiting, running, landed, blocked, merged, escalated, dropped/);
+    assert.match(r.stderr, /allowed: proposed, queued, waiting, running, landed, blocked, merged, dropped/);
   });
 
   await t.test('"add --proposed" files it as a proposal; "add" on its own still files work', () => {
@@ -730,6 +730,37 @@ test('queue.mjs: "proposed" — in the queue, counted, and never a candidate', a
     assert.equal(r.json.state, 'queued');
     assert.equal(run('queue.mjs', ['next'], dir).json.ticket, proposal);
   });
+});
+
+// ---- pre-6.0.0 history: an "escalated" item is unwritable, and still fully readable -----------
+//
+// Escalation folded into the client channel, so nothing writes that state any more and `set`
+// refuses the word. A queue.json from before then can still hold an item in it, and the reading
+// side has to stay whole: dropping the word from the state list outright would have left such an
+// item out of the rendered queue.md while queue.json still carried it — a rendering that lies
+// about what is in the queue is worse than a state nobody writes.
+test('queue.mjs: an "escalated" item left by a pre-6.0.0 mission is still listed, counted and rendered', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
+  writeFileSync(queuePath, JSON.stringify({
+    items: [{
+      ticket: '001', state: 'escalated', class: 'standard', branch: 'mission1/t-001', dependsOn: [],
+    }],
+  }));
+
+  const listed = run('queue.mjs', ['list'], dir);
+  assert.equal(listed.code, 0, listed.stderr);
+  assert.deepEqual(listed.json.map((i) => [i.ticket, i.state]), [['001', 'escalated']]);
+  assert.deepEqual(run('queue.mjs', ['list', '--state', 'escalated'], dir).json.map((i) => i.ticket), ['001']);
+
+  const rendered = run('queue.mjs', ['render'], dir);
+  assert.equal(rendered.code, 0, rendered.stderr);
+  const queueMd = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.md'), 'utf8');
+  assert.match(queueMd, /## escalated \(1\)/);
+  assert.match(queueMd, /^- 001 {2}standard {2}mission1\/t-001/m);
 });
 
 // ---- concurrent writers: one lock, no lost item --------------------------------------------

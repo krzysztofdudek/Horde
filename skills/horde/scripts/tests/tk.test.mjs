@@ -98,6 +98,23 @@ test('tk.mjs: new, list, show, status, log, grep, review-request, move', async (
     const r = run('tk.mjs', ['status', id, 'bogus'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /unknown state/);
+    assert.match(r.stderr, /allowed: proposed, queued, running, landed, changes, blocked, merged, dropped/);
+  });
+
+  // The seat cassation took verification and escalation out of the ticket's own ladder: the
+  // landing gate verifies, and escalation goes to the client channel. Neither word is written by
+  // this command any more, and neither falls through to a bare "unknown state" either — somebody
+  // typing one from memory, or copying it off a pre-6.0.0 ticket, is told what replaced it.
+  await t.test('status refuses each retired state by name, saying what replaced it', () => {
+    const verified = run('tk.mjs', ['status', id, 'verified'], dir);
+    assert.equal(verified.code, 1);
+    assert.match(verified.stderr, /"verified" is no longer a state a ticket is moved to/);
+    assert.match(verified.stderr, /landing gate/);
+
+    const escalated = run('tk.mjs', ['status', id, 'escalated'], dir);
+    assert.equal(escalated.code, 1);
+    assert.match(escalated.stderr, /"escalated" is no longer a state a ticket is moved to/);
+    assert.match(escalated.stderr, /ask\.mjs add/);
   });
 
   await t.test('log appends a bullet', () => {

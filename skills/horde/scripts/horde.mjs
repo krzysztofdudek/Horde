@@ -57,9 +57,9 @@ commands:
   config set <key> <value>
       dotted paths into .horde/config.json, e.g. "gates.trunk", "territory.maxBytes",
       "fixRounds.resume". A list-valued key takes a comma-separated list or a JSON array.
-      "keyContext" (default 3) is how much surrounding code a review's key is bound to: an
-      owner's approval and a verifier's verdict survive a branch catching up with the team as
-      long as nothing landed within this many lines of the ticket's own change. Raise it to send
+      "keyContext" (default 3) is how much surrounding code a review's key is bound to: a
+      judgement already recorded against a branch survives that branch catching up with the trunk
+      as long as nothing landed within this many lines of the ticket's own change. Raise it to send
       more tickets back for a re-review, lower it to send fewer; 1 is the lowest offered.
       "ygCommand" is how this repository invokes the Yggdrasil CLI (default "yg"); "grainCommand"
       how it invokes Grain, when it has one (default: none). "worktree.copy" (default: none) is a
@@ -412,7 +412,7 @@ function defaultConfig(root) {
     protectedPaths: [],
     classes: { ...DEFAULT_CLASSES },
     parallelism: 6,
-    // The fix-loop breaker (tk.mjs status <ticket> changes): rounds 1..resume ask the steward to
+    // The fix-loop breaker (tk.mjs status <ticket> changes): rounds 1..resume ask the director to
     // resume the same worker; the next "fresh" rounds ask for a new one, one class heavier;
     // beyond resume+fresh the command refuses and names the ruling to make instead.
     fixRounds: { resume: 3, fresh: 2 },
@@ -656,7 +656,8 @@ function cmdInit(positional, flags) {
 
   writeText(join(dest, 'decisions.md'), '# Decisions\n\n');
   writeText(join(dest, 'plan.md'), '# Plan\n\n');
-  writeJSON(join(dest, 'dissents.json'), { items: [] });
+  // No dissents.json: the dissent channel folded into ask.mjs, and this wrote an empty file that
+  // nothing in the tool set has read since. A pre-6.0.0 mission's own copy is left where it is.
   writeJSON(join(dest, 'counter.json'), { next: 1 });
 
   writeJSON(join(dest, 'teams', 'trunk', 'queue.json'), { items: [] });
@@ -847,8 +848,8 @@ function readStdin() {
 // the chairman asked for actually lands — the goal, the non-goals, the evidence catalogue, the
 // amendments — and it was the one file with no way to write it but by hand, which the skill's own
 // rule forbids. `show` prints it; `edit` replaces it from stdin, and says what that did to the
-// evidence catalogue, because a rewrite that drops a row already recorded as reproduced loses a
-// verifier's work silently.
+// evidence catalogue, because a rewrite that drops a row already recorded as reproduced loses the
+// proof somebody already took, silently.
 function cmdCharter(positional, flags) {
   const horde = resolveHorde(flags);
   const path = hordePath(horde, 'charter.md');
@@ -918,7 +919,7 @@ function cmdCharter(positional, flags) {
   }
 
   // Separately: a row still present but whose already-recorded "reproduced by" this text erases
-  // (kept in the table, cell blanked) loses a verifier's work silently unless flagged — worth a
+  // (kept in the table, cell blanked) loses proof already taken, silently, unless flagged — worth a
   // warning on every edit, drop-refusal or not.
   const filledBefore = rowsBefore.filter((r) => r.reproducedBy);
   const dropped = filledBefore

@@ -28,6 +28,10 @@ test('horde.mjs: init, list, config, archive', async (t) => {
     assert.match(charter, /`mission1\/trunk` off `develop`/);
     assert.equal(existsSync(join(dir, '.horde', 'hordes', 'mission1', 'counter.json')), true);
     assert.equal(existsSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json')), true);
+    // The dissent channel folded into ask.mjs: init used to write an empty dissents.json that
+    // nothing in the tool set has read since — a file whose only effect was to suggest a channel
+    // that is not there.
+    assert.equal(existsSync(join(dir, '.horde', 'hordes', 'mission1', 'dissents.json')), false);
     const branches = execFileSync('git', ['branch'], { cwd: dir, encoding: 'utf8' });
     assert.match(branches, /mission1\/trunk/);
   });

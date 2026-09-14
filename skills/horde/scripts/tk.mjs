@@ -47,7 +47,16 @@ import { addDependency } from './queue.mjs';
 // only the client's own answer to the "stuck" ask filed against it does, and that answer is a
 // product decision, which is why there is no escalation kind for it and no command here that
 // rules on one.
-const STATUSES = ['proposed', 'queued', 'running', 'landed', 'changes', 'blocked', 'verified', 'merged', 'escalated', 'dropped'];
+const STATUSES = ['proposed', 'queued', 'running', 'landed', 'changes', 'blocked', 'merged', 'dropped'];
+// Two statuses this command used to write and no longer will. They are named here rather than
+// dropped in silence, so someone typing one from memory (or copying it out of a pre-6.0.0 ticket
+// that still carries it) is told what replaced it instead of reading "unknown state" off a list
+// the word plainly used to be on. Reading is untouched: a ticket on disk in either state is shown
+// exactly as it stands — see "pre-6.0.0 history" in scripts/README.md.
+const RETIRED_STATUSES = {
+  verified: 'the landing gate is the verification now — a green gate lands the branch and there is nobody to countersign it',
+  escalated: 'escalation folded into the client channel — file it with ask.mjs add "<why>" --kind stop',
+};
 const SEVERITIES = ['high', 'medium', 'low'];
 // A ticket is "work" (the mission's own scope) unless it names itself "quality" — a self-filed
 // improvement outside a wave's assigned scope (better graph, normalization, tidy-up) that
@@ -111,7 +120,7 @@ commands:
       rewrites the body (everything from "## What" on) from stdin, leaving the header block —
       the id/title heading, Status, Node/Class/Severity/Team, Depends on/Branch, Files,
       Consumes/Produces, Evidence — untouched. Appends "body edited by <name>" to the log.
-      What owners use to write ticket bodies. With any of --files/--consumes/--produces/
+      What the director uses to write ticket bodies. With any of --files/--consumes/--produces/
       --evidence it changes those fields instead, each with its own log line saying who changed
       it — how a ticket is widened when the work turns out to touch a file it never declared.
       --depends adds dependencies to the ticket's queue item, one per number, through the same
@@ -205,7 +214,7 @@ function priorChangesRounds(ticket) {
   return max;
 }
 
-// What this round of "changes" means: rounds 1..resume ask the steward to resume the same
+// What this round of "changes" means: rounds 1..resume ask the director to resume the same
 // worker with the findings; the next "fresh" rounds ask for a new one, one class heavier, briefed
 // with "brief.mjs worker NNN --takeover"; beyond resume+fresh this refuses outright — another
 // round would be a stall dressed up as progress, not a fix. What happens then is tick's: the queue
@@ -281,9 +290,9 @@ function allTeamPaths(horde) {
 }
 
 // The acceptance lines of a ticket: every `- [ ]` (or `- [x]`) line under "## Acceptance", minus
-// the template's own placeholder. A ticket with none has nothing a verifier can reproduce, so
-// nothing can ever prove it done — `queue add` refuses it (a real mission found one at verifier
-// briefing time, after the work was already written).
+// the template's own placeholder. A ticket with none has nothing anybody can reproduce, so
+// nothing can ever prove it done — `queue add` refuses it (a real mission found one at briefing
+// time, after the work was already written).
 const ACCEPTANCE_PLACEHOLDER = /^- \[[ x]\]\s*(…|\.\.\.)?\s*$/;
 export function acceptanceLines(issueText) {
   const text = String(issueText || '');
@@ -393,7 +402,7 @@ function listFlag(value) {
 
 // Every path a ticket declares must lie inside the boundary of a node the ticket names: a ticket
 // is work on a node, and a file outside every one of its nodes belongs to somebody else's — the
-// owner who would have to approve it never sees this ticket. A node the graph does not know
+// node that would have to answer for it never sees this ticket. A node the graph does not know
 // contributes no boundary, and with no boundary at all there is nothing to check against.
 function checkFilesInBoundary(nodes, files) {
   if (files.length === 0) return;
@@ -441,7 +450,7 @@ export function allTickets(horde) {
 // A port a ticket consumes has to come from somewhere: a ticket that produces it (this team's or
 // another's — a cross-team contract is still a contract), or the graph, where the port already
 // exists. Neither, and the ticket is planning against something nobody is building; the refusal
-// names the port so the owner can either file the producing ticket or use the port that exists.
+// names the port so the caller can either file the producing ticket or use the port that exists.
 function checkConsumesHaveProducers(horde, consumes, selfId) {
   if (consumes.length === 0) return;
   const cfg = readConfig() || {};
@@ -460,7 +469,7 @@ function checkConsumesHaveProducers(horde, consumes, selfId) {
 
 // createTicket(horde, spec) — the one place a ticket comes into being, so a ticket filed by a tool
 // (the quality pass over Grain's advisories, `queue.mjs quality`) is the same object, validated the
-// same way, as one an owner files by hand. `cmdNew` is this with the flags read off the command
+// same way, as one filed by hand. `cmdNew` is this with the flags read off the command
 // line; nothing else writes an issue folder. Refusals still go through fail(), which is the tools'
 // shared error contract — a caller wanting a softer answer checks first.
 //
@@ -492,8 +501,9 @@ export function createTicket(horde, spec) {
   if (!title) fail('new requires --title "<t>"');
   if (!Array.isArray(nodes) || nodes.length === 0) fail('new requires --node <n> (repeatable)');
   // The model allows a ticket one node, or two when the ticket carries a contract between them —
-  // and no more, because a ticket spanning three nodes needs three owners' approval for one diff
-  // and no owner holds the whole of it. Three were being accepted in silence.
+  // and no more, because a ticket spanning three nodes is one diff three separate components
+  // have to answer for, and nothing in the graph answers for the whole of it. Three were being
+  // accepted in silence.
   if (nodes.length > 2) {
     fail(`a ticket names one node, or two when it carries a contract between them — this one names ${nodes.length} (${nodes.join(', ')}). Split it into one ticket per node, with the contract between them on its own ticket if they need one`);
   }
@@ -644,6 +654,9 @@ function cmdShow(horde, positional, flags) {
 function cmdStatus(horde, positional, flags) {
   const [idRaw, status, note] = positional;
   if (!idRaw || !status) fail('status requires <ticket> <state>');
+  if (RETIRED_STATUSES[status]) {
+    fail(`"${status}" is no longer a state a ticket is moved to — ${RETIRED_STATUSES[status]} (allowed: ${STATUSES.join(', ')})`);
+  }
   if (!STATUSES.includes(status)) fail(`unknown state: ${status} (allowed: ${STATUSES.join(', ')})`);
   const ticket = requireTicket(horde, idRaw);
 
@@ -692,10 +705,10 @@ function cmdGrep(horde, positional, flags) {
   emit(results, flags, () => (results.length ? results.map((r) => `${r.id} ${r.file}: ${r.line}`).join('\n') : '(no matches)'));
 }
 
-// --delta <path> — the file holding the difference between what the owner already approved and
+// --delta <path> — the file holding the difference between what was already reviewed and
 // what is on the branch now. Nothing in this tool set writes it: the caller generates it
 // themselves (e.g. `git diff <approved-sha>..HEAD -- <files> > path/to/diff`) and passes its path.
-// Logged by path rather than by content: the owner reads the file, and the log keeps the record of
+// Logged by path rather than by content: the reviewer reads the file, and the log keeps a record of
 // which re-review this request was, so a later reader can tell a scoped one from a full one.
 function cmdReviewRequest(horde, positional, flags) {
   const ticket = requireTicket(horde, positional[0]);
@@ -758,7 +771,7 @@ function setHeaderField(text, label, value) {
 // a decision reviewers have to be able to see happen, never a silent drift.
 // Everything from "## What" on, replaced; the header block (the fields every other tool parses)
 // left exactly as it was. One derivation, because a ticket filed by a tool writes its body the
-// same way an owner does through `edit`.
+// same way a hand-written one does through `edit`.
 function replaceTicketBody(ticket, text, body) {
   const idx = text.indexOf('## What');
   if (idx === -1) fail(`ticket ${ticket.id}: could not find the "## What" section to replace`);

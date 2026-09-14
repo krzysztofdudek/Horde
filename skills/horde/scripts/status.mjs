@@ -21,7 +21,8 @@ tip, ticket branches beyond it (landed / unverified / unmerged), queue counts by
 asks, the last recorded gate result, and any
 lease another live horde holds on a node this one touches (node-lease-across-hordes).
 
---horde narrows to one horde, --team (within it) to one team.
+--horde narrows to one horde. --team takes "trunk" and nothing else — every ticket is filed there
+— and any other name is refused rather than answered with an empty horde.
 
 options: --json  --help`;
 
@@ -81,13 +82,12 @@ function queueTotals(horde) {
   return totals;
 }
 
-function hordeDigest(horde, cfg, teamFilter) {
+function hordeDigest(horde, cfg) {
   const trunkBranch = `${horde}/trunk`;
   const trunkSha = git(['rev-parse', '--short', trunkBranch]);
   const { ahead, behind } = aheadBehind(cfg && cfg.base, trunkBranch);
 
-  const teamNames = (!teamFilter || teamFilter === 'trunk') ? ['trunk'] : [];
-  const teams = teamNames.map((t) => teamDigest(horde, t));
+  const teams = [teamDigest(horde, 'trunk')];
 
   const asks = readJSON(hordePath(horde, 'asks.json'), { items: [] });
   const askItems = Array.isArray(asks.items) ? asks.items : [];
@@ -181,6 +181,15 @@ function main() {
   const { flags } = parseArgs(process.argv.slice(2));
   if (flags.help) { console.log(USAGE); process.exit(0); }
 
+  // A mission files every ticket on "trunk" — nothing has spawned a sub-team since 6.0.0. `--team`
+  // used to narrow the digest to one of them, and for any other name it printed a horde with no
+  // team in it at all: an empty answer that read as "nothing is happening here". Refused by name
+  // instead, because silence is the one answer a digest must never give.
+  if (flags.team !== undefined && flags.team !== 'trunk') {
+    const named = flags.team === true ? '' : ` "${flags.team}"`;
+    fail(`no such team${named} — every ticket is filed on "trunk"; omit --team, or pass --team trunk`);
+  }
+
   let names = listHordes();
   if (flags.horde) {
     if (!names.includes(flags.horde)) fail(`no such horde: ${flags.horde}`);
@@ -193,7 +202,7 @@ function main() {
   }
 
   const cfg = readConfig();
-  const hordes = names.map((h) => hordeDigest(h, cfg, flags.team || null));
+  const hordes = names.map((h) => hordeDigest(h, cfg));
   if (flags.json) {
     console.log(JSON.stringify({ hordes }, null, 2));
   } else {
