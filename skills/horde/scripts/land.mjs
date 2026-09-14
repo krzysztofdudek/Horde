@@ -1417,8 +1417,11 @@ function promiseFrontmatter(text) {
 
 // What keeps this promise, as the path of the file that keeps it — or a sentence, for the one
 // pairing that is not a file that runs. Null means nothing here keeps it. The four pairings are
-// the package's own four, read the same way it reads them.
-function pairingOf(tree, tracked, promiseRel, front) {
+// the package's own four, read the same way it reads them. `byStem` is the tree's own tracked
+// files indexed by base name, built once by the caller: a mirror pairing asks for one, and asking
+// by walking every tracked file per promise is the shape that turns a big repository's landing
+// into a scan of the whole tree per promise it holds.
+function pairingOf(tree, tracked, byStem, promiseRel, front) {
   if (front.blocks.artefact !== undefined) {
     const block = front.blocks.artefact;
     const complete = ['path', 'sha256', 'accepted_by', 'at'].every((f) => block[f]);
@@ -1431,13 +1434,12 @@ function pairingOf(tree, tracked, promiseRel, front) {
     if (hash <= 0 || hash === raw.length - 1) return null;
     const target = raw.slice(0, hash).trim();
     const name = raw.slice(hash + 1).trim();
-    const path = [...tracked].find((f) => f === target || f.endsWith(`/${target}`));
+    const path = tracked.has(target) ? target : [...tracked].find((f) => f.endsWith(`/${target}`));
     if (!path) return null;
     const text = contentAt(tree, path);
     return PROMISE_CASE_BY_NAME.some((build) => build(name).test(text || '')) ? path : null;
   }
-  const want = `${stemOf(promiseRel)}${SPEC_SUFFIX}`;
-  const found = [...tracked].filter((f) => stemOf(f) === want);
+  const found = byStem.get(`${stemOf(promiseRel)}${SPEC_SUFFIX}`) || [];
   return found.length === 1 ? found[0] : null;
 }
 
@@ -1446,6 +1448,11 @@ function promisesIn(tree, cfg) {
   const dir = layer.promises && layer.promises.dir;
   if (!dir) return [];
   const tracked = trackedIn(tree);
+  const byStem = new Map();
+  for (const f of tracked) {
+    const stem = stemOf(f);
+    if (byStem.has(stem)) byStem.get(stem).push(f); else byStem.set(stem, [f]);
+  }
   const out = [];
   for (const rel of [...tracked].sort()) {
     if (!rel.startsWith(`${dir}/`) || !rel.endsWith('.md') || rel.slice(dir.length + 1).includes('/')) continue;
@@ -1460,7 +1467,7 @@ function promisesIn(tree, cfg) {
       // So that, and only that, is what these two trees are compared on — no parked list to
       // configure, and a repository that renamed its parked words is read exactly the same.
       live: front.fields.status === 'implemented',
-      keptBy: pairingOf(tree, tracked, rel, front),
+      keptBy: pairingOf(tree, tracked, byStem, rel, front),
     });
   }
   return out;
@@ -1549,10 +1556,13 @@ function promiseRefusals(book, basePromises, headPromises, touched) {
 // the one exception — that is a rename, nothing was taken away, and refusing it would refuse
 // tidying up.
 function testFileRefusals(book, cfg, baseTree, headTree, basePromises, touched) {
-  const globs = Array.isArray(cfg.testGlobs) ? cfg.testGlobs.filter(Boolean) : [];
+  // Compiled once, not once per file: this is asked of every tracked path in both trees, and a
+  // repository big enough for any of this to matter is a repository where rebuilding the same
+  // handful of patterns per path is the whole cost of the guard.
+  const globs = (Array.isArray(cfg.testGlobs) ? cfg.testGlobs.filter(Boolean) : []).map((g) => globToRegExp(g));
   const baseTracked = trackedIn(baseTree);
   const headTracked = trackedIn(headTree);
-  const isTest = (f) => globs.some((g) => globToRegExp(g).test(f));
+  const isTest = (f) => globs.some((re) => re.test(f));
 
   const watched = new Set([...baseTracked].filter((f) => isTest(f) && touched.has(f)));
   // A promise paired with something the globs do not recognise is still something that keeps a
@@ -1645,7 +1655,9 @@ function gateGuard(cfg, horde, baseTree, headTree, touched) {
     for (const token of commandTokens(command)) watch(token, `config.gates.${level} runs it`);
   }
   for (const rel of [...HOOK_FILES, ...PUSH_HOOKS]) watch(rel, 'it is a commit or push hook');
-  for (const rel of [...baseTracked].sort()) if (CI_WORKFLOW.test(rel)) watch(rel, 'CI runs it');
+  // Over what the branch touched rather than over the whole tree: `watch` would refuse everything
+  // else anyway, and a repository's workflow directory is not worth walking the tree to find.
+  for (const rel of [...touched].sort()) if (CI_WORKFLOW.test(rel)) watch(rel, 'CI runs it');
 
   const book = protectionBook(horde);
   for (const rel of [...watched].sort()) {
