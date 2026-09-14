@@ -1092,9 +1092,6 @@ function cmdClose(horde, positional, flags) {
   });
 }
 
-// mulberry32 — a tiny, self-contained PRNG so a draw can be reproduced from a seed. Only ever
-// used to pick which tickets to audit; without --seed the draw is Math.random's, as a sample
-// should be.
 function main() {
   const { positional: allPositional, flags } = parseArgs(process.argv.slice(2));
   const [cmd, ...positional] = allPositional;

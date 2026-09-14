@@ -1,11 +1,11 @@
 # 062 · fresh worker class up is documented but never implemented
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
 **Tags:** zaplecze
-**Files:** skills/horde/scripts/tk.mjs
+**Files:** skills/horde/scripts/tk.mjs, skills/horde/scripts/tick.mjs, skills/horde/scripts/_lib.mjs, skills/horde/scripts/tests/tick.test.mjs
 **Found by:** workflow finder tests-vs-docs, confirmed by two refuters
 **Where:** skills/horde/scripts/tests/tick.test.mjs (test file path corrected; core claim at tk.mjs:99/207-208/229 and tick.mjs:366 confirmed as stated)
 

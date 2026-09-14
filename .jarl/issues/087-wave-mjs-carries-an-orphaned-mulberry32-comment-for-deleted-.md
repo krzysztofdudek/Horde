@@ -1,6 +1,6 @@
 # 087 · wave.mjs carries an orphaned mulberry32 comment for deleted seededRandom/cmdAuditPlan
 
-**Status:** open
+**Status:** done
 **Kind:** cleanup
 **Priority:** 3
 **Tier:** standard
@@ -21,4 +21,7 @@ The orphaned comment is removed (or, if any of its content still applies to some
 Dowód, którego oczekuję: `grep -n "mulberry32\|seededRandom\|cmdAuditPlan" skills/horde/scripts/wave.mjs` returns nothing.
 
 ## Evidence
+
+- **ran:** grep -n 'mulberry32\|seededRandom\|cmdAuditPlan' skills/horde/scripts/wave.mjs · **saw:** no hits after removal (previously one hit: the orphaned 3-line comment above function main())
+- **ran:** node --test tests/wave.test.mjs · **saw:** 23/23 pass, 0 fail — comment-only removal, no behavior change
 

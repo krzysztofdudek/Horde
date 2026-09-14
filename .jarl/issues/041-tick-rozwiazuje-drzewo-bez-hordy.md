@@ -1,6 +1,6 @@
 # 041 · tick rozwiazuje drzewo bez hordy
 
-**Status:** open
+**Status:** in-progress
 **Kind:** research
 **Priority:** 3
 **Tier:** standard

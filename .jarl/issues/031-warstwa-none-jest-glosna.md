@@ -1,6 +1,6 @@
 # 031 · warstwa none jest glosna
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong
