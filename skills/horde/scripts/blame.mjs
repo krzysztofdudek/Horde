@@ -25,7 +25,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import {
-  hordeRoot, hordePath, teamPath, listHordes, readConfig, readJSON, readText, git, fail,
+  hordeRoot, hordePath, teamPath, listHordes, readConfig, readJSON, readText, git, gitError, fail,
   parseArgs, emit, isMain, resolveTree,
   runMain,
 } from './_lib.mjs';
@@ -87,7 +87,8 @@ options: --json  --help`;
 function blameLine(root, relFile, line) {
   const out = git(['blame', '--porcelain', '-L', `${line},${line}`, '--', relFile], root);
   if (out === null) {
-    fail(`git blame failed on ${relFile}:${line} — not a tracked file, or the line does not exist`);
+    const detail = gitError();
+    fail(`git blame failed on ${relFile}:${line} — not a tracked file, or the line does not exist${detail ? ` (${detail})` : ''}`);
   }
   const lines = out.split('\n');
   const sha = (lines[0] || '').split(' ')[0];

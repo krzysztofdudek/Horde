@@ -28,10 +28,9 @@ import { dirname, join } from 'node:path';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, git, fail, parseArgs,
-  asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine, withProvenance,
-  nowIso,
-  runMain,
+  hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, git, gitError, fail,
+  parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine,
+  withProvenance, nowIso, runMain,
 } from './_lib.mjs';
 import {
   ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, verdictCommandsFor,
@@ -264,7 +263,10 @@ export function acquireGateLock(ticket, branch, { waitMs = LOCK_WAIT_MS } = {}) 
 
 function checkBaseFreshness(branch, parentBranch) {
   const parentTip = git(['rev-parse', parentBranch]);
-  if (!parentTip) return { ok: false, note: `parent branch not found: ${parentBranch}` };
+  if (!parentTip) {
+    const detail = gitError();
+    return { ok: false, note: `parent branch not found: ${parentBranch}${detail ? ` — ${detail}` : ''}` };
+  }
   const mergeBase = git(['merge-base', branch, parentBranch]);
   const ok = mergeBase === parentTip;
   return {
@@ -1369,7 +1371,10 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
   const branch = item.branch;
   if (!branch) fail(`ticket ${item.ticket} has no branch yet — nothing to land (queue.mjs set ${item.ticket} running cuts one)`);
   const branchSha = git(['rev-parse', '--verify', branch]);
-  if (!branchSha) fail(`no such branch: ${branch}`);
+  if (!branchSha) {
+    const detail = gitError();
+    fail(`no such branch: ${branch}${detail ? ` — ${detail}` : ''}`);
+  }
 
   const ticketId = String(item.ticket);
   const issueDirName = findIssueDir(teamDir, ticketId);
@@ -1394,7 +1399,8 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
   // and a landing that skipped the comparison because the base was missing would be the one
   // landing where the law could be rewritten freely.
   if (!parentTip) {
-    fail(`no such branch: ${parentBranch} — the guards that keep a landing from weakening the rules read the base tree and this branch's tree and compare them, and with no base there is nothing to compare against. Restore ${parentBranch}, or fix config.base`);
+    const detail = gitError();
+    fail(`no such branch: ${parentBranch} — the guards that keep a landing from weakening the rules read the base tree and this branch's tree and compare them, and with no base there is nothing to compare against. Restore ${parentBranch}, or fix config.base${detail ? ` (${detail})` : ''}`);
   }
 
   const changedFiles = diffPaths(['diff', '--name-only', `${parentBranch}...${branch}`]);

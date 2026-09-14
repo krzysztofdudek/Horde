@@ -13,14 +13,37 @@ import { execFileSync } from 'node:child_process';
 
 const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'templates');
 
+// The stderr text of the most recent failed git() call — see gitError() below.
+let lastGitError = null;
+
 // git(args, cwd) — execFileSync wrapper, trimmed stdout on success, null on any failure
 // (not a repo, no such ref, git not found, …). Every other git-touching export goes through this.
+//
+// A null return conflates two very different situations: git ran and correctly reported "no" (a
+// ref does not exist, a path is not tracked, two branches share no history) and git could not
+// answer at all (not a repository, the binary is missing, a real fatal error). A caller that reads
+// null as the first case unconditionally and carries on is reading a possible error as "nothing
+// is wrong" — a false zero standing in for a refusal. gitError() is how a caller tells the two
+// apart before deciding which one it just saw: it holds the stderr git printed for the failure
+// git() just returned null for (empty string when git exited non-zero without printing anything,
+// e.g. a clean `--quiet` existence check), and is cleared on the next successful call. Read it
+// immediately after the git() call it explains — another git() call overwrites it.
 export function git(args, cwd = process.cwd()) {
   try {
-    return execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
-  } catch {
+    const out = execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] }).toString().trim();
+    lastGitError = null;
+    return out;
+  } catch (e) {
+    lastGitError = (e.stderr ? e.stderr.toString() : String(e.message || e)).trim();
     return null;
   }
+}
+
+// gitError() — the stderr text of the most recent failed git() call (see git() above), or null
+// when that call succeeded or none has run yet. Never printed on its own: a caller folds it into
+// its own refusal so the refusal says WHY, in git's own words, not just THAT.
+export function gitError() {
+  return lastGitError;
 }
 
 // patchIdOf(branch, parent, {context, cwd}) — the 40-hex `git patch-id --stable` of what the
@@ -64,7 +87,8 @@ export function patchIdOf(branch, parent, { context = 3, cwd = process.cwd() } =
 export function repoRoot() {
   const top = git(['rev-parse', '--show-toplevel']);
   if (top) return top;
-  throw new Error(`not a git repository (or any parent up to the mount point): ${process.cwd()}`);
+  const detail = gitError();
+  throw new Error(`not a git repository (or any parent up to the mount point): ${process.cwd()}${detail ? ` — ${detail}` : ''}`);
 }
 
 // ---- resolveTree: a command works on the tree it was told, never on cwd by accident -----------
@@ -110,7 +134,10 @@ function parseWorktreeList(text) {
 // without first knowing what "this repo" is.
 function thisRepoWorktrees(cwd) {
   const out = git(['worktree', 'list', '--porcelain'], cwd);
-  if (out === null) fail(`not a git repository (or any parent up to the mount point): ${cwd}`);
+  if (out === null) {
+    const detail = gitError();
+    fail(`not a git repository (or any parent up to the mount point): ${cwd}${detail ? ` — ${detail}` : ''}`);
+  }
   return parseWorktreeList(out);
 }
 
@@ -205,7 +232,8 @@ function resolveHordeTrunk(horde, cwd) {
       process.stderr.write(`trunk resync discarded ${discarded} uncommitted change${discarded === 1 ? '' : 's'} at ${path} — trunk (${branch}) is written only by the landing script, so every read resets it to the branch's tip\n`);
     }
     if (git(['reset', '--hard', branch], path) === null) {
-      fail(`could not sync the trunk tree at ${path} to ${branch}`);
+      const detail = gitError();
+      fail(`could not sync the trunk tree at ${path} to ${branch}${detail ? ` — ${detail}` : ''}`);
     }
   }
   return {
@@ -308,10 +336,21 @@ export function provisionTree(path, ref, cfg) {
     if (git(['ls-files', '--error-unmatch', '--', rel], root) !== null) {
       throw new Error(`config.worktree.copy names "${rel}", which git already tracks on this branch — copying over a tracked path would desync the worktree from its own branch`);
     }
+    // null above also covers a genuine ls-files failure that has nothing to do with "untracked" —
+    // git's own text for the case this loop actually means to allow always names the pathspec as
+    // unmatched; anything else read the same way would let a real failure through as "safe to
+    // copy" (a false zero for the desync check this loop exists to make).
+    const trackedCheckError = gitError();
+    if (trackedCheckError && !/did not match any file/i.test(trackedCheckError)) {
+      throw new Error(`could not tell whether config.worktree.copy's "${rel}" is tracked on this branch — ${trackedCheckError}`);
+    }
   }
   const isBranch = git(['show-ref', '--verify', '--quiet', `refs/heads/${ref}`], root) !== null;
   const args = isBranch ? ['worktree', 'add', path, ref] : ['worktree', 'add', '--detach', path, ref];
-  if (git(args, root) === null) throw new Error(`could not create worktree at ${path} for ${ref}`);
+  if (git(args, root) === null) {
+    const detail = gitError();
+    throw new Error(`could not create worktree at ${path} for ${ref}${detail ? ` — ${detail}` : ''}`);
+  }
   const copied = [];
   for (const rel of copyList) {
     const src = join(root, rel);
@@ -345,7 +384,10 @@ export function withProvenance(obj, info) {
 // an already-absolute path) normalizes both.
 function gitCommonDir() {
   const out = git(['rev-parse', '--git-common-dir']);
-  if (!out) throw new Error(`not a git repository (or any parent up to the mount point): ${process.cwd()}`);
+  if (!out) {
+    const detail = gitError();
+    throw new Error(`not a git repository (or any parent up to the mount point): ${process.cwd()}${detail ? ` — ${detail}` : ''}`);
+  }
   return resolve(process.cwd(), out);
 }
 
