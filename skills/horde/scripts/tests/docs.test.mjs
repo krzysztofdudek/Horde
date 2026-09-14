@@ -842,3 +842,82 @@ test('scripts/README.md\'s wave.mjs command list names only commands wave.mjs\'s
   const offenders = named.filter((n) => !known.has(n));
   assert.deepEqual(offenders, [], `scripts/README.md names wave.mjs command(s) absent from its own USAGE: ${offenders.join(', ')} (USAGE has: ${[...known].join(', ')})`);
 });
+
+// ---- constants and where they come from (issue 013) ----------------------------------------
+//
+// A threshold has provenance, not a signature: issue 013 found nine numbers with no recorded
+// origin (a measurement, a transport ceiling, a client's decision) and one, `max_bytes`, that
+// already has one and is the pattern the rest follow. Every value below is read live off the
+// source that actually defines it — never retyped as a literal here — so a row goes stale the
+// moment the code and the table disagree, exactly like `landCheckOrder()`/`readmeGateItems()`
+// above hold land.mjs's own gate list to its docs.
+
+function defaultConfigSlice() {
+  const text = readText(join(SCRIPTS_DIR, 'horde.mjs'));
+  const start = text.indexOf('function defaultConfig(root) {');
+  assert.ok(start !== -1, 'horde.mjs no longer declares defaultConfig(root)');
+  const end = text.indexOf('\n// ---- the graph', start);
+  assert.ok(end !== -1, 'could not find the end of defaultConfig() — its own closing marker moved');
+  return text.slice(start, end);
+}
+
+function constantsTable() {
+  const readme = readText(join(SCRIPTS_DIR, 'README.md'));
+  const heading = '## Constants and where they come from';
+  const start = readme.indexOf(heading);
+  assert.ok(start !== -1, `scripts/README.md has no "${heading}" section`);
+  const rest = readme.slice(start + heading.length);
+  const next = rest.search(/^## /m);
+  return next === -1 ? rest : rest.slice(0, next);
+}
+
+function tableRows() {
+  return constantsTable().split('\n')
+    .filter((l) => l.trim().startsWith('|'))
+    .filter((l) => !/^\s*\|\s*-+\s*\|/.test(l))
+    .filter((l) => !/^\s*\|\s*Constant\s*\|/.test(l));
+}
+
+// Each [key, value] pair: `key` is the exact substring the table's own row is expected to carry
+// (never guessed — every value comes from a regex read against the real file), `value` the
+// current live default. A key that stops matching means the source it names moved; a value that
+// stops matching means the table fell out of step with the code.
+function liveConstants() {
+  const cfg = defaultConfigSlice();
+  const node = readText(join(SCRIPTS_DIR, 'node.mjs'));
+  const escalate = readText(join(SCRIPTS_DIR, 'escalate.mjs'));
+  const promises = readText(join(REPO_ROOT, 'packages', 'promises', 'yg-package.yaml'));
+
+  const need = (re, text, label) => {
+    const m = re.exec(text);
+    assert.ok(m, `could not read ${label} off its own source — the pattern that finds it moved`);
+    return m[1];
+  };
+
+  return [
+    ['parallelism', need(/parallelism:\s*(\d+)/, cfg, 'parallelism')],
+    ['fixRounds.resume', need(/fixRounds:\s*\{\s*resume:\s*(\d+)/, cfg, 'fixRounds.resume')],
+    ['fixRounds.fresh', need(/fixRounds:\s*\{\s*resume:\s*\d+,\s*fresh:\s*(\d+)/, cfg, 'fixRounds.fresh')],
+    ['tick.interval', need(/tick:\s*\{\s*interval:\s*(\d+)/, cfg, 'tick.interval')],
+    ['territory.maxBytes', need(/territory:\s*\{\s*maxBytes:\s*(\d+)/, cfg, 'territory.maxBytes')],
+    ['law.retireAfterWaves', need(/law:\s*\{\s*retireAfterWaves:\s*(\d+)/, cfg, 'law.retireAfterWaves')],
+    ['law.qualityDropAsk', need(/law:\s*\{\s*retireAfterWaves:\s*\d+,\s*qualityDropAsk:\s*([\d.]+)/, cfg, 'law.qualityDropAsk')],
+    ['WAVES_CLEAN_FOR_ENFORCED', need(/const WAVES_CLEAN_FOR_ENFORCED = (\d+);/, node, 'WAVES_CLEAN_FOR_ENFORCED')],
+    ['escalate.mjs recurring --min', need(/flags\.min === undefined \? (\d+) :/, escalate, "escalate.mjs's --min default")],
+    ['max_bytes', need(/max_bytes:\s*\n\s*type: number\s*\n\s*default:\s*(\d+)/, promises, "promises' max_bytes")],
+  ];
+}
+
+test('every constant issue 013 found has a row in scripts/README.md\'s constants table, with its current value', () => {
+  const rows = tableRows();
+  assert.ok(rows.length >= 10, `expected at least 10 data rows in the constants table, found ${rows.length}`);
+
+  const constants = liveConstants();
+  assert.equal(new Set(constants.map(([k]) => k)).size, constants.length, 'two constants share the same lookup key');
+
+  for (const [key, value] of constants) {
+    const matches = rows.filter((r) => r.includes(key));
+    assert.equal(matches.length, 1, `expected exactly one row naming ${key}, found ${matches.length}`);
+    assert.ok(matches[0].includes(String(value)), `the row for ${key} does not carry its current value (${value}):\n${matches[0]}`);
+  }
+});
