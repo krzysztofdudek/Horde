@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, initHorde, addNode, run, yg,
 } from './helpers.mjs';
+import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 import { wilson, ticketDeclares } from '../retro.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -710,6 +711,29 @@ test('retro.mjs: two retrospectives at once leave one document and one line in t
   const doc = JSON.parse(readFileSync(hordeFile(dir, 'mission1', 'retro.json'), 'utf8'));
   assert.equal(doc.taste.length, 1);
   assert.equal(doc.logged.length, 1);
+});
+
+test('retro.mjs: a lock caught half-made is waited for, never taken for an abandoned one', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  // Two real processes take the shipped lock — in child processes, like every other refusal
+  // here — with one of them paused mid-creation and the other held at the door until that pause
+  // begins. That puts the second process inside the window every run, where a scheduler would
+  // need thousands of tries to put it there once. What comes back is the window each one held
+  // the lock for, and a lock that holds keeps those apart.
+  const race = await raceOneLock(dir, 'retro');
+  assert.ok(race.paused, `nothing was ever paused, so this run proves nothing:\n${describeRace(race)}`);
+  assert.equal(race.slow.code, 0, describeRace(race));
+  assert.equal(race.other.code, 0, describeRace(race));
+
+  const paused = race.slow.window;
+  const other = race.other.window;
+  assert.ok(paused && paused.ok && other && other.ok, describeRace(race));
+  assert.notEqual(paused.pid, other.pid, 'two processes, not one');
+  assert.equal(overlaps(paused, other), false,
+    'both processes held the retrospective lock at the same time: the one paused mid-creation had '
+    + `its file read as an abandoned one and taken.\n${describeRace(race)}`);
 });
 
 test('retro.mjs: a ticket directory named in unicode is read through without distortion', async (t) => {

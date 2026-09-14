@@ -93,6 +93,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - A charter's quality policy that is not `autonomous` or `only-the-work` is now refused, instead of quietly running as the more permissive of the two.
 - A check meant to catch a ticket touching files outside its allowed area now compares whole folder names, instead of just their starting letters — so a different, similarly named folder is no longer mistaken for being inside that area.
 - A git failure partway through reading what a change touched used to be read as an empty change, letting the checks that depend on it pass without ever looking. They now refuse instead.
+- Landings and mission closes run one at a time even when two of them start at the very same instant: two changes never land together, and the same closing line never reaches a component's history twice.
 
 ### Migrating a mission already in flight
 

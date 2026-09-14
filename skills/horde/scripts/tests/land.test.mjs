@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode, addAspect, yg, requireYg, MARKER_CHECK,
 } from './helpers.mjs';
+import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -864,6 +865,30 @@ test('land.mjs: a half-written lock file names no process to wait on, so it is t
   const r = run('land.mjs', [branch], dir);
   assert.equal(r.code, 0, r.stderr);
   assert.ok(r.json.lock.some((n) => /unreadable gate lock/.test(n)), JSON.stringify(r.json.lock));
+});
+
+test('land.mjs: a gate lock caught half-made is waited for, never taken for an abandoned one', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  // The one above is a lock file nobody is behind — taken over, correctly. This is the other
+  // case: a lock file whose holder is alive and still writing it. Two real processes take the
+  // shipped gate lock, one paused mid-creation and the other held at the door until that pause
+  // begins, which puts the second process inside the window every run instead of once in
+  // thousands. What comes back is the window each one held the gate for, and a lock that holds
+  // keeps those apart.
+  const race = await raceOneLock(dir, 'gate');
+  assert.ok(race.paused, `nothing was ever paused, so this run proves nothing:\n${describeRace(race)}`);
+  assert.equal(race.slow.code, 0, describeRace(race));
+  assert.equal(race.other.code, 0, describeRace(race));
+
+  const paused = race.slow.window;
+  const other = race.other.window;
+  assert.ok(paused && paused.ok && other && other.ok, describeRace(race));
+  assert.notEqual(paused.pid, other.pid, 'two processes, not one');
+  assert.equal(overlaps(paused, other), false,
+    'both landings held the gate at the same time: the one paused mid-creation had its lock file '
+    + `read as an abandoned one and taken.\n${describeRace(race)}`);
 });
 
 test('land.mjs: --background returns a result-file path at once, and the file has the run\'s shape', async (t) => {
