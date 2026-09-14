@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode,
 } from './helpers.mjs';
+import { charterMismatches } from '../tk.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -625,5 +626,72 @@ test('tk.mjs edit --depends: the same path queue.mjs dep writes, so the circle i
     const r = tkEdit(dir, second, '', ['--by', 'consultant-a']);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /--depends/);
+  });
+});
+
+// ---- what the mission promised, against what the ticket says -----------------------------------
+//
+// The two halves of a mission card a ticket can contradict on its own: the territories the mission
+// was cut into, and the evidence catalogue it promised. `charterMismatches` is that reading — pure,
+// over a ticket's text and the two promises — and `queue.mjs add` is the door that applies it.
+
+test('tk.mjs charterMismatches: a node outside every territory, and an evidence row the charter never had', async (t) => {
+  const TERRITORIES = [
+    { territory: 'the front door', nodes: ['auth', 'api'] },
+    { territory: 'numbers', nodes: ['reporting'] },
+  ];
+  const ticketText = (node, evidence) => [
+    '# 001 · A ticket', '',
+    '**Status:** proposed',
+    `**Node:** ${node} · **Class:** standard · **Severity:** medium · **Team:** trunk`,
+    '**Depends on:** none · **Branch:** —',
+    `**Evidence:** ${evidence}`, '',
+    '## Acceptance — evidence', '', '- [ ] it works', '',
+  ].join('\n');
+
+  await t.test('a node inside a territory, earning a row the charter carries, matches nothing', () => {
+    assert.deepEqual(charterMismatches(ticketText('auth', 'E1'), {
+      territories: TERRITORIES, catalogue: new Set(['E1', 'E2']),
+    }), []);
+  });
+
+  await t.test('a node outside every territory is a mismatch naming the node and the territories', () => {
+    const out = charterMismatches(ticketText('billing', 'E1'), {
+      territories: TERRITORIES, catalogue: new Set(['E1']),
+    });
+    assert.equal(out.length, 1);
+    assert.equal(out[0].field, 'Node');
+    assert.deepEqual(out[0].values, ['billing']);
+    assert.match(out[0].has, /the front door \(auth, api\)/);
+    assert.match(out[0].has, /numbers \(reporting\)/);
+  });
+
+  await t.test('a mission nobody has cut yet promises no area, so no node is outside one', () => {
+    assert.deepEqual(charterMismatches(ticketText('billing', 'E1'), {
+      territories: [], catalogue: new Set(['E1']),
+    }), []);
+  });
+
+  await t.test('an evidence row the catalogue does not carry is a mismatch naming it', () => {
+    const out = charterMismatches(ticketText('auth', 'E1, E7'), {
+      territories: TERRITORIES, catalogue: new Set(['E1']),
+    });
+    assert.equal(out.length, 1);
+    assert.equal(out[0].field, 'Evidence');
+    assert.deepEqual(out[0].values, ['E7'], 'only the row the charter is missing, never the one it has');
+    assert.match(out[0].has, /E1/);
+  });
+
+  await t.test('a ticket earning no row at all is ordinary work, not a mismatch', () => {
+    assert.deepEqual(charterMismatches(ticketText('auth', 'none'), {
+      territories: TERRITORIES, catalogue: new Set(['E1']),
+    }), []);
+  });
+
+  await t.test('both wrong at once are reported together, neither hiding the other', () => {
+    const out = charterMismatches(ticketText('billing', 'E7'), {
+      territories: TERRITORIES, catalogue: new Set(['E1']),
+    });
+    assert.deepEqual(out.map((m) => m.field), ['Node', 'Evidence']);
   });
 });

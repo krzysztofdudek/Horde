@@ -309,6 +309,12 @@ A charter rewrite that drops an evidence row outright is free before the mission
 it, `horde.mjs charter edit` refuses the drop unless `--ask <id>` names an answered ask of kind `charter`
 whose own text names the row — a promise made to the chairman does not quietly disappear from a later edit.
 
+**The chairman may dictate a ticket; the mission card is what says it belongs.** `queue.mjs add` refuses
+one whose nodes lie outside every territory the mission was cut into, or which earns an evidence row the
+charter's catalogue does not carry — it names what does not fit and prints the `charter` question that
+would change it. Put that question to them and record the answer, and the ticket goes in with
+`--ask <id>`. Do not rule on it yourself: which work this mission takes on is theirs, not a build decision.
+
 ## Where things are
 
 - `reference/model.md` — the mental model in full: three planes, the node, roles as functions of the

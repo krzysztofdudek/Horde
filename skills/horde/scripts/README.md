@@ -216,7 +216,6 @@ items are not left out of it. `proposed` is a ticket
 nobody has ruled on: listed and counted like any other, and never a candidate for `next`. A
 consultant files its own tickets and adds them with `add --proposed`; `refine.mjs --step review` is
 the only thing that moves one to `queued`.
-
 Every command that changes `queue.json` — here, in `tick.mjs`, and in `audit.mjs`'s own ticket
 filing — reads it, changes it and writes it back under one lock, `withQueueLock` (`_lib.mjs`), the
 same exclusive-create trick `decide.mjs`'s own lock uses: `<queue.json>.lock`, one per
@@ -226,7 +225,17 @@ can no longer each read the same document and have one silently overwrite the ot
 Same take-over rule as the gate lock below: the file names the pid that holds it, and a pid no
 longer running — including one that just refused via `fail()`, which exits before its own `finally`
 can release the lock — is taken over immediately rather than waited on.
-- `list [--state s]`, `add NNN [--depends dep,…] [--proposed]`, `set NNN <state> [--sha x] [--agent name] [--note "…"]`,
+
+`add` is the door a ticket is held at. Two things are checked there and nowhere else: a ticket with
+no acceptance line has nothing a verifier could reproduce, and a ticket that is not what the mission
+promised — one naming a node outside every territory the cut holds (`territories.json`), or earning
+an `**Evidence:**` row the charter's evidence catalogue does not carry — is not this mission's to
+do. The client may dictate a ticket; the mission card is what says it belongs, so the second refusal
+names what does not fit and prints the `charter` question that would change it, and `--ask <id>`
+naming an answered ask of that kind is the one way in. The queue item then records which ask took it.
+A mission nobody has cut yet has no territory to be outside of, and a ticket earning no row at all
+claims nothing — neither is a mismatch.
+- `list [--state s]`, `add NNN [--depends dep,…] [--proposed] [--ask <id>]`, `set NNN <state> [--sha x] [--agent name] [--note "…"]`,
   `next [--class c] [--why] [--stack]` — ready = queued, every dependency merged, and clear of every
   `running` ticket's own lock: a ticket declaring `**Files:**` collides only on an overlapping
   path or glob; a ticket with none (or a `running` item whose ticket can no longer be read) locks

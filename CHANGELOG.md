@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A ticket that does not match what the mission agreed to no longer joins the work. One that touches an area outside the mission's scope, or that claims a proof the mission never promised, is turned back with the mismatch named and the question to put to you. Answer it and the ticket goes in.
+
 ## [6.0.0] - 2026-09-12
 
 Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to install.

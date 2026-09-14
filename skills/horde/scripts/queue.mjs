@@ -21,9 +21,10 @@ import {
   runMain,
 } from './_lib.mjs';
 import {
-  findTicket, parseField, padId, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, createTicket, setTicketBody, acceptanceLines,
+  findTicket, parseField, padId, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, createTicket, setTicketBody, acceptanceLines, charterPushback,
 } from './tk.mjs';
 import { noteMerged, parseEvidenceRows } from './wave.mjs';
+import { loadAsks } from './ask.mjs';
 import {
   consumersOf, portExists, globToRegExp, nodeExists, advisoryKey, readAdvisoryLedger,
   recordAdvisory,
@@ -51,12 +52,17 @@ const USAGE = `usage: queue.mjs <command> [options]
 
 commands:
   list [--state s] [--team t] [--horde h]
-  add <ticket> [--depends dep,…] [--proposed] [--team t] [--horde h]
+  add <ticket> [--depends dep,…] [--proposed] [--ask <id>] [--team t] [--horde h]
       each dep is NNN, a ticket number in this same team.
       --proposed files it as a proposal rather than as work: listed and counted in the queue,
       never offered by "next", until the architect's plan review passes it. That is how a
       consultant's own tickets enter — nothing it writes is dispatchable before somebody has
       looked at the whole plan.
+      Refuses a ticket that is not what the mission promised: one naming a node outside every
+      territory the mission was cut into, or earning an **Evidence:** row the charter's catalogue
+      does not carry. The refusal names what does not fit and prints the "charter" question that
+      would change it; --ask <id>, naming an answered ask of that kind, is the one way in, and the
+      queue item records which ask took it.
   set <ticket> <${SETTABLE_STATES.join('|')}> [--sha x] [--agent name] [--note "…"]
       [--on MMM] [--team t] [--horde h]
       "running --on MMM" starts the ticket from MMM's tip instead of the team's (a stack): MMM
@@ -188,6 +194,22 @@ function resolveDepRef(horde, raw, defaultTeam) {
   };
 }
 
+// The one way past a charter pushback: the client's own answer, recorded. Kind "charter" and
+// answered — the same two things `horde.mjs charter edit --ask` requires before it lets a promised
+// evidence row be dropped, because a promise quietly removed from the card and a ticket the card
+// never made are the same decision, and it is the client's either way.
+function requireCharterAsk(horde, id) {
+  const item = loadAsks(horde).items.find((it) => it.id === id);
+  if (!item) fail(`no such ask: ${id} (on horde "${horde}")`);
+  if (item.kind !== 'charter') {
+    fail(`ask ${id} is kind "${item.kind}", not "charter" — taking in a ticket the mission card does not cover is a charter change and needs an ask of that kind`);
+  }
+  if (item.state !== 'answered') {
+    fail(`ask ${id} is not answered yet (state: ${item.state}) — ask.mjs answer ${id} "<answer>" --horde ${horde} first`);
+  }
+  return item;
+}
+
 function cmdAdd(horde, positional, flags) {
   const idRaw = positional[0];
   if (!idRaw) fail('add requires <ticket>');
@@ -196,6 +218,15 @@ function cmdAdd(horde, positional, flags) {
   if (!ticket) fail(`no such ticket: ${idRaw}`);
   if (acceptanceLines(ticket.text).length === 0) {
     fail(`ticket ${ticket.id} has no acceptance line — nothing anybody could reproduce, so nothing could ever prove it done. Add at least one "- [ ] …" line under "## Acceptance" (tk.mjs new --evidence "<what someone reproduces>", or edit the issue), then add it to the queue.`);
+  }
+  // …and the second thing checked at the door: the ticket against what the mission promised. A
+  // ticket nobody can prove done and a ticket the mission never said it would do are refused in
+  // the same place, because both are cheapest to catch before anything is built on them.
+  const pushback = charterPushback(horde, ticket);
+  let ask = null;
+  if (pushback) {
+    if (!flags.ask) fail(pushback.message);
+    ask = requireCharterAsk(horde, String(flags.ask));
   }
   const item = withQueueLock(horde, team, () => {
     const doc = load(horde, team);
@@ -210,11 +241,17 @@ function cmdAdd(horde, positional, flags) {
       }
     }
     const created = newQueueItem(ticket, dependsOn, flags.proposed ? 'proposed' : 'queued');
+    if (ask) {
+      created.notes.push({
+        at: nowIso(),
+        text: `charter: ${pushback.mismatches.map((m) => `${m.field} ${m.values.join(', ')}`).join(' · ')} — taken in on ask ${ask.id}: ${ask.answer}`,
+      });
+    }
     doc.items.push(created);
     save(horde, team, doc);
     return created;
   });
-  emit(item, flags, () => `${item.state}: ${item.ticket}`);
+  emit(item, flags, () => `${item.state}: ${item.ticket}${ask ? ` — taken in on ask ${ask.id}` : ''}`);
 }
 
 // The shape of a queued item, in one place, so a ticket the quality pass files enters the queue as
