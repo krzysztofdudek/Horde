@@ -5,8 +5,11 @@
 // spec and wrote down the question instead of guessing; the ticket stays where it was. `stuck` — a
 // ticket exhausted its fix rounds and tick (017) put it on "blocked"; tick files this one, not an
 // agent, and it carries the gate's last words and the ticket's log path. `lower` — a request to
-// weaken a rule: demote, an added yg-suppress marker, a moved review_by, an aspect detached from a
-// node. `charter` — a mission-card change: the goal, an exclusion, an evidence-catalogue row.
+// weaken something that protects the work: a rule (demote, an added yg-suppress marker, a moved
+// review_by, an aspect detached from a node), the proof (a promise put back to planned, a test
+// file or an assertion taken out, a skip marker added), or a gate (the script a gate command runs,
+// a commit or push hook, a CI workflow). `charter` — a mission-card change: the goal, an
+// exclusion, an evidence-catalogue row.
 //
 // Filing one never touches the queue, and an open one holds only what depends on the answer:
 // "stop" everything — nothing new goes out, nothing merges, no wave closes — "stuck" that ticket,
@@ -24,8 +27,19 @@
 // a decision that failed to record — a duplicate slug, a read-only file — never leaves an item
 // silently closed with nothing durable behind it. The ruling body is one line of bold fields
 // (Kind, Territory, Aspect, Scope where they apply) followed by the question and the client's own
-// answer — the exact shape land.mjs's law guard already reads to decide whether a "lower" ask lets
-// a landing through.
+// answer — the exact shape land.mjs's guards already read to decide whether a "lower" ask lets a
+// landing through.
+//
+// `--aspect` names WHAT is being weakened, and it has never been more than a string those guards
+// match on exactly. Three spellings share it, one per guard, chosen so no two can ever collide:
+//
+//   <rule id>          a rule in the graph, e.g. "no-marker"
+//   evidence:<name>    a promise's own id, or a test file's path
+//   gate:<path>        a file a gate command, a hook or CI actually runs
+//
+// A rule id is a bare directory name under `.yggdrasil/aspects/`, so it never carries the `:` the
+// other two open with. One answer lets one of these through and never a category: a mission that
+// means to lower three things files three questions.
 
 import {
   hordePath, readJSON, writeJSON, allocateId, nowIso, fail, parseArgs, emit, isMain, resolveHorde,
@@ -40,16 +54,21 @@ const USAGE = `usage: ask.mjs <command> [options]
 commands:
   add "<why>" --kind <${KINDS.join('|')}> [--ticket NNN] [--territory t] [--aspect a] [--horde h]
       --aspect is required for kind "lower" (there is nothing to lower without naming it) and
-      illegal for the other three kinds.
+      illegal for the other three kinds. It names the one thing being weakened, in whichever of
+      three spellings says which: a rule's own id ("no-marker"), a promise or a test file
+      ("evidence:adds-two-numbers", "evidence:tests/second.test.mjs"), or a gate, hook or CI file
+      ("gate:scripts/gate.sh", "gate:.husky/pre-commit"). One answer lets exactly that one thing
+      through and never a category.
   list [--open] [--horde h]
       open first, newest first.
   show <id> [--horde h]
   answer <id> "<answer>" [--scope once|mission] [--horde h]
       records the client's answer, closes the item, and appends it to decisions.md as "ask-<id>".
       --scope is accepted only for kind "lower": "once" (the default) spends the grant on the
-      landing that uses it; "mission" stands until "horde done". land.mjs's law guard reads this
-      decision, not the raw item, to decide whether a branch that weakens a rule may land; a
-      "stuck" ticket returns to the queue or closes as not-done only through an answer here.
+      landing that uses it; "mission" stands until "horde done". land.mjs's guards read this
+      decision, not the raw item, to decide whether a branch that weakens a rule, the proof or a
+      gate may land; a "stuck" ticket returns to the queue or closes as not-done only through an
+      answer here.
 
 options: --json  --help`;
 
@@ -106,7 +125,7 @@ export function addAsk(horde, {
   if (!why) throw new Error('why required');
   if (typeof kind !== 'string' || !KINDS.includes(kind)) throw new Error(`kind must be one of: ${KINDS.join('|')}`);
   if (kind === 'lower' && !aspect) throw new Error('--aspect is required for kind "lower" — nothing to lower without naming it');
-  if (kind !== 'lower' && aspect) throw new Error(`--aspect has no meaning for kind "${kind}" — only "lower" names a rule to weaken`);
+  if (kind !== 'lower' && aspect) throw new Error(`--aspect has no meaning for kind "${kind}" — only "lower" names something to weaken`);
   const doc = loadAsks(horde);
   const { id } = allocateId(horde, 'ask');
   const item = {

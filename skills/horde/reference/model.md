@@ -5,7 +5,8 @@ approval — the architect still rules on what changes the graph, whoever holds 
 stays Yggdrasil's own unit and is never re-cut to fit an agent; the agent is sized to the node, not
 the other way round. A worker holds exactly one worktree, and in the trunk checkout writes nothing
 but the landing script's own commits. Any territory's own agent may raise a rule on its evidence;
-only the client may lower one.
+only the client may lower one — and the same holds for everything else that protects the work, the
+proof and the gates alike.
 
 ## Three planes, two loops
 
@@ -123,7 +124,9 @@ Agents are biased towards their own work, and no prompt fixes that. The structur
   itself the moment every one is green — no second person's signature to collect;
 - a rule may only be raised by whoever holds the territory it reaches, and only lowered by the
   client's own answered word — the landing gate refuses a branch that tries the other direction by
-  itself;
+  itself, and refuses it the same way for the proof and the gates: a promise put back to planned, a
+  test file or an assertion taken out, a skip marker added, the script a gate runs or a hook removed
+  or rewritten. One answered question per thing being lowered, never one for a category;
 - an architect rules the whole plan once, before dispatch, and every graph change on its own
   evidence — nobody else sees the whole of it.
 
@@ -169,6 +172,10 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
   evidence, without asking, and every climb is written into the graph's log and listed at the wave
   close. Anything that lowers enforcement — a status down, a waiver, a review date, a retirement —
   is the chairman's, under every setting; the horde has no command for it.
+- Nothing that protects the work weakens without an answered question. The rules are one of the
+  three, not all of them: the proof (a promise's own status, the case paired with it, the test
+  files and how much each of them asserts) and the gates (what a gate command runs, the commit and
+  push hooks, the CI workflows) are held exactly as tightly, and by the same answer.
 
 ## Hard places, named
 

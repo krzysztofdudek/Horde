@@ -189,9 +189,11 @@ the agents that carry the plan out:
   the only place trailers are written, because it is the only place a merge commit is made. Where an
   adopter's history already has its own convention for this, take theirs and say so. On red it refuses, puts the ticket back on `changes` with the gate's own words, and
   ticks the round counter. Two things it refuses outright rather than reporting: a branch that
-  weakens a rule it is judged by, and a branch that sharpens a rule while changing the code that
-  rule refuses. The first goes through only on the **client's** recorded answer — put it to them,
-  never rule on it yourself.
+  weakens anything protecting the work — a rule it is judged by, a promise, a test file or an
+  assertion, a skip marker added, the script a gate runs, a commit or push hook, a CI workflow —
+  and a branch that sharpens a rule while changing the code that rule refuses. The first goes
+  through only on the **client's** recorded answer, naming that one thing — put it to them, never
+  rule on it yourself.
 - **A landing is not the end of a ticket.** When a merge is undone, or the evidence a ticket claimed
   goes red again and you file a new ticket for it (`tk.mjs new … --reopens NNN`), say so:
   `land.mjs NNN --fate reverted --by <sha>`, or `land.mjs NNN --fate reopened --by <the new
@@ -243,9 +245,12 @@ whether that belongs to `ask.mjs` too is still open (see the CHANGELOG).
 **What travels to the client, and what does not.** `ask.mjs` carries exactly four kinds: `stop` (a
 worker ran out of spec and wrote down the question instead of guessing — the ticket stays put),
 `stuck` (a ticket exhausted its fix rounds — `tick.mjs` files this one, not an agent), `lower` (a
-request to weaken a rule — demote, an added `yg-suppress` marker, a moved `review_by`, an aspect
-detached from a node; requires `--aspect`), and `charter` (a mission-card change: the goal, an
-exclusion, an evidence-catalogue row). A build decision — a contract, a boundary, a conflict between
+request to weaken something that protects the work: a rule — demote, an added `yg-suppress` marker,
+a moved `review_by`, an aspect detached from a node — or the proof — a promise put back to planned,
+a test file or an assertion taken out, a skip marker added — or a gate — the script a gate command
+runs, a commit or push hook, a CI workflow. Requires `--aspect`, naming that one thing: a rule's own
+id, `evidence:<promise or test file>`, or `gate:<path>`), and `charter` (a mission-card change: the
+goal, an exclusion, an evidence-catalogue row). A build decision — a contract, a boundary, a conflict between
 two tickets —
 is yours, not the client's; rule on it and record it with `decide.mjs add`. A ruling is complete when
 a worker can execute it without coming back: before approving a
@@ -255,14 +260,18 @@ line is the user's, so ask for it in the same breath instead of a second round t
 
 ## Standards you do not give away
 
-- **The horde leaves the graph no weaker than it found it.** Better rules, raised statuses, new
+- **The horde leaves the graph, the proof and the gates no weaker than it found them.** Better
+  rules, raised statuses, more tests, new
   relations and tidying after green are the horde's own to do, without asking. A rule climbs its
   ladder on evidence and nothing else — `node.mjs promote <rule>` grants the next rung only when
   the rule's own cases run clean and, for the rung that blocks, when two closed waves have seen
   nothing new against it and nothing is outstanding — and it writes the numbers into the graph's
   own log. Anything that lowers enforcement is the user's call: `node.mjs demote` refuses without
   `--by user`, there is no command here for a waiver or a review date, and the wave close lists
-  every raise for the chairman to veto whether or not anyone asks.
+  every raise for the chairman to veto whether or not anyone asks. The proof and the gates are held
+  by the same hand and answered the same way: a promise put back to planned, a test file or an
+  assertion taken out, a skip marker added, the script a gate runs or a hook rewritten or removed —
+  the landing refuses each of them outright until the client has said so, naming that one thing.
 - **Ports are the contracts.** A promise between nodes is one object in the graph, named and
   described — there is no version, in the graph or in Horde. Changing one a node already depends
   on is a proposal the architect rules on, not a silent edit.
