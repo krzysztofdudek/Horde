@@ -538,3 +538,4 @@
 - 2026-09-14 06:15 · 107 evidence row · HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/promises-package.test.mjs
 - 2026-09-14 06:15 · 107 review approve · Fixed directly in main. yg-aspect.yaml's description no longer claims a fixed three statuses; it now names the real rule (implemented, or one of this repository's own configured parked markers) matching issue 089's fix. No test asserted on the literal old text.
 - 2026-09-14 06:15 · 107 → done · doc-shape's yg-aspect.yaml description accurately describes the post-089 status rule instead of a fixed three.
+- 2026-09-14 06:11 · filed 108 · a repository with no evidence layer can never land anything: the revert-test item refuses outright when testGlobs is unset (filed as 104 by the worker branch; renumbered to 108 on merge — 104 through 107 were already taken)

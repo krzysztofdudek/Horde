@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, initHorde, addNode, run, yg,
+  writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE,
 } from './helpers.mjs';
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 import { wilson, ticketDeclares } from '../retro.mjs';
@@ -879,4 +880,44 @@ test('retro.mjs: a mission where nothing came back says so, rather than saying n
     readFileSync(hordeFile(dir, 'mission1', 'retro.md'), 'utf8'),
     /## What came back after landing\n\n\(nothing — no merge on this mission was undone/,
   );
+});
+
+// ---- a mission with no evidence layer says so in the retrospective too ------------------------
+//
+// A retrospective on a mission that had a suite behind it and one on a mission where every row was
+// somebody going and looking are read differently, and nothing else on the document says which
+// this was. So the document says it, at the top, before anything the mission wrote down is read
+// back.
+test('retro.mjs: a mission whose charter found no evidence layer says so on the document', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  initHorde(dir);
+  await writeEvidenceJudgement(dir, NO_EVIDENCE_LAYER);
+  seedTicket(dir, 'mission1', '001', { states: ['queued', 'merged'] });
+  writeClasses(dir, 'mission1', {});
+
+  const r = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.json.noEvidenceLayer, /^No evidence layer in this repository:/);
+
+  const document = readFileSync(hordeFile(dir, 'mission1', 'retro.md'), 'utf8');
+  const sentence = document.indexOf('No evidence layer in this repository:');
+  assert.notEqual(sentence, -1, document);
+  assert.ok(sentence < document.indexOf('## What the law could say'), 'it stands above what it frames');
+});
+
+test('retro.mjs: a mission that has an evidence layer says nothing about one', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  initHorde(dir);
+  await writeEvidenceJudgement(dir, A_TEST_SUITE);
+  seedTicket(dir, 'mission1', '001', { states: ['queued', 'merged'] });
+  writeClasses(dir, 'mission1', {});
+
+  const r = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.noEvidenceLayer, null);
+  assert.doesNotMatch(readFileSync(hordeFile(dir, 'mission1', 'retro.md'), 'utf8'), /No evidence layer in this repository/);
 });

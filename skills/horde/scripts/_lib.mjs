@@ -787,6 +787,50 @@ export function parseEvidenceRows(charterText) {
     }));
 }
 
+// --- the mission's charter.md: whether this repository has an evidence layer at all -------------
+//
+// One judgement per mission, written into the charter's own section when the cut is accepted: what
+// proof means HERE, read off this repository rather than brought along. One of its answers is that
+// there is nothing to point at — no test suite, no directory of promises, not even a file named
+// like a test — and that answer opens the section with "No evidence layer found".
+//
+// It is read back from the charter rather than detected again, because the charter is the file a
+// person corrects: a judgement somebody rewrote by hand is the one that stands, not whatever the
+// repository happens to look like the next time a tool goes looking.
+//
+// Anchored to the START of the section, deliberately. The charter template quotes the same phrase
+// in the middle of a sentence while telling the architect when to write it, and a mission whose cut
+// has not run yet has judged nothing at all — a loose search would read those instructions as a
+// verdict, and every landing, every wave close and the retrospective would announce an absence
+// nobody has established.
+
+export const EVIDENCE_SECTION = 'Evidence in this repository';
+
+const NO_EVIDENCE_LAYER_RE = /^no evidence layer found\b/i;
+
+// The one sentence every surface says when that is what the charter holds. It lives here, said the
+// same way in all of them, because a mission with nothing to run its proof against is one fact
+// about the whole mission — not a different remark invented at each place it comes up.
+export const NO_EVIDENCE_LAYER_NOTE = 'No evidence layer in this repository: the charter says there '
+  + 'is no test suite, no promises directory and nothing named like a test, so nothing here is '
+  + 'proved by running it. Every row of the evidence catalogue stands on what it names itself — a '
+  + 'scenario, a film, a screenshot, a measurement — and somebody has to look at that to know it '
+  + 'holds.';
+
+// True when the charter's own judgement is that there is nothing here to point at.
+export function noEvidenceLayerIn(charterText) {
+  const heading = `## ${EVIDENCE_SECTION}`;
+  const section = markdownSection(charterText, heading);
+  if (!section) return false;
+  return NO_EVIDENCE_LAYER_RE.test(section.slice(heading.length).trim());
+}
+
+// noEvidenceLayerNote(horde) — the sentence to say, or null when this mission has an evidence layer
+// (or has not judged yet, which is not the same claim and is never said as one).
+export function noEvidenceLayerNote(horde) {
+  return noEvidenceLayerIn(readText(hordePath(horde, 'charter.md'))) ? NO_EVIDENCE_LAYER_NOTE : null;
+}
+
 // --- the mission's decisions.md: its entries ---------------------------------------------------
 //
 // One block per `## ` heading: `## <date> · <slug>[ · ticket <id>][ · node <id>]`, then the body.

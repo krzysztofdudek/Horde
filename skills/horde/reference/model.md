@@ -178,7 +178,9 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
 - The first cut of the graph is a judgement the director makes with the user, not alone.
 - The test environment is supplied from outside Horde: it works with whatever it finds and never
   builds one itself. A repository with a thin or missing evidence layer gets an honest line in the
-  charter and in the frame, never a worker sent to build the missing piece.
+  charter and in the frame, never a worker sent to build the missing piece. Where the charter's
+  answer is that there is nothing here to point at, every landing, every wave close and the
+  retrospective say so in a line of their own rather than leaving it to be inferred.
 
 ## Mechanics
 
