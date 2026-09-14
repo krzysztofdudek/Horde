@@ -1,6 +1,6 @@
 # 047 · land liczy wpis cache bramki i nigdy go nie zapisuje
 
-**Status:** open
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -21,4 +21,5 @@ land zapisuje wpis last-gate.json dla swojego poziomu po każdym pomiarze bramki
 ## Evidence
 
 Corroborated independently by worker 003 (issue 003), while removing seat-model leftovers: land.mjs's checkGate builds a {sha,result,count} cache object that only horde.mjs done and wave.mjs close ever persist to cache/last-gate.json -- a landing's own gate result is never cached by land.mjs itself. Same finding as this issue's own Where:, from a second, independent source.
+- **ran:** node --test tests/land.test.mjs (rebased tip, fixed, then merged main) · **saw:** 1 fail then 71/71 after fixing a stale cost-tracking test assumption; 71/71 again on merged main
 
