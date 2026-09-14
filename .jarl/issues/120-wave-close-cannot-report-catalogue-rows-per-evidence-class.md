@@ -65,3 +65,5 @@ that is answered does `wave.mjs close` have something true to count. Whatever la
 charter already written readable, and keeps the prototype table invisible to catalogue readers.
 
 ## Evidence
+Krzysztof approved: a fifth column on the catalogue naming the evidence class outright (see .jarl/decisions.md, 120-fifth-catalogue-column). Ready for implementation dispatch. Held out of dispatch until the current wave lands — issue 124 (in progress) touches _lib.mjs, where parseEvidenceRows lives.
+

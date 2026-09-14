@@ -37,3 +37,9 @@ Krzysztof ruled: when a mission's charter judges 'no evidence layer' (no test su
 
 ## 2026-09-14 · 080-batch-landing-approved
 Krzysztof: zatwierdzam projekt jak jest, bez zmian (patrz issue 080's Evidence dla pełnej notatki projektowej — rozłączne pliki + ten sam parentBranch/parentTip kwalifikują bilety do wsadu; jeden tymczasowy worktree, jedno uruchomienie bramki (acquireGateLock raz) dla całego wsadu; przy sukcesie osobne scalenie per bilet (własny commit, wpis journala, rozmiar — bez zmian względem dziś); przy czerwonym wyniku fallback do lądowania jeden po jednym w tym samym przebiegu, bez bisekcji. Implementacja może ruszyć — held do czasu wylądowania issue 108 (oba dotykają land.mjs, unikamy samo-zadanego konfliktu).
+
+## 2026-09-14 · 122-consolidate-shared-git-helper
+Krzysztof: scalić w jedno wspólne, eksportowane odporne-na-retry git() w helpers.mjs, które wszystkie 17 dotkniętych plików testowych importują zamiast trzymać własną kopię — zamiast naprawiać każdy plik osobno. Held do czasu wylądowania bieżącej fali (121 dotyka retro.test.mjs, jednego z 17).
+
+## 2026-09-14 · 120-fifth-catalogue-column
+Krzysztof: wiersz katalogu karty (charter.md) zyskuje piątą kolumnę nazywającą wprost klasę dowodu (np. 'e2e scenario'), zamiast budować powiązanie wiersz-karty <-> plik promise. Prosta zmiana schematu; każda już napisana karta zostaje czytelna (brakująca kolumna = nieznana klasa). Held do czasu wylądowania bieżącej fali (124 dotyka _lib.mjs, gdzie żyje parseEvidenceRows).
