@@ -101,6 +101,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - Landings and mission closes run one at a time even when two of them start at the very same instant: two changes never land together, and the same closing line never reaches a component's history twice.
 - A change that has just landed is no longer re-checked from scratch when the mission's final check runs right after it — it reuses that landing's own result. Closing a round of work straight after a landing now correctly shows that landing as checked, instead of showing it as not yet checked.
 - A check meant to catch a ticket touching a path it must not is no longer fooled by a similarly named neighbour — a path you protect from `src/a` no longer lets `src/ab` through.
+- A promise whose status a repository's own settings say means nothing runs it yet is now accepted throughout the evidence package, instead of being refused before that setting could take effect.
 
 ### Migrating a mission already in flight
 

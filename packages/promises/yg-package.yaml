@@ -28,6 +28,14 @@ config:
     sections:
       type: string
       default: "What it checks, Why it matters, How to see it"
+    # Statuses that mean "nothing runs this yet, and that is fine", comma separated.
+    # Kept in step with has-evidence, evidence-is-live and evidence-matches-promise's
+    # own key of the same name: this is the first rule every promise meets, so a
+    # status they would treat as parked has to be accepted here too, or a promise
+    # using it would be refused before any of them ever saw it.
+    parked_markers:
+      type: string
+      default: "planned, disabled"
   product-language:
     # Words that look like code but are the product's own vocabulary, comma
     # separated — `PostgreSQL`, `OAuth`, a brand name with an internal capital.
