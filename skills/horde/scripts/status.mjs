@@ -115,9 +115,10 @@ function hordeDigest(horde, cfg) {
     .filter((node) => leases[node] && leases[node].horde !== horde)
     .map((node) => ({ node, horde: leases[node].horde, since: leases[node].since }));
 
-  // Every charter row, one of five states: no-ticket / queued / running / merged / reproduced —
-  // wave.mjs's own reading, shared with horde.mjs done's gate, of "does a ticket prove this row
-  // and how far has it gotten" (see wave.mjs's evidenceCoverage for what each state means).
+  // Every charter row, one of six states: no-ticket / prototyping / queued / running / merged /
+  // reproduced — wave.mjs's own reading, shared with horde.mjs done's gate, of "does a ticket
+  // prove this row and how far has it gotten" (see wave.mjs's evidenceCoverage for what each
+  // state means).
   const evidenceRows = evidenceCoverage(horde);
   const evidenceByState = {};
   for (const r of evidenceRows) evidenceByState[r.state] = (evidenceByState[r.state] || 0) + 1;
@@ -176,7 +177,7 @@ function printHorde(h) {
   if (h.evidence.total === 0) {
     console.log('  evidence: (no rows in the charter yet)');
   } else {
-    const order = ['no-ticket', 'queued', 'running', 'merged', 'reproduced'];
+    const order = ['no-ticket', 'prototyping', 'queued', 'running', 'merged', 'reproduced'];
     const summary = order.filter((s) => h.evidence.byState[s]).map((s) => `${s}=${h.evidence.byState[s]}`).join(' ');
     console.log(`  evidence: ${h.evidence.rows.filter((r) => r.state === 'reproduced').length}/${h.evidence.total} reproduced — ${summary}`);
     for (const row of h.evidence.rows) {

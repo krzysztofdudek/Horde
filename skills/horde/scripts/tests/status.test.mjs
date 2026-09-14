@@ -214,9 +214,10 @@ test('status.mjs: a ticket whose issue Status is "changes" reads as unverified, 
   assert.equal(tb.category, 'unverified', 'a ticket whose real Status is "changes" must not read as "landed"');
 });
 
-// E13 — status.mjs's evidence block: every charter row in one of five states, derived from
-// tickets' own **Status:** and acceptance checklists, never from a second, hand-kept count.
-test('status.mjs: the evidence block shows all five coverage states', async (t) => {
+// E13 — status.mjs's evidence block: every charter row in one of six states, derived from
+// tickets' own **Status:**, **Kind:** and acceptance checklists, never from a second, hand-kept
+// count.
+test('status.mjs: the evidence block shows all six coverage states', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -230,22 +231,34 @@ test('status.mjs: the evidence block shows all five coverage states', async (t) 
       '| E3 | in flight | web | |',
       '| E4 | merged, not yet stamped | web | |',
       '| E5 | already stamped by hand | web | someone |',
+      '| E6 | shown to the client, not yet answered | web | |',
+      '| E7 | shown, but real work is also filed on it | web | |',
     ].join('\n'),
   );
   writeFileSync(charterPath, charter);
 
-  function ticket(id, status, evidenceId) {
+  function ticket(id, status, evidenceId, kind) {
     const dst = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${id}-slug`);
     mkdirSync(dst, { recursive: true });
-    writeFileSync(join(dst, 'issue.md'), `# ${id} · slug\n\n**Status:** ${status}\n\n## Acceptance — evidence\n\n- [ ] covers ${evidenceId}\n`);
+    const kindLine = kind ? `\n**Kind:** ${kind}` : '';
+    writeFileSync(join(dst, 'issue.md'), `# ${id} · slug\n\n**Status:** ${status}${kindLine}\n\n## Acceptance — evidence\n\n- [ ] covers ${evidenceId}\n`);
     // The log's contents are not what the evidence block reads — a row's state comes from the
-    // ticket's own **Status:** and its acceptance checklist, and "reproduced" comes from the
-    // charter's own last column. The file exists here because a ticket directory has one.
+    // ticket's own **Status:**, **Kind:** and its acceptance checklist, and "reproduced" comes
+    // from the charter's own last column. The file exists here because a ticket directory has one.
     writeFileSync(join(dst, 'log.md'), `- 2026-01-01 status: ${status}\n`);
   }
   ticket('002', 'proposed', 'E2');
   ticket('003', 'running', 'E3');
   ticket('004', 'merged', 'E4');
+  // 099 — a row only a prototype names must not read as ordinary "queued" work: it is a promise
+  // being shown, not one being built, and a reader must be able to tell the two apart.
+  ticket('005', 'proposed', 'E6', 'prototype');
+  // Once a real ticket also claims the row (the shape after the client has answered and the real
+  // work is filed alongside it), the real ticket's own progress wins — whatever the prototype's
+  // own status is, even one as advanced-looking as "merged" (landed on the prototype branch, not
+  // the trunk).
+  ticket('006', 'merged', 'E7', 'prototype');
+  ticket('007', 'running', 'E7');
 
   const r = run('status.mjs', ['--horde', 'mission1'], dir);
   assert.equal(r.code, 0);
@@ -260,9 +273,14 @@ test('status.mjs: the evidence block shows all five coverage states', async (t) 
   assert.equal(byId.E4.ticket, '004');
   assert.equal(byId.E5.state, 'reproduced');
   assert.equal(byId.E5.reproducedBy, 'someone');
-  assert.equal(r.json.hordes[0].evidence.total, 5);
+  assert.equal(byId.E6.state, 'prototyping');
+  assert.equal(byId.E6.ticket, '005');
+  assert.equal(byId.E7.state, 'running', 'the real ticket wins the row over the prototype, whatever either one\'s own status');
+  assert.equal(byId.E7.ticket, '007');
+  assert.equal(r.json.hordes[0].evidence.total, 7);
 
   const human = run('status.mjs', ['--horde', 'mission1'], dir, { json: false });
-  assert.match(human.stdout, /evidence: 1\/5 reproduced/);
+  assert.match(human.stdout, /evidence: 1\/7 reproduced/);
   assert.match(human.stdout, /E4 \[merged\]/);
+  assert.match(human.stdout, /E6 \[prototyping\]/);
 });
