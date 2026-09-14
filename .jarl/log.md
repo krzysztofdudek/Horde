@@ -539,3 +539,6 @@
 - 2026-09-14 06:15 · 107 review approve · Fixed directly in main. yg-aspect.yaml's description no longer claims a fixed three statuses; it now names the real rule (implemented, or one of this repository's own configured parked markers) matching issue 089's fix. No test asserted on the literal old text.
 - 2026-09-14 06:15 · 107 → done · doc-shape's yg-aspect.yaml description accurately describes the post-089 status rule instead of a fixed three.
 - 2026-09-14 06:11 · filed 108 · a repository with no evidence layer can never land anything: the revert-test item refuses outright when testGlobs is unset (filed as 104 by the worker branch; renumbered to 108 on merge — 104 through 107 were already taken)
+- 2026-09-14 06:18 · filed 109 · land.mjs's own resolveTree calls omit horde too, same gap as 041's (filed as 104 by the worker branch; renumbered — 104 through 108 were already taken)
+- 2026-09-14 06:18 · filed 110 · resolveHordeTrunk races two concurrent callers onto one worktree path (filed as 105 by the worker branch; renumbered)
+- 2026-09-14 06:19 · filed 111 · README's top-of-file --horde/trunk contract reads broader than what's implemented (filed as 106 by the worker branch; renumbered)

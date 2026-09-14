@@ -60,6 +60,13 @@ One run: reconcile what a returned call left behind, put every ready branch thro
 what to start now, and say whether the queue has emptied. Then it exits — nothing lives between
 runs.
 
+Reconcile, the gate and the dispatch list all run in the tree --tree names; without it, cwd —
+whatever the calling shell already sits on — same as an ordinary read anywhere else in this tool
+set, not this horde's trunk just because a horde was resolvable. --horde h WRITTEN OUT is what
+changes that: on its own (no --tree) it resolves to that horde's own trunk worktree instead, exactly
+as queue.mjs plan/quality already read it. A bare tick.mjs call — the boot sequence's own — carries
+neither flag, so it inherits whatever tree the session is already in.
+
 --json prints {tree, branch, sha, spawn: [{ticket, model, brief}], judge: [{ticket, pairs, brief}],
 askClient: [{id, kind, why}], held: [{ticket, ask, kind, holds, note}], close: <bool>}. Everything
 on "spawn" has had its branch and worktree cut already, so the brief command on it renders against a
@@ -520,13 +527,26 @@ function externalStart(horde, cfg, entries, root) {
 // ---- one run --------------------------------------------------------------------------------
 
 function runOnce(horde, cfg, flags, runner) {
-  const info = resolveTree({ tree: flags.tree }, { cwd: process.cwd() });
-  const root = info.path;
   // The landing gate's lock, not a second one: two ticks on one repository would otherwise settle
-  // the same branch twice and hand the same ticket to two workers.
+  // the same branch twice and hand the same ticket to two workers. Taken before the tree is even
+  // resolved, and on purpose: --horde named explicitly (below) falls through to this horde's own
+  // trunk, which provisions that worktree the first time anything asks and `git reset --hard`s it
+  // on every ask after — both are their own small race between two ticks that reach this line at
+  // the same moment, and this is the one lock already serializing tick against itself, so
+  // resolving under it costs nothing new to set up.
   const lock = acquireGateLock('tick', null, { waitMs: gateLockWaitMs(cfg) });
   if (!lock.ok) fail(lock.note);
   try {
+    // No --tree: cwd, same as an ordinary graph read everywhere else in this tool set (see
+    // node.mjs main()'s own comment above its resolveTree call) — NOT this horde's trunk just
+    // because a horde was resolvable, which is the one question still open on ask a-002. What
+    // this DOES now honor is --horde typed explicitly: `flags.horde`, never the `horde` this
+    // function was handed (resolveHorde's own default-to-the-sole-horde reading), so a bare
+    // `tick.mjs` run is untouched and only a caller who actually wrote --horde gets trunk instead
+    // of whatever branch the shell happened to be sitting on — the same distinction queue.mjs
+    // plan/quality already draw, and the one 037 broke by forwarding the resolved horde instead.
+    const info = resolveTree({ tree: flags.tree, horde: flags.horde }, { cwd: process.cwd() });
+    const root = info.path;
     // Read before anything is written: a queue.json caught half-written refuses here, cleanly,
     // naming the file, while every other read below is safe because this one passed.
     // The holds are worked out off this same read, once, so the landing gate and the dispatch list

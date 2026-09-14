@@ -5,8 +5,9 @@
 //
 // node.mjs's read commands take `--tree`/`--ticket`/`--scratch` (see node.mjs main()); `bind` with
 // no positional is used as the plain vehicle below since it needs nothing else to exist first.
-// queue.mjs's commands take `--horde` too, and that is the one place `--horde` alone means trunk —
-// everywhere else here it stays the ordinary multi-horde disambiguator.
+// queue.mjs's commands take `--horde` too, and that (with tick.mjs, covered in tick.test.mjs, not
+// here) is where `--horde` written out alone means trunk — everywhere else here it stays the
+// ordinary multi-horde disambiguator.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
