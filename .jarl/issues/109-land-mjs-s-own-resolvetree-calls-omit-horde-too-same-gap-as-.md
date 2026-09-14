@@ -1,6 +1,6 @@
 # 109 · land.mjs's own resolveTree calls omit horde too, same gap as 041's
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -21,4 +21,5 @@ Read both call sites against current code (line numbers may have shifted), work 
 ## Evidence
 
 - **ran:** grep -n "resolveTree(" skills/horde/scripts/land.mjs (from a checkout at the state 041 landed on) · **saw:** two call sites, both `resolveTree({ tree: flags.tree }, { cwd: process.cwd() })`, at lines 1829 and 1843, `horde` absent from either
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/land.test.mjs skills/horde/scripts/tests/docs.test.mjs · **saw:** 116/116 pass on rebased branch tip and again on merged main; independently re-read both resolveTree call sites' diffs before merging, confirmed flags.horde used consistently at both, matching 041's established convention
 
