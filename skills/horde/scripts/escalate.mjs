@@ -3,12 +3,13 @@
 //
 // What is left once ask.mjs (019) folded escalation and dissent into the one channel to the
 // client: the second trigger for legislation (the first is the consultant at refine.mjs, the
-// third is legislate.mjs after a wave close). The same answer given three times over one
-// territory is a rule nobody wrote down — so this groups the ANSWERED asks by (kind, territory,
-// normalized answer text) and hands a group past the threshold to whoever works that territory as
-// a rule proposal. Three different answers to the same kind of question on one territory are three
-// different answers, not a rule; the tool counts what was actually said, not how many times the
-// question came up.
+// third is audit.mjs's review-date sweep at a wave close — legislate itself is a brief.mjs role,
+// not a standalone script). The same answer given three times over one territory is a rule
+// nobody wrote down — so this groups the ANSWERED asks by (kind, territory, normalized answer
+// text) and hands a group past the threshold to whoever works that territory as a rule proposal.
+// Three different answers to the same kind of question on one territory are three different
+// answers, not a rule; the tool counts what was actually said, not how many times the question
+// came up.
 //
 // No state of its own: it reads hordes/<horde>/asks.json (ask.mjs) and only ever proposes, never
 // files — filing a rule is the territory's own agent's move, through node.mjs promote or a new
