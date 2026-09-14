@@ -1,6 +1,6 @@
 # 012 · reset trunku po cichu
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -21,4 +21,6 @@ Gdy reset odrzuca zmiany, jedna linia na stderr mówi, ile plików odrzucono i d
 Dowód, którego oczekuję: skills/horde/scripts/tests/lib.test.mjs.
 
 ## Evidence
+
+- **ran:** node --test tests/lib.test.mjs · **saw:** 29/29 pass; merged; README.md conflict with 003's rewrite resolved by inserting the new sentence into HEAD's current paragraph structure
 
