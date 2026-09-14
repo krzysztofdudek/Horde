@@ -558,3 +558,4 @@
 - 2026-09-14 07:23 · 104 → in-progress · dispatched to an Opus worker with the design already decided
 - 2026-09-14 07:32 · decided 108-no-evidence-layer-exempts-revert-test
 - 2026-09-14 07:32 · 108 evidence · Ruled by Krzysztof (see .jarl/decisions.md, 108-no-evidence-layer-exempts-revert-test): checkRevertTest exempts every ticket when the charter has judged 'no evidence layer' — return ok:true immediately citing the charter's own judgment, before the testGlobs-empty check and before requiring a per-ticket **No new tests: declaration. Held out of dispatch until issue 109 (also touching land.mjs) lands, to avoid a self-inflicted merge conflict.
+- 2026-09-14 07:34 · 080 evidence · Design note (jarl, before any code — per this issue's own acceptance criteria):
