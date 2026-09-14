@@ -30,9 +30,7 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import {
-  execFileSync, execSync, spawn as spawnProcess,
-} from 'node:child_process';
+import { execFileSync, spawn as spawnProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit,
@@ -399,11 +397,22 @@ function workerName(ticket, round) {
   return round > 0 ? `w-${ticket}-r${round}` : `w-${ticket}`;
 }
 
-function briefCommand(horde, ticket, name, worktree, takeover) {
-  const parts = ['node', join(SCRIPTS, 'brief.mjs'), 'worker', ticket, '--name', name, '--horde', horde];
+// The argv a worker's brief is rendered with. Returned as an array, not the joined display string
+// below, so a caller that actually RUNS this (externalStart, never a shell) passes each part as its
+// own argv entry — a horde or worktree name is never validated against a safe character set at
+// creation, so joining these into one string for a shell to reparse would let either one break out
+// of its own argument.
+function briefCommandParts(horde, ticket, name, worktree, takeover) {
+  const parts = [join(SCRIPTS, 'brief.mjs'), 'worker', ticket, '--name', name, '--horde', horde];
   if (worktree) parts.push('--tree', worktree);
   if (takeover) parts.push('--takeover');
-  return parts.join(' ');
+  return parts;
+}
+
+// The same command, as the one string a person reads and runs themselves (the session runner's own
+// dispatch list, a log line) — never fed to a shell by this tool itself.
+function briefCommand(horde, ticket, name, worktree, takeover) {
+  return ['node', ...briefCommandParts(horde, ticket, name, worktree, takeover)].join(' ');
 }
 
 // How many rounds of changes this ticket has already been through: changesRoundInfo answers with
@@ -464,6 +473,7 @@ function dispatch(horde, cfg, root, flags, holds) {
       ticket: id,
       model: takeover ? classUp(cfg, baseClass) : baseClass,
       brief: briefCommand(horde, id, workerName(id, prior), started.worktree, takeover),
+      briefParts: briefCommandParts(horde, id, workerName(id, prior), started.worktree, takeover),
       stacked: stackedLine(candidate.stackOn),
       worktree: started.worktree,
       branch: started.branch,
@@ -503,11 +513,13 @@ function closeCommand(horde) {
 // starts the workers itself through the host's own headless CLI. The command line is the operator's
 // (`config.runner.spawn`), with `<class>` and `<brief>` filled in.
 //
-// The brief itself is rendered by running `entry.brief` verbatim — the exact command dispatch()
-// already built for this entry, takeover section and round-aware `--name` included. That is the
-// same command the session runner would be handed to run itself; the only thing "external" changes
-// is who runs it, never what it says (see reference/model.md's Runner section) — so this must never
-// reconstruct a narrower call of its own.
+// The brief itself is rendered from `entry.briefParts` — the same argv dispatch() already built for
+// this entry, takeover section and round-aware `--name` included, run directly (never through a
+// shell: a horde or worktree name is nobody's to validate as shell-safe, and this is the one path
+// that runs a worker's brief with nobody reading the command first). That is the same command the
+// session runner would be handed to run itself; the only thing "external" changes is who runs it,
+// never what it says (see reference/model.md's Runner section) — so this must never reconstruct a
+// narrower call of its own.
 function externalStart(horde, cfg, entries, root) {
   const template = cfg.runner && cfg.runner.spawn;
   const started = [];
@@ -515,7 +527,7 @@ function externalStart(horde, cfg, entries, root) {
     const path = hordePath(horde, 'briefs', `${entry.ticket}.md`);
     let text;
     try {
-      text = execSync(entry.brief, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      text = execFileSync(process.execPath, entry.briefParts, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
       started.push({ ticket: entry.ticket, started: false, note: `could not render the brief: ${e && e.stderr ? String(e.stderr).trim() : e}` });
       continue;

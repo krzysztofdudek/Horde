@@ -704,6 +704,39 @@ test('tick.mjs --runner external: the round-4 (takeover) worker is briefed with 
   assert.ok(!briefText.includes(`You are **w-${id}**,`), 'never the flat name once the ticket is in the takeover band');
 });
 
+// externalStart() used to run entry.brief as one string through a shell (execSync). Nothing
+// validates a horde's name against a safe character set at creation — horde.mjs init takes
+// whatever it is given — so a horde named with a shell metacharacter sequence that is still a
+// valid git ref (branch names forbid spaces and a handful of others, but not ';', '|', '&', '`',
+// '$(' ) would have let that name break out of its own --horde argument and run an arbitrary
+// second command. Fixed by running the brief through the same argv array dispatch() already built
+// (briefParts), never a shell. This proves the fix holds against the exact class of name that
+// would have triggered it, not just that the happy path still works.
+test('tick.mjs --runner external: a horde name is never handed to a shell, even one shaped like an injection', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  const horde = 'mission1;>INJECTED_MARKER';
+  initHorde(dir, horde);
+
+  const marker = join(dir, 'INJECTED_MARKER');
+  run('horde.mjs', ['config', 'set', 'runner.spawn', 'true'], dir);
+  const id = mkTicket(dir, 'runner-injection-check', { files: 'src/inj.ts' });
+  run('queue.mjs', ['add', id], dir);
+  run('queue.mjs', ['set', id, 'running', '--agent', 'w'], dir);
+
+  const r = tick(dir, ['--runner', 'external']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.external.length, 1, `one worker started (${JSON.stringify(r.json.external)})`);
+  const started = r.json.external[0];
+  assert.ok(started.started, `brief render did not fail on the weird name (${JSON.stringify(started)})`);
+  assert.ok(!existsSync(marker), 'the ";>INJECTED_MARKER" tail of the horde name was never handed to a shell');
+
+  // Not just "nothing bad happened" — the weird name reached brief.mjs as one literal argument, the
+  // same as any other horde name would.
+  const briefText = readFileSync(started.brief, 'utf8');
+  assert.ok(briefText.includes(horde), 'the horde name reached the brief intact, as one literal value');
+});
+
 test('tick.mjs: asks.json that does not exist is an empty in-tray, not a refusal', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
