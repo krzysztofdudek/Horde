@@ -540,6 +540,67 @@ test('tick.mjs: a red gate with rounds left puts the ticket back in the queue ra
   assert.ok(!existsSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json')), 'nothing is asked of the client while rounds remain');
 });
 
+// changesRoundInfo's own label ("resume same worker" for rounds 1..resume, "fresh worker, class
+// up" beyond it) has always been real — the takeover flag on the brief command already followed
+// it. What the dispatch list handed out did not: `model` was read straight off the ticket's own
+// static Class field regardless of `takeover`, so the "class up" in the label never actually
+// happened. Four red gates in a row (default resume=3, fresh=2) drives the ticket past the resume
+// band and into the fresh one on the fourth, and the redispatch that follows each round is where
+// the fix actually shows.
+test('tick.mjs dispatch: past config.fixRounds.resume, the redispatched model is one class up — not the ticket\'s own class', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+
+  const id = mkTicket(dir, 'earns-a-heavier-worker', { files: 'src/hw.ts', class: 'standard' });
+  run('queue.mjs', ['add', id], dir);
+  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'w'], dir);
+  git(['-C', running.json.worktree, 'commit', '--allow-empty', '-qm', 'work'], dir);
+  const sha = git(['-C', running.json.worktree, 'rev-parse', 'HEAD'], dir);
+
+  const spawns = [];
+  for (let round = 1; round <= 4; round += 1) {
+    assert.equal(run('queue.mjs', ['set', id, 'landed'], dir).code, 0);
+    writeLandResult(dir, id, {
+      ticket: id,
+      branch: running.json.branch,
+      sha,
+      ok: false,
+      checks: [{ name: 'tests', ok: false, note: `round ${round} still red` }],
+      pairs: [],
+      brief: null,
+      landed: null,
+    });
+    const r = tick(dir);
+    assert.equal(r.code, 0, r.stderr);
+    spawns.push(r.json.spawn.find((s) => s.ticket === id));
+    // tick.mjs's own gate-red handler logs a round only once per "changes" status (so reading the
+    // same red result twice never double-counts) — so the ticket has to be moved off "changes"
+    // before the next red gate counts as a new round, exactly as a real worker taking it back up
+    // would leave it.
+    if (round < 4) {
+      assert.equal(run('tk.mjs', ['status', id, 'running', `resuming for round ${round + 1}`], dir).code, 0);
+    }
+  }
+
+  await t.test('rounds 1-2 (still within resume) redispatch on the ticket\'s own class, same as before this fix', () => {
+    for (const spawned of spawns.slice(0, 2)) {
+      assert.ok(spawned, `redispatched (${JSON.stringify(spawns)})`);
+      assert.doesNotMatch(spawned.brief, /--takeover/);
+      assert.equal(spawned.model, 'standard');
+    }
+  });
+
+  await t.test('rounds 3-4 (past resume) redispatch one class up, never the ticket\'s own "standard"', () => {
+    for (const spawned of spawns.slice(2)) {
+      assert.ok(spawned, `redispatched (${JSON.stringify(spawns)})`);
+      assert.match(spawned.brief, /--takeover/);
+      assert.equal(spawned.model, 'heavy', 'one rung up the default ladder from "standard"');
+      assert.notEqual(spawned.model, 'standard');
+    }
+  });
+});
+
 test('tick.mjs: asks.json that does not exist is an empty in-tray, not a refusal', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));

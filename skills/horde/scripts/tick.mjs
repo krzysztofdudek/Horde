@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit,
   isMain, resolveHorde, git, resolveTree, withProvenance, provenanceLine, withQueueLock,
-  runMain, appendText, parseEvidenceRows,
+  runMain, appendText, parseEvidenceRows, classUp,
 } from './_lib.mjs';
 import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine,
@@ -450,9 +450,10 @@ function dispatch(horde, cfg, root, flags, holds) {
       on: candidate.stackOn && candidate.stackOn.length ? candidate.stackOn[0] : undefined,
       agent: workerName(id, prior),
     });
+    const baseClass = (ticket && parseField(ticket.text, 'Class')) || started.class || null;
     out.push({
       ticket: id,
-      model: (ticket && parseField(ticket.text, 'Class')) || started.class || null,
+      model: takeover ? classUp(cfg, baseClass) : baseClass,
       brief: briefCommand(horde, id, workerName(id, prior), started.worktree, takeover),
       stacked: stackedLine(candidate.stackOn),
       worktree: started.worktree,
