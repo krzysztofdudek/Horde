@@ -4,10 +4,18 @@ import { execFileSync } from 'node:child_process';
 import {
   existsSync, mkdirSync, readFileSync, writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode, yg,
 } from './helpers.mjs';
+import { sizeRanks } from '../_lib.mjs';
+
+const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
+
+function git(args, cwd) {
+  execFileSync('git', args, { cwd, stdio: 'ignore' });
+}
 
 // The architect reads the plan whole, from a file: relayed through a message it gets summarised
 // on the way, and a steward cannot message the architect directly in any case.
@@ -36,8 +44,6 @@ test('queue.mjs plan --out: writes the plan to a file and says so on stdout', as
 // where it can be checked: nothing else is queued against the row until the answer exists, and
 // once it does the row reads as answered in both places a person reads, on its own, never folded
 // into the figures for work that is actually built.
-
-function git(args, dir) { execFileSync('git', args, { cwd: dir, stdio: 'ignore' }); }
 
 function writeFile(dir, rel, text) {
   const full = join(dir, rel);
@@ -145,4 +151,143 @@ test('a prototype answered by the client: the row reads as answered on its own, 
     // The catalogue figures are untouched by it: being shown a thing is not having built it.
     assert.match(text, /\*\*Evidence catalogue:\*\* 0\/2 green/);
   });
+});
+
+// ---- change size, and where it sits among the rest of the plan -------------------------------
+
+// A ticket, queued, started on its own branch, with a change of a known size committed on it.
+// A new file of `lineCount` lines is `lineCount` insertions across one file against the team
+// branch — a size the assertions below can name exactly rather than approximate.
+function ticketWithChange(dir, slug, lineCount) {
+  const created = run('tk.mjs', ['new', slug, '--title', `The ${slug}`, '--node', 'nodeA', '--class', 'standard', '--evidence', 'it works'], dir);
+  assert.equal(created.code, 0, created.stderr);
+  const id = created.json.id;
+  assert.equal(run('queue.mjs', ['add', id], dir).code, 0);
+  const started = run('queue.mjs', ['set', id, 'running'], dir);
+  assert.equal(started.code, 0, started.stderr);
+  const tree = started.json.worktree;
+  const rel = join('src', 'nodeA', `${slug}.txt`);
+  mkdirSync(join(tree, 'src', 'nodeA'), { recursive: true });
+  writeFileSync(join(tree, rel), `${Array.from({ length: lineCount }, (_, i) => `line ${i + 1}`).join('\n')}\n`);
+  git(['add', rel], tree);
+  git(['commit', '-qm', `${slug}: ${lineCount} line(s)`], tree);
+  return id;
+}
+
+test('queue.mjs plan: change size and its rank among the plan\'s own tickets', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'nodeA', { mapping: ['src/nodeA/**'] });
+
+  const big = ticketWithChange(dir, 'big', 60);
+  const mid = ticketWithChange(dir, 'mid', 20);
+  const small = ticketWithChange(dir, 'small', 8);
+  const tiny = ticketWithChange(dir, 'tiny', 2);
+  // A fifth ticket nobody has started. There is nothing to measure on it, and the plan says so
+  // rather than guessing a size out of what the ticket declares.
+  const unstarted = run('tk.mjs', ['new', 'unstarted', '--title', 'Not started', '--node', 'nodeA', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
+  assert.equal(run('queue.mjs', ['add', unstarted], dir).code, 0);
+
+  const planNow = () => {
+    const r = run('queue.mjs', ['plan'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    return r.json;
+  };
+
+  await t.test('every started ticket carries its measured size and its rank in this plan', () => {
+    const plan = planNow();
+    const sizeOf = (id) => plan.tickets.find((x) => x.id === id).size;
+    assert.deepEqual(sizeOf(big), {
+      files: 1, lines: 60, rank: 1, of: 4, biggestQuarter: true,
+    });
+    assert.deepEqual([mid, small, tiny].map((id) => sizeOf(id).lines), [20, 8, 2]);
+    assert.deepEqual([mid, small, tiny].map((id) => sizeOf(id).rank), [2, 3, 4]);
+    assert.deepEqual([mid, small, tiny].map((id) => sizeOf(id).of), [4, 4, 4]);
+    assert.deepEqual([mid, small, tiny].map((id) => sizeOf(id).biggestQuarter), [false, false, false]);
+    assert.equal(sizeOf(unstarted), null, 'a ticket with no branch has no size to report');
+  });
+
+  await t.test('the plan prints each rank, and offers the biggest quarter as a split to consider', () => {
+    const human = run('queue.mjs', ['plan'], dir, { json: false });
+    assert.equal(human.code, 0, human.stderr);
+    assert.match(
+      human.stdout,
+      new RegExp(`change size \\(lines/files, biggest first\\): ${big} 60/1 — 1 of 4 · ${mid} 20/1 — 2 of 4 · ${small} 8/1 — 3 of 4 · ${tiny} 2/1 — 4 of 4 · 1 not measured yet`),
+    );
+    assert.match(human.stdout, new RegExp(`biggest quarter of this plan: ${big} — worth considering a split`));
+    // A suggestion, not an action: the plan says outright who rules on it.
+    assert.match(human.stdout, /the architect decides, nothing here acts on it/);
+    const plan = planNow();
+    assert.deepEqual(plan.splitSuggestions, [{
+      ticket: big, lines: 60, files: 1, rank: 1, of: 4,
+    }]);
+  });
+
+  // The point of the whole signal: it is a position in a set, not a size anything is over. The
+  // 60-line change below is not touched — the plan around it is — and it stops standing out.
+  await t.test('a rank, not a threshold: the same change stops standing out once bigger work joins the plan', () => {
+    const bigger = ticketWithChange(dir, 'bigger', 300);
+    const alsoBigger = ticketWithChange(dir, 'alsobigger', 200);
+    const plan = planNow();
+    const sizeOf = (id) => plan.tickets.find((x) => x.id === id).size;
+    assert.equal(sizeOf(big).lines, 60, 'the change itself did not move');
+    assert.equal(sizeOf(big).rank, 3);
+    assert.equal(sizeOf(big).of, 6);
+    assert.equal(sizeOf(big).biggestQuarter, false);
+    assert.deepEqual(plan.splitSuggestions.map((s) => s.ticket), [bigger, alsoBigger]);
+  });
+});
+
+// ---- there is no threshold to find ----------------------------------------------------------
+
+// Scale invariance is the strongest statement of "no threshold" there is: multiply every change in
+// the set by any factor and the answer is identical, which no fixed size could survive.
+test('the size rank is scale-free, and a set with nothing to compare has no biggest quarter', () => {
+  const set = (f) => [
+    { id: 'a', size: { lines: 100 * f, files: 5 * f } },
+    { id: 'b', size: { lines: 50 * f, files: 3 * f } },
+    { id: 'c', size: { lines: 10 * f, files: 1 * f } },
+    { id: 'd', size: { lines: 5 * f, files: 1 * f } },
+  ];
+  const shape = (ranks) => [...ranks].map(([id, s]) => [id, s.rank, s.of, s.biggestQuarter]);
+  const once = shape(sizeRanks(set(1)));
+  assert.deepEqual(once, [['a', 1, 4, true], ['b', 2, 4, false], ['c', 3, 4, false], ['d', 4, 4, false]]);
+  assert.deepEqual(shape(sizeRanks(set(1000))), once, 'a thousand times bigger, same answer');
+  assert.deepEqual(shape(sizeRanks(set(0.01))), once, 'a hundred times smaller, same answer');
+
+  // Nothing to compare against: a lone change, and a set where every change is the same size.
+  const lone = sizeRanks([{ id: 'a', size: { lines: 9000, files: 400 } }]);
+  assert.equal(lone.get('a').biggestQuarter, false, 'a change is not outsized against nothing');
+  const flat = sizeRanks(['a', 'b', 'c', 'd'].map((id) => ({ id, size: { lines: 9000, files: 400 } })));
+  assert.deepEqual([...flat.values()].map((s) => s.biggestQuarter), [false, false, false, false]);
+
+  // A change that could not be measured is left out of the ranking rather than counted as zero.
+  const partial = sizeRanks([{ id: 'a', size: { lines: 4, files: 1 } }, { id: 'b', size: null }]);
+  assert.equal(partial.has('b'), false);
+  assert.equal(partial.get('a').of, 1);
+});
+
+// The same claim read off the source: one place decides the rank, and the only number written
+// down there is what the word "quartile" means. A threshold would be a size compared against a
+// number, and there is none to find.
+test('no size threshold is written down anywhere the signal is computed', () => {
+  const lib = readFileSync(join(SCRIPTS_DIR, '_lib.mjs'), 'utf8');
+  const from = lib.indexOf('// ---- how big a change is');
+  const to = lib.indexOf('// repoRoot() —');
+  assert.ok(from !== -1 && to > from, 'the change-size section moved — this scan no longer reads it');
+  const block = lib.slice(from, to);
+
+  const numbers = [...new Set([...block.matchAll(/(?<![\w$.])\d+(?![\w$])/g)].map((m) => m[0]))].sort();
+  assert.deepEqual(numbers, ['0', '1', '4'], `the size section names a number it did not before: ${numbers.join(', ')}`);
+  assert.equal([...block.matchAll(/(?<![\w$.])4(?![\w$])/g)].length, 1);
+  assert.match(block, /const QUARTERS = 4;/, 'the only figure here is the four quarters of a quartile');
+  assert.doesNotMatch(block, /\b(?:lines|files)\b\s*[<>]=?\s*\d/, 'a measured size is compared against a number');
+  assert.doesNotMatch(block, /\d\s*[<>]=?\s*\b(?:lines|files)\b/, 'a number is compared against a measured size');
+
+  // Everything else only reads the verdict; nobody re-decides it with a figure of their own.
+  for (const file of ['queue.mjs', 'land.mjs', 'wave.mjs']) {
+    const text = readFileSync(join(SCRIPTS_DIR, file), 'utf8');
+    assert.doesNotMatch(text, /biggestQuarter\s*[:=][^=]/, `${file} decides the biggest quarter for itself`);
+  }
 });

@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 import {
   hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, leaseHolderForNode,
   resolveTree, provisionTree, provenanceLine, withProvenance, firstClass, withQueueLock, appendText,
-  parseEvidenceRows,
+  parseEvidenceRows, diffSize, sizeRanks,
   runMain,
 } from './_lib.mjs';
 import {
@@ -1237,6 +1237,33 @@ export function buildPlan(horde, team, cfg, { tree } = {}) {
     .filter((r) => r.id && !claimed.has(r.id))
     .map((r) => ({ id: r.id, evidence: r.evidence }));
 
+  // How big each ticket's change is, and where that sits among the OTHER tickets of this same
+  // plan. Size is the one thing about a change that measurement bore out, so the plan says it —
+  // as a position in the set of tickets actually in play, recomputed from that set every call.
+  // There is no size written down here that a ticket is "over": the same change ranks differently
+  // in a mission of small work than in a mission of large work, which is the whole point.
+  //
+  // A ticket whose branch has not been cut has no change to measure and gets no position; it is
+  // reported as not measured rather than guessed at from what the ticket declares.
+  for (const t of tickets) {
+    const item = items.get(t.id);
+    t.size = item && item.branch
+      ? diffSize(parentBranchOf(horde, team, item, { cwd: root }).branch, item.branch, { cwd: root })
+      : null;
+  }
+  const ranks = sizeRanks(tickets.map((t) => ({ id: t.id, size: t.size })));
+  for (const t of tickets) t.size = ranks.get(t.id) || null;
+
+  // The biggest quarter of this plan, offered to the architect and to nobody else. Nothing in this
+  // tool set splits a ticket, refuses one, or reorders anything because of what is on this list —
+  // it is a reading, and the ruling on it is the architect's.
+  const splitSuggestions = tickets
+    .filter((t) => t.size && t.size.biggestQuarter)
+    .sort((a, b) => a.size.rank - b.size.rank || a.id.localeCompare(b.id))
+    .map((t) => ({
+      ticket: t.id, lines: t.size.lines, files: t.size.files, rank: t.size.rank, of: t.size.of,
+    }));
+
   const weightEstimate = tickets.reduce((sum, t) => sum + weightOf(t.class) * 2, 0);
   const parallelism = cfg.parallelism || 6;
   const waves = layers.reduce((sum, l) => sum + Math.ceil(l.length / parallelism), 0);
@@ -1254,6 +1281,7 @@ export function buildPlan(horde, team, cfg, { tree } = {}) {
     loose,
     lockConflicts,
     hubFiles,
+    splitSuggestions,
     consumesWithoutProducer,
     cycles,
     uncoveredEvidence,
@@ -1342,6 +1370,16 @@ export function renderPlan(plan) {
   lines.push(plan.hubFiles.length
     ? `hub files: ${plan.hubFiles.map((h) => `${h.file} (${h.tickets.join(', ')})`).join(' · ')}`
     : 'hub files: none');
+  const sized = plan.tickets.filter((t) => t.size)
+    .sort((a, b) => a.size.rank - b.size.rank || a.id.localeCompare(b.id));
+  const unsized = plan.tickets.length - sized.length;
+  const sizes = sized.map((t) => `${t.id} ${t.size.lines}/${t.size.files} — ${t.size.rank} of ${t.size.of}`);
+  if (unsized) sizes.push(`${unsized} not measured yet (no branch cut)`);
+  lines.push(`change size (lines/files, biggest first): ${sizes.join(' · ')}`);
+  const suggestions = plan.splitSuggestions || [];
+  lines.push(suggestions.length
+    ? `biggest quarter of this plan: ${suggestions.map((s) => s.ticket).join(', ')} — worth considering a split; the architect decides, nothing here acts on it`
+    : 'biggest quarter of this plan: nothing stands out against the rest');
   lines.push(plan.consumesWithoutProducer.length
     ? `consumes without a producer: ${plan.consumesWithoutProducer.map((c) => `${c.ticket} needs ${c.port}`).join(' · ')}`
     : 'consumes without a producer: none');

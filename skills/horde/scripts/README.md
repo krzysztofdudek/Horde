@@ -276,8 +276,12 @@ earning no row at all claims nothing — neither is a mismatch.
   connected components with the tickets that hang loose on their own, tickets with no order
   between them that claim the same file, files three or more tickets claim, the extra approvals a
   port change owes (who consumes it: `node.mjs`'s `consumersOf`), consumed ports nothing produces,
-  the charter evidence rows no ticket names, the weight estimate (Σ class weight × 2 runs per
-  ticket) and the waves that many layers need at
+  the charter evidence rows no ticket names, how big each started ticket's change has grown (lines
+  and files, against the branch it was cut from) with its rank among the others of this same plan
+  and the biggest quarter of them offered as splits worth considering — a reading recomputed from
+  the tickets in play every call, never a size written down anywhere, and nothing here acts on it;
+  a ticket with no branch yet has nothing to measure and is reported as such. Then the weight
+  estimate (Σ class weight × 2 runs per ticket) and the waves that many layers need at
   `config.parallelism`. Merged and dropped tickets are out of the plan — it is what remains to do.
   A circle of dependencies is a refusal, with the circle printed. `--json` is a `horde-plan/1`
   document carrying all of it. `--apply-order` records the order `plan` proposed for a file clash
@@ -744,7 +748,7 @@ tickets at that moment (imported, never a second derivation of the DAG), the par
 layer allows within `config.parallelism`, and the instant the wave opened — the three things the
 close reads back to say what the wave planned, and to know which rulings belong to it.
 
-Beyond the counts it always carried, `close` states five figures the chairman reads:
+Beyond the counts it always carried, `close` states six figures the chairman reads:
 
 - **what came back after landing** — the merges reverted and the tickets reopened in this wave,
   counted beside the merges and never folded into them, off the same journal bullets `land.mjs
@@ -752,6 +756,12 @@ Beyond the counts it always carried, `close` states five figures the chairman re
   back did not merge six;
 - **parallelism** — planned (the bullet above) against achieved (the most tickets this wave landed
   on any one day; a journal bullet is dated, not stamped, so the day is the grain the record has);
+- **change size** — how big each of this wave's merges turned out (lines and files, read from the
+  merge commit itself), ranked against the other merges of the same wave, with the biggest quarter
+  of them named. The wave is where a cut that was too wide shows up as a fact rather than as a
+  feeling, so the close records it and stops there: nothing is refused or reopened on account of
+  it, and no size is written down anywhere for a merge to be over. A sha this repository can no
+  longer read simply carries no position;
 - **keys transferred** — the reviews this wave did not have to buy twice, summed from the bullets
   a pre-migration checklist wrote when a ticket's keys survived a catch-up;
 - **decisions per merged ticket** — the escalations ruled since this wave opened, over the tickets
@@ -850,6 +860,13 @@ the JSON, and every item below is measured against it:
 
 A judgement has to be **committed on the branch** to count. The gate reads a fresh tree at the tip,
 so a verdict sitting uncommitted in somebody's checkout is one this branch does not carry.
+
+Above the items, the result carries one line that judges nothing: **how big this change turned out**
+— lines and files against the parent branch, and where that sits among the mission's other open
+tickets. The rank comes off `queue.mjs plan`'s own ranking, so the landing and the plan the architect
+read cannot give two answers to one question, and a plan that cannot be built right now costs the
+landing nothing (the size is still measured, just without a position beside it). No item passes or
+fails on it.
 
 `--no-gate` skips items 2, 5, 6 and 7, and never merges. `--background` starts the run, prints the
 path of the result file it will write (`.horde/hordes/<h>/land/<ticket>.json`, shape

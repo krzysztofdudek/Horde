@@ -80,7 +80,10 @@ this brief. Every proposal, contract and cut you rule on is read against it.
      tickets is wrong about what it needs; say which, and why, in the graph's terms.
   4. **Decomposition** — components and the critical path. Two components each larger than half the
      parallelism are a sub-team. A critical path most of the mission hangs off is a node doing too
-     much: that is a cut, and it is yours to propose.
+     much: that is a cut, and it is yours to propose. The plan also ranks every ticket that has a
+     branch by how big its change has grown and names the biggest quarter of this mission. That is
+     a reading against the rest of this plan and nothing else — there is no size a ticket is over —
+     so it always names somebody. Whether the one it names is really two tickets is yours to say.
   5. **Collision** — the files three or more tickets claim. A hub file is usually a boundary in the
      wrong place, not an ordering problem; look at it as a candidate cut before you accept the order
      the plan proposes.

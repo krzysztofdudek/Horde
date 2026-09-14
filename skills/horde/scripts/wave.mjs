@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import {
   hordePath, teamPath, readText, writeText, appendText, readJSON, writeJSON, readConfig, today,
   nowIso, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy, resolveTree,
-  markdownSection, markdownTableCells, parseEvidenceRows, parseVerdictBlocks,
+  markdownSection, markdownTableCells, parseEvidenceRows, parseVerdictBlocks, diffSize, sizeRanks,
   runMain,
 } from './_lib.mjs';
 // queue.mjs imports this file too (noteMerged). The cycle is deliberate and
@@ -241,12 +241,14 @@ function waveSpan(journalText, waveStartN) {
   return lines.join('\n');
 }
 
-// Every "merged:" bullet of one wave, with the date it carries — the wave's merge timeline.
+// Every "merged:" bullet of one wave, with the date and the landed sha it carries — the wave's
+// merge timeline. The sha is what lets the close measure how big each merge actually was, so it
+// is read here rather than looked up a second way somewhere else.
 function waveMerges(spanText) {
   const out = [];
   for (const line of spanText.split('\n')) {
-    const m = /^- (\S+) merged: (\S+) /.exec(line);
-    if (m) out.push({ date: m[1], ticket: m[2] });
+    const m = /^- (\S+) merged: (\S+) (\S+)/.exec(line);
+    if (m) out.push({ date: m[1], ticket: m[2], sha: m[3] });
   }
   return out;
 }
@@ -265,6 +267,23 @@ function waveFates(spanText) {
     }
   }
   return out;
+}
+
+// How big each of this wave's merges was, and where each sits among the others of the same wave.
+// A merge commit's own change is what it brought in over the branch it merged into: `<sha>^1` to
+// `<sha>`, which is the same three-dot diff every other reading in this tool set takes, since the
+// first parent is an ancestor of the merge. A sha this repository cannot read (an old journal
+// bullet, a branch long gone) measures as nothing and simply carries no position.
+//
+// Ranked against this wave's own merges and nothing else: the set is the comparison, and there is
+// no size a merge is over. Reported and never acted on.
+function waveChangeSizes(merges, cwd) {
+  // One reading per ticket: a wave that recorded the same ticket twice is one merge to measure,
+  // not two, and the later sha is the one that stands.
+  const shaOf = new Map(merges.map((m) => [m.ticket, m.sha]));
+  const ranks = sizeRanks([...shaOf].map(([ticket, sha]) => ({ id: ticket, size: diffSize(`${sha}^1`, sha, { cwd }) })));
+  return [...ranks].map(([ticket, size]) => ({ ticket, ...size }))
+    .sort((a, b) => a.rank - b.rank || a.ticket.localeCompare(b.ticket));
 }
 
 // Achieved parallelism, read off the merge timeline the journal actually holds: the most
@@ -956,6 +975,15 @@ function cmdClose(horde, positional, flags) {
   // disagree about what the same document holds.
   const prototypes = parsePrototypeArtifacts(readText(hordePath(horde, 'charter.md')) || '');
 
+  // How big this wave's merges turned out, each against the others of the same wave. The wave is
+  // where a cut that was too wide shows up as a fact rather than as a feeling — so the close
+  // records it, and stops there. Nothing is refused or reopened on account of it.
+  const changeSizes = waveChangeSizes(merges, resolveTree({}).path);
+  const changeSizeLine = changeSizes.length
+    ? changeSizes.map((c) => `${c.ticket} ${c.lines}/${c.files} — ${c.rank} of ${c.of}`).join(' · ')
+    : 'nothing measured';
+  const biggestQuarterTickets = changeSizes.filter((c) => c.biggestQuarter).map((c) => c.ticket);
+
   // What this mission has done to the law, as a document: the graph on the branch the mission was
   // cut from against the graph on the trunk it has built. Written every close, at the wave's own
   // path, so a second close of the same wave replaces it rather than writing a second one. Whoever
@@ -985,6 +1013,7 @@ function cmdClose(horde, positional, flags) {
     achievedParallelism: achievedParallelism(merges),
     keysTransferred,
     decisionsLine: decisions.line,
+    changeSizeLine: `${changeSizeLine}${biggestQuarterTickets.length ? ` · biggest quarter: ${biggestQuarterTickets.join(', ')}` : ''}`,
     qualityLine: indexLine,
     qualityBlock: qualityBlock({
       policy, promotions, qualityMerges, indexLine, observed, declined,
@@ -1019,6 +1048,7 @@ function cmdClose(horde, positional, flags) {
     achievedParallelism: vars.achievedParallelism,
     keysTransferred,
     decisions: { ruled: decisions.ruled, merged: decisions.merged, perMergedTicket: decisions.ratio },
+    changeSizes,
     quality,
     qualityDeclined: declined,
     qualityPolicy: policy,
@@ -1035,6 +1065,12 @@ function cmdClose(horde, positional, flags) {
     if (fates.length) {
       lines.push(`after landing: ${reverted.length} reverted, ${reopened.length} reopened — `
         + fates.map((f) => `${f.ticket} ${f.fate} (${f.by})`).join(', '));
+    }
+    if (changeSizes.length) {
+      lines.push(`change size (lines/files, biggest first): ${changeSizeLine}`);
+      if (biggestQuarterTickets.length) {
+        lines.push(`biggest quarter of this wave: ${biggestQuarterTickets.join(', ')} — worth asking the architect whether work that size wants cutting smaller next time`);
+      }
     }
     for (const p of promotions) lines.push(`rule raised: ${p.aspect} ${p.from} → ${p.to}`);
     if (qualityMerges.length) lines.push(`improvements finished: ${qualityMerges.map((q) => q.ticket).join(', ')}`);

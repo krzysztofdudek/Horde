@@ -81,6 +81,89 @@ export function patchIdOf(branch, parent, { context = 3, cwd = process.cwd() } =
   }
 }
 
+// ---- how big a change is, and where that size sits among the changes beside it ---------------
+//
+// Size is the one thing about a change that held up when it was measured: how many lines it moves
+// and how many files it spreads over. Everything below reports it and nothing acts on it — there
+// is no size at which a change becomes "too big", because no such number survived measurement
+// either. What survives is the comparison: this change against the others in the same mission.
+
+// diffSize(from, to, {cwd}) — `git diff --numstat from...to`, summed: {files, lines} where lines
+// is insertions plus deletions. A branch that has changed nothing yet measures {files: 0,
+// lines: 0}; null means there was nothing to read at all (an unknown ref, no git), so "measured,
+// and it is empty" never looks like "could not be measured" to a caller.
+//
+// Three dots, matching every other diff in this tool set: what the branch ADDS on top of where it
+// was cut from, never what the base has moved on to since. For a merge commit read as `<sha>^1`
+// to `<sha>` the two forms coincide, since the first parent is an ancestor of the merge.
+export function diffSize(from, to, { cwd = process.cwd() } = {}) {
+  const out = git(['-c', 'core.quotepath=false', 'diff', '--numstat', `${from}...${to}`], cwd);
+  if (out === null) return null;
+  let files = 0;
+  let lines = 0;
+  for (const row of out.split('\n').filter(Boolean)) {
+    const [added, removed] = row.split('\t');
+    files += 1;
+    // A binary file's counts come back as "-": a file touched, with no lines to count.
+    lines += (Number(added) || 0) + (Number(removed) || 0);
+  }
+  return { files, lines };
+}
+
+// A quartile has four quarters. That is what the word means — it is not a size, and nothing here
+// compares a change against it.
+const QUARTERS = 4;
+
+// biggerChange(a, b) — orders two measured sizes. Lines first, because that is the measured
+// signal; files only separates two changes that move the same number of lines. There is
+// deliberately no exchange rate between the two (no "a file is worth N lines"): a made-up
+// constant is exactly what this signal does without.
+function biggerChange(a, b) {
+  return (a.lines - b.lines) || (a.files - b.files);
+}
+
+// sizeRanks(entries) — where each measured change sits among the others handed in beside it.
+// `entries` is [{id, size}], `size` being diffSize's answer or null for a change nothing could be
+// measured on; the answer is a Map from id to {files, lines, rank, of, biggestQuarter}.
+//
+// `rank` counts from the biggest (1 is the biggest change in the set) and ties share a rank.
+// `of` is how many changes were measured — the set the rank is against, so a reader always knows
+// what a rank was out of. `biggestQuarter` is true when the change sits in the biggest quarter of
+// THIS set and at least one measured change beside it is smaller: a lone change, or a set where
+// everything is the same size, has no biggest quarter to be in, and saying otherwise would be
+// calling a change outsized against nothing.
+//
+// Every number in the answer comes out of the set handed in. Multiply every size by any factor
+// and the answer is identical; take the same change to a mission of bigger work and it moves.
+// That is what makes this a rank rather than a threshold.
+export function sizeRanks(entries) {
+  const measured = asArray(entries).filter((e) => e && e.size);
+  const out = new Map();
+  const of = measured.length;
+  if (of === 0) return out;
+  const cutoff = Math.ceil(of / QUARTERS);
+  for (const e of measured) {
+    const rank = 1 + measured.filter((o) => biggerChange(o.size, e.size) > 0).length;
+    const smaller = measured.filter((o) => biggerChange(o.size, e.size) < 0).length;
+    out.set(e.id, {
+      files: e.size.files,
+      lines: e.size.lines,
+      rank,
+      of,
+      biggestQuarter: rank <= cutoff && smaller > 0,
+    });
+  }
+  return out;
+}
+
+// sizeLine(size) — one measured size, written out on its own, for the reader looking at a single
+// change. The plan and the wave close render whole lists and use a compact form of their own.
+export function sizeLine(size) {
+  if (!size) return 'not measured';
+  const where = size.of > 1 ? ` — ${size.rank} of ${size.of} by size, biggest first` : '';
+  return `${size.lines} line(s) across ${size.files} file(s)${where}${size.biggestQuarter ? ' · biggest quarter' : ''}`;
+}
+
 // repoRoot() — the working tree root of the repository at the current directory, found via
 // `git rev-parse --show-toplevel`. Independent of where the scripts themselves live, so the
 // same install works against whatever repository the caller's cwd is inside.
