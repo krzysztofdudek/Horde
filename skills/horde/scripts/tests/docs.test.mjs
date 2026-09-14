@@ -698,6 +698,40 @@ test('product-language\'s yg-aspect.yaml description names every category label 
   assert.deepEqual(missing, [], `description names no word for: ${missing.join(', ')}\ndescription: "${descriptionLine[1]}"`);
 });
 
+// ---- the doc-shape aspect's description names every class and executor it accepts --------------
+
+// The same discipline as the test above, and for the same reason. check.mjs's CLASSES and
+// EXECUTORS are fixed lists — what kind of proof keeps a promise, and who reproduces it — settled
+// once rather than configured per repository, so the aspect's own one-sentence description is the
+// only place an adopter reads what a promise is allowed to say. Both sides are read live off disk,
+// so a value added to either list without a word added to the sentence fails here.
+function docShapeVocabulary(name) {
+  const text = readText(join(REPO_ROOT, 'packages', 'promises', 'doc-shape', 'check.mjs'));
+  const m = new RegExp(`export const ${name} = \\[([\\s\\S]*?)\\];`).exec(text);
+  assert.ok(m, `check.mjs no longer declares ${name} the way this test expects`);
+  return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+}
+
+test('doc-shape\'s yg-aspect.yaml description names every class and executor check.mjs accepts', () => {
+  const classes = docShapeVocabulary('CLASSES');
+  const executors = docShapeVocabulary('EXECUTORS');
+  assert.ok(classes.length >= 6 && executors.length >= 4,
+    `expected the settled six classes and four executors, found ${classes.length} and ${executors.length}`);
+  assert.ok(classes.includes('e2e scenario') && executors.includes('gate'),
+    'this test\'s premise moved: check.mjs no longer lists the classes and executors as expected');
+
+  const yaml = readText(join(REPO_ROOT, 'packages', 'promises', 'doc-shape', 'yg-aspect.yaml'));
+  const descriptionLine = /^description: (.+)$/m.exec(yaml);
+  assert.ok(descriptionLine, 'yg-aspect.yaml has no description: line');
+  const description = descriptionLine[1].toLowerCase();
+
+  // The whole phrase, not a core noun as above: these values are the words a promise writes out
+  // verbatim, so a description saying "a scenario" while the rule wants "e2e scenario" would be
+  // wrong in exactly the way this test exists to catch.
+  const missing = [...classes, ...executors].filter((v) => !description.includes(v.toLowerCase()));
+  assert.deepEqual(missing, [], `description names nothing for: ${missing.join(', ')}\ndescription: "${descriptionLine[1]}"`);
+});
+
 // ---- issue 063: CHANGELOG's version note matches node.mjs's actual floor, never a major ceiling -
 
 // node.mjs checks the graph's machine documents by schema name (`parsed.schema === schema`), never

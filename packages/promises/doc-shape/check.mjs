@@ -1,13 +1,15 @@
 // One promise, one file, one shape.
 //
-// Five things are asked, and each one is asked separately so a refusal names the
+// Seven things are asked, and each one is asked separately so a refusal names the
 // thing that is actually wrong rather than "this file is malformed":
 //
 //   1. the frontmatter is there and parses
 //   2. `id` is the filename with its extension taken off
 //   3. `status` is `implemented`, or one of the configured `parked_markers`
-//   4. every section this repository asks for is present
-//   5. no section it did not ask for is present
+//   4. `class`, when the promise declares one, is one of the kinds of proof below
+//   5. `executor`, when the promise declares one, is one of the four below
+//   6. every section this repository asks for is present
+//   7. no section it did not ask for is present
 //
 // The rule never says where promises live or what they are called. `ctx.files` is
 // whatever the repository mapped these rules onto, and that mapping is the whole
@@ -27,6 +29,40 @@ const DEFAULT_SECTIONS = 'What it checks, Why it matters, How to see it';
 // meets, so a status they would treat as parked has to be accepted here too, or a promise using
 // it would be refused before any of them ever saw it.
 const DEFAULT_PARKED = 'planned, disabled';
+
+/**
+ * What kind of proof keeps a promise — the closed list a `class:` may name.
+ *
+ * Fixed rather than configured, and that is the whole point of it. `sections`,
+ * `parked_markers` and `named_case_patterns` are settings because a repository's
+ * headings, its word for "parked" and its test-runner conventions are genuinely
+ * its own; what kind of thing a proof IS does not change from one repository to
+ * the next. A scenario driven end to end, a test with nothing real behind it, a
+ * mutation that must be caught, a recorded exchange replayed, a file somebody
+ * accepted, a person saying they saw it work — six kinds, and a repository that
+ * could add a seventh would be saying a word nothing downstream could read.
+ *
+ * Exported so a reader of the package, and the test that keeps the rule's own
+ * description honest, both take the list from here rather than retyping it.
+ */
+export const CLASSES = [
+  'e2e scenario',
+  'hermetic test',
+  'mutation',
+  'recorded stub',
+  'artifact',
+  'client testimony',
+];
+
+/**
+ * Who reproduces that proof — the closed list an `executor:` may name.
+ *
+ * Fixed for the same reason, and it is a shorter list because there are only four
+ * answers: the gate that runs on every change, a guard watching something already
+ * running, the person or agent working the ticket, or the client, who is the only
+ * one who can answer for anything nothing can be run against.
+ */
+export const EXECUTORS = ['gate', 'guard', 'worker', 'client'];
 
 export function check(ctx) {
   const required = splitList(ctx.config?.sections ?? DEFAULT_SECTIONS);
@@ -84,6 +120,28 @@ export function check(ctx) {
         file: file.path,
         line: front.lineOf.status ?? front.startLine,
         message: `This promise's status is '${status}', which is not one of ${accepted.join(', ')}. A status outside this set is a state nothing downstream knows how to treat.`,
+      });
+    }
+
+    // `class` and `executor` are optional in a way `status` is not: a promise that says neither
+    // is a whole promise, and most of them say neither. What is not optional is the vocabulary —
+    // a promise that DOES say one of them says it in the words everything else reads, or the
+    // field is a private note wearing a shared name.
+    const declaredClass = front.fields.class;
+    if (declaredClass !== undefined && !CLASSES.includes(declaredClass)) {
+      out.push({
+        file: file.path,
+        line: front.lineOf.class ?? front.startLine,
+        message: `This promise's class is '${declaredClass}', which is not one of ${CLASSES.join(', ')}. The class says what kind of proof keeps this promise, and a kind outside this set is one nothing downstream knows how to reproduce.`,
+      });
+    }
+
+    const declaredExecutor = front.fields.executor;
+    if (declaredExecutor !== undefined && !EXECUTORS.includes(declaredExecutor)) {
+      out.push({
+        file: file.path,
+        line: front.lineOf.executor ?? front.startLine,
+        message: `This promise's executor is '${declaredExecutor}', which is not one of ${EXECUTORS.join(', ')}. The executor says who reproduces that proof, and a name outside this set is nobody in particular.`,
       });
     }
 

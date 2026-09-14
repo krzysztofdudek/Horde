@@ -43,6 +43,8 @@ const REFUSALS = [
   { id: 'no id', drill: 'doc-shape/violates-no-id', test: 'a promise that declares no id is refused' },
   { id: 'id mismatch', drill: 'doc-shape/violates-id-mismatch', test: 'an id that is not the filename is refused' },
   { id: 'unknown status', drill: 'doc-shape/violates-unknown-status', test: 'a status outside the three is refused' },
+  { id: 'unknown class', drill: 'doc-shape/violates-unknown-class', test: 'a class outside the six kinds of proof is refused' },
+  { id: 'unknown executor', drill: 'doc-shape/violates-unknown-executor', test: 'an executor outside the four is refused' },
   { id: 'missing section', drill: 'doc-shape/violates-missing-section', test: 'a promise missing a section this repository asks for is refused' },
   { id: 'unknown section', drill: 'doc-shape/violates-unknown-section', test: 'a promise carrying a section nobody asked for is refused' },
 
@@ -315,6 +317,39 @@ test('an id that is not the filename is refused', () => {
 test('a status outside the three is refused', () => {
   const out = refusal({ promises: { 'orders-are-confirmed.md': promise({ status: 'shipped' }) } });
   assert.match(out, /status is 'shipped', which is not one of implemented, planned, disabled/);
+});
+
+test('a class outside the six kinds of proof is refused', () => {
+  const out = refusal({
+    promises: { 'orders-are-confirmed.md': promise({ extra: ['class: smoke test'] }) },
+  });
+  assert.match(
+    out,
+    /class is 'smoke test', which is not one of e2e scenario, hermetic test, mutation, recorded stub, artifact, client testimony/,
+  );
+});
+
+test('an executor outside the four is refused', () => {
+  const out = refusal({
+    promises: { 'orders-are-confirmed.md': promise({ extra: ['executor: reviewer'] }) },
+  });
+  assert.match(out, /executor is 'reviewer', which is not one of gate, guard, worker, client/);
+});
+
+test('a promise naming an approved class and executor passes every rule of the package', () => {
+  const dir = promisesRepo({
+    promises: {
+      'orders-are-confirmed.md': promise({ extra: ['class: e2e scenario', 'executor: gate'] }),
+    },
+    suite: { 'orders-are-confirmed.test.mjs': MIRROR },
+  });
+  try {
+    const r = checked(dir);
+    assert.equal(r.code, 0, `expected a clean repository, got:\n${r.out}`);
+    assert.match(r.out, /PASS/);
+  } finally {
+    rmRepo(dir);
+  }
 });
 
 test('a promise missing a section this repository asks for is refused', () => {
@@ -852,6 +887,52 @@ test('doc-shape still refuses that same status when nothing configured it as par
   const out = check(ctx);
   assert.equal(out.length, 1, `expected exactly one finding, got:\n${JSON.stringify(out, null, 2)}`);
   assert.match(out[0].message, /status is 'deferred', which is not one of implemented, planned, disabled/);
+});
+
+test('doc-shape asks nothing of a promise that names no class and no executor', async () => {
+  const { check } = await import(join(PACKAGE_DIR, 'doc-shape', 'check.mjs'));
+  const findings = (extra) => check({
+    files: [{ path: 'promises/orders-are-confirmed.md', content: promise({ extra }) }],
+    config: {},
+  });
+  assert.deepEqual(findings([]), [], 'a promise naming neither field was refused for one of them');
+  // And one without the other is a whole promise too: neither field drags the other in.
+  assert.deepEqual(findings(['class: mutation']), []);
+  assert.deepEqual(findings(['executor: worker']), []);
+});
+
+test('doc-shape accepts every class and every executor this package approves', async () => {
+  const { check, CLASSES, EXECUTORS } = await import(join(PACKAGE_DIR, 'doc-shape', 'check.mjs'));
+  const findings = (extra) => check({
+    files: [{ path: 'promises/orders-are-confirmed.md', content: promise({ extra }) }],
+    config: {},
+  });
+  for (const cls of CLASSES) {
+    assert.deepEqual(findings([`class: ${cls}`]), [], `'${cls}' is an approved class and was refused`);
+  }
+  for (const who of EXECUTORS) {
+    assert.deepEqual(findings([`executor: ${who}`]), [], `'${who}' is an approved executor and was refused`);
+  }
+
+  // The two lists are settled, not a default a repository may widen — so they are written out
+  // here as well as read from the code, and an edit to either one fails here rather than quietly
+  // changing what every promise in every repository installing this package is allowed to say.
+  assert.deepEqual(CLASSES, [
+    'e2e scenario', 'hermetic test', 'mutation', 'recorded stub', 'artifact', 'client testimony',
+  ]);
+  assert.deepEqual(EXECUTORS, ['gate', 'guard', 'worker', 'client']);
+});
+
+test('neither class nor executor is a setting a repository can widen', async () => {
+  const { check } = await import(join(PACKAGE_DIR, 'doc-shape', 'check.mjs'));
+  const out = check({
+    files: [{ path: 'promises/orders-are-confirmed.md', content: promise({ extra: ['class: smoke test'] }) }],
+    // A repository reaching for the shape of the settings it DOES have gets nowhere: the kinds of
+    // proof are the same six wherever this package is installed.
+    config: { classes: 'smoke test', class_markers: 'smoke test', executors: 'reviewer' },
+  });
+  assert.equal(out.length, 1, `expected exactly one finding, got:\n${JSON.stringify(out, null, 2)}`);
+  assert.match(out[0].message, /class is 'smoke test', which is not one of e2e scenario/);
 });
 
 test('the companion refuses to guess when a promise says it is kept and nothing keeps it', async () => {

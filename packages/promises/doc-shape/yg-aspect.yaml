@@ -1,5 +1,5 @@
 name: PromiseHasItsShape
-description: A promise is one file with a frontmatter id matching its filename, a status of implemented or one of this repository's own parked markers, and exactly the sections this repository asks for.
+description: A promise is one file with a frontmatter id matching its filename, a status of implemented or one of this repository's own parked markers, exactly the sections this repository asks for, and — where it names them at all — a class of proof that is an e2e scenario, a hermetic test, a mutation, a recorded stub, an artifact or client testimony, reproduced by a gate, a guard, a worker or the client.
 reviewer:
   type: deterministic
 status: enforced
