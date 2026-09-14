@@ -1066,6 +1066,24 @@ test('land.mjs: a missing base branch refuses by name, because the guards have n
   assert.equal(r.code, 1);
   assert.match(r.stderr, /no such branch: mission1\/trunk/);
   assert.match(r.stderr, /nothing to compare against|with no base/);
+  // git's own reason rides along, not just this tool's guess — proves the refusal is not reading
+  // a real git failure as a plain "missing", the way it would if this text were absent.
+  assert.match(r.stderr, /Needed a single revision/);
+});
+
+test('land.mjs: the ticket\'s own branch missing refuses by name, carrying git\'s own reason too', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '033');
+  // queue.json still names the branch — only the branch itself is gone, e.g. pruned out from
+  // under a stale queue record. checkout something else first: this branch is HEAD right now.
+  git(['checkout', '--detach', 'mission1/trunk'], dir);
+  git(['branch', '-D', branch], dir);
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, new RegExp(`no such branch: ${branch.replace('/', '\\/')}`));
+  assert.match(r.stderr, /Needed a single revision/);
 });
 
 test('land.mjs: unicode and spaces in a touched path survive scope, mapping and graph text', async (t) => {
