@@ -385,7 +385,10 @@ function detectJudge(root) {
 // hook that demands a full `yg check`: the prose rules have nobody to judge them, so every commit
 // refuses, and the only thing a worker learns is to reach for `--no-verify`. That is worth
 // refusing an init over — teaching the escape hatch is worse than never starting.
-const HOOK_FILES = [
+// Exported because land.mjs's gate guard watches the same files for a landing that quietly takes
+// one away: one list, read by the command that installs a hook and by the guard that refuses a
+// branch for removing it, rather than two lists free to drift apart.
+export const HOOK_FILES = [
   '.git/hooks/pre-commit', '.husky/pre-commit', 'lefthook.yml', '.lefthook.yml', '.pre-commit-config.yaml',
 ];
 function detectCommitHook(root) {

@@ -16,6 +16,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - Landing is automatic: a change that passes every check merges immediately; a failing one is refused with the reason. Only one change lands at a time; a crash mid-landing no longer blocks the next.
 - `land --background` returns immediately and writes its result to a file. `worktree.copy` copies files into every new worktree.
 - Weakening a rule (deleting, lowering, moving its review date, narrowing scope, unhooking, disabling for a file) requires the client's written approval — once per landing or for the whole mission.
+- That same approval is now required for weakening the proof or the checks. A change is refused until you have said it is right if it puts a promise back to "planned" or leaves it with nothing keeping it, deletes a test file, leaves a test file with fewer assertions than it had, switches a case off, or removes or rewrites what a gate command runs, a commit or push hook, or a CI workflow. The approval names the one thing being weakened, so it never covers anything else. Adding tests, adding assertions and renaming a test file are unaffected.
 - A change cannot both alter a rule and alter the code that rule judges in one landing; both are refused together.
 - Every landing runs the full test suite against a real Yggdrasil build; the architecture check runs on the branch itself and must be fully green.
 - `queue plan --out <file>` writes the whole plan to a file for the architect.

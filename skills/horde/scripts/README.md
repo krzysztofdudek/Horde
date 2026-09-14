@@ -714,12 +714,21 @@ of both old sequences.
 Everything that used to travel as an escalation or a dissent goes down one channel now, and only
 four kinds travel down it: `stop` (a worker ran out of spec and wrote down the question instead of
 guessing — the ticket stays put), `stuck` (`tick.mjs` filed this one, not an agent — a ticket
-exhausted its fix rounds), `lower` (a request to weaken a rule: demote, an added `yg-suppress`
-marker, a moved `review_by`, an aspect detached from a node — requires `--aspect`), and `charter`
-(a mission-card change: the goal, an exclusion, an evidence-catalogue row).
+exhausted its fix rounds), `lower` (a request to weaken something that protects the work: a rule
+— demote, an added `yg-suppress` marker, a moved `review_by`, an aspect detached from a node — or
+the proof — a promise put back to planned, a test file or an assertion taken out, a skip marker
+added — or a gate — the script a gate command runs, a commit or push hook, a CI workflow. Requires
+`--aspect`), and `charter` (a mission-card change: the goal, an exclusion, an evidence-catalogue
+row).
 
 - `add "<why>" --kind stop|stuck|lower|charter [--ticket NNN] [--territory t] [--aspect a] [--horde h]`
-  — `--aspect` is required for `lower` and refused for the other three kinds.
+  — `--aspect` is required for `lower` and refused for the other three kinds. It names the one thing
+  being weakened, in whichever of three spellings says which — a rule's own id (`no-marker`), a
+  promise or a test file (`evidence:adds-two-numbers`, `evidence:tests/second.test.mjs`), or a gate,
+  hook or workflow file (`gate:scripts/gate.sh`, `gate:.husky/pre-commit`). The three cannot collide:
+  a rule id is a bare directory name under `.yggdrasil/aspects/` and never carries the `:` the other
+  two open with. One answer lets exactly that one thing through and never a category, so a mission
+  meaning to lower three things files three questions.
 - `list [--open]` — open first, newest first.
 - `show <id>`.
 - `answer <id> "<answer>" [--scope once|mission] [--horde h]` — the one place the client's word gets
@@ -727,9 +736,9 @@ marker, a moved `review_by`, an aspect detached from a node — requires `--aspe
   answered, so a decision that failed to record — a duplicate slug, a read-only file — never leaves an
   item silently closed with nothing durable behind it. `--scope` is accepted only for kind `lower`:
   `once` (the default) spends the grant on the landing that uses it; `mission` stands until
-  `horde.mjs done`. `land.mjs`'s law guard reads this answer, not the raw item, to decide whether a
-  branch that weakens a rule may land; a `stuck` ticket returns to the queue or closes as not-done only
-  through an answer here.
+  `horde.mjs done`. `land.mjs`'s guards read this answer, not the raw item, to decide whether a
+  branch that weakens a rule, the proof or a gate may land; a `stuck` ticket returns to the queue or
+  closes as not-done only through an answer here.
 
 State: `hordes/<horde>/asks.json` (source of truth) + `asks.md` (rendered).
 
@@ -955,11 +964,11 @@ worker for the whole list, not one per ticket, with each ticket's own result fil
 it would carry landed on its own. A half-written result file reads as no file at all — the gate
 never trusts a recorded result, its own or anyone's, and simply runs again.
 
-### the two guards
+### the guards
 
-Before any item is judged, two things are checked that no worker can fix by trying again. Both are
-deterministic — no model is asked whether a change is a weakening; Yggdrasil's own machine documents
-say so — and both refuse outright rather than reporting an item.
+Before any item is judged, four things are checked that no worker can fix by trying again. Every one
+is deterministic — no model is asked whether a change is a weakening; two trees and Yggdrasil's own
+machine documents say so — and every one refuses outright rather than reporting an item.
 
 **The law guard.** A branch may not weaken the rules it is judged by. Six cases, each named
 separately in the refusal because the fix differs for each: a rule present on the base and gone from
@@ -994,6 +1003,48 @@ The one thing that lets any of this through is the client's own word, in the mis
 the landing that uses it — which writes a `**Consumed:**` line into the answer itself — and
 `scope: mission` stands until the mission closes. An unanswered ask passes nothing.
 
+**The evidence guard.** A branch may not weaken the proof it is judged by. Five cases, each named
+separately for the same reason: a promise that read `implemented` on the base and does not on the
+branch (its own status changed, or the promise is gone); a promise whose **paired case** is gone —
+the four pairings the `promises` package knows, read the same way it reads them (a mirror file, a
+`<file>#<case name>` target whose case is actually there, the promise itself, a complete accepted
+artefact); a **test file removed**; a test file carrying **fewer assertions** than it had; and a
+test file carrying **more skip or exclusivity markers** than it had. The files it watches are
+whatever `config.testGlobs` recognise, plus whatever keeps a live promise, whether or not the globs
+would have recognised that.
+
+Assertions and markers are each counted off a **closed list per language**, combined into one
+pattern so nothing is counted twice, and compared **per file** — never in total, since assertions
+moved from one file to another are a split, which is a thing to say out loud rather than a number
+that happens to come out even. There is no threshold and nothing to configure: the only figure that
+decides anything is the difference between two counts. The languages are the ones this tool already
+recognises elsewhere — the six build systems `horde.mjs init` reads a repository with, plus .NET,
+whose markers the package's own skip list already names — and a suite written in anything else
+counts zero on both trees, which compares equal and refuses nothing. Two things are deliberately
+not weakenings: a file whose exact bytes turn up under a new name is a **rename**, not a removal,
+and a promise already parked on the base was keeping nothing, so nothing about it can have stopped.
+
+**The gate guard.** A branch may not weaken the gates it is measured through. What it watches, on
+the base tree: the file a `config.gates.*` command actually **runs** (every token of the command
+that names a tracked file — a command made of shell builtins alone names none, which is the honest
+answer, since nothing here can see inside `npm run gate`); the **commit and push hooks**
+(`.husky/pre-commit`, `.husky/pre-push`, `lefthook.yml`, `.lefthook.yml`, `.pre-commit-config.yaml`
+— the same list `horde.mjs init` reads, plus the two push paths); and every **CI workflow** file
+(`.github/workflows/*.yml`, `*.yaml`). Any of them removed, or its content changed, refuses.
+`config.gates.*` itself is not compared: it lives in `.horde/`, which is in neither tree, so there
+is no earlier version of it to compare against. `config.protectedPaths` is not watched here either
+— item 3 already refuses a branch that so much as touches one, with no way through at all, and a
+second refusal naming a client answer that still could not land the change would be worse than
+saying nothing.
+
+Both read the branch's own three-dot diff against its parent and compare only paths in it — the same
+reading item 3 and the conflict guard already take. Two trees differ for two reasons and only one of
+them is this branch's doing: without that confinement a branch merely left behind by its parent would
+read as having deleted every test the parent has added since. Both are let through by the same
+`decisions.md` answer the law guard reads, of the same kind `lower`, with the same two scopes — what
+differs is only the name on it: `evidence:<promise id>` or `evidence:<test file path>` for the first,
+`gate:<path>` for the second. One answer lets one thing through, never a category.
+
 **The conflict-of-interest guard.** A branch may not sharpen a rule and change the code that rule
 refuses in the same landing: whichever way the rule now reads, it reads that way because the code
 needed it to. Adding a new rule is not this — it judged nothing before. Raising an existing rule's
@@ -1027,7 +1078,7 @@ already uses, read off each branch's own diff — Yggdrasil's own derived lock f
 toward a collision). A ticket that fails either test is not excluded from the run, only from
 **this** shared hold; it lands on its own instead, in the same call.
 
-For an eligible group: items 1, 3, 4, 8 and 9, and both guards, still run per ticket, individually,
+For an eligible group: items 1, 3, 4, 8 and 9, and every guard, still run per ticket, individually,
 exactly as for one — nothing about batching changes what they measure or when. What changes is items
 5-7 plus the judge item: a throwaway worktree at the group's own parent tip, each member's branch
 merged onto it in sequence (`--no-ff`, discarded the moment the gate has run — never referenced by
@@ -1309,8 +1360,8 @@ the way `charter edit --ask` reads it; one naming no row holds nothing.
 Holding a landing means not asking the gate at all, rather than declining to write the answer down
 afterwards: the gate merges the branch into its parent itself the moment every item comes back
 green, so by the time there is a result to read the merge has already happened. Not asking it is
-also what spares the ticket its fix rounds — a `lower` question is exactly the case where the law
-guard comes back red on a rule only the client can agree to weaken, and a round spent on that is a
+also what spares the ticket its fix rounds — a `lower` question is exactly the case where a guard
+comes back red on something only the client can agree to weaken, and a round spent on that is a
 round spent on a question no worker can answer.
 
 Nothing here writes: a hold is worked out fresh every run from what is open right now, so an
