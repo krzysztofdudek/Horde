@@ -237,7 +237,7 @@ can release the lock — is taken over immediately rather than waited on.
   parent's tip → `landed`; a dirty worktree → `git add -A && git commit -m "wip: reclaimed"` on the
   ticket branch, then `queued` with a note; a clean worktree and no commit → `queued`, worktree
   removed. A `waiting` item is left untouched — it has nothing running to reconcile).
-- `plan [--team t] [--apply-order]` — the team's DAG, derived from the tickets and printed, never
+- `plan [--team t] [--apply-order] [--out <file>]` — the team's DAG, derived from the tickets and printed, never
   dispatched. Two kinds of edge, added together and never overriding one another: a ticket that
   `**Consumes:** <node>/<port>` comes after the ticket that `**Produces:**` that same port — no
   version to compare, so the port name alone is the match (in its own team or another's — a
@@ -253,6 +253,9 @@ can release the lock — is taken over immediately rather than waited on.
   A circle of dependencies is a refusal, with the circle printed. `--json` is a `horde-plan/1`
   document carrying all of it. `--apply-order` records the order `plan` proposed for a file clash
   (fewer files first) as an ordinary dependency on the queue item, with a note saying why.
+  `--out <file>` writes the plan (rendered, or JSON with `--json`) to a file instead of stdout,
+  for a reader who must see it whole — the architect — rather than a summary relayed through a
+  message.
 - A dependency (`add`'s `--depends`, `dep`'s `--on`) is `NNN` (same team), `<team>:NNN` (a ticket in
   another team's queue), or `<team>:team:<name>` (that team's own merge-up item, e.g.
   `trunk:team:allies`) — `next` checks a cross-team one against that team's own `queue.json`, read

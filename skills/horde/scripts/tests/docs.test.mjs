@@ -412,6 +412,22 @@ test('the four plugin manifests carry the same version as CHANGELOG.md\'s top re
   assert.equal(marketplace.plugins[0].version, top, `.github/plugin/marketplace.json carries ${marketplace.plugins[0].version}, CHANGELOG's top section is ${top}`);
 });
 
+// ---- queue.mjs plan's --out flag is documented in scripts/README.md ------------------------
+
+test('scripts/README.md\'s plan bullet documents queue.mjs plan\'s --out flag', () => {
+  const readme = readText(join(SCRIPTS_DIR, 'README.md'));
+  const start = readme.indexOf('- `plan [--team t]');
+  assert.ok(start !== -1, 'scripts/README.md has no `plan` bullet under queue.mjs');
+  const rest = readme.slice(start);
+  const next = rest.search(/\n- `/);
+  const bullet = next === -1 ? rest : rest.slice(0, next);
+
+  const signature = /^- `(plan[^`]*)`/.exec(bullet);
+  assert.ok(signature, 'the plan bullet does not open with a `plan ...` usage signature');
+  assert.match(signature[1], /--out/, `the plan bullet's usage signature "${signature[1]}" omits --out`);
+  assert.match(bullet, /to a file instead of stdout/i, 'the plan bullet never explains that --out writes the plan to a file instead of stdout');
+});
+
 // ---- broken states a scan must actually catch ----------------------------------------------
 
 function hasValidFrontmatter(text) {
