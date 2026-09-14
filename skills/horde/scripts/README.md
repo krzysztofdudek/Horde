@@ -170,6 +170,13 @@ its folder and of the `id:` its issue.md carries.
   produced by some ticket of this horde (its own team or another's) or already exist on that node in
   the graph — refused by name otherwise. Port existence is read through `node.mjs`'s graph reading,
   in one place, so a later change of where the graph comes from changes one function.
+  Both checks read the graph in the tree `new`/`edit` is run from (cwd) — `--horde` on either is only
+  the ticket-store disambiguator (which horde's `teams/` this ticket files under), never a tree
+  switch, the same ordinary reading every `node.mjs` read takes (`queue.mjs plan`/`quality` is the
+  one place `--horde` alone also means the tip of trunk). A node the tree does not carry contributes
+  no boundary and no port, so a ticket named against it is accepted uncontested rather than refused —
+  run `new`/`edit` from the tree whose graph state should decide the check, or land the graph change
+  there first.
 - `list [--state s] [--node n] [--team t] [--review-pending] [--open]`, `show NNN [--log]`,
   `status NNN <state> ["note"]` (states: proposed queued running landed changes blocked merged
   dropped — `blocked` is `tick.mjs`'s own, for a ticket whose fix rounds ran out; `verified` and

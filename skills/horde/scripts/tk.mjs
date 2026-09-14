@@ -96,7 +96,11 @@ commands:
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
       the merge checklist refuses a diff that reaches past them). --consumes/--produces name the
       ports the ticket needs and delivers, as <node>/<port>; a consumed port with no producing
-      ticket and no such port in the graph is refused. An --evidence value that is
+      ticket and no such port in the graph is refused. Boundary and port existence are both read
+      from the graph in the tree this command runs from (cwd) — --horde here only picks which
+      horde's ticket store the ticket is filed into, same as every ordinary read in this tool set;
+      it never switches the tree. Run new/edit from the tree whose graph state should decide the
+      check. An --evidence value that is
       nothing but catalogue ids ("E2,E5") fills the Evidence field; any other value becomes its
       own "- [ ] …" line in the ticket's Acceptance — evidence checklist, and the ids cited in it
       fill the field too. A catalogue id (E1, E2, …) must already be a row in the horde's
