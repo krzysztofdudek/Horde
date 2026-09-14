@@ -192,9 +192,9 @@ its folder and of the `id:` its issue.md carries.
   in one place, so a later change of where the graph comes from changes one function.
   Both checks read the graph in the tree `new`/`edit` is run from (cwd) — `--horde` on either is only
   the ticket-store disambiguator (which horde's `teams/` this ticket files under), never a tree
-  switch, the same ordinary reading every `node.mjs` read takes (`queue.mjs plan`/`quality` and
-  `tick.mjs` are where `--horde` written out alone also means the tip of trunk instead). A node the
-  tree does not carry contributes
+  switch, the same ordinary reading every `node.mjs` read takes (`queue.mjs plan`/`quality`,
+  `tick.mjs` and `land.mjs` are where `--horde` written out alone also means the tip of trunk
+  instead). A node the tree does not carry contributes
   no boundary and no port, so a ticket named against it is accepted uncontested rather than refused —
   run `new`/`edit` from the tree whose graph state should decide the check, or land the graph change
   there first.
@@ -824,15 +824,28 @@ Beyond the counts it always carried, `close` states six figures the chairman rea
 
 ## land.mjs — the gate a change lands through
 
-`land.mjs <ticket|branch> [--level trunk] [--no-gate] [--background]`, for a ticket branch
-(`<horde>/t-NNN`). This is the last command a worker runs. Nine items, ✓/✗ each; **every one green
-means the branch is merged into its parent here and now**, and a single ✗ means it is not. Nobody
-signs anything either way — a green run is the signature, and the landed sha is the only trace.
+`land.mjs <ticket|branch> [--level trunk] [--no-gate] [--background] [--tree p] [--horde h]`, for a
+ticket branch (`<horde>/t-NNN`). This is the last command a worker runs. Nine items, ✓/✗ each;
+**every one green means the branch is merged into its parent here and now**, and a single ✗ means
+it is not. Nobody signs anything either way — a green run is the signature, and the landed sha is
+the only trace.
 
 It runs in a **fresh detached worktree at the branch's own tip**, made for the run and removed on
 every way out. It does not read whichever worktree happens to hold the branch: a gate that measures
 a tree somebody is still typing into is measuring the wrong thing, and briefing a reader into
 someone else's tree is how three separate mission failures started.
+
+That scratch tree is not where `land.mjs` itself runs *from*, though — that is `--tree`, or, without
+one, cwd: the same ordinary default every read in this tool set takes, not this horde's trunk just
+because a horde was resolvable. `--horde h` written out (no `--tree`) is what changes that, for a
+gate run and for `--fate` alike: it resolves to that horde's own trunk worktree instead, exactly as
+`queue.mjs plan`/`quality` and `tick.mjs` already read it. This tree is where the scope check's own
+graph read happens (when a ticket declared no files of its own) and where a scratch merge tree is
+provisioned from when nothing already holds the parent branch checked out — never where the gate's
+own measurements run, which is always the scratch tree above regardless. In practice this rarely
+shows: `tick.mjs` spawns every gate run it starts with cwd already pointed at the tree it resolved,
+so the difference is invisible unless `land.mjs` is run directly, by hand, with `--horde` and no
+`--tree`.
 
 Its **parent branch** is trunk's own (`<horde>/trunk`), or — while the ticket is stacked on a
 dependency that has not merged yet — that dependency's branch; one answer, reported as `parent` in

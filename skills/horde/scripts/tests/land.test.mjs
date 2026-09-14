@@ -1733,3 +1733,78 @@ test('land.mjs: a charter whose evidence judgement has not been made yet claims 
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.json.noEvidenceLayer, null);
 });
+
+// ---- the tree land.mjs itself runs in, with and without --horde written out (issue 109) --------
+//
+// The same shared contract every other tool here reads (node.mjs main()'s own comment above its
+// resolveTree call, tree.test.mjs, and tick.test.mjs's own version of this test): an ordinary run
+// with neither --tree nor --horde stays on cwd, whatever tree that happens to be — a resolvable
+// horde is not by itself a second signal for "read trunk instead". --horde WRITTEN OUT is the one
+// thing that does mean this horde's own trunk, exactly as queue.mjs plan/quality and tick.mjs
+// already read it. Before this test existed, land.mjs's own resolveTree calls forwarded neither
+// form of --horde at all, so the flag had no effect on the tree land ran in either way.
+//
+// Files are declared explicitly on both tickets so the scope check never depends on which tree's
+// own graph state gets read — that would entangle this with a second question (which tree
+// checkScope should read) this issue is not about. What is left to differ, and what this test
+// actually proves, is whether land.mjs ever provisions this horde's own trunk WORKTREE — a
+// resource only --horde written out reaches — while running from a shell sitting on neither the
+// mission's own base branch nor mission1/trunk, matching the issue's own "wandered somewhere land
+// was never told about" shape.
+test('land.mjs: no --horde stays on cwd; --horde written out resolves to that horde\'s own trunk instead', async (t) => {
+  await t.test('no --horde at all: cwd, wherever the main checkout is sitting — trunk\'s own separate worktree is never touched', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const { branch } = setupLandable(dir, '109', { files: ['feature-109.mjs', 'feature-109.test.mjs'] });
+    git(['checkout', 'develop'], dir);
+    const trunkBefore = git(['rev-parse', 'mission1/trunk'], dir);
+    const trunkWorktree = join(dir, '.horde', 'worktrees', 'mission1', 'trunk');
+
+    const r = run('land.mjs', [branch], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.ok, true);
+    assert.notEqual(git(['rev-parse', 'mission1/trunk'], dir), trunkBefore, 'the ticket still landed');
+    assert.equal(existsSync(trunkWorktree), false, 'trunk\'s own separate worktree was never provisioned');
+    // Resolving a tree is not a checkout: the shell this ran from stays exactly where it was.
+    assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], dir), 'develop');
+  });
+
+  await t.test('--horde mission1 written out: this horde\'s own trunk worktree gets provisioned, a different tree from cwd', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const { branch } = setupLandable(dir, '110', { files: ['feature-110.mjs', 'feature-110.test.mjs'] });
+    git(['checkout', 'develop'], dir);
+    const trunkBefore = git(['rev-parse', 'mission1/trunk'], dir);
+    const trunkWorktree = join(dir, '.horde', 'worktrees', 'mission1', 'trunk');
+    assert.equal(existsSync(trunkWorktree), false, 'not provisioned yet — the point of this sub-test is that land.mjs is what provisions it');
+
+    const r = run('land.mjs', [branch, '--horde', 'mission1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.ok, true);
+    assert.notEqual(git(['rev-parse', 'mission1/trunk'], dir), trunkBefore, 'the ticket still landed');
+    assert.equal(existsSync(trunkWorktree), true, '--horde written out: trunk\'s own separate worktree was provisioned');
+    // Shared state, not part of either tree: the main checkout is left exactly where it was.
+    assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], dir), 'develop');
+  });
+});
+
+// --fate draws the same tree distinction as the gate-run path above, for consistency — one script,
+// one flag, one reading of it — even though the one thing --fate itself reads off the tree (a
+// single, repo-wide "does this commit exist") could not care less which valid worktree answers it.
+test('land.mjs --fate: --horde written out resolves to that horde\'s own trunk too, same as a gate run', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '111', { files: ['feature-111.mjs', 'feature-111.test.mjs'] });
+  const landed = run('land.mjs', [branch], dir);
+  assert.equal(landed.code, 0, landed.stderr);
+  const revertSha = landed.json.landed.sha;
+  git(['checkout', 'develop'], dir);
+  const trunkWorktree = join(dir, '.horde', 'worktrees', 'mission1', 'trunk');
+  assert.equal(existsSync(trunkWorktree), false);
+
+  const r = run('land.mjs', ['111', '--fate', 'reverted', '--by', revertSha, '--horde', 'mission1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.recorded, true);
+  assert.equal(existsSync(trunkWorktree), true, '--horde written out on --fate provisions trunk\'s own worktree too');
+  assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], dir), 'develop');
+});

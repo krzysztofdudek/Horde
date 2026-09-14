@@ -48,9 +48,9 @@ import {
 import { recordMerged, buildPlan } from './queue.mjs';
 import { noteFate } from './wave.mjs';
 
-const USAGE = `usage: land.mjs <ticket|branch> [--level trunk] [--no-gate] [--background] [--horde h]
-       land.mjs <ticket> --fate reverted --by <sha> [--horde h]
-       land.mjs <ticket> --fate reopened --by <ticket> [--horde h]
+const USAGE = `usage: land.mjs <ticket|branch> [--level trunk] [--no-gate] [--background] [--tree p] [--horde h]
+       land.mjs <ticket> --fate reverted --by <sha> [--tree p] [--horde h]
+       land.mjs <ticket> --fate reopened --by <ticket> [--tree p] [--horde h]
 
 The gate a change lands through. Nine items, ✓/✗ per line; every one green means the branch is
 merged into its parent here and now, and a single ✗ means it is not — nobody's signature is asked
@@ -97,6 +97,14 @@ directly on <horde>/trunk. "team" here is the name of a config key kept from bef
 team you can name: passing --level team is refused outright rather than read as the default.
 --no-gate skips items 5, 6 and 7 (informational: pass) and never merges.
 --background starts the run and prints the path of the result file it will write, immediately.
+
+Everything above — the scope check's own graph read included — runs against the tree --tree
+names; without it, cwd, same as an ordinary read anywhere else in this tool set, not this horde's
+trunk just because a horde was resolvable. --horde h WRITTEN OUT (no --tree) is what changes that,
+for both a gate run and a --fate record: it resolves to that horde's own trunk worktree instead,
+exactly as queue.mjs plan/quality and tick.mjs already read it. This is usually invisible — tick.mjs
+spawns every gate run with cwd already pointed at the tree it resolved — and matters only when land
+is run directly, by hand, with --horde and no --tree.
 
 --fate records what became of a ticket AFTER it landed, and runs no gate: "reverted" when the merge
 was undone (--by names the commit that undid it), "reopened" when the evidence the ticket claimed
@@ -1835,7 +1843,14 @@ function main() {
     for (const bad of ['level', 'no-gate', 'background']) {
       if (flags[bad] !== undefined) fail(`--${bad} does not go with --fate — a fate records what became of a landing, it never runs one`);
     }
-    const root = resolveTree({ tree: flags.tree }, { cwd: process.cwd() }).path;
+    // No --tree: cwd, the same ordinary default every read in this tool set takes — not this
+    // horde's trunk just because a horde was resolvable, which is the question still open on ask
+    // a-002. --horde WRITTEN OUT is what changes that, read the same way as the gate-run path
+    // below: `flags.horde`, never resolveHorde(flags)'s own default-to-the-sole-horde value below
+    // it. The tree barely matters to what --fate itself does with it — the one read it makes off
+    // root is a single, repo-wide `git rev-parse` — but the flag is not read one way here and
+    // another way three lines down for the same script and the same caller.
+    const root = resolveTree({ tree: flags.tree, horde: flags.horde }, { cwd: process.cwd() }).path;
     runFate(resolveHorde(flags), root, arg, flags);
     return;
   }
@@ -1849,7 +1864,18 @@ function main() {
   const level = flags.level || 'team';
 
   const horde = resolveHorde(flags);
-  const info = resolveTree({ tree: flags.tree }, { cwd: process.cwd() });
+  // No --tree: cwd, same as an ordinary read anywhere else in this tool set — NOT this horde's
+  // trunk just because a horde was resolvable, which is the one question still open on ask a-002.
+  // What this DOES now honor is --horde typed explicitly: `flags.horde`, never `horde` above
+  // (resolveHorde's own default-to-the-sole-horde reading), so a bare `land.mjs <ticket>` call —
+  // the shape tick.mjs itself spawns, cwd already pointed where tick resolved it — is untouched,
+  // and only a caller who actually wrote --horde (running land.mjs directly, as a maintainer
+  // might) gets this horde's own trunk instead of whatever tree the shell happened to be sitting
+  // on — the same distinction queue.mjs plan/quality and tick.mjs already draw. land.mjs is the
+  // one script every doc in this tool set names as trunk's sole writer, so resolving --horde here
+  // to the tree it may actually merge into is not a new exception, just this script catching up to
+  // its own rule.
+  const info = resolveTree({ tree: flags.tree, horde: flags.horde }, { cwd: process.cwd() });
   const root = info.path;
   const cfg = readConfig() || {};
 
