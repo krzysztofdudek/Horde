@@ -30,7 +30,9 @@
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { execFileSync, spawn as spawnProcess } from 'node:child_process';
+import {
+  execFileSync, execSync, spawn as spawnProcess,
+} from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit,
@@ -500,6 +502,12 @@ function closeCommand(horde) {
 // under `--runner external`: a loop outside any agent has nobody to hand a dispatch list to, so it
 // starts the workers itself through the host's own headless CLI. The command line is the operator's
 // (`config.runner.spawn`), with `<class>` and `<brief>` filled in.
+//
+// The brief itself is rendered by running `entry.brief` verbatim — the exact command dispatch()
+// already built for this entry, takeover section and round-aware `--name` included. That is the
+// same command the session runner would be handed to run itself; the only thing "external" changes
+// is who runs it, never what it says (see reference/model.md's Runner section) — so this must never
+// reconstruct a narrower call of its own.
 function externalStart(horde, cfg, entries, root) {
   const template = cfg.runner && cfg.runner.spawn;
   const started = [];
@@ -507,7 +515,7 @@ function externalStart(horde, cfg, entries, root) {
     const path = hordePath(horde, 'briefs', `${entry.ticket}.md`);
     let text;
     try {
-      text = execFileSync(process.execPath, [join(SCRIPTS, 'brief.mjs'), 'worker', entry.ticket, '--name', `w-${entry.ticket}`, '--horde', horde, '--tree', entry.worktree], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      text = execSync(entry.brief, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
       started.push({ ticket: entry.ticket, started: false, note: `could not render the brief: ${e && e.stderr ? String(e.stderr).trim() : e}` });
       continue;
