@@ -1,6 +1,6 @@
 # 022 · dowod wykonany na czubku
 
-**Status:** in-progress
+**Status:** done
 **Kind:** gap
 **Priority:** 1
 **Tier:** strong
@@ -39,4 +39,6 @@ Uwagi: Środowisko i runner są poza Hordą; Horda tylko czyta raport, który br
 - **ran:** this is an item, not a sixth guard: nothing here refuses outright and no ask.mjs --kind lower answer waives it · **saw:** wired into checkGate itself, so a report-configured gate is green only when the report agrees — exactly the way a gate is not green today unless its exit code says so. A missing or failed case is fixed by writing it, un-skipping it or making it pass, which is what separates it from 021's guards
 - **ran:** horde.mjs: no change needed for the config surface — setPath/getPath already write any dotted path · **saw:** horde.mjs config set gates.report.path "reports/junit.xml" and gates.report.format junit both work with zero code change there; every reader of cfg.gates names commit|team|trunk explicitly, so an object under gates.report collides with nothing
 - **ran:** git log --oneline ded1474..HEAD && git status --short · **saw:** 855c27a path guard + cost note / b26c496 docs + CHANGELOG / 2fde212 the report reading itself / aa1e8fb in-progress; working tree clean. Only 5 lines were removed from land.mjs in the whole ticket, all inside checkGate, its comment and the USAGE item — no guard function from 021 was touched
+- **ran:** HORDE_TEST_YG=... node --test tests/land.test.mjs tests/law-guard.test.mjs, merger's own run on the merged tip · **saw:** land.test.mjs: 114 tests, 114 pass, 0 fail, 0 skip. law-guard.test.mjs: 51 tests, 51 pass, 0 fail, 0 skip (confirms no regression to issue 021's guards from the promisesIn/pairingOf changes)
+- **ran:** HORDE_TEST_YG=... node --test tests/docs.test.mjs tests/ask.test.mjs tests/horde.test.mjs tests/drill.test.mjs tests/tick.test.mjs tests/queue.test.mjs, merger's own broader regression sweep on the merged tip · **saw:** 303 tests, 301 pass, 0 fail, 2 pre-existing unrelated skips
 
