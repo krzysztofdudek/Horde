@@ -42,6 +42,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - Landing a change and closing a wave both report the same size figure, so what a piece of work cost is visible where it lands and again when the wave is counted up.
 - `history` lists every mission that has finished on this repository, newest first: what it set out to do, how much of what it promised was proved, the rules it proposed and the things it found no rule will ever capture, the questions you answered, and what it changed about the rules.
 - Each agent planning an area is now handed what earlier missions already learned about that same area — and only about that area: the rules they proposed for it, what they found no rule holds there, and the answers you already gave about it. Nothing from anybody else's area reaches them.
+- A promise in the evidence package can now say what kind of proof keeps it — an e2e scenario, a hermetic test, a mutation, a recorded stub, an artifact or client testimony — and who reproduces that proof: a gate, a guard, a worker or the client. Both are optional; a promise that says neither is unaffected. Anything outside those two lists is refused, so the words mean the same thing in every repository.
 
 ### Changed
 
