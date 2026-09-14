@@ -1,6 +1,6 @@
 # 021 · nic co chroni nie slabnie
 
-**Status:** in-progress
+**Status:** done
 **Kind:** gap
 **Priority:** 1
 **Tier:** strong
@@ -30,4 +30,6 @@ Dowód, którego oczekuję: skills/horde/scripts/tests/law-guard.test.mjs, skill
 - **ran:** design decision on the ask target field: kept --aspect as the one flag and **Aspect:** as the one field, widening only what values it is documented to accept · **saw:** zero churn to ask.mjs parsing, decisions.md shape, findAnswer/consumeAnswer or any existing test; three collision-free spellings instead — a bare rule id (unchanged), evidence:<promise id|test path>, gate:<path>. Each guard calls findAnswer for its own specific target, never a blanket category waiver
 - **ran:** deviation from the issue's own list: config.protectedPaths is not watched by the gate guard · **saw:** item 3 (scope) already refuses any branch that so much as touches a protected path, with no client answer able to let it through; a second refusal naming an answer that still could not land the change would mislead a worker into asking the client for nothing. Recorded in scripts/README.md and in the code
 - **ran:** git log --oneline -3 && git status --short · **saw:** 0fd87a6 keep the new guards cheap / 574994e docs+CHANGELOG / d62e66f the guards themselves; working tree clean
+- **ran:** HORDE_TEST_YG=... node --test tests/law-guard.test.mjs tests/land.test.mjs, merger's own run on the merged tip · **saw:** 146 tests, 146 pass, 0 fail, 0 skipped
+- **ran:** HORDE_TEST_YG=... node --test tests/docs.test.mjs tests/ask.test.mjs tests/horde.test.mjs tests/drill.test.mjs tests/tick.test.mjs tests/queue.test.mjs, merger's own broader regression sweep on the merged tip · **saw:** 303 tests, 301 pass, 0 fail, 2 pre-existing unrelated skips
 
