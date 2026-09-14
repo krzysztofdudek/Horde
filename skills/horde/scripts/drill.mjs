@@ -33,7 +33,7 @@ import {
 } from './_lib.mjs';
 import { findTicket, ticketFiles } from './tk.mjs';
 import {
-  nodeExists, nodeBoundary, nodeGraphPathPrefix, ticketNodes,
+  nodeExists, nodeBoundary, nodeGraphPathPrefix, ticketNodes, pathInBoundary,
 } from './node.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -120,10 +120,6 @@ function globToRegExp(glob) {
     if (glob.startsWith('**/', i)) { out += '(?:.*/)?'; i += 3; } else if (glob.startsWith('**', i)) { out += '.*'; i += 2; } else if (glob[i] === '*') { out += '[^/]*'; i += 1; } else { out += esc(glob[i]); i += 1; }
   }
   return new RegExp(`^${out}$`);
-}
-
-function pathInBoundary(path, boundary) {
-  return boundary.some((pat) => (pat.includes('*') ? globToRegExp(pat).test(path) : path === pat || path.startsWith(pat)));
 }
 
 // Files added by one commit (status A), as paths.
