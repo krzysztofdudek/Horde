@@ -97,8 +97,21 @@ function short(sha) { return sha ? sha.slice(0, 7) : '(none)'; }
 // A path with any byte above 0x7f comes back from git C-quoted ("za\305\274\303\263...") unless
 // this is off, and every item that compares a diff path against a declared one, or hands it to the
 // graph to ask who owns it, would then be working on an escape sequence instead of a filename.
+//
+// git() returns null on a real failure and '' on a clean result that just has nothing to say, and
+// this is the one place that tells them apart. Every caller here feeds a gate item — scope,
+// mapping, the revert test, the merge's own conflict list — that already reads an empty list as
+// "nothing to flag", so folding a git() failure into that same [] would pass every one of them on
+// a diff this landing never actually read. fail()s instead, naming the git error gitError() left
+// behind, so a corrupted object or an unreadable ref refuses the landing rather than reading as a
+// clean, empty diff.
 function diffPaths(args, cwd) {
-  return (git(['-c', 'core.quotepath=false', ...args], cwd) || '').split('\n').filter(Boolean);
+  const out = git(['-c', 'core.quotepath=false', ...args], cwd);
+  if (out === null) {
+    const detail = gitError();
+    fail(`git ${args.join(' ')} failed, so this landing cannot tell what the branch actually touched — reading that as "nothing changed" would let the scope and mapping items pass on a diff nobody examined${detail ? `: ${detail}` : ''}`);
+  }
+  return out.split('\n').filter(Boolean);
 }
 
 // The nine items, in the order they are reported. Written down as a list rather than left to the
@@ -1291,8 +1304,16 @@ function mergeIntoParent(root, cfg, branch, parentBranch, parentTip, ticketId, c
     try {
       execFileSync('git', ['merge', '--no-ff', '-m', message, branch], { cwd: checkout, stdio: 'pipe' });
     } catch (e) {
-      const files = conflictingFiles(checkout);
-      git(['merge', '--abort'], checkout);
+      // conflictingFiles can itself now refuse — a git failure independent of the conflict, hit
+      // while listing it. The abort still has to run either way: `checkout` is a real tree this
+      // landing did not make (unlike the scratch branch below, nothing here throws it away), so
+      // leaving it mid-merge on top of the conflict would strand it for whoever works there next.
+      let files;
+      try {
+        files = conflictingFiles(checkout);
+      } finally {
+        git(['merge', '--abort'], checkout);
+      }
       return {
         ok: false,
         conflict: true,
