@@ -1,0 +1,377 @@
+# Log
+
+- 2026-09-13 15:45 · opened · Poprawki do Hordy 6.0.0: dokumentacja i kod mówią to samo, kruchości usunięte, luki wobec wizji misji domknięte, koszt usunięty w całości. Wydanie 6.0.0 zrobione od nowa jako jedyne.
+- 2026-09-13 15:46 · filed 001 · tick nigdy nie spawnia
+- 2026-09-13 15:46 · filed 002 · brief konsultanta port z wersja
+- 2026-09-13 15:46 · filed 003 · resztki modelu podzespolow
+- 2026-09-13 15:46 · filed 004 · straz konfliktu martwy wyjatek
+- 2026-09-13 15:46 · filed 005 · escalate liczy zamiast porownywac
+- 2026-09-13 15:46 · filed 006 · retro losowanie bez ziarna
+- 2026-09-13 15:46 · filed 007 · retro dopasowanie jednostki przez includes
+- 2026-09-13 15:46 · filed 008 · jeden parser na dokument
+- 2026-09-13 15:46 · filed 009 · fail w bibliotece
+- 2026-09-13 15:46 · filed 010 · kolejka bez blokady
+- 2026-09-13 15:46 · filed 011 · bramki z pierwszego ekosystemu
+- 2026-09-13 15:46 · filed 012 · reset trunku po cichu
+- 2026-09-13 15:46 · filed 013 · stale maja pochodzenie
+- 2026-09-13 15:46 · filed 014 · test rewersji tylko nowe pliki
+- 2026-09-13 15:46 · filed 015 · has evidence named dopasowanie
+- 2026-09-13 15:46 · filed 016 · dokumentacja i kod w jednym tescie
+- 2026-09-13 15:46 · filed 017 · reconcile bez wpisu w logu
+- 2026-09-13 15:46 · filed 018 · nieznana polityka jakosci domyslnie autonomous
+- 2026-09-13 15:46 · filed 019 · git polyka bledy
+- 2026-09-13 15:46 · filed 020 · katalog obietnic zgadywany
+- 2026-09-13 15:46 · filed 021 · nic co chroni nie slabnie
+- 2026-09-13 15:46 · filed 022 · dowod wykonany na czubku
+- 2026-09-13 15:46 · filed 023 · obietnica zyje
+- 2026-09-13 15:46 · filed 024 · pola klasa i wykonawca obietnicy
+- 2026-09-13 15:46 · filed 025 · pushback na bilet spoza charteru
+- 2026-09-13 15:46 · filed 026 · bilet prototyp
+- 2026-09-13 15:46 · filed 027 · ksiega misji czytelna dla nastepnej
+- 2026-09-13 15:46 · filed 028 · pytania nie blokuja reszty
+- 2026-09-13 15:46 · filed 029 · los biletu w misji
+- 2026-09-13 15:46 · filed 030 · sygnal rozmiaru
+- 2026-09-13 15:46 · filed 031 · warstwa none jest glosna
+- 2026-09-13 15:46 · filed 032 · granica srodowiska w skill
+- 2026-09-13 15:46 · filed 033 · e2e rodziny dla kontraktu
+- 2026-09-13 15:46 · filed 034 · changelog 6 0 0 i re release
+- 2026-09-13 15:46 · filed 035 · wip znika przed merge
+- 2026-09-13 15:46 · filed 036 · koszt wylatuje w calosci
+- 2026-09-13 15:46 · decided koszt-wylatuje
+- 2026-09-13 15:46 · decided jedno-wydanie-6-0-0
+- 2026-09-13 15:46 · decided srodowisko-poza-horda
+- 2026-09-13 15:46 · decided jarl-tylko-na-galezi
+- 2026-09-13 15:47 · 036 → in-progress · worker raised, wave 1
+- 2026-09-13 15:47 · 002 → in-progress · worker raised, wave 1
+- 2026-09-13 15:47 · 004 → in-progress · worker raised, wave 1
+- 2026-09-13 15:47 · 010 → in-progress · worker raised, wave 1
+- 2026-09-13 15:47 · 005 → in-progress · worker raised, wave 1
+- 2026-09-13 15:49 · decided jarl-zostaje-0-1-0
+- 2026-09-13 15:51 · filed 037 · plan i quality czytaja cwd zamiast trunku
+- 2026-09-13 15:51 · filed 038 · tk usage nie wymienia komendy move
+- 2026-09-13 15:51 · filed 039 · readme done obiecuje odmowe za brak audytu
+- 2026-09-13 15:51 · filed 040 · tk new waliduje granice wobec cwd
+- 2026-09-13 15:51 · filed 041 · tick rozwiazuje drzewo bez hordy
+- 2026-09-13 15:52 · filed 042 · dyscyplina review kaze uruchomic tk review
+- 2026-09-13 15:52 · filed 043 · readme i escalate nazywaja nieistniejacy legislate mjs
+- 2026-09-13 15:52 · filed 044 · readme i skill pomijaja wymagane name w brief
+- 2026-09-13 15:52 · filed 045 · has-evidence bez bloku scope
+- 2026-09-13 15:52 · filed 046 · product-language bez drilla dla url-path
+- 2026-09-13 15:53 · filed 047 · land liczy wpis cache bramki i nigdy go nie zapisuje
+- 2026-09-13 15:53 · filed 048 · retro drugi sedzia bierze pierwszy werdykt z listy
+- 2026-09-13 15:53 · filed 049 · refine review buduje plan bez oslony na blad
+- 2026-09-13 16:06 · filed 050 · stress testy hordy po poprawkach
+- 2026-09-13 16:08 · 004: worker stalled twice on a background test run; jarl reviewed the diff, ran law-guard tests, added the changelog line and committed on its branch
+- 2026-09-13 16:16 · filed 051 · architect brief tells the architect to run a nonexistent
+- 2026-09-13 16:16 · filed 052 · legislate brief passes the territory name not the agent
+- 2026-09-13 16:16 · filed 053 · worker brief s issuedir omits the hordes horde path
+- 2026-09-13 16:16 · filed 054 · worker brief s node mjs show command breaks when
+- 2026-09-13 16:16 · filed 055 · horde mjs config key worktree copy missing from readme
+- 2026-09-13 16:16 · filed 056 · readme lists a nonexistent queue mjs move command
+- 2026-09-13 16:16 · filed 057 · node mjs propose s node boundary flags required for
+- 2026-09-13 16:16 · filed 058 · escalate mjs s minimum 2 floor on min is
+- 2026-09-13 16:16 · filed 059 · queue mjs plan s out flag is undocumented in
+- 2026-09-13 16:16 · filed 060 · readme documents wave mjs audit audit plan commands that
+- 2026-09-13 16:16 · filed 061 · node mjs veto s why argument notation disagrees between
+- 2026-09-13 16:16 · filed 062 · fresh worker class up is documented but never implemented
+- 2026-09-13 16:16 · filed 063 · changelog claims a strict yggdrasil major version pin that
+- 2026-09-13 16:16 · filed 064 · changelog names a nonexistent config key worker copy
+- 2026-09-13 16:16 · filed 065 · product language s description omits two of the four
+- 2026-09-13 16:16 · filed 066 · evidence matches promise s companion hardcodes the parked status
+- 2026-09-13 16:16 · filed 067 · tk mjs review request delta error names a source
+- 2026-09-13 16:16 · filed 068 · status mjs branchcategory tests queue item state for values
+- 2026-09-13 16:20 · handoff · Pętla poprawek do Hordy 6.0.0 otwarta na gałęzi claude/autonomous-self-evolving-system-oiveiz. 68 spraw: 35 z własnego czytania, 13 od trzech czytelników, 18 z workflow z refuterami, 1 stress testy na koniec, 1 usunięcie kosztu. Fala pierwsza w locie: 036, 002, 004, 010, 005; workerzy stawali na testach w tle, merger (jeden długowieczny agent) przejmuje ich gałęzie, weryfikuje, scala, ustawia done. Narzędzie: node /home/user/jarlskill/skills/jarl/scripts/jarl.mjs. Sesja otwierająca pracowała na mocnym modelu; pętla może iść dalej na standardowym. Zasady: wpisy CHANGELOG pod [6.0.0], wersja bez zmian, JarlSkill zostaje 0.1.0, .jarl/ znika przed merge do main, gałęzie workerów nigdy nie są pushowane, koszt wylatuje w całości, środowisko testowe poza Hordą.
+- 2026-09-13 16:23 · filed 069 · testy chmod zaklada brak roota
+- 2026-09-13 16:23 · filed 070 · retro podwojny bieg blokada niestabilna pod obciazeniem
+- 2026-09-13 16:23 · filed 069 i 070 z raportu workera 036 (Found)
+- 2026-09-13 16:25 · 042 → in-progress · worker raised, wave 2
+- 2026-09-13 16:25 · 044 → in-progress · worker raised, wave 2
+- 2026-09-13 16:25 · 051 → in-progress · worker raised, wave 2
+- 2026-09-13 16:25 · 052 → in-progress · worker raised, wave 2
+- 2026-09-13 16:25 · 053 → in-progress · worker raised, wave 2
+- 2026-09-13 16:42 · 051 review approve · Reviewer: acceptance met literally, new docs.test.mjs test verified red on base architect.md / green on branch's fix, scope limited to architect.md + expected CHANGELOG.md + the new test file. Minor only: regression test is intentionally general across reference/roles/, CHANGELOG entry checked against register rules.
+- 2026-09-13 16:46 · 042 review approve · Reviewer: acceptance met literally — tk.mjs has no review subcommand, replaced with real log+status commands matching drill.mjs's reviewLines() format. Verified red on base review.md / green on branch's fix via docs.test.mjs. Scope: only review.md + CHANGELOG.md + docs.test.mjs touched. Minor only: new ### Fixed subsection is first of its kind under [6.0.0]; the doc-block regex parser is narrow but acceptable.
+- 2026-09-13 16:46 · filed 071 · worker worktree branch nie nazywa sie jarl NNN slug
+- 2026-09-13 16:46 · filed 071 z raportu workera 053 (nazwa galezi)
+- 2026-09-13 17:08 · 036 round 1 · npm test: lib.test.mjs 'renderTemplate fills placeholders and defaults' still asserts /Limit: none runs-weighted/ against the charter template, but templates/charter.md's Cost/Limit section was removed by this branch's own commit (b97ef8a) without updating that assertion — reverted, merge rolled back with git reset --hard ORIG_HEAD
+- 2026-09-13 17:09 · 044 review approve · Reviewer: acceptance met literally for the two declared files (SKILL.md, scripts/README.md), verified via git grep — no remaining broken example. Red on parent / green on branch confirmed for tests/docs.test.mjs alone. Scope: SKILL.md + README.md + expected CHANGELOG.md + docs.test.mjs only. Minor only: tk.mjs:99/208 carry the same gap but are already filed as issue 072, disclosed not silent; the new snippet scanner is fragile to backtick-parity elsewhere in the doc but nothing is lost in practice here.
+- 2026-09-13 17:09 · 071 → dropped · naprawione w narzędziu Jarla, nie w Hordzie
+- 2026-09-13 17:10 · 052 review approve · Reviewer: acceptance met literally, --by {{territory}} → --by {{name}} matching every other role's usage and node.mjs promote semantics. Verified red on parent (5088c50 unmerged) / green on branch via brief.test.mjs subtest 9. Scope: legislate.md + expected CHANGELOG.md + brief.test.mjs only. Minor only: an unrelated flake seen during first uncontrolled setup run, absent from the final controlled comparison.
+- 2026-09-13 17:10 · 053 review approve · Reviewer: acceptance met literally, worker.md now renders hordes/{{horde}}/{{issueDir}}/log.md, matching hordePath()'s real location. Verified red on merge-base (old worker.md) / green on branch via brief.test.mjs subtest 'worker'. Scope: worker.md + expected CHANGELOG.md + brief.test.mjs only. No findings beyond Minor (none).
+- 2026-09-13 17:10 · filed 072 z raportu workera 044 (Found)
+- 2026-09-13 17:17 · 004 evidence · npm test (split in two): # tests 310 # pass 306 # fail 4 (root-permission-only, pre-existing/environmental) + # tests 594 # pass 593 # fail 0 # skipped 1; merged as 322436f
+- 2026-09-13 17:18 · test call after denial
+- 2026-09-13 17:18 · 002 evidence · npm test (split in two): # tests 310 # pass 306 # fail 4 (root-permission-only, pre-existing/environmental) + # tests 594 # pass 593 # fail 0 # skipped 1; merged as 23144c2
+- 2026-09-13 17:18 · 005 evidence · npm test (split in two): # tests 310 # pass 306 # fail 4 (root-permission-only, pre-existing/environmental) + # tests 594 # pass 593 # fail 0 # skipped 1; merged as f1230d3
+- 2026-09-13 17:18 · 010 evidence · npm test (split in two): # tests 310 # pass 306 # fail 4 (root-permission-only, pre-existing/environmental) + # tests 594 # pass 593 # fail 0 # skipped 1; merged as f60e3c3
+- 2026-09-13 17:21 · 005 review approve · Reviewer: acceptance met literally — grouping key now includes normalized answer text, so distinct answers never propose a rule; docs/usage/CHANGELOG updated to match. Verified red on f1230d3^1 (pre-change) / green on f1230d3 via escalate.test.mjs's two new subtests, run against separate git-archive extractions, main checkout untouched. Scope: escalate.mjs + SKILL.md/README.md/CHANGELOG.md/escalate.test.mjs, all by intent. No findings beyond nominal Minor (none).
+- 2026-09-13 17:25 · 010 review changes · Reviewer: Important — merge commit f60e3c3 carries unrelated content (.jarl/issues/071 + two log.md lines) present in neither merge parent, confirmed added directly in the merge commit. 010's own diff (queue.mjs/_lib.mjs withQueueLock) is otherwise literal and verified red/green. Minor: tick.mjs/audit.mjs routed through the lock and a README paragraph, both by acceptance intent, not scope creep.
+- 2026-09-13 17:25 · 010 review approve · the Important finding is stray .jarl state from the shared-checkout race, not the worker's diff; the diff meets the acceptance line with red→green evidence
+- 2026-09-13 17:25 · decided stray-jarl-state-in-merges
+- 2026-09-13 17:26 · 010 evidence · Reviewer verified withQueueLock covers every queue.json read-modify-write site (queue.mjs, tick.mjs, audit.mjs), red on f60e3c3^1 (import of withQueueLock fails) / green on f60e3c3, 51/51 in queue.test.mjs. Merge commit f60e3c3 also carries stray .jarl/ bookkeeping (issue 071 + log lines) from an unrelated shared-checkout race — see decision stray-jarl-state-in-merges; not a defect in this diff, and .jarl/ never reaches main.
+- 2026-09-13 17:28 · 004 review approve · Reviewer: acceptance met literally — conflict waiver deleted outright, guard now refuses unconditionally, docs/comments rewritten to match. Verified red on 322436f^1 (old test asserted waiver worked) / green on 322436f via law-guard.test.mjs test 24, isolated git-archive trees. Scope: land.mjs + README.md + CHANGELOG.md + law-guard.test.mjs only. Minor: declared Files named ask.mjs, which needed no edit (never defined a conflict kind) — not scope creep, just an unneeded declared file.
+- 2026-09-13 17:28 · 002 review approve · Reviewer: acceptance met literally — refine.mjs's --consumes/--produces syntax dropped the @<v> suffix, matching tk.mjs's pre-existing refusal and node.mjs's docs. New refine.test.mjs asserts the brief text and runs the exact command through real tk.mjs new. Verified red on 23144c2^1 / green on 23144c2, isolated scratch clones. Scope: refine.mjs + README.md + CHANGELOG.md + refine.test.mjs. Minor: declared Files named tk.mjs, which needed no edit (already correct) — not scope creep.
+- 2026-09-13 17:37 · 051 evidence · npm test: 900 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha cbe0f3b
+- 2026-09-13 17:37 · 051 → done · merged
+- 2026-09-13 17:37 · merged 051 cbe0f3b
+- 2026-09-13 17:38 · 036 review approve · Reviewer: forbidden set (limit-reached, Limit:, reviewerCalls, cost.mjs/json, sumEntries, bookCost, measureCost, writeCostRuns, plan.cost) confirmed zero hits by grepping the branch tree; 'cost' survives only as ordinary English prose or 6 deliberate regression guards; classes correctly kept for non-cost model-selection reasons. done no longer requires cost.json. Round 2's fix confirmed minimal and correct; lib.test.mjs 28/0, horde.test.mjs 55/54/1 (the 1 = pre-existing root-chmod issue 069, confirmed identical on base branch too). All other touched suites green. Minor only: dead imports in tick.mjs, a stale template-key example in _lib.mjs, ragged line wrapping in a few edited comments, config.parallelism named in a user-facing FAQ answer, horde-plan/1 and horde-retro/1 document shape changed without a schema id bump.
+- 2026-09-13 17:38 · filed 073 · 036 sprzatanie po recenzji drobiazgi
+- 2026-09-13 17:38 · filed 073 z drobiazgow recenzenta 036
+- 2026-09-13 17:44 · 042 evidence · npm test: 901 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha 8f89a97
+- 2026-09-13 17:44 · 042 → done · merged
+- 2026-09-13 17:44 · merged 042 8f89a97
+- 2026-09-13 17:50 · 052 evidence · npm test: 901 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha 24a26f5
+- 2026-09-13 17:50 · 052 → done · merged
+- 2026-09-13 17:50 · merged 052 24a26f5
+- 2026-09-13 17:57 · 053 evidence · npm test: 901 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha 94c51cc
+- 2026-09-13 17:57 · 053 → done · merged
+- 2026-09-13 17:57 · merged 053 94c51cc
+- 2026-09-13 18:01 · 054 → in-progress · worker raised, wave 3
+- 2026-09-13 18:01 · 067 → in-progress · worker raised, wave 3
+- 2026-09-13 18:01 · 014 → in-progress · worker raised, wave 3
+- 2026-09-13 18:01 · 015 → in-progress · worker raised, wave 3
+- 2026-09-13 18:01 · 065 → in-progress · worker raised, wave 3
+- 2026-09-13 18:04 · 044 evidence · npm test: 903 pass / 4 known root-permission fails (issue 069) / 1 skipped; merge sha d2f4b1f
+- 2026-09-13 18:04 · 044 → done · merged
+- 2026-09-13 18:04 · merged 044 d2f4b1f
+- 2026-09-13 18:05 · 002 evidence · Merge commit 23144c2 fixed the consultant brief's --consumes syntax to match tk.mjs's accepted port@version form; merged
+- 2026-09-13 18:05 · 002 → done · merged
+- 2026-09-13 18:05 · 004 evidence · Merge commit 322436f removed the dead conflict-guard exception; guard now always refuses when a branch changes both rule and code it governs; merged
+- 2026-09-13 18:05 · 004 → done · merged
+- 2026-09-13 18:05 · 005 evidence · Merge commit f1230d3 fixed escalate recurring to group by kind, territory and normalized answer text instead of only counting; merged
+- 2026-09-13 18:06 · 005 → done · merged
+- 2026-09-13 18:06 · 010 evidence · Merge commit f60e3c3 introduced withQueueLock covering every queue.json read-modify-write site (queue.mjs, tick.mjs, audit.mjs); merged
+- 2026-09-13 18:06 · 010 → done · merged
+- 2026-09-13 18:06 · merged 002 23144c2
+- 2026-09-13 18:06 · merged 004 322436f
+- 2026-09-13 18:06 · merged 005 f1230d3
+- 2026-09-13 18:06 · merged 010 f60e3c3
+- 2026-09-13 18:08 · 065 review approve · Reviewer: acceptance met literally — yg-aspect.yaml description now names all 8 category labels check.mjs's CATEGORIES table refuses (table name and field name added). Verified red on parent (old yaml) / green on branch via docs.test.mjs, worktree untouched. Scope: yg-aspect.yaml + expected CHANGELOG.md + docs.test.mjs only. Minor only: the test's coverage check is a coarse but honest substring heuristic, openly noted in its own comment.
+- 2026-09-13 18:09 · 067 review approve · Reviewer: chose the working fix over the issue's speculative Acceptance text — land.mjs confirmed to never write/print a rereview file (unchanged, correctly so), and tk.mjs's usage/comment/refusal all rewritten to tell the caller to generate the diff themselves, closing the actual bug. Verified red on ad23b9d (old text) / green on c1a3783 via tk.test.mjs's new subtest, throwaway worktrees. Scope: tk.mjs + expected CHANGELOG.md + tk.test.mjs. Minor: README.md:178, also named in the issue, was already accurate and correctly left untouched.
+- 2026-09-13 18:12 · 054 review approve · Reviewer: acceptance met literally — node.mjs's cmdShow only ever reads positional[0], so worker.md's new {{nodeShowCmd}} placeholder (filled by brief.mjs with one full node.mjs show <id> line per node) fixes the two-node case while single-node renders unchanged. Verified red on parent brief.mjs/worker.md / green on branch via brief.test.mjs, worktree restored cleanly after. Scope: worker.md + brief.mjs (the minimal necessary code fix) + expected CHANGELOG.md + brief.test.mjs. No findings beyond nominal Minor (none).
+- 2026-09-13 18:14 · 015 review approve · Reviewer: acceptance met literally — substring match replaced by NAMED_PATTERN_MATCHERS over the five required positions (test(, it(, Scenario:, def test_, func Test), configurable via named_case_patterns with a safe empty-list fallback to defaults; companion.mjs's namedTarget now agrees with check.mjs on malformed input. Verified red on pre-change check.mjs (5/9 fail) / green on branch (9/9) via has-evidence-check.test.mjs. Scope: check.mjs + companion.mjs + expected drill fixture + yg-package.yaml config entry + CHANGELOG.md (under [6.0.0]) + has-evidence-check.test.mjs + promises-package.test.mjs (drill's e2e wiring, required by acceptance). Minor only: RegExp built per-call not precompiled (no perf concern); identifier-derivation is naive word-splitting, untested edge case but configurable.
+- 2026-09-13 18:17 · filed 074 · readme rozdzial revert test nieaktualny po 014
+- 2026-09-13 18:17 · filed 075 · worker brief hordy powinien kazac uruchamiac tylko dotkniete testy
+- 2026-09-13 18:17 · filed 076 · jarl evidence powinno przyjmowac strukturalne wiersze
+- 2026-09-13 18:17 · filed 074 z raportu workera 014 (Found); filed 075 i 076 z ruling jarla po ocenie Opus (przegląd przenośności) — 076 dotyczy narzędzia JarlSkill, nie kodu Hordy, nie do podjęcia przez workera w tym repo
+- 2026-09-13 18:25 · 036 evidence · npm test: 886 tests, 881 pass, 4 fail (pre-existing root-permission chmod tests, issue 069), 1 skipped; merged as 95904ce75bf23422ae01af3f64ef34a544bb7f5d
+- 2026-09-13 18:25 · 036 → done · merged
+- 2026-09-13 18:25 · merged 036 95904ce75bf23422ae01af3f64ef34a544bb7f5d
+- 2026-09-13 18:27 · 014 review approve · Reviewer: acceptance met literally — checkRevertTest now filters on A or M status (was A only), routing a modified existing test through the same red-check path as a new one; noNewTestsReason requires a non-empty reason after the header, empty/missing falls through to refusal. Verified red on parent (4 fail, exactly the 4 new/changed tests) / green on branch (52/0) via land.test.mjs, independently reproduced. Scope: land.mjs + expected CHANGELOG.md + land.test.mjs. chainOfTwo fixture fix confirmed honest, not a weakened assertion. Minor: README.md stale section already filed as 074; issue file's own Status field still in-progress (bookkeeping, not code).
+- 2026-09-13 18:32 · filed 077 · brief test mutuje prawdziwy plik roli, powodując losowe czerwone CI
+- 2026-09-13 18:32 · 077 → in-progress · worker raised, red CI fix
+- 2026-09-13 18:33 · filed 078 · brief mjs powinien pisac brief do pliku zamiast tylko stdout
+- 2026-09-13 18:33 · 075 → in-progress · worker raised, ruling confirmed by repeated stalls
+- 2026-09-13 18:33 · 078 → in-progress · worker raised, portability ruling
+- 2026-09-13 18:38 · 075 review approve · Reviewer: acceptance met literally — worker.md's Prove-it-red-green bullet now covers every clause (scoped to touched test file(s), foreground, explicit shell-tool timeout, full suite left to landing/merger). Verified red on base worker.md / green on branch via docs.test.mjs test #9, run directly. Scope: worker.md + expected CHANGELOG.md + docs.test.mjs only. No findings beyond nominal Minor (none).
+- 2026-09-13 18:38 · filed 079 · status mjs powinien widziec branch bez wpisu w kolejce
+- 2026-09-13 18:38 · filed 080 · land mjs moglby scalac paczke biletow pod jednym przebiegiem bramki
+- 2026-09-13 18:38 · filed 081 · recenzja przed done jako odmowa narzedzia w Hordzie
+- 2026-09-13 18:39 · 077 review approve · Reviewer flagged Important (brief.mjs's HORDE_TEST_ROLES_DIR override) but the issue's own acceptance line explicitly names this as one of two sanctioned approaches ('kopii... albo na atrapę, którą brief.mjs czyta przez wstrzykniętą ścieżkę') — this IS the injected-path mock it names, not undeclared scope. Reviewer confirmed no-op for any normal invocation, no other read of the env var, pure fallback. Reproduced 3/3 green on node --test tests/brief.test.mjs tests/docs.test.mjs. Scope otherwise: brief.mjs + brief.test.mjs + helpers.mjs (env passthrough) + expected CHANGELOG.md. Approving; reeve's call per the jarl's request to weigh this one directly.
+- 2026-09-13 18:42 · 078 review approve · Reviewer: acceptance met literally — brief.mjs's emitBrief writes byte-identical brief content to --out and prints only the path (or a --json summary), unchanged behavior without the flag across all four roles; refine.mjs --step consult gained an analogous --out per territory. Verified red on merge-base / green on branch tip via brief.test.mjs, throwaway worktrees, main checkout untouched. Scope: brief.mjs + refine.mjs + expected SKILL.md/model.md sentence + CHANGELOG.md (confirmed under existing [6.0.0]/### Added, not Unreleased) + brief.test.mjs. Minor: refine.mjs's --out path has no dedicated test (not required by the issue's stated acceptance); CHANGELOG bullet folds two code paths into one line, still accurate.
+- 2026-09-13 18:47 · 054 evidence · check clean, batch suite green (pre-existing root-perm fails only + 1 known flake, isolated rerun green); merge 00b4597
+- 2026-09-13 18:47 · 054 → done · merged
+- 2026-09-13 18:47 · 065 evidence · check clean, batch suite green (pre-existing root-perm fails only + 1 known flake, isolated rerun green); merge 9fff711
+- 2026-09-13 18:47 · 065 → done · merged
+- 2026-09-13 18:47 · 067 evidence · check clean, batch suite green (pre-existing root-perm fails only + 1 known flake, isolated rerun green); merge a5b9227
+- 2026-09-13 18:47 · 067 → done · merged
+- 2026-09-13 18:47 · 015 evidence · check clean (files-outside-declared list explained: drill fixture + package manifest inherent to fix), batch suite green (pre-existing root-perm fails only + 1 known flake, isolated rerun green); merge 3920484
+- 2026-09-13 18:47 · 015 → done · merged
+- 2026-09-13 18:47 · merged 054 00b4597
+- 2026-09-13 18:47 · merged 065 9fff711
+- 2026-09-13 18:47 · merged 067 a5b9227
+- 2026-09-13 18:47 · merged 015 3920484
+- 2026-09-13 18:48 · 001 → in-progress · worker raised, wave 4
+- 2026-09-13 18:48 · 079 → in-progress · worker raised, wave 4
+- 2026-09-13 18:48 · 006 → in-progress · worker raised, wave 4
+- 2026-09-13 18:48 · 011 → in-progress · worker raised, wave 4
+- 2026-09-13 18:48 · 017 → in-progress · worker raised, wave 4
+- 2026-09-13 18:54 · 001 review approve · Reviewer: acceptance met literally — tick.mjs's only spawnProcess call site is inside externalStart, gated on runner === 'external'; all three prose spots (tick.mjs header, model.md, README.md) now state the true session/external distinction. Verified red on merge-base / green on branch via docs.test.mjs, isolated worktree. Confirmed no leakage from the worker's caught stash mixup — commit is clean, self-contained. Scope: the three named files + expected CHANGELOG.md (confirmed under existing [6.0.0]) + docs.test.mjs. Minor: a reformatted README paragraph runs one line past normal wrap width, cosmetic.
+- 2026-09-13 18:55 · 079 review approve · Reviewer: acceptance met literally — orphanedBranches lists refs/heads/<horde>/t-* branches absent from knownBranches, which is built from ALL queue items' branch fields (unfiltered by state), so a merged/dropped ticket's still-present branch is correctly never flagged. Verified red on merge-base / green on branch via status.test.mjs. Scope: status.mjs + expected CHANGELOG.md (confirmed under existing [6.0.0]) + status.test.mjs. No findings at all.
+- 2026-09-13 18:55 · 006 review approve · Reviewer: acceptance met literally — seedFromState(missionState(landed)) derives the seed via FNV-1a over the sorted ticket@sha list, feeding a named mulberry32 PRNG replacing Math.random; all four return paths of measureJudge carry seed, verified individually. Verified red on parent (seed undefined) / green on branch (34/34) via retro.test.mjs, four retro runs on the same landed set proving identical seed+sample, checked against retro.json on disk not just stdout. Scope: retro.mjs + expected CHANGELOG.md + retro.test.mjs only. No findings at all.
+- 2026-09-13 18:55 · 017 review approve · Reviewer: acceptance met literally — reconcileRunningLocked now appends state, reason and the reclaiming commit's sha to ticket.logPath via appendText, following the existing log-append convention (same helper tk.mjs itself uses), additive to the existing queue.json note. Verified red on parent (no log.md write, no reclaimedSha) / green via queue.test.mjs 51/51. Scope: queue.mjs + expected CHANGELOG.md + queue.test.mjs. Minor: reclaimedSha would read (null) if git rev-parse somehow failed right after a successful commit — extremely unlikely, not blocking. Note: reviewer mistakenly believed this was already merged to main (no jarl/017-* branch exists under that name — same unrenamed-worktree-branch pattern as elsewhere); it is not merged, still on branch worktree-agent-ac9971dd28c9dc717, but reviewed the correct commit 88e2ae4's diff regardless.
+- 2026-09-13 19:08 · 014 evidence · Merge commit 46bee4b: land.mjs's revert test now checks changed test files too and honors a declared No new tests exemption; merged
+- 2026-09-13 19:08 · 014 → done · merged
+- 2026-09-13 19:08 · 075 evidence · Merge commit de33d4c: worker brief scopes test runs to touched files, foreground, explicit timeout; merged
+- 2026-09-13 19:08 · 075 → done · merged
+- 2026-09-13 19:08 · 077 evidence · Merge commit 5d99ccb: brief.test.mjs no longer mutates the real reference/roles/legislate.md on disk; merged
+- 2026-09-13 19:08 · 077 → done · merged
+- 2026-09-13 19:08 · 078 evidence · Merge commit 32e933a: brief.mjs and refine.mjs --step consult take --out to write briefs to a file; merged
+- 2026-09-13 19:08 · 078 → done · merged
+- 2026-09-13 19:08 · reconciled bookkeeping: 014, 075, 077, 078 were already merged (46bee4b, de33d4c, 5d99ccb, 32e933a) but evidence/done had not been recorded; fixed
+- 2026-09-13 19:32 · 014 round 1 · reverted from the batch: land.mjs's stricter revert-test default (refuse when a diff adds no new/changed test file, unless the ticket declares **No new tests:**) breaks 15 of skills/horde/scripts/tests/law-guard.test.mjs's fixtures, which build synthetic land.mjs tickets with no test files and no No-new-tests declaration. Isolated rerun: node --test tests/law-guard.test.mjs alone, 17/32 red on 46bee4b, 32/32 green after reverting the merge. Needs 014 to update law-guard.test.mjs's fixture helper (declare No new tests, or add a trivial test file) before it can land again.
+- 2026-09-13 19:32 · 075 evidence · npm test 906 tests, 879 pass, 26 fail (pre-existing root-perm + reverted-014 unrelated law-guard interference now clean); law-guard.test.mjs isolated 32/32 green; merge de33d4c
+- 2026-09-13 19:32 · 075 → done · merged
+- 2026-09-13 19:32 · 077 evidence · brief.test.mjs isolated green, no longer mutates real reference/roles/legislate.md; merge 5d99ccb
+- 2026-09-13 19:32 · 077 → done · merged
+- 2026-09-13 19:32 · 078 evidence · brief.test.mjs isolated green, --out writes brief to file for all roles + refine.mjs --step consult; merge 32e933a
+- 2026-09-13 19:32 · 078 → done · merged
+- 2026-09-13 19:32 · merged 075 de33d4c
+- 2026-09-13 19:32 · merged 077 5d99ccb
+- 2026-09-13 19:32 · merged 078 32e933a
+- 2026-09-13 19:33 · reverted 014 merge 46bee4b as 03155bb: breaks law-guard.test.mjs fixtures, round 1 filed
+- 2026-09-13 19:34 · 014 → in-progress · fresh worker raised, round 1 rework
+- 2026-09-13 19:35 · filed 082 · martwe galezie worktree agent zostaja po scaleniu
+- 2026-09-13 19:35 · filed 082, martwe galezie worktree-agent po scaleniu (porzadkowe)
+- 2026-09-13 19:35 · 001 evidence · suite: 887 pass / 21 fail (chmod-permission tests + pre-existing law-guard/014 fixture issue, unrelated to this branch); merge sha 1a9e16a
+- 2026-09-13 19:35 · 001 → done · merged
+- 2026-09-13 19:35 · merged 001 1a9e16a
+- 2026-09-13 19:35 · 006 evidence · suite: 887 pass / 21 fail (chmod-permission tests + pre-existing law-guard/014 fixture issue, unrelated to this branch); merge sha 069ee20
+- 2026-09-13 19:35 · 006 → done · merged
+- 2026-09-13 19:36 · merged 006 069ee20
+- 2026-09-13 19:36 · 017 evidence · suite: 887 pass / 21 fail (chmod-permission tests + pre-existing law-guard/014 fixture issue, unrelated to this branch); merge sha e6f8f13
+- 2026-09-13 19:36 · 017 → done · merged
+- 2026-09-13 19:36 · merged 017 e6f8f13
+- 2026-09-13 19:36 · 079 evidence · suite: 887 pass / 21 fail (chmod-permission tests + pre-existing law-guard/014 fixture issue, unrelated to this branch); merge sha cdbd5fe
+- 2026-09-13 19:36 · 079 → done · merged
+- 2026-09-13 19:36 · merged 079 cdbd5fe
+- 2026-09-13 19:37 · 009 → in-progress · worker raised, wave 6
+- 2026-09-13 19:37 · 016 → in-progress · worker raised, wave 6
+- 2026-09-13 19:37 · 020 → in-progress · worker raised, wave 6
+- 2026-09-13 19:37 · 069 → in-progress · worker raised, wave 6
+- 2026-09-13 19:37 · 037 → in-progress · worker raised, wave 6
+- 2026-09-13 19:41 · filed 083 · trzeci test chmod pod rootem w law-diff
+- 2026-09-13 19:41 · filed 083, trzeci test chmod pod rootem, znaleziony przy sprawdzaniu 069
+- 2026-09-13 19:44 · 069 review approve · Reviewer: acceptance met literally — both named tests detect root via process.getuid()===0 and skip with the exact reason text. Verified red on old code as root (both fail) / green on fix (86 pass, 0 fail, 2 skipped with the matching skip text), run directly in a detached scratch extraction, main checkout untouched. Scope: ask.test.mjs + horde.test.mjs + expected CHANGELOG.md (confirmed under existing [6.0.0]) only, no new test file needed since this modifies existing tests. Minor: non-root behavior not independently re-run (no non-root account available), but the change is a guarded early-return, negligible risk.
+- 2026-09-13 19:44 · 016 review approve · Reviewer: acceptance met literally — general scan extracts every <script>.mjs <subcommand> --flag from SKILL.md/README.md/reference/** and checks each against that script's own live USAGE text off disk; companion test proves it catches a dropped command, a dropped flag, and doesn't false-positive. Verified 22/22 via a proper worktree extraction (matching an unrelated pre-existing test's Yggdrasil-sibling-checkout requirement), main checkout untouched. Scope: docs.test.mjs only, correctly no CHANGELOG entry (test-only, no user-visible behavior change). The one real adjacent finding (wave.mjs audit in README.md) correctly left to issue 060 via deliberate scoping. Minor: regex confines matches to one line (forward-looking gap, no present case); no CHANGELOG entry (correct as-is, noted not flagged).
+- 2026-09-13 19:45 · 037 review approve · Reviewer: acceptance met literally — cmdQuality and cmdPlan both pass the resolved horde parameter (not raw flags.horde) into resolveTree, tracing precedence through _lib.mjs: with no --tree/--ticket/--scratch, a truthy horde now always takes the resolveHordeTrunk branch instead of falling through to resolveCwd. Verified red on parent (someone-elses-work) / green on branch (mission1/trunk) via plan.test.mjs, git-archive scratch extraction + dedicated worktree, main checkout untouched throughout. Scope: queue.mjs + expected CHANGELOG.md + plan.test.mjs. Minor: cmdQuality's identical one-line fix has no dedicated test (not required by the issue's own acceptance, which names only queue.mjs plan); test has slightly redundant equal+notEqual assertions, harmless.
+- 2026-09-13 19:46 · 020 review approve · Reviewer: acceptance met literally — promiseDirFromGraph reads yg aspects --json --reach, falls back to null (guessed list) on no graph/no-or-stale CLI/package absent/multi-directory reach; detectPromises tries it first, validates a status-line markdown file, else walks the old PROMISE_DIRS list unchanged. Verified red on merge-base (no graph-reach path) / green on branch via horde.test.mjs, git-archive scratch extraction, main checkout untouched. Scope: horde.mjs + expected CHANGELOG.md + horde.test.mjs only. Minor: doc-shape match is a deliberately soft regex (any package's doc-shape id), noted not a correctness bug against this acceptance.
+- 2026-09-13 19:55 · 014 review approve · Reviewer (round 2): round-1 regression fixed at its root — lawFixture's new noNewTests option (default a standard reason) writes **No new tests:** into every generated issue.md; confirmed by grep that all 22 call sites take the default, none opts out. checkRevertTest's file-status filter widened to A|M; noNewTestsReason requires a non-empty reason. No assertions weakened in law-guard.test.mjs, only the fixture helper's template changed. Verified independently, run directly: land.test.mjs + law-guard.test.mjs together, 81/81 green (worker's reported 84 was an inaccurate count, substance correct). Scope: land.mjs + expected CHANGELOG.md + land.test.mjs + law-guard.test.mjs (the fixture fix), matching what caused round 1. No findings beyond the count discrepancy.
+- 2026-09-13 19:56 · 009 review approve · Reviewer (strong tier, extra care): confirmed all 18 tools end with runMain(main), the only process.exit in _lib.mjs is inside exitOnFailure reached only from runMain, no stray fail()-style exit anywhere. fail()/runMain semantics correct: HordeError caught and mapped to error:<msg>+exit code, anything else re-thrown. Refusal contract measured unchanged across 7 tools via git archive comparison. tick --watch proof run directly: 49/0 fail including the new case. Gate-lock release-on-refusal assessed as a genuine leak fix, not a risk (lock acquisition sits outside the try, release() is idempotent and pid-guarded). Scope: exactly the expected 18-tool fanout + tick.mjs + tick.test.mjs + README.md + CHANGELOG.md. Four Minor findings, none blocking: watch()'s catch treats any throw as a refusal not just HordeError (pre-existing pattern, not a regression); --json's new refused-object shape is undocumented; several test files carry now-false stale comments about fail() calling process.exit; drill.mjs/land.mjs still call process.exit(1) from non-main helper frames (pre-existing, untouched).
+- 2026-09-13 19:56 · filed 084 · resztki po 009 fail w bibliotece
+- 2026-09-13 19:57 · filed 084 z drobiazgow recenzenta 009
+- 2026-09-13 20:20 · 009 evidence · npm test: 902 pass, 4 fail (pre-existing chmod/root), merge d1bd06a
+- 2026-09-13 20:20 · 009 → done · merged
+- 2026-09-13 20:20 · merged 009 d1bd06a
+- 2026-09-13 20:39 · filed 085 · flat-topology justification conflates platform contingency with context scoping
+- 2026-09-13 20:39 · 085 evidence row · node --test skills/horde/scripts/tests/docs.test.mjs
+- 2026-09-13 20:39 · 085 review approve · the three named reasons are supported by other sections of model.md already (one-branch-one-worker, Trust is manufactured in one place, portability across hosts) — this just names them where the topology is justified
+- 2026-09-13 20:40 · 085 → in-progress · editing model.md's flat-topology justification
+- 2026-09-13 20:40 · 085 → done · rewrote justification per Fable review; docs.test.mjs green
+- 2026-09-13 21:02 · 014 evidence row · git log --oneline cd69320 -1; node --test tests/land.test.mjs tests/law-guard.test.mjs (from skills/horde/scripts)
+- 2026-09-13 21:02 · 014 → done · merged as cd69320, confirmed present in branch history; bookkeeping was left open when the wave-6 merger process was interrupted
+- 2026-09-13 21:02 · 020 evidence row · git log --oneline 8d2fa42 -1
+- 2026-09-13 21:02 · 020 → done · merged as 8d2fa42, confirmed present in branch history; bookkeeping was left open when the wave-6 merger process was interrupted
+- 2026-09-13 21:02 · 016 evidence row · git log --oneline cefc760 -1
+- 2026-09-13 21:02 · 016 → done · merged as cefc760, confirmed present in branch history; bookkeeping was left open when the wave-6 merger process was interrupted
+- 2026-09-13 21:09 · 011 review approve · Reviewer: acceptance met literally — detectGates now maps every detected ecosystem (not just the first) to its commit-lane and gate command and joins each list with && , feeding commit/team/trunk alike; cmdInit's charter gate note lists every ecosystem name joined with ' + ' instead of ecosystems[0] alone. New test builds a pom.xml+go.mod fixture and asserts both the human charter text and the --json gates.team/gates.trunk/testGlobs. Verified red on merge-base 596744d / green on fa02914 via a git-archive scratch extraction, main checkout untouched. Full suite run directly (node --test tests/horde.test.mjs): 58 tests, 57 pass, 1 fail — the fail is the known root-chmod false failure tracked as 069/083, nothing else red. Scope: horde.mjs + horde.test.mjs + expected CHANGELOG.md only. CHANGELOG bullet is plain-language and adopter-facing. Minor: the JSON assertion checks gates.team/gates.trunk but not gates.commit explicitly — same map+join code path, not a real gap.
+- 2026-09-13 21:10 · 037 evidence row · git log --oneline; node --test tests/plan.test.mjs
+- 2026-09-13 21:10 · 069 evidence row · node --test tests/ask.test.mjs tests/horde.test.mjs
+- 2026-09-13 21:10 · 037 → done · merged and reviewed already; bookkeeping catch-up after the wave-6 merger was interrupted
+- 2026-09-13 21:10 · 069 → done · merged and reviewed already; bookkeeping catch-up after the wave-6 merger was interrupted
+- 2026-09-13 21:10 · 011 evidence row · node --test tests/horde.test.mjs (combined with 069's fix, from skills/horde/scripts)
+- 2026-09-13 21:10 · 011 → done · reviewed approve (independent reviewer, full acceptance verified against red-before/green-after); merged
+- 2026-09-13 21:22 · 003 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 007 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 023 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 028 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 032 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 033 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 045 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 066 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 083 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 034 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 035 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 046 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 049 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 057 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 058 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 060 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · 070 → in-progress · reeve: worker raised, wave 1
+- 2026-09-13 21:22 · asked a-001 (charter) · Issue 024 needs client-approved closed lists for a promise's optional 'class' (evidence type: e2e scenario, hermetic test, mutation, recorded stub, artifact, client testimony) and 'executor' (who reproduces it: gate, guard, worker, client) fields before implementation can start. Proposed lists are in the issue body's Where/Acceptance. Holding 024 open, not raised.
+- 2026-09-13 21:22 · 076 → dropped · Out of scope for Horde: issue text itself says nothing to do in this repository — it is a ticket against the JarlSkill loop tool's evidence command, filed for tracking, not a Horde code/doc change.
+- 2026-09-13 21:22 · 082 → dropped · Out of scope for Horde: issue text itself says this is a note for JarlSkill's merger brief (always delete both branch names after merge), not a Horde code change; no worker to raise here.
+- 2026-09-13 21:32 · 037 → open · reverted (f551100): the fix broke a pre-existing, deliberate test in tree.test.mjs that expects no --horde to mean cwd, not the resolved horde's trunk — the two behaviors conflict and the issue needs a design decision on what 'no --horde' should mean before a fix lands, not a blanket flags.horde→horde swap
+- 2026-09-13 21:32 · 037 evidence row · node --test tests/tree.test.mjs tests/plan.test.mjs (from skills/horde/scripts, after revert f551100)
+- 2026-09-13 21:33 · asked a-002 (charter) · Issue 037 filed queue.mjs plan/quality as a bug (no --horde, one horde in repo → should read trunk, not cwd) and a worker's fix made resolveTree always use the resolved horde's trunk when one exists. That broke a pre-existing, deliberate test in tree.test.mjs asserting the opposite: no --tree, no --horde → cwd, even with a horde present. Both can't be the documented default. Which is correct: (a) no --horde always means cwd, full stop — 037 is invalid, close it; or (b) no --horde should mean trunk when exactly one horde exists, and tree.test.mjs's existing case needs to change instead; or (c) something more specific (e.g. this distinction should key off something else, like whether a mission is actively running vs a bare repo)?
+- 2026-09-13 21:35 · 033 → open · blocked: two of its three required refusal cases depend on 021 (ask.mjs lower needs evidence/gate targets) and 022 (a runner-report reader in land.mjs), neither implemented yet — do not re-raise until those land
+- 2026-09-13 21:36 · 034 evidence row · cat CHANGELOG.md (one [6.0.0] header, confirmed); read .github/workflows/release.yml in full; list_releases/list_tags on krzysztofdudek/Horde
+- 2026-09-13 21:36 · 034 review approve · Verified independently against .jarl/decisions.md's jedno-wydanie-6-0-0 ruling: the tag/release recreation is explicitly gated on the maintainer's word at the end of the whole batch, not a worker's or this loop's to do now. Worker's own evidence (CHANGELOG has one [6.0.0] header, release.yml read in full, live GitHub check shows exactly one v6.0.0 tag/release) is sufficient; nothing to fix.
+- 2026-09-13 21:36 · 034 → done · verified, nothing to fix now; the tag/release recreation stays deferred to end-of-batch per standing decision
+- 2026-09-13 21:37 · 046 evidence row · 3 targeted existing tests + a real 'yg drill --aspect .../product-language' run
+- 2026-09-13 21:37 · 046 review approve · Worker's evidence is conclusive and independently checkable: git blame/log shows the exact drill case (violates-url-path/orders-are-confirmed) predates the issue's own filing date. No fabricated/redundant test warranted.
+- 2026-09-13 21:37 · 046 → done · issue was stale — the acceptance criteria was already met before it was filed
+- 2026-09-13 21:38 · 035 evidence row · grep -rIln jarl skills/horde/ (shipped skill has zero .jarl awareness); read .jarl/decisions.md
+- 2026-09-13 21:38 · 035 review approve · Correct: this issue describes a process guarantee already implemented by jarl.mjs's own close command (refuses while open, removes .jarl/ as the last commit). Nothing in skills/horde/ itself references .jarl/, so there is no shipped-code gap to fix.
+- 2026-09-13 21:38 · 035 → done · already implemented by jarl.mjs close; no shipped-code gap
+- 2026-09-13 21:39 · filed 086 · horde.mjs README section still cites deleted wave.mjs audit-plan
+- 2026-09-13 21:39 · filed 087 · wave.mjs carries an orphaned mulberry32 comment for deleted seededRandom/cmdAuditPlan
+- 2026-09-13 21:44 · filed 088 · CHANGELOG chmod/root skip wording will say 'two' when three tests now carry the guard
+- 2026-09-13 21:44 · 083 review approve · Reviewer (standard tier): acceptance met literally, red-before/green-after independently reproduced as root, scope exactly law-diff.test.mjs only (git show 106616a --stat, 1 file). Minor: notes the already-merged 069 CHANGELOG line will read stale ('Two' tests) once this lands as the third; filed as its own follow-up issue rather than touched here (083's own scope is test-only, correctly no CHANGELOG entry of its own).
+- 2026-09-13 21:45 · 063 → in-progress · reeve: worker raised, wave 1.5 (freed CHANGELOG.md slot)
+- 2026-09-13 21:46 · 032 review approve · Reviewer (standard tier): acceptance met literally (all three docs carry the boundary sentence, docs.test.mjs asserts presence), red-before/green-after independently reproduced via git-archive extraction (3/3 fail on old docs, 3/3 pass on new; full docs.test.mjs 24/25 pass, the one pre-existing failure is an unrelated sandbox gap present identically on merge-base). Scope exactly the 3 declared docs + docs.test.mjs, 1 commit. Flagged: jarl.mjs check's scope verdict shows a false '✗ outside declared files' for this issue because 032's own Files field is skill-relative (SKILL.md, reference/model.md, templates/charter.md) while check compares against repo-relative git diff paths (skills/horde/SKILL.md, ...) — confirmed a jarl.mjs tool blind spot, not a real scope escape (git diff --stat shows exactly the 4 expected files, 1 commit).
+- 2026-09-13 21:46 · filed 089 · doc-shape's closed STATUSES list means parked_markers can't actually add a new parked status package-wide
+- 2026-09-13 21:46 · 066 review approve · Reviewer (standard tier): acceptance met literally for the two rules it names (companion.mjs mirrors has-evidence's ctx.config?.parked_markers pattern byte-for-byte; yg-package.yaml declares the key). Red-before/green-after reproduced independently via extracted-file harness plus real runner archive diff (pass count +1, all other outcomes unchanged, the 40 pre-existing failures are a sandbox-wide missing-yg-binary issue on both branches). Scope: companion.mjs + yg-package.yaml + promises-package.test.mjs, all required by the acceptance line itself, 1 commit, nothing else touched. Minor/follow-up: doc-shape/check.mjs hardcodes a closed 3-value STATUSES list, so parked_markers can only narrow within {planned,implemented,disabled}, not add a genuinely new status as the issue's own motivating example suggested — doesn't block this fix (out of its declared scope), filed as issue 089.
+- 2026-09-13 22:37 · 083 evidence · npm test in skills/horde/scripts (batch of 083+032+066): 919 tests, 914 pass, 4 skipped (3 root-only chmod skips incl. this issue's own fix, 1 optional RatatoskrSkill-checkout skip), 1 fail (land.test.mjs:978 'a branch tip that moved...', a load-timing flake unrelated to this issue — land.mjs/land.test.mjs untouched by 083's diff, reproduces green in isolation in 12.1s, same class as tracked issue 070). Merged b15dfba.
+- 2026-09-13 22:37 · 032 evidence · npm test in skills/horde/scripts (batch of 083+032+066): 919 tests, 914 pass, 4 skipped (3 root-only chmod skips, 1 optional RatatoskrSkill-checkout skip), 1 fail (land.test.mjs:978 'a branch tip that moved...', a load-timing flake unrelated to this issue — land.mjs/land.test.mjs untouched by 032's diff, reproduces green in isolation in 12.1s, same class as tracked issue 070). Merged d03e65f.
+- 2026-09-13 22:38 · 066 evidence · npm test in skills/horde/scripts (batch of 083+032+066): 919 tests, 914 pass, 4 skipped (3 root-only chmod skips, 1 optional RatatoskrSkill-checkout skip), 1 fail (land.test.mjs:978 'a branch tip that moved...', a load-timing flake unrelated to this issue — land.mjs/land.test.mjs untouched by 066's diff, reproduces green in isolation in 12.1s, same class as tracked issue 070). Merged b6863fd.
+- 2026-09-13 22:38 · 083 → done · merged b15dfba, batch check clean of any related regression
+- 2026-09-13 22:38 · 032 → done · merged d03e65f, batch check clean of any related regression
+- 2026-09-13 22:38 · 066 → done · merged b6863fd, batch check clean of any related regression
+- 2026-09-13 22:38 · merged 083 b15dfba
+- 2026-09-13 22:38 · merged 032 d03e65f
+- 2026-09-13 22:38 · merged 066 b6863fd
+- 2026-09-13 22:38 · merger: 058 not merged this batch — brief expected an approving review already recorded, but .jarl/log.md carries no '058 review approve|changes' line (only filed/in-progress); a completed approve report sits unlogged at /tmp/jarl-relay/reviews/review-058.md. Left in-progress, branch and worktree kept, pending jarl.mjs review 058 approve <findings> before the next merge attempt.
+- 2026-09-13 22:38 · merger: batch check (083+032+066) surfaced one red outside all three issues' scope — land.test.mjs:978 'a branch tip that moved...' failed under the full-suite's heavy concurrent load (journal-timestamp-ordering check tripped instead of the intended branch-move check), reproduced green alone in 12.1s; land.mjs/land.test.mjs untouched by any of the three diffs. Same class as issue 070 (timing-dependent test, unstable under machine load), different file — worth a sibling issue or widening 070's scope, jarl's call.
+- 2026-09-13 22:40 · 058 review approve · Reviewer: acceptance met literally (USAGE now reads 'default 3, minimum 2', matches README:662 verbatim, runtime enforcement pre-existing/unchanged). Red-before/green-after reproduced independently via git-archive scratch extraction: pre-change 7/9 pass (2 fail on the new test), post-change 9/9. Scope: escalate.mjs + its test file only, one commit, no CHANGELOG needed (doc-only). Minor: issue's own stale line-number citations, pre-existing, doesn't affect correctness.
+- 2026-09-13 22:41 · 057 review approve · Reviewer (standard tier): acceptance met literally against node.mjs's own USAGE (the cited source of truth), red-before/green-after independently reproduced via git-archive overlay (old README fails the new test for the exact named reason, new README passes; full docs.test.mjs 23/23 green wired to real yg CLI). Scope: README.md + docs.test.mjs only -- node.mjs untouched, matching the issue's own Where: (README.md:462, not node.mjs). Minor/tool note: jarl.mjs check flags this as 'outside declared files' because this issue category (workflow finder usage-vs-readme) puts the AUDITED script in Files:, not necessarily the edit site -- confirmed by cross-checking siblings 055/056/059/060/061; not a scope escape. No CHANGELOG entry needed (pure doc correction).
+- 2026-09-13 22:41 · filed 090 · acquireRetroLock race: worker reproduced it once, reviewer could not in 220 runs and code reading says it should be safe
+- 2026-09-13 22:41 · 007 review changes · Reviewer: Important -- adopter-visible fix (two-judges measurement attribution) with no CHANGELOG.md entry under [6.0.0], despite direct precedent for this exact class of change already in that section. Minor (not blocking): pathInBoundary's prefix-not-boundary-aware matching (shared, pre-existing, in node.mjs) leaves a narrower residual false-positive (e.g. src/utils.js vs src/utils.js.map) -- out of 007's declared scope, flagged as a follow-up rather than blocking this fix, which correctly closes the issue's own reproducer.
+- 2026-09-13 22:41 · 007 round 1 · Reviewer found an Important gap: this diff changes retro's two-judges measurement attribution (adopter-visible) but adds no CHANGELOG.md entry under the existing [6.0.0] section. Round 1: add one plain-language entry there -- wording is the worker's/maintainer's call, placement under [6.0.0] is not.
+- 2026-09-13 22:41 · filed 091 · pathInBoundary is a prefix check, not a path-boundary check
+- 2026-09-13 22:41 · 049 review changes · Reviewer: Important -- adopter-visible fix (refine.mjs review step now refuses with a worded reason instead of crashing with a raw stack trace) with no CHANGELOG.md entry under [6.0.0], against an unbroken repo precedent of entering exactly this shape of change there (cited 037/011/069 as precedent, 016 as the one correctly-skipped test-only exception). Minor (not blocking): the new catch is slightly broader than strictly necessary (would also catch a HordeError from deeper in buildPlan's chain) but not reachable in practice at this call site -- not a functional bug.
+- 2026-09-13 22:41 · 049 round 1 · Reviewer found an Important gap: this diff changes refine.mjs's review-step behavior (a worded refusal instead of a raw crash -- adopter-visible) but adds no CHANGELOG.md entry under [6.0.0], against this repo's own unbroken precedent for this shape of change. Round 1: add one plain-language entry there -- wording is the worker's call, placement under [6.0.0] is not.
+- 2026-09-13 22:41 · 045 review approve · Reviewer (standard tier): acceptance's four parts each verified independently, including reading Yggdrasil's own pairs.ts source directly (not just yg schemas read aspect's doc text) to confirm scope:{per:node} with no files: key is behaviorally identical to the prior absent-scope default -- a genuine no-behavior-change, self-documentation commit. Red-before/green-after reproduced via git-archive hybrid tree. Real yg drill + yg pack add + yg check + yg marketplace check all green. Correctly no CHANGELOG entry (research-tagged, proven zero behavior change, not just asserted). Minor: diff also adds one test to the shared promises-package.test.mjs beyond the issue's own declared Files: field -- additive-only, directly instrumenting the acceptance line's own 'real package install' clause, not scope creep.
+- 2026-09-13 22:41 · 063 review approve · Reviewer (standard tier): acceptance met literally -- false 'same major' claim replaced with an open floor ('6.0.0 or newer'), verified against node.mjs's actual schema-equality check (not a semver comparison) and cross-checked against README.md and this file's own 0.3.0/0.4.0 precedent (identical phrasing template already established twice). Red-before/green-after independently reproduced via git-archive overlay. Scope: CHANGELOG.md + docs.test.mjs only, 1 commit; correctly no separate CHANGELOG entry of its own (a correction to the changelog's own prose, no behavior/flag/output changed, node.mjs untouched by this diff). Minor: new wording doesn't restate README's 'or a newer release with a changed doc shape is also refused' nuance, but matches house style and makes no false claim -- not blocking.
+- 2026-09-13 22:41 · 007 review approve · Reviewer round 2: focused re-check of commit 184accd only. Exactly one CHANGELOG.md line added, correctly under [6.0.0]/Fixed (not [Unreleased]), plain adopter-facing language with no internal names, nothing else touched. Round-1 Important finding resolved; round-1's approved code/test/scope stand unchanged. No new findings.
+- 2026-09-13 22:41 · 049 review approve · Reviewer round 2: focused re-check of commit 38837b8 only. Exactly one CHANGELOG.md line added, correctly under [6.0.0]/Fixed (not [Unreleased]), plain adopter-facing language with no internal names, nothing else touched. Round-1 Important finding resolved; round-1's approved code/test/scope stand unchanged. No new findings.
+- 2026-09-13 22:41 · 060 review approve · Reviewer (standard tier): acceptance met literally -- README's stale audit/audit-plan command listing and behavior text removed, verified wave.mjs's own USAGE has exactly 6 cases (no audit), 'five figures'->'four' count independently recounted. Red-before/green-after independently reproduced via git-archive swap. Scope: README.md + docs.test.mjs, 1 commit; correctly left the two further stale spots (086, 087) to their own filed issues rather than scope-creeping. No CHANGELOG needed (wave.mjs itself untouched/byte-identical; the real behavior removal already shipped in migration 2c8ed09, this is pure doc reconciliation).
+- 2026-09-13 22:41 · filed 092 · wave-close template always prints a stale Escalated: 0 line
+- 2026-09-13 22:41 · 047 evidence · Corroborated independently by worker 003 (issue 003), while removing seat-model leftovers: land.mjs's checkGate builds a {sha,result,count} cache object that only horde.mjs done and wave.mjs close ever persist to cache/last-gate.json -- a landing's own gate result is never cached by land.mjs itself. Same finding as this issue's own Where:, from a second, independent source.
+- 2026-09-13 22:41 · 028 review changes · Reviewer (strong tier): Important -- no CHANGELOG.md entry for a plainly adopter-visible change. Important, escalated rather than ruled on by the reviewer: the 'stop' row's scope was a genuine ambiguity in the issue's own Polish source text -- jarl ruled (see decision 'stop-holds-landing-too'): stop holds landing too, not just new dispatch, per the table's own graduated ordering (stuck < charter < lower < stop=wszystko; lower already proves landing is a blockable thing, so the widest row must be a superset of it). Round 2 sent to the worker: landTheLanded must also check for an open stop before merging anything, plus the CHANGELOG entry. Verified red-before/green-after and a real merge onto current base cleanly (three full-suite failures on the raw branch tip all independently traced to branch staleness/load, none to this diff). Minor findings (queue.mjs touched beyond declared Files:, a charter-hold/wave.mjs field-reading inconsistency, held-array omits stop's own co-occurring holds, queue.mjs next doesn't consult holds) all non-blocking, recorded for the record.
+- 2026-09-13 22:41 · 028 round 1 · Reviewer + jarl ruling: (1) missing CHANGELOG entry: add one under the existing [6.0.0] section reflecting the corrected, wider behavior (stop holds everything, including already-finished work ready to land, not just new dispatch). (2) Ruled: 'stop wszystko' includes landing, per the table's own graduated ordering. landTheLanded must also refuse to merge any ticket while an open stop stands, not just consult the lower-holds map; add a test. Also asked to check whether the close/--watch-exit condition has the same gap, and fix it too if it's the same root cause.
+- 2026-09-13 22:41 · decided stop-holds-landing-too
+- 2026-09-13 22:41 · 070 review approve · Reviewer: acceptance met literally (Promise.all race replaced by lock-file-poll synchronization, verified against production lock path/shape). Extraordinarily thorough load verification: 220 before-state executions (up to 40 concurrent children under synthetic CPU load) reproduced zero failures, and 161 after-state executions all green -- so the acceptance's own literal requirement (test no longer depends on timing) is confirmed regardless. Honest unresolved point, not treated as blocking: reviewer could not corroborate the commit message's claim that a real acquireRetroLock race caused the original 1/60 failure -- code reading suggests the lock is a single atomic wx-create with no exists-but-unparseable window -- and flagged this as genuinely unsure rather than guessing either way. Filed a research issue on the discrepancy rather than a confident bug report. Correctly no CHANGELOG entry (test-only, retro.mjs itself byte-identical).
+- 2026-09-13 22:41 · filed 093 · land.test.mjs has timing-dependent tests unstable under machine load (two spots)
+- 2026-09-13 22:54 · 057 evidence · Merged 5a14054 into claude/autonomous-self-evolving-system-oiveiz. Sub-batch A check (057+007+045+058): node --test tests/*.test.mjs from skills/horde/scripts, HORDE_TEST_RATATOSKR_DIR set — 923 tests, 920 pass, 0 fail, 3 skipped (root-bypass chmod, pre-existing/expected), 0 cancelled, exit 0.
+- 2026-09-13 22:55 · 007 evidence · Merged 13d258e into claude/autonomous-self-evolving-system-oiveiz. Sub-batch A check (057+007+045+058): node --test tests/*.test.mjs from skills/horde/scripts, HORDE_TEST_RATATOSKR_DIR set — 923 tests, 920 pass, 0 fail, 3 skipped (root-bypass chmod, pre-existing/expected), 0 cancelled, exit 0.
+- 2026-09-13 22:55 · 045 evidence · Merged e9e1214 into claude/autonomous-self-evolving-system-oiveiz. Sub-batch A check (057+007+045+058): node --test tests/*.test.mjs from skills/horde/scripts, HORDE_TEST_RATATOSKR_DIR set — 923 tests, 920 pass, 0 fail, 3 skipped (root-bypass chmod, pre-existing/expected), 0 cancelled, exit 0.
+- 2026-09-13 22:55 · 058 evidence · Merged cb03740 into claude/autonomous-self-evolving-system-oiveiz. Sub-batch A check (057+007+045+058): node --test tests/*.test.mjs from skills/horde/scripts, HORDE_TEST_RATATOSKR_DIR set — 923 tests, 920 pass, 0 fail, 3 skipped (root-bypass chmod, pre-existing/expected), 0 cancelled, exit 0.
+- 2026-09-13 22:56 · 057 → done · merged, sub-batch A check green
+- 2026-09-13 22:56 · 007 → done · merged, sub-batch A check green
+- 2026-09-13 22:56 · 045 → done · merged, sub-batch A check green
+- 2026-09-13 22:56 · 058 → done · merged, sub-batch A check green
+- 2026-09-14 01:38 · 049 evidence row · node --test tests/refine.test.mjs
+- 2026-09-14 01:38 · 049 → done · merged as c1ff0a7, confirmed present in branch history; bookkeeping was left open when the merger process was interrupted
+- 2026-09-14 01:46 · 060 evidence row · node --test tests/docs.test.mjs
+- 2026-09-14 01:46 · 060 → done · merged as b4f4d21
+- 2026-09-14 01:46 · 070 evidence row · reviewer's own independent stress test, 220+161 runs
+- 2026-09-14 01:46 · 070 → done · merged as b6ac837
+- 2026-09-14 01:46 · 063 evidence row · node --test tests/docs.test.mjs
+- 2026-09-14 01:46 · 063 → done · merged as 38b10f7
+- 2026-09-14 01:46 · 003 evidence row · node --test tests/docs.test.mjs (28/28); full reviewer verification
+- 2026-09-14 01:46 · 023 evidence row · node --test tests/docs.test.mjs tests/promises-package.test.mjs (88/88, round 2)
+- 2026-09-14 01:46 · 028 evidence row · node --test tests/tick.test.mjs (67/67, round 2, reviewer-verified)
+- 2026-09-14 01:46 · 003 review approve · Reviewer: README grep claim verified literally (7 hits for owner/verifier/steward, all in the new pre-6.0.0 history section, 0 above it). No reader function removed — full function-set comparison before/after identical across all 7 files; hordeDigest's teamFilter loss removes no reading capability since a non-trunk --team already produced an empty list pre-change. Red-before/green-after reproduced independently via git-archive scratch extraction against the real Yggdrasil 6.0.0 build, all 6 changed test files. CHANGELOG entries present and correct. 4 pre-existing suite failures reproduce identically on the branch's own parent, zero new failures. The stewardFor-kept judgment call resolved on the Acceptance's own terms (readers stay clause), not a dodge.
+- 2026-09-14 01:46 · 023 review approve · Reviewer (round 2, focused re-check): CHANGELOG moved to [6.0.0] correctly (single bullet, not duplicated); stale four-rules count corrected to five/four/fifth, verified against the package itself (5 aspects, 4 deterministic + 1 llm). Non-CHANGELOG diff hash-identical across both rounds, confirming marker-list correctly left untouched per the jarl's ruling. docs.test.mjs's own [Unreleased]-section assertion still passes with an empty section. 23/23 + 89/89, including the evidence-is-live drill green through the real Yggdrasil 6.0.0 CLI.
+- 2026-09-14 01:46 · 028 review approve · Reviewer (round 2, full re-check not a rubber-stamp): independently verified the hold-before-gate-start placement against the real code path (startGate shells land.mjs which performs the merge itself; recordMerged is only post-merge bookkeeping, so holding there would be too late). Wrote its own additional test for the gate-not-yet-started path, confirmed round-1 code merges under an open stop and round-2 doesn't. Close/--watch fix confirmed correct (both the flag and the printed command withheld). Red/green reproduced on both rounds; test-merged onto current base clean. CHANGELOG entry correct wording, scope clean, 5 Minor non-blocking findings only.
+- 2026-09-14 01:46 · 003 → done · merged as c6faeb6
+- 2026-09-14 01:46 · 023 → done · merged as 2bb9a76
+- 2026-09-14 01:46 · 028 → done · merged as e689c02
+- 2026-09-14 01:49 · 019 → in-progress · worker raised, wave 2
+- 2026-09-14 01:49 · 025 → in-progress · worker raised, wave 2
+- 2026-09-14 01:49 · 059 → in-progress · worker raised, wave 2
+- 2026-09-14 01:49 · 090 → in-progress · worker raised, wave 2
+- 2026-09-14 01:49 · 091 → in-progress · worker raised, wave 2
+- 2026-09-14 01:49 · 088 → in-progress · worker raised, wave 2
+- 2026-09-14 01:49 · 008 → in-progress · worker raised, wave 2
+- 2026-09-14 01:49 · 026 → in-progress · worker raised, wave 2
+- 2026-09-14 01:49 · 012 → in-progress · worker raised, wave 2
+- 2026-09-14 01:49 · 013 → in-progress · worker raised, wave 2
+- 2026-09-14 01:49 · 040 → in-progress · worker raised, wave 2
+- 2026-09-14 01:49 · 068 → in-progress · worker raised, wave 2
+- 2026-09-14 02:06 · filed 094 · acquireRetroLock/acquireGateLock: a lock file that exists but is not yet fully written is treated as dead and stolen
+- 2026-09-14 02:07 · 094 evidence row · strace -f -e trace=openat,write,close node wxtest.mjs (wxtest.mjs: writeFileSync(path,'{}',{flag:'wx'}))
+- 2026-09-14 02:07 · 094 evidence row · node orchestrator.mjs 400 60 500, six times in a row (byte-for-byte port of acquireRetroLock's decision/write logic; one contender's write delayed 400ms after create, the other 100% unmodified, both racing the same lock path)
+- 2026-09-14 02:07 · 094 evidence row · same harness with 0 injected delay (control): two 100%-unmodified contenders racing normally, repeated
+- 2026-09-14 02:07 · 090 evidence row · read acquireRetroLock and its release() line by line, read the identical pattern in land.mjs's acquireGateLock, straced writeFileSync(path,data,{flag:'wx'}) to see its actual syscalls, then built a deterministic fault-injected repro (lock-lib.mjs port of the exact decision logic + contender.mjs/orchestrator.mjs) racing a delayed writer against the 100%-unmodified acquire logic, 6 runs
