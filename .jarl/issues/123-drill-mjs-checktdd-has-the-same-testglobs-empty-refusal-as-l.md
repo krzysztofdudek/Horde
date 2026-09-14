@@ -1,6 +1,6 @@
 # 123 · drill.mjs checkTdd has the same testGlobs-empty refusal as land.mjs's revert test had before issue 108, with no no-evidence-layer exemption
 
-**Status:** in-progress
+**Status:** done
 **Kind:** gap
 **Priority:** 3
 **Tier:** standard
@@ -40,4 +40,5 @@ unchanged.
 
 ## Evidence
 - **ran:** HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" timeout 400 node --test tests/drill.test.mjs (run from skills/horde/scripts) · **saw:** exit 0 — # tests 26, # pass 26, # fail 0, # cancelled 0 (includes 4 new tests for the no-evidence-layer exemption; all 22 pre-existing drill.test.mjs tests still pass unchanged)
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/drill.test.mjs · **saw:** 26/26 pass, 0 fail, on the merged tip
 
