@@ -243,6 +243,50 @@ function resolveTicketTree(ticket, horde, cwd) {
   });
 }
 
+// ---- one lock file, four holders ---------------------------------------------------------------
+//
+// Every lock in this tool set is the same shape: a JSON blob naming the pid that holds it, at a
+// path whose mere existence is the lock — land.mjs's gate lock, retro.mjs's retrospective lock,
+// the worktree lock and the queue lock right below. Writing that file in place looks like one
+// step and is three: the path is created empty, the content is written a moment later, and the
+// file is closed. A locker that reads the path inside that window finds an empty file naming no
+// pid, reads that exactly like a genuinely dead holder's lock, and takes over — while the first
+// holder is still writing. Both then believe they hold it.
+//
+// So the content goes to a name nobody is watching first, whole and closed, and only then takes
+// the lock's own name. Linking is the step that decides: it either wins outright or fails with
+// EEXIST, and the lock path carries its whole content from the instant it exists at all — so it
+// never exists as an empty file naming no holder for a racing caller to read as abandoned.
+//
+// The temporary name carries the pid, which no two live processes share; the few random
+// characters after it keep even two containers that share a mount and a pid number apart.
+export function createLockFile(path, content) {
+  const temp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
+  writeFileSync(temp, content);
+  try {
+    linkSync(temp, path);
+  } catch (e) {
+    if (e.code === 'EEXIST') throw e;
+    // A filesystem that cannot make a second name for a file cannot be held this way. It keeps
+    // the single call, narrow window and all, rather than being left with no lock at all.
+    writeFileSync(path, content, { flag: 'wx' });
+  } finally {
+    try { rmSync(temp, { force: true }); } catch { /* the lock is the link, not this name */ }
+  }
+}
+
+// A process that dies holding any of these locks must not wedge the repository forever, so every
+// lock file carries the pid that took it, and a lock whose pid is gone is taken over — with each
+// caller's own note about it — rather than waited out.
+export function processAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+export function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 // ---- one process at a time per worktree path ---------------------------------------------------
 //
 // Making a worktree is a check-then-act: nothing is there, so make it. Two processes that both
@@ -267,37 +311,10 @@ function resolveTicketTree(ticket, horde, cwd) {
 // hand back a tree another process is still filling. Waiting for the first caller to finish hands
 // back the finished tree instead, which is the answer both callers asked for.
 //
-// The lock itself is the one the rest of this tool set already uses (`withQueueLock` below, and
-// land.mjs's and retro.mjs's own): the file names the pid holding it, a pid no longer running is
-// taken over immediately rather than waited out, and the wait is bounded. It is created the way
-// the gate and retrospective locks are — written whole under a name nobody waits on, then linked
-// into place, since linking is the one step that is both atomic and exclusive — so the lock path
-// never exists as an empty file naming no holder.
-//
 // It lives beside the worktree, never inside it: `<path>.lock` is under `.horde/`, which is
 // gitignored whole, so `git worktree add` never sees it and `git reset --hard` never touches it.
 const TREE_LOCK_WAIT_MS = 120000;
 const TREE_LOCK_POLL_MS = 50;
-
-function treeLockProcessAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
-}
-
-function createTreeLockFile(path, content) {
-  const temp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
-  writeFileSync(temp, content);
-  try {
-    linkSync(temp, path);
-  } catch (e) {
-    if (e.code === 'EEXIST') throw e;
-    // A filesystem that cannot make a second name for a file cannot be held this way. It keeps
-    // the single call, narrow window and all, rather than being left with no lock at all.
-    writeFileSync(path, content, { flag: 'wx' });
-  } finally {
-    try { rmSync(temp, { force: true }); } catch { /* the lock is the link, not this name */ }
-  }
-}
 
 // withTreeLock(treePath, fn) — runs `fn` with nothing else on this repository creating or
 // resyncing the worktree at `treePath`. Returns whatever `fn` returns; releases on the way out of
@@ -309,7 +326,7 @@ function withTreeLock(treePath, fn, { waitMs = TREE_LOCK_WAIT_MS } = {}) {
   for (;;) {
     try {
       mkdirSync(dirname(path), { recursive: true });
-      createTreeLockFile(path, `${JSON.stringify({ pid: process.pid, tree: treePath, at: nowIso() }, null, 2)}\n`);
+      createLockFile(path, `${JSON.stringify({ pid: process.pid, tree: treePath, at: nowIso() }, null, 2)}\n`);
       break;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
@@ -318,14 +335,14 @@ function withTreeLock(treePath, fn, { waitMs = TREE_LOCK_WAIT_MS } = {}) {
     try { held = JSON.parse(readFileSync(path, 'utf8')); } catch { held = null; }
     // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
     // like a dead one: taken over rather than waited on.
-    if (!held || !treeLockProcessAlive(held.pid)) {
+    if (!held || !processAlive(held.pid)) {
       try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
       continue;
     }
     if (Date.now() > deadline) {
       throw new Error(`the worktree at ${treePath} is being made or resynced by another process (pid ${held.pid}, since ${held.at || 'an unrecorded time'}) — timed out waiting for ${path}`);
     }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, TREE_LOCK_POLL_MS);
+    sleepSync(TREE_LOCK_POLL_MS);
   }
   try {
     return fn();
@@ -1052,9 +1069,12 @@ export function teamPath(horde, team, ...parts) {
 // changes queue.json wraps its read, its change and its write in one call to `withQueueLock`, so
 // no two ever interleave.
 //
-// A fourth hand-rolled copy of this lock (decide.mjs, land.mjs's `acquireGateLock` and retro.mjs
-// already each have their own) is what this is instead of: one shared primitive in `_lib.mjs`,
-// scoped per horde+team so two different queues never wait on each other.
+// A fourth hand-rolled copy of this lock (decide.mjs, land.mjs's `acquireGateLock` and retro.mjs's
+// `acquireRetroLock` already each have their own) is what this is instead of: one shared primitive
+// in `_lib.mjs`, scoped per horde+team so two different queues never wait on each other. It is
+// created the same atomic way those two are — `createLockFile` above, content written whole to a
+// name nobody is watching and only then linked into place — so a racing caller can never read a
+// lock still being written as an abandoned one and take it out from under its holder.
 //
 // A refusal raised through `fail()` now unwinds the stack, so the `finally` releasing this lock
 // does run. A holder can still die without releasing — killed outright, or the machine going down
@@ -1068,18 +1088,13 @@ function queueLockPath(horde, team) {
   return `${teamPath(horde, team, 'queue.json')}.lock`;
 }
 
-function queueLockProcessAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
-}
-
 export function withQueueLock(horde, team, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
   const path = queueLockPath(horde, team);
   const deadline = Date.now() + waitMs;
   for (;;) {
     try {
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, `${JSON.stringify({ pid: process.pid, horde, team, at: nowIso() }, null, 2)}\n`, { flag: 'wx' });
+      createLockFile(path, `${JSON.stringify({ pid: process.pid, horde, team, at: nowIso() }, null, 2)}\n`);
       break;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
@@ -1088,14 +1103,14 @@ export function withQueueLock(horde, team, fn, { waitMs = QUEUE_LOCK_WAIT_MS } =
     try { held = JSON.parse(readFileSync(path, 'utf8')); } catch { held = null; }
     // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
     // like a dead one: taken over rather than waited on.
-    if (!held || !queueLockProcessAlive(held.pid)) {
+    if (!held || !processAlive(held.pid)) {
       try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
       continue;
     }
     if (Date.now() > deadline) {
       throw new Error(`queue.json for team "${team}" is locked by another process (pid ${held.pid}, taken ${held.at || 'at an unrecorded time'}) — timed out waiting for ${path}`);
     }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, QUEUE_LOCK_POLL_MS);
+    sleepSync(QUEUE_LOCK_POLL_MS);
   }
   try {
     return fn();

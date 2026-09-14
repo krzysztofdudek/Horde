@@ -41,13 +41,14 @@
 // the second run reads what replaced it and puts the two side by side. Nothing is refused over it.
 
 import {
-  existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, linkSync,
+  existsSync, readdirSync, readFileSync, mkdirSync, rmSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   hordePath, readJSON, writeJSON, nowIso, fail, parseArgs, emit, isMain,
   resolveHorde, resolveTree, readConfig, asArray, parseLogEntries, noEvidenceLayerNote,
+  createLockFile, processAlive, sleepSync,
   runMain,
 } from './_lib.mjs';
 import {
@@ -678,41 +679,9 @@ function measureThreshold(cfg, items, inexpressible) {
 const LOCK_WAIT_MS = 60000;
 const LOCK_POLL_MS = 200;
 
-function processAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
-}
-
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-// Writing the lock file in place looks like one step and is three: the path is created empty,
-// the content is written a moment later, and the file is closed. A second process that reaches
-// the path inside that moment reads nothing, finds no pid to wait on, and takes a lock whose
-// holder is still writing it — after which both hold it and neither knows.
-//
-// So the content goes to a name nobody waits on first, whole and closed, and only then takes the
-// lock's name. Linking is the step that decides: it either wins outright or fails with EEXIST,
-// and the lock path carries its whole content from the instant it exists. EEXIST comes back
-// exactly as the single call this replaces raised it, so the waiting below is unchanged.
-//
-// The temporary name carries the pid, which no two live processes share; the few random
-// characters after it keep even two containers that share a mount and a pid number apart.
-function createLockFile(path, content) {
-  const temp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
-  writeFileSync(temp, content);
-  try {
-    linkSync(temp, path);
-  } catch (e) {
-    if (e.code === 'EEXIST') throw e;
-    // A filesystem that cannot make a second name for a file cannot be held this way. It keeps
-    // the single call, narrow window and all, rather than being left with no lock at all.
-    writeFileSync(path, content, { flag: 'wx' });
-  } finally {
-    try { rmSync(temp, { force: true }); } catch { /* the lock is the link, not this name */ }
-  }
-}
+// createLockFile, processAlive and sleepSync are shared with land.mjs's own lock and _lib.mjs's
+// queue and worktree locks (imported above) — see createLockFile's own comment in _lib.mjs for why
+// the file is written beside its name and only then linked into place.
 
 // Exported under its full name so the regression that guards it can put two real processes
 // against this function itself rather than against a copy — a copy drifts away from the code it

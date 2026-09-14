@@ -25,7 +25,7 @@
 // recorded where the landing was recorded. See "what became of a ticket after it landed" below.
 
 import {
-  existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, linkSync,
+  existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { execFileSync, execSync, spawn } from 'node:child_process';
@@ -34,7 +34,7 @@ import {
   hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, git, gitError, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine,
   withProvenance, nowIso, parseDecisionEntries, decisionField, diffSize, sizeRanks, sizeLine,
-  noEvidenceLayerNote,
+  noEvidenceLayerNote, createLockFile, processAlive, sleepSync,
   runMain,
 } from './_lib.mjs';
 import {
@@ -239,41 +239,9 @@ export function gateLockWaitMs(cfg) {
 
 function lockWait(cfg) { return gateLockWaitMs(cfg); }
 
-function processAlive(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
-}
-
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-// Writing the lock file in place looks like one step and is three: the path is created empty,
-// the content is written a moment later, and the file is closed. A second landing that reaches
-// the path inside that moment reads nothing, finds no pid to wait on, and takes a lock whose
-// holder is still writing it — after which both hold the gate and neither knows.
-//
-// So the content goes to a name nobody waits on first, whole and closed, and only then takes the
-// lock's name. Linking is the step that decides: it either wins outright or fails with EEXIST,
-// and the lock path carries its whole content from the instant it exists. EEXIST comes back
-// exactly as the single call this replaces raised it, so the waiting below is unchanged.
-//
-// The temporary name carries the pid, which no two live processes share; the few random
-// characters after it keep even two containers that share a mount and a pid number apart.
-function createLockFile(path, content) {
-  const temp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
-  writeFileSync(temp, content);
-  try {
-    linkSync(temp, path);
-  } catch (e) {
-    if (e.code === 'EEXIST') throw e;
-    // A filesystem that cannot make a second name for a file cannot be held this way. It keeps
-    // the single call, narrow window and all, rather than being left with no lock at all.
-    writeFileSync(path, content, { flag: 'wx' });
-  } finally {
-    try { rmSync(temp, { force: true }); } catch { /* the lock is the link, not this name */ }
-  }
-}
+// createLockFile, processAlive and sleepSync are shared with retro.mjs's own lock and _lib.mjs's
+// queue and worktree locks (imported above) — see createLockFile's own comment in _lib.mjs for why
+// the file is written beside its name and only then linked into place.
 
 export function acquireGateLock(ticket, branch, { waitMs = LOCK_WAIT_MS } = {}) {
   const path = lockPath();
