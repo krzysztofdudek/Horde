@@ -1,6 +1,6 @@
 # 043 · readme i escalate nazywaja nieistniejacy legislate mjs
 
-**Status:** open
+**Status:** done
 **Kind:** docs
 **Priority:** 2
 **Tier:** standard
@@ -19,4 +19,6 @@ Czytelnik próbuje uruchomić skrypt, którego nie ma.
 Oba miejsca opisują prawdziwy mechanizm; test docs sprawdza, że każda nazwa *.mjs w dokumentach istnieje na dysku.
 
 ## Evidence
+
+- **ran:** node --test tests/docs.test.mjs (rebased tip, then merged main) · **saw:** 34/34 pass both times
 
