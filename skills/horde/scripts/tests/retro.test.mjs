@@ -603,10 +603,13 @@ test('retro.mjs: a packaging refusal on a sampled pair is a reason the sample wa
   seedTicket(dir, 'mission1', '001', { refusals: ['gate: red'], landed: true, files: ['src/auth/login.mjs'] });
   writeClasses(dir, 'mission1', { 'gate:001:0': { class: 'inexpressible' } });
   run('horde.mjs', ['config', 'set', 'retro.judgeSampleRate', '1'], dir);
+  // Refused, not passed: a pass still in force is caught earlier, before packaging is ever
+  // attempted (its own test, below) — this fixture is for every OTHER reason `yg verdict package`
+  // can refuse, which a still-in-force refusal is free to hit exactly like anything else.
   recordingYg(dir, {
     packageFails: true,
     verdicts: [{
-      aspect: 'one-sentence', unit: { kind: 'file', path: 'src/auth/login.mjs' }, verdict: 'pass', judge: 'tier-a', hash: 'h', inForce: true,
+      aspect: 'one-sentence', unit: { kind: 'file', path: 'src/auth/login.mjs' }, verdict: 'refused', judge: 'tier-a', hash: 'h', inForce: true,
     }],
   });
 
@@ -619,6 +622,7 @@ test('retro.mjs: a packaging refusal on a sampled pair is a reason the sample wa
   assert.match(r.json.judge.skipped[0].why, /refused/);
   assert.match(r.json.judge.skipped[0].why, /no pending pair/);
   assert.equal(r.json.judge.skipped[0].ticket, '001');
+  assert.equal(r.json.judge.passInForce.length, 0, 'a plain packaging refusal is not the pass-in-force kind');
 });
 
 // ---- the two-judge comparison, over the sequence that can actually happen -----------------------
@@ -649,32 +653,35 @@ const onFile = (dir) => Object.values(JSON.parse(readFileSync(samplesFile(dir), 
 
 test('retro.mjs: two judges that disagree come back with the count and the interval at that sample size', async (t) => {
   const dir = judgeFixture(t);
-  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'pass' });
+  // tier-a refuses first, never passes: a pass still in force can never be packaged for a second
+  // judge at all (its own test, below), so the only first judgement this measurement can ever
+  // capture and later compare is a refusal — or a pass that has already gone stale.
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'refused' });
 
-  // Run one. The slot holds tier-a's pass and nothing else, so there is nothing yet to compare:
-  // the pair comes back on `pending`, with tier-a's opinion written down and the command that
-  // puts the same pair to tier-b.
+  // Run one. The slot holds tier-a's refusal and nothing else, so there is nothing yet to
+  // compare: the pair comes back on `pending`, with tier-a's opinion written down and the
+  // command that puts the same pair to tier-b.
   const first = run('retro.mjs', ['--tree', dir], dir);
   assert.equal(first.code, 0, first.stderr);
   assert.equal(first.json.judge.pairs.length, 0);
   assert.equal(first.json.judge.disagreements, 0);
   assert.equal(first.json.judge.pending.length, 1);
-  assert.equal(first.json.judge.pending[0].held, 'pass');
+  assert.equal(first.json.judge.pending[0].held, 'refused');
   assert.equal(first.json.judge.pending[0].heldBy, 'tier-a');
   assert.match(first.json.judge.pending[0].record, /verdict record .*--by tier-b/);
 
   const [kept] = onFile(dir);
   assert.equal(kept.judge, 'tier-a');
-  assert.equal(kept.verdict, 'pass');
+  assert.equal(kept.verdict, 'refused');
 
   // The second judge runs exactly that command, and it overwrites the slot. tier-a's verdict is
   // gone from the graph — this is the one thing no later read can undo, and the reason the copy
   // above had to be taken first.
-  judgeRecords(dir, { ...THE_PAIR, by: 'tier-b', verdict: 'refused' });
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-b', verdict: 'pass' });
   const inventory = ygVerdicts(dir);
   assert.equal(inventory.length, 1, 'a graph holds one verdict per pair, never two');
   assert.equal(inventory[0].judge, 'tier-b');
-  assert.equal(inventory[0].verdict, 'refused');
+  assert.equal(inventory[0].verdict, 'pass');
 
   // Run two: one opinion on file, one in the slot, two different judges, and they disagree.
   const second = run('retro.mjs', ['--tree', dir], dir);
@@ -685,18 +692,27 @@ test('retro.mjs: two judges that disagree come back with the count and the inter
   assert.equal(second.json.judge.pairs[0].agrees, false);
   assert.deepEqual(second.json.judge.interval, wilson(1, 1));
   assert.ok(second.json.judge.interval.low > 0 && second.json.judge.interval.high <= 1);
+  assert.equal(second.json.judge.passInForce.length, 0, 'a real disagreement is not the pass-in-force kind either');
+
+  // The figure just asserted above is honest about its own reach: once there is a count to read,
+  // the document says outright that it only ever covers pairs whose first judge refused (or had
+  // gone stale), never one that passed and still holds — so a reader is never left thinking this
+  // disagreement rate was measured over the whole sample.
+  assert.match(second.json.judge.note, /only.*REFUSED/);
+  assert.match(second.json.judge.note, /never.*PASSED/);
+  assert.match(second.json.judge.note, /0 of this sample's pair\(s\) were out of reach/);
 
   // Both sides of it are named, so the number can be read back and argued with. The two hashes
   // here are NOT equal — a verdict binds to a hash with its own verdict word folded in, so two
   // judges who disagree about code that never moved always record two different hashes. Reading
   // that as "the code changed" would drop every disagreement there is.
   const [p] = second.json.judge.pairs;
-  assert.equal(p.held, 'pass');
+  assert.equal(p.held, 'refused');
   assert.equal(p.heldBy, 'tier-a');
-  assert.equal(p.second, 'refused');
+  assert.equal(p.second, 'pass');
   assert.equal(p.secondBy, 'tier-b');
   assert.notEqual(kept.hash, inventory[0].hash, 'the two judgements are bound to two different hashes');
-  assert.equal(kept.hashes.refused, inventory[0].hash, 'and to the same code, which is what makes them comparable');
+  assert.equal(kept.hashes.pass, inventory[0].hash, 'and to the same code, which is what makes them comparable');
 
   // Running it again says the same thing: the copy is kept, not re-taken, so the measurement does
   // not answer differently every time it is run over the same mission.
@@ -708,22 +724,31 @@ test('retro.mjs: two judges that disagree come back with the count and the inter
 
 test('retro.mjs: two judges that agree are counted as a pair and not as a disagreement', async (t) => {
   const dir = judgeFixture(t);
-  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'pass' });
+  // Both refuse: a pass still in force could never be captured as the held first judgement in the
+  // first place (its own test, below), so an agreement this measurement can actually reach is two
+  // judges refusing the same code alike, not two judges passing it alike.
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'refused' });
   run('retro.mjs', ['--tree', dir], dir);
-  judgeRecords(dir, { ...THE_PAIR, by: 'tier-b', verdict: 'pass' });
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-b', verdict: 'refused' });
 
   const r = run('retro.mjs', ['--tree', dir], dir);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.json.judge.pairs.length, 1);
   assert.equal(r.json.judge.pairs[0].agrees, true);
+  assert.equal(r.json.judge.pairs[0].held, 'refused');
+  assert.equal(r.json.judge.pairs[0].second, 'refused');
   assert.equal(r.json.judge.disagreements, 0);
   assert.deepEqual(r.json.judge.interval, wilson(0, 1));
   assert.equal(r.json.judge.skipped.length, 0, JSON.stringify(r.json.judge.skipped));
+  assert.equal(r.json.judge.passInForce.length, 0, JSON.stringify(r.json.judge.passInForce));
 });
 
 test('retro.mjs: two judgements taken over code that moved between them are counted neither way', async (t) => {
   const dir = judgeFixture(t);
-  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'pass' });
+  // Refused, not passed — a pass still in force is never even captured as a held first judgement
+  // (its own test, below), so the only way this scenario is reachable at all is starting from a
+  // refusal.
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'refused' });
   run('retro.mjs', ['--tree', dir], dir);
 
   // The code under the pair changes, and only then does the second judge reach it. The two are
@@ -740,6 +765,51 @@ test('retro.mjs: two judgements taken over code that moved between them are coun
   assert.match(r.json.judge.skipped[0].why, /not the same code/);
   assert.equal(r.json.judge.skipped[0].ticket, '001');
   assert.equal(r.json.judge.skipped[0].unit, 'file:src/auth/login.mjs');
+  assert.equal(r.json.judge.passInForce.length, 0, 'code moving apart is not the pass-in-force kind either');
+});
+
+// ---- a pass that still holds is out of reach, not a plain skip ---------------------------------
+//
+// `yg verdict package`/`yg verdict record` both resolve a pair through Yggdrasil's own
+// `resolvePair`, which refuses outright once a pair already holds a verdict for exactly these
+// inputs: recording a second one over it would replace a judgement that still applies with no
+// evidence that anything changed. That refusal fires for a PASS in force and never for a REFUSAL
+// in force — so a pair whose first judge passed it, and whose pass still holds, can never be
+// packaged for a second judge and can never be recorded over. Every test above starts its held
+// first judgement from a refusal for exactly this reason; this one is the mirror case, proving
+// what happens to the one shape that can never get there.
+test('retro.mjs: a pair whose first judge passed it, and whose pass still holds, is out of reach — its own kind of skip, never a silent miscount', async (t) => {
+  const dir = judgeFixture(t);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'pass' });
+
+  const r = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(r.code, 0, `a measurement never refuses: ${r.stderr}`);
+  assert.equal(r.json.judge.pairs.length, 0, 'a pass still in force was never compared');
+  assert.equal(r.json.judge.disagreements, 0);
+  assert.equal(r.json.judge.interval, null);
+  assert.equal(r.json.judge.pending.length, 0, 'nothing is offered to a second judge for a pair that can never reach one');
+  assert.equal(r.json.judge.skipped.length, 0, 'not the generic skip pile — its own distinguishable kind');
+  assert.equal(r.json.judge.passInForce.length, 1);
+  assert.equal(r.json.judge.passInForce[0].ticket, '001');
+  assert.equal(r.json.judge.passInForce[0].aspect, 'one-sentence');
+  assert.equal(r.json.judge.passInForce[0].unit, 'file:src/auth/login.mjs');
+  assert.match(r.json.judge.passInForce[0].why, /tier-a passed this pair and that pass still holds/);
+  assert.match(r.json.judge.passInForce[0].why, /can never reach a second judge/);
+  assert.ok(!existsSync(samplesFile(dir)), 'nothing was written down — there is no first judgement to compare later');
+
+  // The document itself says the population this run could not reach at all, plainly, rather than
+  // a note left over from the "still waiting" case (which nothing here is).
+  assert.match(r.json.judge.note, /nothing in it reached a second judge this run/);
+  assert.match(r.json.judge.note, /`skipped` and `passInForce`/);
+  const md = readFileSync(hordeFile(dir, 'mission1', 'retro.md'), 'utf8');
+  assert.match(md, /out of reach ticket 001: tier-a passed this pair and that pass still holds/);
+
+  // Running it again says the same thing — this is a structural fact about the pair, re-derived
+  // from the graph's own inventory every time, never a one-off command failure that might clear.
+  const again = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(again.json.judge.passInForce.length, 1);
+  assert.equal(again.json.judge.pending.length, 0);
+  assert.ok(!existsSync(samplesFile(dir)));
 });
 
 test('retro.mjs: a pair nobody has given a second judgement stays pending, run after run, with the first kept', async (t) => {
@@ -750,6 +820,7 @@ test('retro.mjs: a pair nobody has given a second judgement stays pending, run a
   assert.equal(first.code, 0, first.stderr);
   assert.equal(first.json.judge.pending.length, 1);
   assert.equal(first.json.judge.pairs.length, 0);
+  assert.equal(first.json.judge.passInForce.length, 0, 'a refusal on file is not the pass-in-force kind');
   assert.match(first.json.judge.note, /waiting for the command beside it/);
   const [kept] = onFile(dir);
 
@@ -779,6 +850,7 @@ test('retro.mjs: a pair only the second judge has ever judged is a skip, never a
   assert.equal(r.json.judge.pending.length, 0);
   assert.equal(r.json.judge.skipped.length, 1);
   assert.match(r.json.judge.skipped[0].why, /no first judgement here for it to be compared against/);
+  assert.equal(r.json.judge.passInForce.length, 0, 'a lone second-judge verdict is not the pass-in-force kind');
   assert.ok(!existsSync(samplesFile(dir)), 'and nothing was written down to be compared against itself later');
 });
 

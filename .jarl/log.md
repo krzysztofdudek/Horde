@@ -595,3 +595,4 @@
 - 2026-09-14 09:01 · 111 → done · README's top-of-file contract paragraph states the real, narrow --horde/trunk rule instead of one that reads broader than what's implemented or decided.
 - 2026-09-14 09:01 · 113 → in-progress · dispatched to a worker in its own worktree/branch, a-002 now ruled
 - 2026-09-14 09:01 · 024 → in-progress · dispatched to a worker in its own worktree/branch, a-001 now ruled
+- 2026-09-14 09:04 · filed 117 · retro.test.mjs's stand-in yg CLI never refuses package/record on a pass still in force, unlike the real CLI
