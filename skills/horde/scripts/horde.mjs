@@ -17,11 +17,11 @@ import {
   repoRoot, hordeRoot, hordePath, readConfig, writeConfig, listHordes, readJSON,
   writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
   readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
-  qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES,
+  qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES, parseEvidenceRows,
   runMain,
 } from './_lib.mjs';
 import {
-  currentWaveNumber, lastWaveNumber, parseEvidenceRows, mentionsEvidenceId, wave1Started,
+  currentWaveNumber, lastWaveNumber, mentionsEvidenceId, wave1Started,
   stampMissionEvidence,
 } from './wave.mjs';
 import { writeLawDiff } from './law.mjs';

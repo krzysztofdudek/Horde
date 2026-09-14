@@ -16,9 +16,10 @@ import { join } from 'node:path';
 import {
   hordePath, teamPath, readText, writeText, appendText, readJSON, writeJSON, readConfig, today,
   nowIso, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy, resolveTree,
+  markdownSection, markdownTableCells, parseEvidenceRows, parseVerdictBlocks,
   runMain,
 } from './_lib.mjs';
-// queue.mjs imports this file too (noteMerged, parseEvidenceRows). The cycle is deliberate and
+// queue.mjs imports this file too (noteMerged). The cycle is deliberate and
 // safe — every binding on both sides is a hoisted function declaration and neither module calls
 // the other while it is still being evaluated. The alternative, a second derivation of the DAG
 // here, is the thing worth avoiding: the parallelism a wave close reports as "planned" has to be
@@ -255,11 +256,7 @@ function findTicketDir(horde, team, ticket) {
 
 // The "## Acceptance" section of a ticket's issue.md — the checklist tk.mjs wrote from `--evidence`.
 function acceptanceSection(issueText) {
-  const idx = issueText.indexOf('## Acceptance');
-  if (idx === -1) return '';
-  const rest = issueText.slice(idx);
-  const nextHeading = rest.indexOf('\n## ', 1);
-  return nextHeading === -1 ? rest : rest.slice(0, nextHeading);
+  return markdownSection(issueText, '## Acceptance');
 }
 
 // Exported so horde.mjs's charter edit can hold a ruled escalation's own text to the same test it
@@ -284,52 +281,23 @@ export function wave1Started(journalText) {
   });
 }
 
-// The latest pre-migration verdict block in a ticket's log.md (verdict.md's rendered heading, in
-// order — log.md is append-only, so the last match is the most recent verdict).
+// The latest pre-migration verdict block in a ticket's log.md — log.md is append-only, so the last
+// block whose heading reads as one is the most recent verdict.
 function latestVerdict(logText) {
-  if (!logText) return null;
-  const lines = logText.split('\n');
-  const headingRe = /^## Verdict · (\S+) · (\d{4}-\d{2}-\d{2}) · by (\S+) \(([^)]+)\)$/;
-  let latest = null;
-  for (let i = 0; i < lines.length; i++) {
-    const m = headingRe.exec(lines[i]);
-    if (!m) continue;
-    let result = null;
-    for (let j = i + 1; j < lines.length && !lines[j].startsWith('## '); j++) {
-      const rm = /^\*\*Result:\*\* (\S+)/.exec(lines[j]);
-      if (rm) { result = rm[1]; break; }
-    }
-    latest = { verifier: m[3], result };
-  }
-  return latest;
-}
-
-// The evidence catalogue table in charter.md: | id | evidence | node | reproduced by |. A row
-// counts once any cell holds text (the template ships one all-empty row). Exported so horde.mjs
-// can tell a rewritten charter what it just did to the catalogue.
-export function parseEvidenceRows(charterText) {
-  const headingIdx = charterText.indexOf('## Acceptance');
-  if (headingIdx === -1) return [];
-  const rest = charterText.slice(headingIdx);
-  const nextHeading = rest.indexOf('\n## ', 1);
-  const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
-  const lines = section.split('\n').filter((l) => l.trim().startsWith('|'));
-  // lines[0] = header, lines[1] = --- separator, lines[2..] = data
-  return lines.slice(2)
-    .map((l) => l.split('|').slice(1, -1).map((c) => c.trim()))
-    .filter((cells) => cells.some((c) => c.length > 0))
-    .map(([id, evidence, node, reproducedBy]) => ({ id, evidence, node, reproducedBy: reproducedBy || '' }));
+  const blocks = parseVerdictBlocks(logText).filter((b) => b.verifier);
+  if (!blocks.length) return null;
+  const { verifier, result } = blocks[blocks.length - 1];
+  return { verifier, result };
 }
 
 // ---- the charter's own shape, where a tool writes into it -------------------------------------
 //
 // The section naming what counts as evidence in THIS repository — refine writes it once per
 // mission, a person reads it, and every catalogue row above is reproduced through what it names.
-// It lives here, beside the catalogue's own reader, because the one thing that must never happen
-// to it is standing INSIDE the catalogue's section: parseEvidenceRows (and tk.mjs's own copy of
-// that read) slices "## Acceptance" up to the next "## " heading, so a heading dropped into the
-// middle of that table makes every row below it stop existing for both readers, silently and with
-// nothing wrong to see in the file.
+// The one thing that must never happen to it is standing INSIDE the catalogue's section:
+// parseEvidenceRows slices "## Acceptance" up to the next "## " heading, so a heading dropped into
+// the middle of that table makes every row below it stop existing, silently and with nothing wrong
+// to see in the file.
 
 export const EVIDENCE_SECTION = 'Evidence in this repository';
 
@@ -341,7 +309,7 @@ const CATALOGUE_HEADER = ['id', 'evidence', 'node', 'reproduced by'];
 function catalogueRowsAnywhere(charterText) {
   return String(charterText || '').split('\n')
     .filter((l) => l.trim().startsWith('|'))
-    .map((l) => l.split('|').slice(1, -1).map((c) => c.trim()))
+    .map(markdownTableCells)
     .filter((cells) => cells.length === 4)
     .filter((cells) => !cells.every((c, i) => c.toLowerCase() === CATALOGUE_HEADER[i]))
     .filter((cells) => !cells.every((c) => c === '' || /^-+$/.test(c)))
@@ -435,7 +403,7 @@ export function parsePrototypeArtifacts(charterText) {
   const section = next === -1 ? rest : rest.slice(0, next);
   return section.split('\n')
     .filter((l) => l.trim().startsWith('|'))
-    .map((l) => l.split('|').slice(1, -1).map((c) => c.trim()))
+    .map(markdownTableCells)
     .filter((cells) => cells.length === PROTOTYPE_HEADER.length)
     .filter((cells) => !cells.every((c, i) => c.toLowerCase() === PROTOTYPE_HEADER[i]))
     .filter((cells) => !cells.every((c) => c === '' || /^-+$/.test(c)))

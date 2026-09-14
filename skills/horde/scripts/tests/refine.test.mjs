@@ -901,7 +901,8 @@ test('refine.mjs: the judgement\'s broken states, each refused or repaired in it
   await t.test('a section somebody put INSIDE the catalogue is refused, and nothing is written', () => {
     const path = hordeFile(dir, 'm1', 'charter.md');
     // Two real catalogue rows, with the section dropped between them — the exact shape that makes
-    // parseEvidenceRows, and tk.mjs's own copy of that read, quietly see one row instead of two.
+    // parseEvidenceRows, which every reader of the catalogue goes through, quietly see one row
+    // instead of two.
     const text = readFileSync(path, 'utf8')
       .replace(/^## Evidence in this repository\n[\s\S]*?(?=^## Acceptance)/m, '')
       .replace('| | | | |', [

@@ -21,7 +21,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readJSON, readText, readConfig, fail, parseArgs, asArray, emit,
-  isMain, resolveHorde, parentBranchOf, resolveTree, writeText,
+  isMain, resolveHorde, parentBranchOf, resolveTree, writeText, latestChangesRound,
   runMain,
 } from './_lib.mjs';
 import {
@@ -330,20 +330,6 @@ function nodesText(root, cfg, nodes, reader, fallback) {
 function requireName(flags) {
   if (!flags.name) fail('--name <n> is required');
   return flags.name;
-}
-
-// tk.mjs's own "changes" log line carries "(round N/cap — <label>)" — read back the same way
-// tk.mjs's own priorChangesRounds does, so the takeover block can say how many times a prior
-// worker actually attempted this ticket before the fresh, one-class-up one takes it over.
-const CHANGES_ROUND_RE = /\(round (\d+)\/\d+ — /;
-
-function latestChangesRound(logText) {
-  let max = 0;
-  for (const line of (logText || '').split('\n')) {
-    const m = CHANGES_ROUND_RE.exec(line);
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  }
-  return max;
 }
 
 // "a prior worker attempted this ticket N times; the ticket is yours; here is its log" — rendered

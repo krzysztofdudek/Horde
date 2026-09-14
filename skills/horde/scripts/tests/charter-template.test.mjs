@@ -4,7 +4,7 @@
 //
 // Three of its sections are read by machine and the rest by a human alone:
 //
-//   ## Acceptance  — wave.mjs parseEvidenceRows, and tk.mjs's own second copy of that read
+//   ## Acceptance  — _lib.mjs parseEvidenceRows
 //   ## Quality     — _lib.mjs qualityPolicyIn
 //   ## Goal / ## Non-goals / ## Constraints — refine.mjs charterForTerritory, which cuts the
 //                    charter down to what one consultant may see
@@ -18,8 +18,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EVIDENCE_SECTION, parseEvidenceRows, catalogueCut } from '../wave.mjs';
-import { qualityPolicyIn } from '../_lib.mjs';
+import { EVIDENCE_SECTION, catalogueCut } from '../wave.mjs';
+import { qualityPolicyIn, parseEvidenceRows } from '../_lib.mjs';
 
 const TEMPLATE = join(dirname(dirname(dirname(fileURLToPath(import.meta.url)))), 'templates', 'charter.md');
 const text = readFileSync(TEMPLATE, 'utf8');
@@ -55,9 +55,9 @@ test('charter template: the evidence judgement stands outside every machine-read
 
 test('charter template: a judgement section dropped inside the catalogue is caught, not absorbed', () => {
   // The failure this is all guarding against: someone puts the section between the catalogue's
-  // header row and its data, and from that moment parseEvidenceRows — and tk.mjs's copy, which is
-  // what checks a ticket's --evidence ids — see a catalogue two rows shorter than the chairman
-  // agreed to, with nothing wrong to see in the file.
+  // header row and its data, and from that moment parseEvidenceRows — which every reader of the
+  // catalogue goes through, the check on a ticket's --evidence ids included — sees a catalogue two
+  // rows shorter than the chairman agreed to, with nothing wrong to see in the file.
   const filled = text.replace('| | | | |', '| E1 | the suite is green | api | |\n| E2 | the film plays | web | |');
   assert.equal(parseEvidenceRows(filled).length, 2);
   assert.equal(catalogueCut(filled), null);

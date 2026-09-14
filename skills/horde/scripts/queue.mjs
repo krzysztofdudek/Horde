@@ -18,12 +18,13 @@ import { execFileSync } from 'node:child_process';
 import {
   hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, leaseHolderForNode,
   resolveTree, provisionTree, provenanceLine, withProvenance, firstClass, withQueueLock, appendText,
+  parseEvidenceRows,
   runMain,
 } from './_lib.mjs';
 import {
   findTicket, parseField, padId, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, prototypeBranchOf, createTicket, setTicketBody, acceptanceLines, charterPushback,
 } from './tk.mjs';
-import { noteMerged, parseEvidenceRows, parsePrototypeArtifacts } from './wave.mjs';
+import { noteMerged, parsePrototypeArtifacts } from './wave.mjs';
 import { loadAsks } from './ask.mjs';
 import {
   consumersOf, portExists, globToRegExp, nodeExists, advisoryKey, readAdvisoryLedger,

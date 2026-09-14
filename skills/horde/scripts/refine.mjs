@@ -28,7 +28,7 @@ import { execFileSync } from 'node:child_process';
 import {
   hordePath, readJSON, readText, writeText, readConfig, fail, parseArgs, emit, isMain,
   resolveHorde, resolveTree, git, claimLease, assertLeaseAvailable, provenanceLine, withProvenance,
-  firstClass,
+  firstClass, parseEvidenceRows,
   runMain,
 } from './_lib.mjs';
 import {
@@ -40,7 +40,7 @@ import {
   findTicket, allTickets, nodesOf, ticketEvidence, ticketKind,
 } from './tk.mjs';
 import {
-  parseEvidenceRows, EVIDENCE_SECTION, catalogueCut, upsertCharterSection,
+  EVIDENCE_SECTION, catalogueCut, upsertCharterSection,
   parsePrototypeArtifacts,
 } from './wave.mjs';
 import { detectEvidenceLayer, renderEvidenceJudgement, PROMISES_OFFER } from './horde.mjs';
@@ -725,8 +725,8 @@ function stepCut(horde, flags) {
 //
 // Two things are checked before a byte is written. A charter whose catalogue is already cut in two
 // by a heading standing inside "## Acceptance" is refused rather than written into: the rows below
-// that heading are invisible to parseEvidenceRows and to tk.mjs's own copy of that read, so a
-// mission that carried on would be working to a catalogue quietly shorter than the one the
+// that heading are invisible to parseEvidenceRows, which every reader of the catalogue goes
+// through, so a mission that carried on would be working to a catalogue quietly shorter than the
 // chairman agreed to. And a charter that cannot be written is a refusal naming the path — never a
 // silent skip that leaves the judgement in nobody's head.
 function writeEvidenceJudgement(horde, root, cfg) {

@@ -26,13 +26,13 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import {
   hordeRoot, hordePath, teamPath, listHordes, readConfig, readJSON, readText, git, gitError, fail,
-  parseArgs, emit, isMain, resolveTree,
+  parseArgs, emit, isMain, resolveTree, parseVerdictBlocks, parseAcceptanceLines,
+  parseEvidenceRows,
   runMain,
 } from './_lib.mjs';
 import {
   allTickets, nodesOf, parseField,
 } from './tk.mjs';
-import { parseEvidenceRows } from './wave.mjs';
 import { fileRules } from './node.mjs';
 
 // A ticket written before this migration can still carry a "**Keys:** author X · verifier Y ·
@@ -277,53 +277,12 @@ function findOwningTicket(root, commit, hordeFilter) {
 // round could have a later, unrelated block, so this looks back for the one the Keys line actually
 // points at rather than trusting "last in the file" blindly.
 
-function verdictBlocks(logText) {
-  if (!logText) return [];
-  return logText.split(/\n(?=## Verdict)/).map((b) => b.trim()).filter((b) => b.startsWith('## Verdict'));
-}
-
-function parseVerdictBlock(block) {
-  const heading = /^## Verdict · \S+ · \d{4}-\d{2}-\d{2} · by (\S+) \(([^)]+)\)/.exec(block);
-  const result = /\*\*Result:\*\*\s*(\S+)/.exec(block);
-  const rows = [];
-  const tableStart = block.indexOf('| item | command | saw |');
-  if (tableStart !== -1) {
-    for (const line of block.slice(tableStart).split('\n').slice(2)) {
-      if (!line.trim().startsWith('|')) break;
-      const cells = line.split('|').slice(1, -1).map((c) => c.trim());
-      if (cells.length >= 3) rows.push({ item: cells[0], command: cells[1], saw: cells[2] });
-    }
-  }
-  return {
-    verifier: heading ? heading[1] : null,
-    class: heading ? heading[2] : null,
-    result: result ? result[1] : null,
-    rows,
-  };
-}
-
 function verifierVerdict(logText, verifierName) {
-  const blocks = verdictBlocks(logText).map(parseVerdictBlock);
+  const blocks = parseVerdictBlocks(logText);
   if (verifierName && verifierName !== '—') {
     for (let i = blocks.length - 1; i >= 0; i--) if (blocks[i].verifier === verifierName) return blocks[i];
   }
   return blocks.length ? blocks[blocks.length - 1] : null;
-}
-
-// The ticket's own "## Acceptance — evidence" checklist lines, in order — the same section
-// a pre-migration verdict's --item indices numbered and wave.mjs scans for catalogue ids.
-function acceptanceLines(ticketText) {
-  const idx = ticketText.indexOf('## Acceptance');
-  if (idx === -1) return [];
-  const rest = ticketText.slice(idx);
-  const nextHeading = rest.indexOf('\n## ', 1);
-  const section = nextHeading === -1 ? rest : rest.slice(0, nextHeading);
-  const out = [];
-  for (const line of section.split('\n')) {
-    const m = /^- \[([ xX])\]\s*(.+)$/.exec(line.trim());
-    if (m && m[2].trim() !== '…') out.push({ checked: m[1].trim() !== '', text: m[2].trim() });
-  }
-  return out;
 }
 
 // Evidence rows the ticket named and their state: each acceptance line, paired (by the same
@@ -332,7 +291,9 @@ function acceptanceLines(ticketText) {
 // charter shows them reproduced.
 function evidenceRows(hordeId, ticket, logText) {
   const verdict = verifierVerdict(logText, parseKeys(ticket.text).verifier);
-  const lines = acceptanceLines(ticket.text).map((l, i) => ({
+  // The ticket's own checklist, in order — the same section a pre-migration verdict's --item
+  // indices numbered, which is what pairs a line with the row that recorded it.
+  const lines = parseAcceptanceLines(ticket.text).map((l, i) => ({
     text: l.text,
     checked: l.checked,
     saw: verdict && verdict.rows[i] ? verdict.rows[i].saw : null,

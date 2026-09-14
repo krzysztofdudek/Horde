@@ -18,11 +18,10 @@ import {
 } from 'node:fs';
 import {
   hordePath, readConfig, readText, appendText, today, fail, parseArgs, emit, isMain, resolveHorde,
+  parseDecisionEntries,
   runMain,
 } from './_lib.mjs';
 import { ygCommand } from './node.mjs';
-
-const ENTRY_RE = /^## (\d{4}-\d{2}-\d{2}) · ([^\s·]+)(?: · ticket (\S+))?(?: · node (\S+))?\s*$/;
 
 const USAGE = `usage: decide.mjs <command> [options]
 
@@ -41,26 +40,17 @@ function decisionsPath(horde) {
   return hordePath(horde, 'decisions.md');
 }
 
-// Parse decisions.md content into entries { date, slug, ticket, node, body }. Any `## ` heading
-// that doesn't match the date-slug pattern (a stray preamble, a lessons banner) is skipped along
-// with its body, so free text can live in the file without confusing the parser.
+// The decisions this file records: { date, slug, ticket, node, body }. Any `## ` heading that
+// doesn't match the date-slug pattern (a stray preamble, a lessons banner) is skipped along with
+// its body, so free text can live in the file without confusing anything that reads it by slug.
 export function parseEntries(text) {
-  if (!text) return [];
-  const lines = text.split('\n');
-  const entries = [];
-  let i = 0;
-  while (i < lines.length) {
-    const m = ENTRY_RE.exec(lines[i]);
-    if (!m) { i++; continue; }
-    const [, date, slug, ticket, node] = m;
-    i++;
-    const bodyLines = [];
-    while (i < lines.length && !lines[i].startsWith('## ')) { bodyLines.push(lines[i]); i++; }
-    while (bodyLines.length && bodyLines[0].trim() === '') bodyLines.shift();
-    while (bodyLines.length && bodyLines[bodyLines.length - 1].trim() === '') bodyLines.pop();
-    entries.push({ date, slug, ticket: ticket || null, node: node || null, body: bodyLines.join('\n') });
-  }
-  return entries;
+  return parseDecisionEntries(text)
+    .filter((e) => e.slug)
+    .map(({
+      date, slug, ticket, node, body,
+    }) => ({
+      date, slug, ticket, node, body,
+    }));
 }
 
 // A duplicate-slug check that reads, then a write some time later, is a race between two

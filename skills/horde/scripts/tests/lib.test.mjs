@@ -413,3 +413,326 @@ test('_lib.mjs: DEFAULT_CLASSES and firstClass are host-neutral', async (t) => {
     assert.notEqual(firstClass(null), 'sonnet');
   });
 });
+
+// ---- one parser per document ------------------------------------------------------------------
+//
+// The same markdown documents used to be taken apart by a regex in each tool that read them: the
+// ticket log's state lines in retro, brief and tk; its verdict blocks in drill, blame and wave;
+// the ticket's acceptance checklist in tk, blame and wave; the charter's evidence catalogue in
+// wave and tk; the mission's decisions in decide and land. A shape reworded in one of them left
+// the others quietly measuring the wrong thing. Every one of those reads now goes through the
+// parsers below, and the last test here is what keeps it that way.
+
+test('_lib.mjs: the ticket log is parsed in one place', async (t) => {
+  const { parseLogEntries, latestChangesRound } = await import('../_lib.mjs');
+
+  const log = [
+    '- 2026-01-01T00:00:00Z status: queued',
+    '- 2026-01-02T00:00:00Z the worker asked about the status: line wording',
+    '- 2026-01-03T00:00:00Z status: changes — gate red (round 2/5 — resume same worker)',
+    '- 2026-01-04T00:00:00Z status: merged — landed',
+    '- a remark with no stamp of its own',
+    'not a log line at all',
+  ].join('\n');
+
+  await t.test('a state entry is told from a remark by its shape, never by its words', () => {
+    const entries = parseLogEntries(log);
+    assert.deepEqual(entries.map((e) => e.isStatus), [true, false, true, true, false]);
+    // The remark talks about a status and stays a remark.
+    assert.equal(entries[1].text, '2026-01-02T00:00:00Z the worker asked about the status: line wording');
+    assert.equal(entries[4].text, 'a remark with no stamp of its own');
+  });
+
+  await t.test('an entry keeps the line it came from, so a caller can key on it', () => {
+    assert.deepEqual(parseLogEntries(log).map((e) => e.index), [0, 1, 2, 3, 4]);
+  });
+
+  await t.test('a state entry carries its state, its note and its fix-loop round', () => {
+    const changes = parseLogEntries(log)[2];
+    assert.equal(changes.status, 'changes');
+    assert.equal(changes.note, 'gate red');
+    assert.deepEqual(
+      { round: changes.round, cap: changes.cap, label: changes.label },
+      { round: 2, cap: 5, label: 'resume same worker' },
+    );
+    const merged = parseLogEntries(log)[3];
+    assert.equal(merged.status, 'merged');
+    assert.equal(merged.note, 'landed');
+    assert.equal(merged.round, null);
+  });
+
+  await t.test('latestChangesRound is the highest round the log records, 0 when it records none', () => {
+    assert.equal(latestChangesRound(log), 2);
+    assert.equal(latestChangesRound(`${log}\n- 2026-01-05T00:00:00Z status: changes — again (round 4/5 — fresh worker, class up)`), 4);
+    assert.equal(latestChangesRound('- 2026-01-01T00:00:00Z status: queued'), 0);
+    assert.equal(latestChangesRound(''), 0);
+    assert.equal(latestChangesRound(null), 0);
+  });
+});
+
+test('_lib.mjs: a verdict block is parsed in one place', async (t) => {
+  const { parseVerdictBlocks } = await import('../_lib.mjs');
+
+  const log = [
+    '- 2026-01-01T00:00:00Z status: running',
+    '',
+    '## Verdict · 004 · 2026-01-02 · by scout (light)',
+    '',
+    '**Result:** not-reproduced',
+    '',
+    '| item | command | saw |',
+    '|---|---|---|',
+    '| the page renders | npm test | 1 failing |',
+    '',
+    '## Verdict · 004 · 2026-01-03 · by scout (light)',
+    '',
+    '**Result:** reproduced',
+    '**Gate:** green at sha abc1234',
+    '',
+    '| item | command | saw |',
+    '|---|---|---|',
+    '| the page renders | npm test | 12 passing |',
+    '| the pipe \\| inside a cell | grep -F pipe | one match |',
+    '',
+    '## Verdict · 007 · 2026-01-04 · by scout (heavy)',
+    '',
+    '**Result:** reproduced',
+  ].join('\n');
+
+  await t.test('every block on the log, in order, with its heading read out', () => {
+    const blocks = parseVerdictBlocks(log);
+    assert.equal(blocks.length, 3);
+    assert.deepEqual(blocks.map((b) => b.ticket), ['004', '004', '007']);
+    assert.deepEqual(blocks.map((b) => b.result), ['not-reproduced', 'reproduced', 'reproduced']);
+    assert.deepEqual(blocks.map((b) => b.verifier), ['scout', 'scout', 'scout']);
+    assert.deepEqual(blocks.map((b) => b.class), ['light', 'light', 'heavy']);
+    assert.deepEqual(blocks.map((b) => b.date), ['2026-01-02', '2026-01-03', '2026-01-04']);
+  });
+
+  await t.test('the evidence table comes back as rows, an escaped pipe staying inside its cell', () => {
+    const [, second] = parseVerdictBlocks(log);
+    assert.deepEqual(second.rows, [
+      { item: 'the page renders', command: 'npm test', saw: '12 passing' },
+      { item: 'the pipe \\| inside a cell', command: 'grep -F pipe', saw: 'one match' },
+    ]);
+    assert.deepEqual(parseVerdictBlocks(log)[2].rows, []);
+  });
+
+  await t.test('the block keeps its own text, so a caller can read a field nobody parsed for it', () => {
+    assert.match(parseVerdictBlocks(log)[1].block, /\*\*Gate:\*\* green at sha abc1234/);
+  });
+
+  await t.test('a verdict handed to the log as a remark carries the log\'s stamp, and reads the same', () => {
+    const stamped = [
+      '- 2026-01-01T00:00:00Z status: running',
+      '- 2026-01-05T00:00:00Z ## Verdict · 004 · 2026-01-05 · by scout (standard)',
+      '',
+      '**Result:** reproduced',
+      '',
+      '| item | command | saw |',
+      '|---|---|---|',
+      '| the page renders | npm test | 12 passing |',
+      '',
+      '**Gate:** `node --test` — green at sha abc1234',
+    ].join('\n');
+    const [only] = parseVerdictBlocks(stamped);
+    assert.equal(parseVerdictBlocks(stamped).length, 1);
+    assert.deepEqual(
+      {
+        ticket: only.ticket, verifier: only.verifier, result: only.result, rows: only.rows.length,
+      },
+      {
+        ticket: '004', verifier: 'scout', result: 'reproduced', rows: 1,
+      },
+    );
+    assert.equal(only.block.startsWith('## Verdict · 004'), true, 'the stamp is not part of the block');
+  });
+
+  await t.test('a log with no verdict on it has no blocks', () => {
+    assert.deepEqual(parseVerdictBlocks('- 2026-01-01T00:00:00Z status: queued'), []);
+    assert.deepEqual(parseVerdictBlocks(''), []);
+    assert.deepEqual(parseVerdictBlocks(null), []);
+  });
+});
+
+test('_lib.mjs: a ticket\'s acceptance checklist is parsed in one place', async (t) => {
+  const { parseAcceptanceLines } = await import('../_lib.mjs');
+
+  const ticket = [
+    '# 004 · a title',
+    '',
+    '## Acceptance — evidence',
+    '',
+    '- [ ] the page renders',
+    '- [x] E3 the audit event lands',
+    '- [X] E4 an upper-case tick is still a tick',
+    '- [ ] …',
+    '- [ ] ...',
+    '- [ ]',
+    '',
+    '## Notes',
+    '',
+    '- [ ] a checkbox outside the section is not an acceptance line',
+  ].join('\n');
+
+  await t.test('only the real lines of the section, with their state and their text', () => {
+    assert.deepEqual(parseAcceptanceLines(ticket), [
+      { raw: '- [ ] the page renders', checked: false, text: 'the page renders' },
+      { raw: '- [x] E3 the audit event lands', checked: true, text: 'E3 the audit event lands' },
+      { raw: '- [X] E4 an upper-case tick is still a tick', checked: true, text: 'E4 an upper-case tick is still a tick' },
+    ]);
+  });
+
+  await t.test('a ticket with no such section, and one with nothing but the placeholder', () => {
+    assert.deepEqual(parseAcceptanceLines('no section at all'), []);
+    assert.deepEqual(parseAcceptanceLines('## Acceptance — evidence\n\n- [ ] …\n'), []);
+    assert.deepEqual(parseAcceptanceLines(null), []);
+  });
+});
+
+test('_lib.mjs: the charter\'s evidence catalogue is parsed in one place', async (t) => {
+  const { parseEvidenceRows, markdownSection, markdownTableCells } = await import('../_lib.mjs');
+
+  const charter = [
+    '# Mission',
+    '',
+    '## Acceptance — the evidence catalogue',
+    '',
+    '| id | evidence | node | reproduced by |',
+    '|---|---|---|---|',
+    '| E1 | the page renders | web | scout |',
+    '| E2 | the audit event lands | audit | |',
+    '| | | | |',
+    '',
+    '## Nodes',
+    '',
+    '| E9 | a row outside the section | x | |',
+  ].join('\n');
+
+  await t.test('the rows inside the section, the all-empty template row dropped', () => {
+    assert.deepEqual(parseEvidenceRows(charter), [
+      {
+        id: 'E1', evidence: 'the page renders', node: 'web', reproducedBy: 'scout',
+      },
+      {
+        id: 'E2', evidence: 'the audit event lands', node: 'audit', reproducedBy: '',
+      },
+    ]);
+  });
+
+  await t.test('a charter with no catalogue at all', () => {
+    assert.deepEqual(parseEvidenceRows('# Mission\n'), []);
+  });
+
+  await t.test('markdownSection stops at the next heading; markdownTableCells trims and unwraps', () => {
+    assert.equal(markdownSection(charter, '## Acceptance').includes('## Nodes'), false);
+    assert.equal(markdownSection(charter, '## Nodes').includes('a row outside the section'), true);
+    assert.equal(markdownSection(charter, '## Nowhere'), '');
+    assert.deepEqual(markdownTableCells('|  a | b  |c|'), ['a', 'b', 'c']);
+  });
+});
+
+test('_lib.mjs: the mission\'s decisions are parsed in one place', async (t) => {
+  const { parseDecisionEntries, decisionField } = await import('../_lib.mjs');
+
+  const decisions = [
+    '# Decisions',
+    '',
+    'A banner nobody parses.',
+    '',
+    '## 2026-09-11 · ask-a-007 · ticket 004 · node auth',
+    '',
+    '**Kind:** lower · **Aspect:** no-marker · **Scope:** once',
+    '**Question:** deleting this rule weakens what the mission is judged by.',
+    '**Answer:** approved — superseded by the type-level check.',
+    '**By:** client · **At:** 2026-09-11T09:00:00Z',
+    '',
+    '## 2026-09-12 · a-ruling',
+    '',
+    'The body of the ruling.',
+    '',
+  ].join('\n');
+
+  await t.test('a heading in the entry shape comes back with its fields read out', () => {
+    const entries = parseDecisionEntries(decisions);
+    const ask = entries.find((e) => e.slug === 'ask-a-007');
+    assert.deepEqual(
+      {
+        date: ask.date, slug: ask.slug, ticket: ask.ticket, node: ask.node,
+      },
+      {
+        date: '2026-09-11', slug: 'ask-a-007', ticket: '004', node: 'auth',
+      },
+    );
+    const ruling = entries.find((e) => e.slug === 'a-ruling');
+    assert.equal(ruling.body, 'The body of the ruling.');
+    assert.equal(ruling.ticket, null);
+    assert.equal(ruling.node, null);
+  });
+
+  await t.test('a heading in any other shape still opens a block, with no fields read', () => {
+    const banner = parseDecisionEntries('## not an entry heading\n\n**Kind:** lower\n');
+    assert.equal(banner.length, 1);
+    assert.equal(banner[0].slug, null);
+    assert.equal(banner[0].date, null);
+    assert.equal(decisionField(banner[0].block, 'Kind'), 'lower');
+  });
+
+  await t.test('an entry\'s block is the file\'s own text, so a caller can rewrite it in place', () => {
+    const ask = parseDecisionEntries(decisions).find((e) => e.slug === 'ask-a-007');
+    assert.equal(decisions.includes(ask.block), true, 'the block must be a literal slice of the document');
+  });
+
+  await t.test('decisionField reads one bold field out of a block, stopping at the next one', () => {
+    const ask = parseDecisionEntries(decisions).find((e) => e.slug === 'ask-a-007');
+    assert.equal(decisionField(ask.block, 'Kind'), 'lower');
+    assert.equal(decisionField(ask.block, 'Aspect'), 'no-marker');
+    assert.equal(decisionField(ask.block, 'Scope'), 'once');
+    assert.equal(decisionField(ask.block, 'Answer'), 'approved — superseded by the type-level check.');
+    assert.equal(decisionField(ask.block, 'Consumed'), '');
+  });
+
+  await t.test('an empty document has no entries', () => {
+    assert.deepEqual(parseDecisionEntries(''), []);
+    assert.deepEqual(parseDecisionEntries(null), []);
+  });
+});
+
+// The invariant behind all of the above: the shapes of those documents are spelled out in
+// _lib.mjs and nowhere else. Each marker below is a piece of one of them as it looks in code — if
+// a tool starts reading a document its own way again, its own copy shows up here.
+test('no tool but _lib.mjs spells out the shape of a document it reads', async () => {
+  const { readdirSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const scriptsDir = dirname(dirname(fileURLToPath(import.meta.url)));
+
+  const MARKERS = [
+    ['the verdict block\'s heading', '## Verdict'],
+    ['the verdict\'s result field', 'Result:\\*\\*'],
+    ['the verdict\'s evidence table', 'command |'],
+    ['the log\'s state line', 'status:\\s'],
+    ['the log\'s fix-loop round', '(round (\\d+)'],
+    ['the acceptance checkbox', '\\[[ x]\\]'],
+    ['the acceptance checkbox', '\\[([ xX])\\]'],
+    ['a table row taken apart by hand', 'split(\'|\').slice(1, -1)'],
+    ['a table row taken apart by hand', 'split(\'|\')[1]'],
+    ['a table row taken apart by hand', 'split(/(?<!\\\\)\\|/)'],
+    ['the decisions entry heading', '· ticket ('],
+    ['the decisions document split into blocks', 'split(/^## /m)'],
+  ];
+
+  const files = readdirSync(scriptsDir).filter((f) => f.endsWith('.mjs') && f !== '_lib.mjs');
+  assert.ok(files.length > 10, `expected the whole tool set, found ${files.length} file(s)`);
+
+  const offenders = [];
+  for (const file of files) {
+    // Full-line comments are prose about these documents and may name them; code may not.
+    const code = readFileSync(join(scriptsDir, file), 'utf8').split('\n')
+      .filter((l) => !l.trim().startsWith('//'));
+    for (const [what, marker] of MARKERS) {
+      const at = code.findIndex((l) => l.includes(marker));
+      if (at !== -1) offenders.push(`${file}: ${what} — ${code[at].trim()}`);
+    }
+  }
+  assert.deepEqual(offenders, [], `these documents are parsed in _lib.mjs; a second reading of one lives in:\n${offenders.join('\n')}`);
+});

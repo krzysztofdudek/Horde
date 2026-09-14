@@ -39,7 +39,7 @@ import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   hordePath, readJSON, writeJSON, nowIso, fail, parseArgs, emit, isMain,
-  resolveHorde, resolveTree, readConfig, asArray,
+  resolveHorde, resolveTree, readConfig, asArray, parseLogEntries,
   runMain,
 } from './_lib.mjs';
 import {
@@ -107,12 +107,6 @@ function walkTeams(horde, visit, teamDir = hordePath(horde, 'teams'), teamName =
   }
 }
 
-// The line `transitionStatus` writes, and the whole of what tells a state entry apart from a
-// remark: `- <iso> status: <state>…`. Everything else in a ticket's log was written by
-// `appendLog`, which prepends the stamp and nothing more. The distinction is the SHAPE of the
-// line, never its words — a remark that happens to talk about a status is still a remark.
-const STATUS_LINE = /^-\s+\S+\s+status:\s/;
-
 // collectRetroInput(horde) — {tickets, items, notes, landed}. Every gate refusal and every
 // remark, in ticket order, each with a key stable across runs so a classification written against
 // one gathering still lines up with the next. A ticket that cannot be read is a note on the
@@ -163,18 +157,19 @@ export function collectRetroInput(horde) {
       notes.push(`ticket ${t.id}: its directory exists and ${t.logPath} does not, so none of its own remarks were read.`);
       continue;
     }
-    const log = readFileSync(t.logPath, 'utf8');
-    log.split('\n').forEach((raw, i) => {
-      const line = raw.trim();
-      if (!line.startsWith('- ')) return;
-      if (STATUS_LINE.test(line)) return;
+    // Every remark on the ticket, and no state line: what `transitionStatus` writes is the
+    // mission's own bookkeeping, not something a retrospective has anything to say about. The
+    // distinction is the shape of the line, never its words — a remark that happens to talk
+    // about a status is still a remark, which is why this asks the log's own parser.
+    for (const entry of parseLogEntries(readFileSync(t.logPath, 'utf8'))) {
+      if (entry.isStatus) continue;
       items.push({
-        key: `log:${t.id}:${i}`,
+        key: `log:${t.id}:${entry.index}`,
         source: 'log',
         ticket: t.id,
-        text: line.replace(/^-\s+/, ''),
+        text: entry.text,
       });
-    });
+    }
   }
 
   return { tickets, items, notes, landed };
