@@ -370,8 +370,8 @@
 - 2026-09-14 01:49 · 013 → in-progress · worker raised, wave 2
 - 2026-09-14 01:49 · 040 → in-progress · worker raised, wave 2
 - 2026-09-14 01:49 · 068 → in-progress · worker raised, wave 2
-- 2026-09-14 02:06 · filed 094 · acquireRetroLock/acquireGateLock: a lock file that exists but is not yet fully written is treated as dead and stolen
-- 2026-09-14 02:07 · 094 evidence row · strace -f -e trace=openat,write,close node wxtest.mjs (wxtest.mjs: writeFileSync(path,'{}',{flag:'wx'}))
-- 2026-09-14 02:07 · 094 evidence row · node orchestrator.mjs 400 60 500, six times in a row (byte-for-byte port of acquireRetroLock's decision/write logic; one contender's write delayed 400ms after create, the other 100% unmodified, both racing the same lock path)
-- 2026-09-14 02:07 · 094 evidence row · same harness with 0 injected delay (control): two 100%-unmodified contenders racing normally, repeated
+- 2026-09-14 02:06 · filed 098 · acquireRetroLock/acquireGateLock: a lock file that exists but is not yet fully written is treated as dead and stolen
+- 2026-09-14 02:07 · 098 evidence row · strace -f -e trace=openat,write,close node wxtest.mjs (wxtest.mjs: writeFileSync(path,'{}',{flag:'wx'}))
+- 2026-09-14 02:07 · 098 evidence row · node orchestrator.mjs 400 60 500, six times in a row (byte-for-byte port of acquireRetroLock's decision/write logic; one contender's write delayed 400ms after create, the other 100% unmodified, both racing the same lock path)
+- 2026-09-14 02:07 · 098 evidence row · same harness with 0 injected delay (control): two 100%-unmodified contenders racing normally, repeated
 - 2026-09-14 02:07 · 090 evidence row · read acquireRetroLock and its release() line by line, read the identical pattern in land.mjs's acquireGateLock, straced writeFileSync(path,data,{flag:'wx'}) to see its actual syscalls, then built a deterministic fault-injected repro (lock-lib.mjs port of the exact decision logic + contender.mjs/orchestrator.mjs) racing a delayed writer against the 100%-unmodified acquire logic, 6 runs

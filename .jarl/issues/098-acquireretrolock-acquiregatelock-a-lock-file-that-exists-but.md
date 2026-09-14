@@ -1,4 +1,4 @@
-# 094 · acquireRetroLock/acquireGateLock: a lock file that exists but is not yet fully written is treated as dead and stolen
+# 098 · acquireRetroLock/acquireGateLock: a lock file that exists but is not yet fully written is treated as dead and stolen
 
 **Status:** open
 **Kind:** bug
