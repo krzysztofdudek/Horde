@@ -14,8 +14,57 @@ import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
+// A commit made through this helper is signed by the sandbox's own commit-signing service
+// (global git config: commit.gpgsign=true, gpg.ssh.program) — nothing to do with the code under
+// test. Under heavy concurrent load that service intermittently answers 503, and git surfaces the
+// failure as the signing program's own stderr followed by "failed to write commit object" (traced
+// and reproduced locally by pointing gpg.ssh.program at a script that fails the same way: the
+// phrase is git's own commit-object-writing step talking, the same for `commit`, `merge` and
+// `revert` alike, whichever one asked for it). Retry ONLY that one signal, a small bounded number
+// of times with a short backoff; anything else — a real conflict, a rejected commit-msg hook, a
+// bad ref — throws on the first attempt, exactly as before this fix.
+const COMMIT_WRITING_SUBCOMMANDS = new Set(['commit', 'merge', 'revert']);
+const TRANSIENT_SIGNING_SIGNAL = /\b50[234]\b|service unavailable|bad gateway|gateway timeout/i;
+const SIGNING_RETRY_ATTEMPTS = 3;
+const SIGNING_RETRY_BACKOFF_SECONDS = 0.3;
+
+function isTransientSigningFailure(stderr) {
+  return /failed to write commit object/i.test(stderr) && TRANSIENT_SIGNING_SIGNAL.test(stderr);
+}
+
 function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  if (!COMMIT_WRITING_SUBCOMMANDS.has(args[0])) {
+    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  }
+  for (let attempt = 1; attempt <= SIGNING_RETRY_ATTEMPTS; attempt += 1) {
+    // Attempt 1 always runs the caller's own command. A `merge` or `revert` that failed at the
+    // signing step has already updated the index and written git's own prepared commit message —
+    // re-issuing the same subcommand fails outright ("already in progress" / "local changes would
+    // be overwritten"); the correct way to finish it is a plain `git commit --no-edit`, which
+    // reuses that prepared message (verified locally: it reproduces the exact commit `merge` or
+    // `revert` would have made). A plain `commit` that failed at signing leaves the index
+    // untouched, so re-issuing the exact same command is both correct and simpler — `--no-edit`
+    // does NOT recover a `-m` message here (verified locally: it aborts on an empty commit
+    // message), so it is only used to finish an already-staged `merge`/`revert`.
+    const thisAttempt = (attempt === 1 || args[0] === 'commit') ? args : ['commit', '--no-edit'];
+    try {
+      return execFileSync('git', thisAttempt, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    } catch (e) {
+      const stderr = e.stderr ? e.stderr.toString() : '';
+      const transient = isTransientSigningFailure(stderr);
+      if (!transient || attempt === SIGNING_RETRY_ATTEMPTS) {
+        if (transient) {
+          e.message += `\n[git commit-signing] gave up after ${attempt} attempts — stderr names a `
+            + '50x/"Service Unavailable" signal alongside "failed to write commit object", which reads as '
+            + 'the sandbox\'s signing service struggling under load, not a failure in the code under test.';
+        }
+        throw e;
+      }
+      execFileSync('sleep', [String(SIGNING_RETRY_BACKOFF_SECONDS * attempt)]);
+    }
+  }
+  // Unreachable: SIGNING_RETRY_ATTEMPTS >= 1, and every iteration above either returns or throws.
+  return undefined;
 }
 
 // The nine items, in the order `land` reports them. Asserted by name in the happy path below and
