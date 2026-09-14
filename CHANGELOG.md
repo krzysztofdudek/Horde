@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [6.0.0] - 2026-09-12
 
-Needs Yggdrasil 6.x — the same major, refused otherwise.
+Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to install.
 
 ### Added
 
