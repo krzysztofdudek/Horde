@@ -270,6 +270,58 @@ test('every *.mjs named in SKILL.md exists in scripts/, and every scripts/*.mjs 
   assert.deepEqual(undocumented, [], `scripts/${undocumented.join(', ')} is named in neither SKILL.md nor scripts/README.md`);
 });
 
+// ---- every *.mjs named anywhere in the docs exists in scripts/ (the other direction) -------
+
+// The check above only ever verified SKILL.md's own names against disk; scripts/README.md's names
+// were collected solely to mark a script "documented" and never checked to exist themselves. That
+// gap is exactly how scripts/README.md and escalate.mjs's own header comment both went on naming
+// `legislate.mjs` — a script that has never existed on disk ("legislate" is a brief.mjs role,
+// rendered from reference/roles/legislate.md, not a standalone script) — with nothing to catch it.
+// This walks every doc a person or an agent reads to learn the tool set and checks the reverse
+// direction there too.
+//
+// Three tokens mjsNamesIn's regex correctly extracts from that prose but that are not scripts/
+// files, so they are excluded by name rather than chased:
+//   - check.mjs, companion.mjs — the generic Yggdrasil per-rule file names
+//     (.yggdrasil/aspects/<id>/check.mjs), a naming convention from outside this tool set, named
+//     in prose about what a rule's own directory holds (reference/roles/legislate.md, retro.md;
+//     scripts/README.md's law-guard section).
+//   - test.mjs — not a name at all: the tail of a glob the regex reads on its own, e.g.
+//     `*.test.mjs` or `family.e2e.test.mjs` in scripts/README.md's own Tests section.
+const NOT_A_SCRIPT_NAME = new Set(['check.mjs', 'companion.mjs', 'test.mjs']);
+
+function docFiles() {
+  return [
+    join(SKILL_DIR, 'SKILL.md'),
+    ...walk(join(SKILL_DIR, 'reference')),
+    ...walk(join(SKILL_DIR, 'templates')),
+    join(SCRIPTS_DIR, 'README.md'),
+    join(REPO_ROOT, 'README.md'),
+    join(REPO_ROOT, 'CLAUDE.md'),
+  ];
+}
+
+test('every *.mjs named in the docs (SKILL.md, reference/**, templates/**, scripts/README.md, README.md, CLAUDE.md) exists in scripts/', () => {
+  const files = docFiles();
+  assert.ok(files.length > 15, `expected the whole doc surface, found ${files.length} file(s)`);
+  const onDisk = new Set(readdirSync(SCRIPTS_DIR).filter((f) => f.endsWith('.mjs')));
+
+  const offenders = [];
+  for (const file of files) {
+    for (const name of mjsNamesIn(readText(file))) {
+      if (!onDisk.has(name) && !NOT_A_SCRIPT_NAME.has(name)) offenders.push(`${file}: names "${name}"`);
+    }
+  }
+  assert.deepEqual(offenders, [], `a doc names a script that does not exist:\n${offenders.join('\n')}`);
+});
+
+test('the docs\' *.mjs scan actually catches a script that does not exist, and does not false-positive on check.mjs/companion.mjs/test.mjs', () => {
+  const onDisk = new Set(readdirSync(SCRIPTS_DIR).filter((f) => f.endsWith('.mjs')));
+  const sample = mjsNamesIn('see `legislate.mjs`, `check.mjs`, `companion.mjs` and `*.test.mjs`');
+  const offenders = [...sample].filter((n) => !onDisk.has(n) && !NOT_A_SCRIPT_NAME.has(n));
+  assert.deepEqual(offenders, ['legislate.mjs'], 'the scan should flag only the name that is neither a real script nor in the known-non-script allowlist');
+});
+
 // ---- the landing gate's item count, compared live, never as a literal ----------------------
 
 function landCheckOrder() {

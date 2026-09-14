@@ -690,8 +690,10 @@ conflict between two tickets), ruled and routed by hand — is gone with the rol
 is the director's own call now, recorded with `decide.mjs add`. What is left here is the one thing
 worth automating: noticing that the client keeps being asked, and answering, the same question. This
 is the second of the three triggers for legislation (the first is the consultant during `refine.mjs`,
-the third is `legislate.mjs` after a wave close). No state of its own — it reads `ask.mjs`'s own
-`asks.json` and only ever proposes, never files: filing a rule is the territory's own agent's move.
+the third is `audit.mjs`'s review-date sweep at a wave close, described above — `legislate` itself
+is a brief `brief.mjs` renders, not a script of that name). No state of its own — it reads
+`ask.mjs`'s own `asks.json` and only ever proposes, never files: filing a rule is the territory's
+own agent's move.
 
 `recurring [--min <n>]` — the **answered** asks (`ask.mjs`) grouped by kind, by territory and by the
 normalized text of the answer itself (lower-case, whitespace collapsed, trailing punctuation dropped),
