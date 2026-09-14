@@ -1,6 +1,6 @@
 # 018 · nieznana polityka jakosci domyslnie autonomous
 
-**Status:** open
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -21,4 +21,6 @@ Nieznana wartość → odmowa z nazwaniem dwóch dopuszczalnych. Test.
 Dowód, którego oczekuję: skills/horde/scripts/tests/lib.test.mjs.
 
 ## Evidence
+
+- **ran:** node --test tests/lib.test.mjs (rebased tip, then merged main) · **saw:** 61/61 pass both times
 
