@@ -1,6 +1,6 @@
 # 125 · brief.test.mjs, docs.test.mjs and horde.test.mjs each still carry a raw, unretried git commit exposed to the same signing 503 issue 122 just consolidated everywhere else
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -30,4 +30,5 @@ docs.test.mjs has no local git wrapper of any name -- every git call in the file
 
 The fix issue 122 built is a direct drop-in for all three: helpers.mjs now exports a git(args, cwd) that retries commit/merge/revert past any '-C'/'-c' prefix and returns the trimmed stdout, so closing this is import git from ./helpers.mjs in each of the three files, replace the raw execFileSync('git', ['commit'...]) bypass call with it, and for horde.test.mjs additionally retarget every gitIn(...) call site to the shared git() and delete the now-redundant local gitIn(). None of the three needs the merge/revert side of the retry logic -- confirmed no caller in any of them uses either subcommand.
 - **ran:** cd skills/horde/scripts && HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" timeout 600 node --test tests/brief.test.mjs tests/horde.test.mjs tests/docs.test.mjs · **saw:** tests 146, pass 145, fail 0, cancelled 0, skipped 1, todo 0 (skip is pre-existing/environmental: 'a horde directory that cannot be written refuses' # SKIP root bypasses file-mode permissions)
+- **ran:** HORDE_TEST_YG=... node --test tests/brief.test.mjs tests/docs.test.mjs tests/horde.test.mjs, merger's own run on the merged tip · **saw:** 146 tests, 145 pass, 0 fail, 1 pre-existing unrelated skip (root bypasses file-mode permissions)
 
