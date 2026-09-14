@@ -108,8 +108,14 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   nothing. A mission archived by an older release carries fewer of these files; what is missing reads
   as missing (`null`) and the rest is still read — half a book is worth more than none. The same
   reader scopes the archive into each consultant's brief (`refine.mjs --step consult`, below).
-- `done [--horde h]` — the mission's final gate (ruling `evidence-is-the-plan`: "the queue is empty"
-  is never "done"). Refuses, listing every reason at once, when: the charter's evidence catalogue is
+- `done [--tree p] [--horde h]` — the mission's final gate (ruling `evidence-is-the-plan`: "the queue
+  is empty" is never "done"). The one place this reads a tree — the trunk gate's own fresh re-run,
+  below, when no cached green already covers the tip — runs from `--tree`, or without one, cwd: the
+  same ordinary default every read in this tool set takes, not this horde's trunk just because a
+  horde was resolvable. `--horde h` written out (no `--tree`) is what changes that, exactly as
+  `queue.mjs plan`/`quality`, `tick.mjs` and `land.mjs` already read it; what the gate actually tests
+  is always the trunk branch's own tip either way, so this rarely shows. Refuses, listing every
+  reason at once, when: the charter's evidence catalogue is
   empty (nothing to reproduce is not the same as done); any charter evidence row is not reproduced
   (first promoting whatever a merged ticket's own verdict already proved, mission-wide and
   regardless of wave, into the charter's "reproduced by" cell — the same reading `wave.mjs close`

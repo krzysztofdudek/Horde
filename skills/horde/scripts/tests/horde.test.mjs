@@ -564,6 +564,49 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
   });
 });
 
+// ---- the tree "done" itself runs in, with and without --horde written out (issue 113) ---------
+//
+// The same shared contract every other tool here reads (node.mjs main()'s own comment above its
+// resolveTree call, tree.test.mjs, tick.test.mjs's and land.test.mjs's own versions of this test):
+// an ordinary run with neither --tree nor --horde stays on cwd, whatever tree that happens to be —
+// a resolvable horde is not by itself a second signal for "read trunk instead" (ask a-002,
+// decisions.md: always cwd, full stop). --horde WRITTEN OUT is the one thing that does mean this
+// horde's own trunk, exactly as queue.mjs plan/quality, tick.mjs (041) and land.mjs (109) already
+// read it. Before this test existed, "done"'s own resolveTree call forwarded the RESOLVED horde
+// (resolveHorde's own default-to-the-sole-horde reading) instead of the raw flag, so a bare
+// `horde.mjs done` in this single-horde fixture read trunk unconditionally, never cwd.
+//
+// "done"'s own resolveTree call runs unconditionally, before any of its reasons are worked out, so
+// neither sub-test needs the mission to actually be done — both refuse on the empty evidence
+// catalogue either way, and that refusal happens after the tree is already resolved. What is left
+// to differ, and what this test actually proves, is whether "done" ever provisions this horde's own
+// trunk WORKTREE — a resource only --horde written out reaches — while running from a shell sitting
+// on "develop" (the mission's own base branch, checked out but never itself mission1/trunk).
+test('horde.mjs done: no --horde stays on cwd; --horde written out resolves to that horde\'s own trunk instead', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const trunkWorktree = join(dir, '.horde', 'worktrees', 'mission1', 'trunk');
+  execFileSync('git', ['checkout', 'develop'], { cwd: dir });
+
+  await t.test('no --horde at all: cwd — trunk\'s own separate worktree is never touched', () => {
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /evidence catalogue is empty/);
+    assert.equal(existsSync(trunkWorktree), false, 'trunk\'s own separate worktree was never provisioned');
+    assert.equal(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim(), 'develop');
+  });
+
+  await t.test('--horde mission1 written out: this horde\'s own trunk worktree gets provisioned, a different tree from cwd', () => {
+    const r = run('horde.mjs', ['done', '--horde', 'mission1'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /evidence catalogue is empty/);
+    assert.equal(existsSync(trunkWorktree), true, '--horde written out: trunk\'s own separate worktree was provisioned');
+    // Resolving a tree is not a checkout: the shell this ran from stays exactly where it was.
+    assert.equal(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim(), 'develop');
+  });
+});
+
 // ---- the archived marker ----------------------------------------------------------------------
 //
 // "Archived" has to be readable off the directory itself, not inferred from where it sits: a
