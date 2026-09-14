@@ -718,3 +718,18 @@
 - 2026-09-14 15:24 · 021 → done · Merged: a landing now refuses to weaken the proof or the checks it is measured by, the same way it already refused to weaken a rule. A promise put back to planned or left with nothing keeping it, a test file removed, a test file with fewer assertions than it had, a new skip marker, or a gate script, commit/push hook or CI workflow removed or rewritten — each refuses by name until the client has answered a question about that exact thing. Adding tests, adding assertions and renaming a test file are unaffected.
 - 2026-09-14 15:26 · 022 → in-progress · dispatched to a worker in its own worktree/branch — P1 kontrakt, was held for issue 021 (both touch land.mjs), now unblocked
 - 2026-09-14 15:48 · 022 → in-progress · worker picked it up: the gate reads back its own runner's report and requires every live promise's paired case to be in it, passing
+- 2026-09-14 16:08 · 022 evidence row · cd skills/horde/scripts && HORDE_TEST_YG="node .../bin.js" timeout 3000 node --test tests/land.test.mjs (final, on the tip)
+- 2026-09-14 16:08 · 022 evidence row · cd skills/horde/scripts && HORDE_TEST_YG=... timeout 2400 node --test tests/law-guard.test.mjs
+- 2026-09-14 16:08 · 022 evidence row · cd skills/horde/scripts && HORDE_TEST_YG=... timeout 900 node --test tests/docs.test.mjs (after the README/SKILL/model edits)
+- 2026-09-14 16:08 · 022 evidence row · the acceptance case the issue names: a fixture whose gate command writes a real JUnit report, with a live promise mirrored by promises/adds-two-numbers.test.mjs
+- 2026-09-14 16:08 · 022 evidence row · the three refusals the acceptance asks for, each on its own fixture: the case absent from the report; the case present and skipped; the case present and failed
+- 2026-09-14 16:08 · 022 evidence row · the "no report configured" case: the same live promise in the tree, gates.report unset
+- 2026-09-14 16:08 · 022 evidence row · the distinction the acceptance draws: gates.report configured at reports/junit.xml while the gate writes reports/elsewhere.xml
+- 2026-09-14 16:08 · 022 evidence row · the design question the issue does not answer: file-level (mirror/self) versus case-level (named) matching, each on its own fixture
+- 2026-09-14 16:08 · 022 evidence row · TAP, read honestly: a TAP stream carries no file attribution at all, so a file-level pairing can only be matched by the paired file's own stem against the case name
+- 2026-09-14 16:08 · 022 evidence row · Playwright JSON: a spec passing in the paired file lands; a spec whose result is timedOut refuses
+- 2026-09-14 16:08 · 022 evidence row · empty is not a finding, the same discipline has-evidence/check.mjs takes: no promises at all; promises but none implemented; a promise kept only by an accepted artefact
+- 2026-09-14 16:08 · 022 evidence row · deviation I chose on my own: config.gates.report.path may not be absolute or climb out with ".."
+- 2026-09-14 16:08 · 022 evidence row · this is an item, not a sixth guard: nothing here refuses outright and no ask.mjs --kind lower answer waives it
+- 2026-09-14 16:08 · 022 evidence row · horde.mjs: no change needed for the config surface — setPath/getPath already write any dotted path
+- 2026-09-14 16:08 · 022 evidence row · git log --oneline ded1474..HEAD && git status --short
