@@ -29,7 +29,7 @@ import { execFileSync, execSync } from 'node:child_process';
 import {
   repoRoot, hordePath, teamPath, readJSON, writeJSON, readText, readConfig, git, nowIso,
   fail, parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, parseVerdictBlocks,
-  runMain,
+  runMain, noEvidenceLayerNote,
 } from './_lib.mjs';
 import { findTicket, ticketFiles } from './tk.mjs';
 import {
@@ -264,12 +264,29 @@ function ticketContext(horde, ticketId) {
 // after the code that satisfies it, and it has never shown that it can fail.
 
 function checkTdd(ctx) {
-  const { root, cfg, branch, parentBranch } = ctx;
+  const {
+    horde, root, cfg, branch, parentBranch,
+  } = ctx;
   const checks = [];
   const tip = git(['rev-parse', '--verify', branch], root);
   if (!tip) return [{ name: 'branch', ok: false, note: `no such branch: ${branch}` }];
   const base = git(['merge-base', branch, parentBranch], root);
   if (!base) return [{ name: 'branch', ok: false, note: `no merge base between ${branch} and ${parentBranch}` }];
+
+  // A mission whose charter has already judged "no evidence layer" answers the "test patterns"
+  // item with that judgment, not with the testGlobs question it doesn't apply to. cfg.testGlobs is
+  // empty on exactly this kind of repository BY CONSTRUCTION — the same emptiness the charter's
+  // reading is made from — so refusing on it would be asking a question this mission has already
+  // answered "there is nothing here to point at" to (the sibling fix: land.mjs's checkRevertTest,
+  // issue 108). Checked here, ahead of the testGlobs guard, so a mission that has made this
+  // judgement is exempted outright on this item, citing the judgement itself in the note.
+  //
+  // The branch/merge-base checks above stay unconditional, deliberately not folded under this
+  // exemption: they ask whether the ticket's branch reference is even real, which the evidence-
+  // layer judgement has nothing to say about — a mission with no evidence layer still has real
+  // branches, and a broken one is still a fact worth surfacing, not something to paper over.
+  const noEvidenceLayer = noEvidenceLayerNote(horde);
+  if (noEvidenceLayer) return [{ name: 'test patterns', ok: true, note: noEvidenceLayer }];
 
   const globs = Array.isArray(cfg.testGlobs) ? cfg.testGlobs.filter(Boolean) : [];
   if (globs.length === 0) {

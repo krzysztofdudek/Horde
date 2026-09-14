@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode, requireYg,
+  writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE,
 } from './helpers.mjs';
 
 const COMMITTED_CORPUS = join(dirname(fileURLToPath(import.meta.url)), 'drills');
@@ -192,6 +193,97 @@ test('drill.mjs check tdd: red when the branch adds no test at all', async (t) =
   const newTests = r.json.checks.find((c) => c.name === 'new tests');
   assert.equal(newTests.ok, false);
   assert.match(newTests.note, /no commit adds a test file/);
+});
+
+// ---- the no-evidence-layer exemption on the "test patterns" item (issue 123, mirrors land.mjs's
+// checkRevertTest fix for the landing gate, issue 108) -----------------------------------------
+//
+// cfg.testGlobs is empty on a no-evidence-layer repository BY CONSTRUCTION — the same emptiness
+// the charter's judgement is made from — so the testGlobs-unset refusal below used to fire on
+// every ticket in exactly the repositories Horde tells to prove their catalogue rows some other
+// way (a scenario, a screenshot, a recording). The charter's judgement now reaches this item
+// directly instead: exempted outright, citing that judgement, rather than refusing on empty
+// testGlobs.
+
+test('drill.mjs check tdd: a mission with no evidence layer exempts "test patterns" outright, even with testGlobs unset and a real new test file in the diff', async (t) => {
+  const m = missionRepo(t);
+  await writeEvidenceJudgement(m.dir, NO_EVIDENCE_LAYER);
+  // The same emptiness the charter's judgement is made from — construction, not a separate
+  // mutation performed on top of it.
+  assert.equal(run('horde.mjs', ['config', 'set', 'testGlobs', ''], m.dir).code, 0);
+  commit(m.worktree, 'a test for retrying a failed call', { 'src/retry.test.mjs': TEST_FILE });
+  commit(m.worktree, 'retry a failed call three times', { 'src/retry.mjs': IMPL_FILE });
+  land(m.dir, m.worktree);
+
+  const r = run('drill.mjs', ['check', 'tdd', '--repo', m.dir, '--ticket', '001'], m.dir);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(r.json.ok, true);
+  // Exempted outright: only this one item — none of the commits/new-tests/red-before/green-after
+  // work below it ever runs.
+  assert.deepEqual(r.json.checks.map((c) => c.name), ['test patterns']);
+  const item = r.json.checks[0];
+  assert.doesNotMatch(item.note, /test patterns are unset/);
+  assert.match(item.note, /^No evidence layer in this repository:/);
+  assert.match(item.note, /stands on what it names itself/);
+});
+
+test('drill.mjs check tdd: the no-evidence-layer exemption never swallows a genuinely missing branch', async (t) => {
+  // A ticket only queued, never set running: mission1/t-001 was never created as a real branch.
+  // The evidence-layer judgement answers "does the testGlobs question even apply here", not "does
+  // this ticket's branch exist" — a mission with no evidence layer still has real branches, and
+  // this proves a broken one is still reported by the branch/merge-base checks ahead of the
+  // exemption, not papered over by it.
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir, 'mission1');
+  addNode(dir, 'core', { mapping: ['src/**'] });
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  git(['add', '.yggdrasil'], dir);
+  git(['commit', '-qm', 'graph: the core component and its boundary'], dir);
+  assert.equal(run('tk.mjs', ['new', 'retry', '--title', 'Retry a failed call three times',
+    '--node', 'core', '--class', 'standard',
+    '--evidence', 'node --test src/retry.test.mjs prints 1 pass'], dir).code, 0);
+  assert.equal(run('queue.mjs', ['add', '001'], dir).code, 0);
+  await writeEvidenceJudgement(dir, NO_EVIDENCE_LAYER);
+  assert.equal(run('horde.mjs', ['config', 'set', 'testGlobs', ''], dir).code, 0);
+
+  const r = run('drill.mjs', ['check', 'tdd', '--repo', dir, '--ticket', '001'], dir);
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.json.checks.map((c) => c.name), ['branch']);
+  assert.match(r.json.checks[0].note, /no such branch: mission1\/t-001/);
+});
+
+test('drill.mjs check tdd: a mission with an evidence layer keeps the old testGlobs-unset refusal, unchanged', async (t) => {
+  const m = missionRepo(t);
+  await writeEvidenceJudgement(m.dir, A_TEST_SUITE);
+  assert.equal(run('horde.mjs', ['config', 'set', 'testGlobs', ''], m.dir).code, 0);
+  commit(m.worktree, 'retry a failed call three times', { 'src/retry.mjs': IMPL_FILE });
+  land(m.dir, m.worktree);
+
+  const r = run('drill.mjs', ['check', 'tdd', '--repo', m.dir, '--ticket', '001'], m.dir);
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.json.checks.map((c) => c.name), ['test patterns']);
+  const item = r.json.checks[0];
+  assert.equal(item.ok, false);
+  assert.match(item.note, /test patterns are unset/);
+  assert.match(item.note, /horde\.mjs config set testGlobs/);
+});
+
+test('drill.mjs check tdd: a charter that has not judged evidence at all keeps the old testGlobs-unset refusal too, unchanged', async (t) => {
+  // No writeEvidenceJudgement call at all: the charter carries no "## Evidence in this
+  // repository" section yet. noEvidenceLayerIn reads false for this case exactly as it does for a
+  // judged-present layer (only a judged-absent layer reads true), so this proves the refusal is
+  // unaffected by the fix either way, not only when a layer has been explicitly judged present.
+  const m = missionRepo(t);
+  assert.equal(run('horde.mjs', ['config', 'set', 'testGlobs', ''], m.dir).code, 0);
+  commit(m.worktree, 'retry a failed call three times', { 'src/retry.mjs': IMPL_FILE });
+  land(m.dir, m.worktree);
+
+  const r = run('drill.mjs', ['check', 'tdd', '--repo', m.dir, '--ticket', '001'], m.dir);
+  assert.equal(r.code, 1);
+  const item = r.json.checks[0];
+  assert.equal(item.ok, false);
+  assert.match(item.note, /test patterns are unset/);
 });
 
 test('drill.mjs check verification: the verdict carries what was run, what was seen, and the tip', async (t) => {
