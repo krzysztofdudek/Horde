@@ -16,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode,
+  makeRepo, rmRepo, run, initHorde, addNode, git,
 } from './helpers.mjs';
 
 const SKILL_DIR = join(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
@@ -562,7 +562,7 @@ test('reference/discipline/review.md\'s change-request commands run against a re
     addNode(dir, 'core', { mapping: ['src/**'] });
     execFileSync('git', ['checkout', '-q', 'mission1/trunk'], { cwd: dir });
     execFileSync('git', ['add', '.yggdrasil'], { cwd: dir });
-    execFileSync('git', ['-c', 'user.email=test@test.com', '-c', 'user.name=Test User', 'commit', '-qm', 'graph'], { cwd: dir });
+    git(['-c', 'user.email=test@test.com', '-c', 'user.name=Test User', 'commit', '-qm', 'graph'], dir);
 
     const created = run('tk.mjs', ['new', 'retry', '--title', 'Retry a failed call', '--node', 'core', '--class', 'standard',
       '--evidence', 'node --test src/retry.test.mjs prints 1 pass'], dir);
