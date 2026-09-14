@@ -635,6 +635,10 @@ export function readConfig() {
 // this same `config.classes` map (Claude Code: light: haiku, standard: sonnet, heavy: opus;
 // Codex: light: gpt-5-mini, heavy: gpt-5; …) — that mapping is theirs to make, never Horde's to
 // guess.
+//
+// A different "class" from EVIDENCE_CLASSES further down this file: that one names what KIND OF
+// PROOF a charter row rests on, this one names how heavy a ticket runs. Never the same word in
+// anything printed — see EVIDENCE_CLASSES' own comment.
 export const DEFAULT_CLASSES = {
   light: 1, standard: 3, heavy: 10, max: 30,
 };
@@ -936,8 +940,32 @@ export function parseAcceptanceLines(issueText) {
 
 // --- the mission's charter.md: its evidence catalogue -------------------------------------------
 //
-// The table under the heading that starts `## Acceptance`: | id | evidence | node | reproduced by |.
+// The table under the heading that starts `## Acceptance`: | id | evidence | node | reproduced by |
+// | evidence class |. The fifth cell is optional and came later (issue 120) — a row written before
+// it existed simply has four cells, which reads exactly like a fifth cell left blank.
 // A row counts once any cell holds text — the template ships one all-empty row, which is no row.
+
+// The six kinds of proof a charter row's fifth cell — or a promise file's own `class:` field — may
+// name, fixed rather than configured (issue 024). This is a hand-kept mirror of
+// packages/promises/doc-shape/check.mjs's own CLASSES export, not an import of it: that package is
+// a separate, optional offer a repository may adopt for its promise files, this skill's own
+// self-containment rule (CLAUDE.md: "all behavior must be self-contained in skills/horde/") means
+// nothing under scripts/ may reach outside skills/horde/ for it, and the words are few enough that
+// keeping the two lists in step by hand costs less than a cross-package dependency would.
+//
+// Never confuse this with DEFAULT_CLASSES above — that is Horde's own model-weight ladder
+// (light/standard/heavy/max), a different "class" naming how heavy a ticket is dispatched at. This
+// one names what KIND OF PROOF a row of evidence rests on, and every reader of it (parseEvidenceRows
+// below, wave.mjs's own per-class report) says "evidence class" or "kind of proof", never a bare
+// "class", so the two are never mistaken for one another in anything printed.
+export const EVIDENCE_CLASSES = [
+  'e2e scenario',
+  'hermetic test',
+  'mutation',
+  'recorded stub',
+  'artifact',
+  'client testimony',
+];
 
 export function parseEvidenceRows(charterText) {
   const section = markdownSection(charterText, '## Acceptance');
@@ -947,8 +975,8 @@ export function parseEvidenceRows(charterText) {
   return lines.slice(2)
     .map(markdownTableCells)
     .filter((cells) => cells.some((c) => c.length > 0))
-    .map(([id, evidence, node, reproducedBy]) => ({
-      id, evidence, node, reproducedBy: reproducedBy || '',
+    .map(([id, evidence, node, reproducedBy, evidenceClass]) => ({
+      id, evidence, node, reproducedBy: reproducedBy || '', evidenceClass: evidenceClass || '',
     }));
 }
 

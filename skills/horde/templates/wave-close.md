@@ -9,6 +9,10 @@
 **Change size (lines/files, biggest first):** {{changeSizeLine}}
 **Quality index:** {{qualityLine}}
 
+## Evidence catalogue — by kind of proof
+
+{{evidenceClassBlock}}
+
 ## Prototypes accepted
 
 {{prototypeBlock}}

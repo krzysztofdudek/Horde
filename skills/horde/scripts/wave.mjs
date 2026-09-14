@@ -17,7 +17,7 @@ import {
   hordePath, teamPath, readText, writeText, appendText, readJSON, writeJSON, readConfig, today,
   nowIso, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy, resolveTree,
   markdownSection, markdownTableCells, parseEvidenceRows, parseVerdictBlocks, diffSize, sizeRanks,
-  noEvidenceLayerNote,
+  noEvidenceLayerNote, EVIDENCE_CLASSES,
   runMain,
 } from './_lib.mjs';
 // The charter section's heading lives with the readers of it, and is handed on from here because
@@ -376,18 +376,45 @@ function latestVerdict(logText) {
 // to see in the file.
 
 const CATALOGUE_HEADER = ['id', 'evidence', 'node', 'reproduced by'];
+const CATALOGUE_HEADER_5 = [...CATALOGUE_HEADER, 'evidence class'];
 
-// Every line anywhere in the charter that looks like a catalogue row — four cells, at least one
-// filled, and neither the header nor its separator. The same filters parseEvidenceRows applies
-// inside the section, applied to the whole document.
+// Every line anywhere in the charter that looks like a catalogue row — four cells (a charter
+// written before the evidence-class column existed, issue 120) or five (one written since), at
+// least one filled, and neither header variant nor the separator. The same filters
+// parseEvidenceRows applies inside the section, applied to the whole document.
+//
+// One more exclusion a plain cell count cannot make on its own: the "Prototypes accepted" table
+// below (see PROTOTYPE_SECTION) also carries five cells, and a prototype's own id is the same
+// catalogue row id it was built to describe, so a five-cell prototype row is shaped exactly like a
+// five-cell catalogue row that escaped the Acceptance section. It is excluded by standing outside
+// the slice this function scans, not by anything about its cells — the one thing that actually
+// tells the two tables apart is which section they stand in.
 function catalogueRowsAnywhere(charterText) {
-  return String(charterText || '').split('\n')
+  const text = String(charterText || '');
+  const scanned = withoutSection(text, PROTOTYPE_SECTION);
+  return scanned.split('\n')
     .filter((l) => l.trim().startsWith('|'))
     .map(markdownTableCells)
-    .filter((cells) => cells.length === 4)
+    .filter((cells) => cells.length === 4 || cells.length === 5)
     .filter((cells) => !cells.every((c, i) => c.toLowerCase() === CATALOGUE_HEADER[i]))
+    .filter((cells) => !(cells.length === 5 && cells.every((c, i) => c.toLowerCase() === CATALOGUE_HEADER_5[i])))
     .filter((cells) => !cells.every((c) => c === '' || /^-+$/.test(c)))
     .filter((cells) => cells.some((c) => c.length > 0));
+}
+
+// The whole document with one "## <heading>" section's own text cut out — the opposite of
+// markdownSection, which returns only that text. Used above so a table that legitimately lives in
+// its own later section is never scanned as if it might be catalogue rows an errant heading
+// orphaned. `heading` is looked up by JS binding, not by textual order in this file — safe here
+// because it is only ever read from inside a function body, called after the whole module (and
+// every top-level const in it) has finished evaluating.
+function withoutSection(text, heading) {
+  const at = text.search(new RegExp(`^##\\s+${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'm'));
+  if (at === -1) return text;
+  const rest = text.slice(at);
+  const next = rest.indexOf('\n## ', 1);
+  const end = next === -1 ? text.length : at + next + 1;
+  return text.slice(0, at) + text.slice(end);
 }
 
 // Null when the charter's catalogue is whole; otherwise how many rows the document holds, how many
@@ -432,13 +459,26 @@ export function upsertCharterSection(charterText, heading, body, { before = null
 // Writes a name into a row's "reproduced by" cell, matched by its id — the one edit any tool in
 // this skill is allowed to make to the charter, since it's recording evidence the mission itself
 // produced (a merged ticket's reproduced verdict), not a decision about the mission.
+//
+// cells[4] is that cell's own position whether or not a sixth, evidence-class cell follows it —
+// the class column was added after "reproduced by", never before it — so this needs no change of
+// its own for issue 120 beyond accepting the wider row: raw '|'.split of a five-cell row (one
+// carrying an evidence-class cell) yields seven pieces rather than six. Nothing else this loop
+// scans is seven pieces long and starts with a catalogue row's own id in cells[1] — except the
+// "Prototypes accepted" table's own rows (see PROTOTYPE_SECTION), which are five cells too and,
+// deliberately, carry that same id in their own first cell. This loop returns on its first match
+// rather than scoping itself to "## Acceptance", and is still safe: a prototype's id always names
+// a real catalogue row, that row always stands earlier in the document (the prototypes table
+// lives in a section of its own at the end of the charter), so the real row is always found first.
 function setReproducedBy(charterText, id, name) {
   const lines = charterText.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line.trim().startsWith('|')) continue;
     const cells = line.split('|');
-    if (cells.length < 6) continue; // '' | id | evidence | node | reproduced by | ''
+    // '' | id | evidence | node | reproduced by | '' (six pieces, four columns) or that same
+    // shape with one more piece for a fifth, evidence-class column (seven pieces).
+    if (cells.length !== 6 && cells.length !== 7) continue;
     if (cells[1].trim() !== id) continue;
     cells[4] = ` ${name} `;
     lines[i] = cells.join('|');
@@ -539,6 +579,69 @@ function computeEvidence(horde, team, mergedTickets) {
   }
   if (changed) writeText(charterPath, charterText);
   return { total: rows.length, green };
+}
+
+// ---- the catalogue's rows, broken down by what kind of proof each rests on --------------------
+//
+// Issue 024 gave a promise file an optional `class` naming the kind of proof that keeps it, from a
+// fixed six-word list (EVIDENCE_CLASSES in _lib.mjs). Issue 120 gave a charter row the same word in
+// a fifth cell of its own, closing 024's own third acceptance line: this is where a wave close
+// finally counts the catalogue per class rather than only as one green/total figure.
+//
+// This is NOT the class a ticket is dispatched at — DEFAULT_CLASSES' light/standard/heavy/max cost
+// ladder, which this command never reports at all (see the contrast noted beside both constants in
+// _lib.mjs). It is what kind of proof the row itself rests on. Everywhere this reads out loud it
+// says "evidence class" or "kind of proof", never a bare "class", on purpose.
+//
+// A row whose fifth cell is blank — including every row written before the column existed — sorts
+// as 'unstated', which is an honest, ordinary answer and reads nothing like a problem. A row whose
+// fifth cell holds text that is NOT one of the six words sorts as neither: it is kept out of every
+// bucket and named on its own, because folding it into 'unstated' would hide a typo behind a word
+// that means "nobody has said yet" when what actually happened is "somebody said something this
+// list does not recognise" — a materially different fact the chairman should be able to see. This
+// mirrors the strictness packages/promises/doc-shape/check.mjs already applies to a promise file's
+// own `class:` field (refused outright when unrecognised) without going as far as that package
+// does: a charter row is filled in by a person, not produced by a doc-shape rule that runs in CI,
+// so this never refuses the close over it — it only ever says, in the report, exactly what it
+// found.
+function classifyEvidenceRows(rows) {
+  const byClass = EVIDENCE_CLASSES.map((evidenceClass) => ({ evidenceClass, total: 0, green: 0 }));
+  const unstated = { evidenceClass: 'unstated', total: 0, green: 0 };
+  const byClassMap = new Map(byClass.map((b) => [b.evidenceClass, b]));
+  const unrecognized = [];
+  for (const row of rows) {
+    const raw = row.evidenceClass;
+    if (!raw) {
+      unstated.total += 1;
+      if (row.reproducedBy) unstated.green += 1;
+    } else if (byClassMap.has(raw)) {
+      const b = byClassMap.get(raw);
+      b.total += 1;
+      if (row.reproducedBy) b.green += 1;
+    } else {
+      unrecognized.push({ id: row.id, value: raw });
+    }
+  }
+  return { byClass: [...byClass, unstated], unrecognized };
+}
+
+// The prose rendering of classifyEvidenceRows' own reading, for the wave-close journal entry — the
+// structured version goes into cmdClose's own --json payload instead, so neither drifts from what
+// the other counts.
+function evidenceClassBlock({ byClass, unrecognized }) {
+  const present = byClass.filter((b) => b.total > 0);
+  if (present.length === 0 && unrecognized.length === 0) {
+    return 'The catalogue holds no rows yet, so there is nothing here to break down.';
+  }
+  const lines = present.map((b) => `- **${b.evidenceClass}** — ${b.green}/${b.total} green`);
+  if (unrecognized.length) {
+    lines.push(
+      `- **unrecognized** — ${unrecognized.length} row(s) whose fifth cell names none of the six kinds of proof `
+      + `(${EVIDENCE_CLASSES.join(', ')}): ${unrecognized.map((u) => `${u.id} ("${u.value}")`).join(', ')}. `
+      + 'Fix the cell or leave it blank.',
+    );
+  }
+  return lines.join('\n');
 }
 
 // ---- mission-wide, all-time evidence coverage --------------------------------------
@@ -997,9 +1100,11 @@ function cmdClose(horde, positional, flags) {
   const qualityMerges = qualityMergesIn(horde, mergedTickets);
   const indexLine = qualityLine(quality, prevQuality);
 
-  // Read back after computeEvidence has had its say, so the two readings of the charter never
-  // disagree about what the same document holds.
-  const prototypes = parsePrototypeArtifacts(readText(hordePath(horde, 'charter.md')) || '');
+  // Read back after computeEvidence has had its say, so every reading of the charter below agrees
+  // about what the same document holds.
+  const charterAfterEvidence = readText(hordePath(horde, 'charter.md')) || '';
+  const prototypes = parsePrototypeArtifacts(charterAfterEvidence);
+  const evidenceByClass = classifyEvidenceRows(parseEvidenceRows(charterAfterEvidence));
 
   // How big this wave's merges turned out, each against the others of the same wave. The wave is
   // where a cut that was too wide shows up as a fact rather than as a feeling — so the close
@@ -1048,6 +1153,7 @@ function cmdClose(horde, positional, flags) {
     qualityBlock: qualityBlock({
       policy, promotions, qualityMerges, indexLine, observed, declined,
     }),
+    evidenceClassBlock: evidenceClassBlock(evidenceByClass),
     prototypeBlock: prototypeBlock(prototypes),
     auditBlock: auditBlock(audit),
   };
@@ -1088,12 +1194,21 @@ function cmdClose(horde, positional, flags) {
     })),
     qualityMerged: qualityMerges,
     prototypes,
+    evidenceByClass,
     aspectsObserved: observed,
     law: { path: law.path, added: law.doc.added.length, raised: law.doc.raised.length, attached: law.doc.attached.length },
     audit,
   }, flags, () => {
     const lines = [`wave ${n} closed — gate ${gate}, ${green}/${total} evidence green`];
     if (noEvidenceLayer) lines.push(noEvidenceLayer);
+    const presentClasses = evidenceByClass.byClass.filter((b) => b.total > 0);
+    if (presentClasses.length) {
+      lines.push(`by kind of proof: ${presentClasses.map((b) => `${b.evidenceClass} ${b.green}/${b.total}`).join(', ')}`);
+    }
+    if (evidenceByClass.unrecognized.length) {
+      lines.push(`${evidenceByClass.unrecognized.length} row(s) name a kind of proof nothing recognises: `
+        + `${evidenceByClass.unrecognized.map((u) => `${u.id} ("${u.value}")`).join(', ')}`);
+    }
     if (fates.length) {
       lines.push(`after landing: ${reverted.length} reverted, ${reopened.length} reopened — `
         + fates.map((f) => `${f.ticket} ${f.fate} (${f.by})`).join(', '));

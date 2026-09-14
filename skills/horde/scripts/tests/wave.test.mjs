@@ -146,6 +146,99 @@ test('wave.mjs close: a merged ticket without a "reproduced" verdict leaves the 
   assert.match(stamped, /\| E1 \| some check \| auth \| \|/);
 });
 
+// ---- issue 120: the catalogue's fifth column, and wave close's per-class report ----------------
+//
+// The fifth cell is optional, closed-vocabulary (the same six words issue 024 fixed for a
+// promise's own `class` field), and never confused in this report's own words with
+// DEFAULT_CLASSES' unrelated light/standard/heavy/max cost ladder.
+
+test('wave.mjs close: the evidence catalogue reports per kind of proof, beside the existing green/total count', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const charter = readFileSync(charterPath(dir), 'utf8').replace('| | | | |', [
+    '| E1 | the checkout completes | web | scout | e2e scenario |',
+    '| E2 | a second scenario | web | | e2e scenario |',
+    '| E3 | a hermetic check | api | keeper | hermetic test |',
+    '| E4 | an old row from before this column existed | audit | |',
+    '| E5 | a row with the column but nothing in it | audit | | |',
+    '| E6 | a row with a typo in its kind of proof | audit | | smoke test |',
+  ].join('\n'));
+  writeFileSync(charterPath(dir), charter);
+
+  run('wave.mjs', ['start'], dir);
+  const r = run('wave.mjs', ['close', '--gate', 'green'], dir);
+  assert.equal(r.code, 0, r.stderr);
+
+  const byClass = Object.fromEntries(r.json.evidenceByClass.byClass.map((b) => [b.evidenceClass, b]));
+
+  await t.test('the JSON payload counts each recognised class, green against total', () => {
+    assert.deepEqual(byClass['e2e scenario'], { evidenceClass: 'e2e scenario', total: 2, green: 1 });
+    assert.deepEqual(byClass['hermetic test'], { evidenceClass: 'hermetic test', total: 1, green: 1 });
+    assert.deepEqual(byClass.unstated, { evidenceClass: 'unstated', total: 2, green: 0 });
+    for (const word of ['mutation', 'recorded stub', 'artifact', 'client testimony']) {
+      assert.deepEqual(byClass[word], { evidenceClass: word, total: 0, green: 0 }, `${word} is still named, at zero`);
+    }
+  });
+
+  await t.test('a word outside the six is named on its own, never folded into "unstated"', () => {
+    assert.deepEqual(r.json.evidenceByClass.unrecognized, [{ id: 'E6', value: 'smoke test' }]);
+  });
+
+  await t.test('the journal carries the same breakdown in its own section, and never the ticket cost-class ladder', () => {
+    const plan = readFileSync(planPath(dir), 'utf8');
+    assert.match(plan, /^## Evidence catalogue — by kind of proof$/m);
+    const block = plan.slice(plan.indexOf('## Evidence catalogue — by kind of proof')).split('\n## Prototypes accepted')[0];
+    assert.match(block, /\*\*e2e scenario\*\* — 1\/2 green/);
+    assert.match(block, /\*\*hermetic test\*\* — 1\/1 green/);
+    assert.match(block, /\*\*unstated\*\* — 0\/2 green/);
+    assert.match(block, /\*\*unrecognized\*\*.*E6 \("smoke test"\)/);
+    assert.doesNotMatch(block, /\blight\b|\bstandard\b|\bheavy\b|\bmax\b/, 'never the ticket cost-class ladder');
+  });
+
+  await t.test('the CLI\'s own human-readable text carries a compact line too', () => {
+    run('wave.mjs', ['start'], dir);
+    const said = run('wave.mjs', ['close', '--gate', 'green'], dir, { json: false });
+    assert.equal(said.code, 0, said.stderr);
+    assert.match(said.stdout, /by kind of proof: e2e scenario 1\/2, hermetic test 1\/1, unstated 0\/2/);
+    assert.match(said.stdout, /row\(s\) name a kind of proof nothing recognises: E6 \("smoke test"\)/);
+  });
+});
+
+test('wave.mjs close: a charter with no evidence-class column at all (written before issue 120) reports every row as unstated, never a crash or refusal', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  // Every row here is the OLD four-column shape — no fifth cell anywhere in the table, exactly
+  // what a charter written before this column existed looks like. One already reproduced (the
+  // "reproduced by" cell filled by hand, exactly as a pre-migration charter could carry), one
+  // not — so this also proves the green count, not only the total, still works for these rows.
+  const charter = readFileSync(charterPath(dir), 'utf8').replace('| | | | |', [
+    '| E1 | the suite is green | api | scout |',
+    '| E2 | the film plays | web | |',
+  ].join('\n'));
+  writeFileSync(charterPath(dir), charter);
+
+  run('wave.mjs', ['start'], dir);
+  const r = run('wave.mjs', ['close', '--gate', 'green'], dir);
+  assert.equal(r.code, 0, r.stderr, 'an old, column-less charter never refuses the close');
+  assert.equal(r.json.total, 2);
+  assert.equal(r.json.green, 1);
+
+  const byClass = Object.fromEntries(r.json.evidenceByClass.byClass.map((b) => [b.evidenceClass, b]));
+  assert.deepEqual(byClass.unstated, { evidenceClass: 'unstated', total: 2, green: 1 });
+  assert.deepEqual(r.json.evidenceByClass.unrecognized, []);
+  for (const word of ['e2e scenario', 'hermetic test', 'mutation', 'recorded stub', 'artifact', 'client testimony']) {
+    assert.equal(byClass[word].total, 0, `${word} should hold none of these old rows`);
+  }
+
+  const plan = readFileSync(planPath(dir), 'utf8');
+  const block = plan.slice(plan.indexOf('## Evidence catalogue — by kind of proof')).split('\n## Prototypes accepted')[0];
+  assert.match(block, /\*\*unstated\*\* — 1\/2 green/);
+});
+
 test('wave.mjs close: human decisions per merged ticket, and the trend across waves', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
