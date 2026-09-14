@@ -496,7 +496,19 @@ export function assertGraphWritable(info, { horde, cfg } = {}) {
     // to name in a refusal already decided above, one line up — and for a graph write specifically,
     // trunk is where the write belongs once named on purpose (node.mjs main()'s own comment above
     // its resolveTree call: "a graph WRITE ... is the one place --horde alone DOES mean trunk").
-    const trunkPath = horde ? resolveTree({ horde }, { cwd: info.path }).path : null;
+    //
+    // Issue 124: the path is composed by hand instead of through resolveTree({horde}). A refusal
+    // that writes nothing must not provision anything either, and resolveTree's horde-branch
+    // resolution is not a free read — resolveHordeTrunk runs `git worktree add` the first time a
+    // horde's trunk tree is asked for, and `git reset --hard` to resync it every time after,
+    // discarding whatever uncommitted state sat there. Both are real, visible side effects a caller
+    // about to be told "this command wrote nothing" should never trigger just so this line can name
+    // a suggested path. The join below is exactly the `path` resolveHordeTrunk itself computes
+    // before either of those branches runs (a plain join off hordeRoot(), never touching git), so
+    // the suggested path is byte-for-byte the same whenever the tree already exists on disk —
+    // dropping resolveTree here removes only the provisioning/resync side effect, never the
+    // suggestion's content.
+    const trunkPath = horde ? join(hordeRoot(), 'worktrees', horde, 'trunk') : null;
     fail(`${info.path} is on "${base}" — a graph write from here is almost certainly the wrong tree found by accident, not named on purpose${trunkPath ? `; the mission's tree is at ${trunkPath}` : ''}. Pass --tree explicitly if this checkout really is what you mean`);
   }
 }
