@@ -36,5 +36,5 @@ in? Whichever it is, the landing gate and the charter say the same thing, and a 
 with no evidence layer proves it.
 
 ## Evidence
-- **ran:** node --test tests/land.test.mjs (the 031 branch, subtest "and so does a refused one") · **saw:** exit 1, revert test ok:false, note "config.testGlobs is unset", on a ticket whose branch does carry a new test file
+Ruled by Krzysztof (see .jarl/decisions.md, 108-no-evidence-layer-exempts-revert-test): checkRevertTest exempts every ticket when the charter has judged 'no evidence layer' — return ok:true immediately citing the charter's own judgment, before the testGlobs-empty check and before requiring a per-ticket **No new tests: declaration. Held out of dispatch until issue 109 (also touching land.mjs) lands, to avoid a self-inflicted merge conflict.
 
