@@ -1,6 +1,6 @@
 # 112 · withQueueLock takes the queue lock with a non-atomic write, the same flaw issue 098 fixed elsewhere
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -23,4 +23,5 @@ Related: issue 103 (centralizing the duplicated lock-file helper into `_lib.mjs`
 ## Evidence
 
 withQueueLock() in skills/horde/scripts/_lib.mjs takes its lock with writeFileSync(path, content, {flag: 'wx'}) — the exact non-atomic create issue 098 replaced in land.mjs's acquireGateLock and retro.mjs's acquireRetroLock. That call is three syscalls (openat O_CREAT|O_EXCL, write, close), so the lock path exists as an empty file for a window. withQueueLock's own retry loop reads the file, gets no pid out of it ('an unreadable or half-written lock file names no pid to wait on'), treats it as abandoned, deletes it and takes the lock — while the first holder is still writing. Both then hold it, and queue.json's read-modify-write can be done twice at once, which is the one thing withQueueLock exists to prevent. 098's fix is already in this repo twice (land.mjs createLockFile, retro.mjs createLockFile): write the content whole to a unique temp name in the same directory, then linkSync it into place, which is atomic AND exclusive. Issue 103 covers moving that helper into _lib.mjs but does not say withQueueLock is still on the broken path. Not fixed under issue 110 (out of its scope: 110 is the worktree resolve race). Note that 110's fix added a correct atomic createTreeLockFile inside _lib.mjs, so 103's centralization now has three copies to fold into one.
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/queue.test.mjs · **saw:** new fault-injection test ('a queue lock caught half-made is waited for, never taken for an abandoned one') passes against the real, unedited withQueueLock; full 262/262 sweep on the merged tip also green
 

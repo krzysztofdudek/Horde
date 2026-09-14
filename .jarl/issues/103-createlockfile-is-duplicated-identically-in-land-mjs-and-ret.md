@@ -1,6 +1,6 @@
 # 103 · createLockFile is duplicated identically in land.mjs and retro.mjs
 
-**Status:** in-progress
+**Status:** done
 **Kind:** cleanup
 **Priority:** 3
 **Tier:** standard
@@ -28,4 +28,6 @@ Extract `createLockFile` (and, if it makes sense while in there, `processAlive`/
 both files (including 098's own lock-race regression tests) must still pass unchanged.
 
 ## Evidence
+
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/lib.test.mjs skills/horde/scripts/tests/land.test.mjs skills/horde/scripts/tests/retro.test.mjs skills/horde/scripts/tests/queue.test.mjs skills/horde/scripts/tests/decide.test.mjs · **saw:** 262/262 pass, 0 fail, on the merged tip
 
