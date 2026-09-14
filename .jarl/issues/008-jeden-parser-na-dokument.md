@@ -1,6 +1,6 @@
 # 008 · jeden parser na dokument
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** strong
@@ -21,4 +21,6 @@ Każdy dokument ma jeden eksportowany parser (w _lib albo module dokumentu) uży
 Dowód, którego oczekuję: skills/horde/scripts/tests/lib.test.mjs (parsery); grep po regexach na te dokumenty poza parserem daje zero.
 
 ## Evidence
+
+- **ran:** node --test tests/*.test.mjs (full suite, rebased tip, twice — before and after fixing the tick.mjs/wave.mjs gaps found) · **saw:** first run: 49 fail (one root cause: tick.mjs's stale wave.mjs import); after fix: 1057 pass/0 fail/4 skip. Same result on the merged main checkout.
 
