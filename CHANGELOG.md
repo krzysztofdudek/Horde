@@ -37,6 +37,8 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - A ticket that does not match what the mission agreed to no longer joins the work. One that touches an area outside the mission's scope, or that claims a proof the mission never promised, is turned back with the mismatch named and the question to put to you. Answer it and the ticket goes in.
 - A promise nobody can yet describe can be built as a prototype first: something that looks like the real thing, so the client can see it and say what they meant. It is worked ahead of everything else, it never reaches the main line of work, and its only proof is the client's own acceptance — what they were shown, who accepted it, and when. Until that answer is recorded, nothing else is planned against that promise. Once it is, the promise reads as answered on its own, both in what the client is shown and in the wave report, and it is never counted as something delivered.
 - A promise still waiting on the client's answer to a prototype now shows on the status screen as its own state — prototyping — instead of looking identical to one real work has already started on.
+- The plan shows how big each piece of work has grown — lines and files — and ranks it against the rest of the mission. The biggest quarter comes with a suggestion to split; taking it is the architect's call, nothing happens on its own. There is no size limit to tune: the ranking is against the work in play, so the same change reads differently in a mission of small pieces than in a mission of large ones.
+- Landing a change and closing a wave both report the same size figure, so what a piece of work cost is visible where it lands and again when the wave is counted up.
 
 ### Changed
 

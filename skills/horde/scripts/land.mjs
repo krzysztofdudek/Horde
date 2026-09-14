@@ -33,7 +33,8 @@ import { fileURLToPath } from 'node:url';
 import {
   hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, git, gitError, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine,
-  withProvenance, nowIso, parseDecisionEntries, decisionField, runMain,
+  withProvenance, nowIso, parseDecisionEntries, decisionField, diffSize, sizeRanks, sizeLine,
+  runMain,
 } from './_lib.mjs';
 import {
   ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, verdictCommandsFor,
@@ -43,7 +44,7 @@ import {
   ticketFiles, ticketEvidence, ticketKind, prototypeBranchOf, ticketReopens, findTicket,
   changesRoundInfo, transitionStatus,
 } from './tk.mjs';
-import { recordMerged } from './queue.mjs';
+import { recordMerged, buildPlan } from './queue.mjs';
 import { noteFate } from './wave.mjs';
 
 const USAGE = `usage: land.mjs <ticket|branch> [--level trunk] [--no-gate] [--background] [--horde h]
@@ -1547,6 +1548,23 @@ function runFate(horde, root, arg, flags) {
   return recorded;
 }
 
+// This branch's size, and its rank among the mission's other open tickets. The rank comes off
+// `queue.mjs plan`'s own ranking, so the landing and the plan the architect read cannot disagree
+// about where this ticket sat. A plan that cannot be built right now (an unreadable graph, a
+// mission mid-edit) costs the landing nothing: the size is still measured and reported, just
+// without a position beside it. Nothing a landing decides depends on either.
+function missionSize(horde, team, cfg, root, ticketId, parentBranch, branch) {
+  try {
+    const plan = buildPlan(horde, team, cfg, { tree: root });
+    const mine = plan.tickets.find((t) => t.id === ticketId);
+    if (mine && mine.size) return mine.size;
+  } catch {
+    // fall through to the unranked measurement
+  }
+  const measured = diffSize(parentBranch, branch, { cwd: root });
+  return measured ? (sizeRanks([{ id: ticketId, size: measured }]).get(ticketId) || null) : null;
+}
+
 // ---- main -------------------------------------------------------------------------
 
 function run(horde, root, cfg, arg, level, noGate, flags) {
@@ -1591,6 +1609,12 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
 
   const changedFiles = diffPaths(['diff', '--name-only', `${parentBranch}...${branch}`]);
   const addedFiles = diffPaths(['diff', '--name-only', '--diff-filter=A', `${parentBranch}...${branch}`]);
+
+  // How big this change turned out, and where that sits among the mission's other open tickets —
+  // read off the plan's own ranking so the number here and the number the architect read in the
+  // plan are the same number, never two answers to one question. No item passes or fails on it:
+  // it is a line in the result, for whoever is deciding how the next ticket like this gets cut.
+  const size = missionSize(horde, team, cfg, root, ticketId, parentBranch, branch);
 
   // The tree every item below reads is made here, at the branch's own tip, and is nobody's
   // working copy. The checklist used to run in whichever worktree happened to hold the branch,
@@ -1667,7 +1691,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
         checks.push({ name: 'merge', ok: false, note: merged.note });
         recordChanges(horde, ticketId, checks);
         return finish(horde, ticketId, {
-          ticket: ticketId, branch, sha: branchSha, ok: false, checks, pairs: [], brief: null, landed: null, lock: lockNotes,
+          ticket: ticketId, branch, sha: branchSha, ok: false, checks, pairs: [], brief: null, landed: null, lock: lockNotes, size,
         }, head, flags, parent, level);
       }
       landed = { ticket: ticketId, sha: merged.sha, at: nowIso() };
@@ -1692,6 +1716,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       brief: judge.brief || null,
       landed,
       lock: lockNotes,
+      size,
     }, head, flags, parent, level);
   } finally {
     cleaner.runAll();
@@ -1747,6 +1772,7 @@ function finish(horde, ticketId, result, head, flags, parent, level) {
   if (flags.result) writeLandResult(horde, ticketId, full);
   emit(full, flags, () => [
     `land ${result.branch} (level: ${level})${parent.stacked ? ` · stacked on ${parent.stackedOn}` : ''}`,
+    `change size: ${sizeLine(result.size)}${result.size && result.size.biggestQuarter ? ' of this mission — worth a look at how the next ticket like it is cut' : ''}`,
     ...asArray(result.lock).map((n) => `· ${n}`),
     ...result.checks.map((c) => `${c.ok ? '✓' : '✗'} ${c.name} — ${c.note}`),
     result.landed ? `LANDED ${short(result.landed.sha)}` : 'NOT LANDED',

@@ -6,6 +6,7 @@
 **Parallelism:** planned {{plannedParallelism}} · achieved {{achievedParallelism}}
 **Keys transferred:** {{keysTransferred}} without re-review
 **Decisions per merged ticket:** {{decisionsLine}}
+**Change size (lines/files, biggest first):** {{changeSizeLine}}
 **Quality index:** {{qualityLine}}
 
 ## Prototypes accepted
