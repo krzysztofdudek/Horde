@@ -404,3 +404,4 @@
 - 2026-09-14 02:15 · 040 → done · merged
 - 2026-09-14 02:16 · 088 evidence row · grep -rn chmod tests/*.mjs
 - 2026-09-14 02:16 · 088 → done · merged
+- 2026-09-14 02:19 · filed 099 · wave.mjs deriveRowState counts a prototype ticket as a claimant, so status.mjs reports its row as queued
