@@ -151,6 +151,12 @@ one sentence naming the `promises` package and `yg pack add <this tool's reposit
 beyond that sentence:
 Horde is as good at proof as the repository lets it be, and it says so once.
 
+Where that is the answer, it does not stay in the charter waiting to be noticed. Every landing,
+every wave close and the retrospective state it in a line of their own: there is no evidence layer
+here, so every row of the catalogue stands on what it names itself and somebody has to go and look
+at that to know it holds. A mission with a suite behind it and a mission where every row is somebody
+going and looking read the same otherwise, and nobody should have to work out which one they are in.
+
 ## Running the mission — two seats, three one-shots
 
 **worker** and **architect** are the only two seats that recur through a mission. Three one-shots do

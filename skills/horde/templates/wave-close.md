@@ -2,7 +2,7 @@
 
 **Merged:** {{merged}} tickets · **Escalated (pre-6.0.0 legacy):** {{escalated}} · **Open:** {{open}} · **Gate on trunk:** {{gate}}
 **After landing:** {{reverted}} reverted · {{reopened}} reopened
-**Evidence catalogue:** {{green}}/{{total}} green (Δ {{delta}} since wave {{n-1}})
+**Evidence catalogue:** {{green}}/{{total}} green (Δ {{delta}} since wave {{n-1}}){{evidenceLayerLine}}
 **Parallelism:** planned {{plannedParallelism}} · achieved {{achievedParallelism}}
 **Keys transferred:** {{keysTransferred}} without re-review
 **Decisions per merged ticket:** {{decisionsLine}}

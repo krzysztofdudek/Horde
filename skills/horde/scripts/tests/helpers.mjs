@@ -3,7 +3,9 @@
 // exercise the actual CLI contract rather than the internals.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import {
+  existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,6 +73,36 @@ export function initHorde(dir, name = 'mission1', extra = []) {
   const r = run('horde.mjs', ['init', name, '--base', 'develop', ...globs, ...ygFlag, ...extra], dir);
   if (r.code !== 0) throw new Error(`initHorde failed: ${r.stderr}`);
   return r.json;
+}
+
+// ---- the charter's evidence judgement, for a fixture that needs one ---------------------------
+//
+// refine.mjs's cut writes one judgement per mission into the charter: what proof means in THIS
+// repository. A fixture that needs the charter to already carry one — most of all the "there is
+// nothing here to point at" answer — gets it written by the same two functions the real cut uses,
+// so what a test measures and what a real mission's charter says can never be two different
+// sentences. Never hand-typed prose: that is the drift this avoids.
+
+// detectEvidenceLayer's own shapes for the two answers a fixture asks for.
+export const NO_EVIDENCE_LAYER = {
+  kind: 'none', promises: null, suites: [], globs: [], looksLikeTests: [], looksLikeCount: 0,
+};
+export const A_TEST_SUITE = {
+  kind: 'suite', promises: null, suites: [{ name: 'npm', gate: 'npm run test' }], globs: ['**/*.test.mjs'],
+};
+
+export async function writeEvidenceJudgement(dir, layer, horde = 'mission1') {
+  const { renderEvidenceJudgement } = await import('../horde.mjs');
+  const { upsertCharterSection, EVIDENCE_SECTION } = await import('../wave.mjs');
+  const path = join(dir, '.horde', 'hordes', horde, 'charter.md');
+  const text = upsertCharterSection(
+    readFileSync(path, 'utf8'),
+    EVIDENCE_SECTION,
+    renderEvidenceJudgement(layer),
+    { before: '## Acceptance' },
+  );
+  writeFileSync(path, text);
+  return path;
 }
 
 // requireYg() — the real Yggdrasil CLI, or a refusal that says why the suite cannot run without

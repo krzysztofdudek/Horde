@@ -17,8 +17,13 @@ import {
   hordePath, teamPath, readText, writeText, appendText, readJSON, writeJSON, readConfig, today,
   nowIso, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy, resolveTree,
   markdownSection, markdownTableCells, parseEvidenceRows, parseVerdictBlocks, diffSize, sizeRanks,
+  noEvidenceLayerNote,
   runMain,
 } from './_lib.mjs';
+// The charter section's heading lives with the readers of it, and is handed on from here because
+// this is where everything else about the charter's shape is taken from.
+export { EVIDENCE_SECTION } from './_lib.mjs';
+
 // queue.mjs imports this file too (noteMerged). The cycle is deliberate and
 // safe — every binding on both sides is a hoisted function declaration and neither module calls
 // the other while it is still being evaluated. The alternative, a second derivation of the DAG
@@ -346,12 +351,11 @@ function latestVerdict(logText) {
 //
 // The section naming what counts as evidence in THIS repository — refine writes it once per
 // mission, a person reads it, and every catalogue row above is reproduced through what it names.
-// The one thing that must never happen to it is standing INSIDE the catalogue's section:
+// Its heading and the readers of what it says live in _lib.mjs with every other reader of these
+// documents. The one thing that must never happen to it is standing INSIDE the catalogue's section:
 // parseEvidenceRows slices "## Acceptance" up to the next "## " heading, so a heading dropped into
 // the middle of that table makes every row below it stop existing, silently and with nothing wrong
 // to see in the file.
-
-export const EVIDENCE_SECTION = 'Evidence in this repository';
 
 const CATALOGUE_HEADER = ['id', 'evidence', 'node', 'reproduced by'];
 
@@ -934,6 +938,10 @@ function cmdClose(horde, positional, flags) {
   const reopened = fates.filter((f) => f.fate === 'reopened');
   const { total, green } = computeEvidence(horde, team, mergedTickets);
   const delta = green - previousGreen(journalText);
+  // Said out loud at every close, not left to be worked out from rows that all happen to name a
+  // film or a screenshot: a mission with nothing to run its proof against is a fact about the
+  // mission, and a chairman reading "4/7 green" deserves to know what green rests on here.
+  const noEvidenceLayer = noEvidenceLayerNote(horde);
 
   const planned = PLAN_RE.exec(span.split('\n').find((l) => PLAN_RE.test(l)) || '');
   const plannedParallelism = planned ? Number(planned[2]) : 0;
@@ -1008,6 +1016,10 @@ function cmdClose(horde, positional, flags) {
     reverted: reverted.length,
     reopened: reopened.length,
     delta: delta >= 0 ? `+${delta}` : String(delta),
+    // A paragraph of its own directly under the number it qualifies, and nothing at all when this
+    // mission has an evidence layer — never a blank line left behind where the sentence would have
+    // stood.
+    evidenceLayerLine: noEvidenceLayer ? `\n\n${noEvidenceLayer}\n` : '',
     'n-1': String(Number(n) - 1),
     plannedParallelism,
     achievedParallelism: achievedParallelism(merges),
@@ -1041,6 +1053,7 @@ function cmdClose(horde, positional, flags) {
     green,
     total,
     delta,
+    noEvidenceLayer,
     reverted: reverted.length,
     reopened: reopened.length,
     fates,
@@ -1062,6 +1075,7 @@ function cmdClose(horde, positional, flags) {
     audit,
   }, flags, () => {
     const lines = [`wave ${n} closed — gate ${gate}, ${green}/${total} evidence green`];
+    if (noEvidenceLayer) lines.push(noEvidenceLayer);
     if (fates.length) {
       lines.push(`after landing: ${reverted.length} reverted, ${reopened.length} reopened — `
         + fates.map((f) => `${f.ticket} ${f.fate} (${f.by})`).join(', '));

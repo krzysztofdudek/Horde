@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   makeRepo, rmRepo, run, initHorde, requireYg,
+  writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE,
 } from './helpers.mjs';
 
 function git(args, cwd) {
@@ -478,4 +479,81 @@ test('wave.mjs close: reverts and reopens are counted beside the merges, per wav
     const plan = readFileSync(planPath(dir), 'utf8');
     assert.match(plan.slice(plan.lastIndexOf('# Wave 2 — close')), /\*\*After landing:\*\* 0 reverted · 0 reopened/);
   });
+});
+
+// ---- a mission with no evidence layer says so at every close ---------------------------------
+//
+// The charter carries one judgement of what proof means here, and one of its answers is that there
+// is nothing to point at. Left at that, a close would report "2/5 green" over rows that are each
+// held up by somebody's word, and the only way to know which kind of mission this was would be to
+// go and read the charter. So the close says it — in its own output, and in the journal it appends.
+
+test('wave.mjs close: a mission whose charter found no evidence layer says so, every close', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  await writeEvidenceJudgement(dir, NO_EVIDENCE_LAYER);
+  const charter = readFileSync(charterPath(dir), 'utf8').replace('| | | | |', '| E1 | the login screen, filmed | auth | |');
+  writeFileSync(charterPath(dir), charter);
+
+  run('wave.mjs', ['start'], dir);
+  const r = run('wave.mjs', ['close', '--gate', 'green'], dir);
+  assert.equal(r.code, 0, r.stderr);
+
+  await t.test('the close carries the sentence as a fact of its own', () => {
+    assert.equal(typeof r.json.noEvidenceLayer, 'string');
+    assert.match(r.json.noEvidenceLayer, /^No evidence layer in this repository:/);
+    assert.match(r.json.noEvidenceLayer, /stands on what it names itself/);
+  });
+
+  await t.test('and says it out loud beside the count, not only in the charter', () => {
+    run('wave.mjs', ['start'], dir);
+    const said = run('wave.mjs', ['close', '--gate', 'green'], dir, { json: false });
+    assert.equal(said.code, 0, said.stderr);
+    assert.match(said.stdout, /0\/1 evidence green/);
+    assert.match(said.stdout, /No evidence layer in this repository:/);
+  });
+
+  await t.test('and the journal carries it under the catalogue count, every close', () => {
+    const plan = readFileSync(planPath(dir), 'utf8');
+    const closes = [...plan.matchAll(/^\*\*Evidence catalogue:\*\* .*$/gm)];
+    assert.equal(closes.length, 2, 'two closes, two catalogue lines');
+    for (const m of closes) {
+      const after = plan.slice(m.index + m[0].length, m.index + m[0].length + 400);
+      assert.match(after, /^\n\nNo evidence layer in this repository:/, 'the sentence stands directly under the count');
+    }
+  });
+});
+
+test('wave.mjs close: a mission that has an evidence layer says nothing about one', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  await writeEvidenceJudgement(dir, A_TEST_SUITE);
+
+  run('wave.mjs', ['start'], dir);
+  const r = run('wave.mjs', ['close', '--gate', 'green'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.noEvidenceLayer, null);
+
+  const plan = readFileSync(planPath(dir), 'utf8');
+  assert.doesNotMatch(plan, /No evidence layer in this repository/);
+  // And the figures block is left exactly as it was — no blank line where the sentence would have
+  // stood.
+  assert.match(plan, /\*\*Evidence catalogue:\*\* 0\/0 green \(Δ \+0 since wave 0\)\n\*\*Parallelism:\*\*/);
+});
+
+// A charter nobody has judged yet — the template's own placeholder, which quotes the phrase in the
+// middle of a sentence while telling the architect when to use it — has established nothing, and
+// must not be read as a verdict.
+test('wave.mjs close: a charter whose evidence judgement has not been made yet claims nothing', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  run('wave.mjs', ['start'], dir);
+  const r = run('wave.mjs', ['close', '--gate', 'green'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.noEvidenceLayer, null);
+  assert.doesNotMatch(readFileSync(planPath(dir), 'utf8'), /No evidence layer in this repository/);
 });

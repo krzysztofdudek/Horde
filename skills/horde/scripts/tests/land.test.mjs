@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode, addAspect, yg, requireYg, MARKER_CHECK,
+  writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE,
 } from './helpers.mjs';
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 
@@ -1655,4 +1656,80 @@ test('land.mjs --fate: what it refuses, and why the gate\'s own flags are not it
     assert.equal(r.code, 1);
     assert.match(r.stderr, /--no-gate does not go with --fate/);
   });
+});
+
+// ---- a mission with no evidence layer says so on every landing --------------------------------
+//
+// The charter carries one judgement of what proof means in this repository, and one of its answers
+// is that there is nothing here to point at: no suite, no promises, not a file named like a test.
+// Every row a ticket earns then stands on what it names itself — a scenario, a film, a screenshot —
+// and the only person who can tell whether it holds is whoever goes and looks. A landing that said
+// nothing about that would leave that to be worked out from items talking about globs and commands,
+// or from reading the charter. So it is said here, once, on every landing, however the items went.
+
+test('land.mjs: a mission whose charter found no evidence layer says so on every landing', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '080');
+  await writeEvidenceJudgement(dir, NO_EVIDENCE_LAYER);
+
+  await t.test('a landing whose items are all green still states it', () => {
+    const r = run('land.mjs', [branch, '--no-gate'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.ok, true);
+    assert.match(r.json.noEvidenceLayer, /^No evidence layer in this repository:/);
+    assert.match(r.json.noEvidenceLayer, /stands on what it names itself/);
+  });
+
+  await t.test('and so does a refused one — it is a fact about the mission, not about this run', () => {
+    // What a "nothing here to point at" judgement actually describes: a repository whose tests
+    // cannot even be named, so the revert test refuses on its own account.
+    run('horde.mjs', ['config', 'set', 'testGlobs', ''], dir);
+    const r = run('land.mjs', [branch, '--no-gate'], dir);
+    assert.equal(r.code, 1);
+    assert.equal(byName(r)['revert test'].ok, false);
+    assert.match(r.json.noEvidenceLayer, /^No evidence layer in this repository:/);
+  });
+
+  await t.test('said out loud above the items, where whoever reads them will read it first', () => {
+    const said = run('land.mjs', [branch, '--no-gate'], dir, { json: false });
+    const sentence = said.stdout.indexOf('No evidence layer in this repository:');
+    assert.notEqual(sentence, -1, said.stdout);
+    const firstItem = said.stdout.search(/^[✓✗] base freshness/m);
+    assert.notEqual(firstItem, -1, said.stdout);
+    assert.ok(sentence < firstItem, 'the sentence stands above the items it frames');
+  });
+
+  await t.test('and it is in the result file the retrospective reads back', () => {
+    const r = run('land.mjs', [branch, '--no-gate', '--result'], dir);
+    assert.equal(r.code, 1);
+    assert.match(landResult(dir, '080').noEvidenceLayer, /^No evidence layer in this repository:/);
+  });
+});
+
+test('land.mjs: a mission that has an evidence layer says nothing about one', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '081');
+  await writeEvidenceJudgement(dir, A_TEST_SUITE);
+
+  const r = run('land.mjs', [branch, '--no-gate'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.noEvidenceLayer, null);
+
+  const said = run('land.mjs', [branch, '--no-gate'], dir, { json: false });
+  assert.doesNotMatch(said.stdout, /No evidence layer in this repository/);
+});
+
+// The charter template quotes the phrase in the middle of a sentence, where it tells the architect
+// when to write it. A mission whose cut has not run yet has judged nothing, and a landing must not
+// read those instructions as a verdict.
+test('land.mjs: a charter whose evidence judgement has not been made yet claims nothing', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '082');
+
+  const r = run('land.mjs', [branch, '--no-gate'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.noEvidenceLayer, null);
 });

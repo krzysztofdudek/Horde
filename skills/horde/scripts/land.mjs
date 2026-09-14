@@ -34,6 +34,7 @@ import {
   hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, git, gitError, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine,
   withProvenance, nowIso, parseDecisionEntries, decisionField, diffSize, sizeRanks, sizeLine,
+  noEvidenceLayerNote,
   runMain,
 } from './_lib.mjs';
 import {
@@ -1755,12 +1756,19 @@ function appendLanded(issueDirPath, landed, parentBranch) {
 }
 
 function finish(horde, ticketId, result, head, flags, parent, level) {
+  // Whether this mission has anything at all to run a proof against, stated on every landing rather
+  // than left to be inferred from items that all talk about globs and commands. When the charter's
+  // answer is "nothing", every row this ticket earns is held up by what it names itself, and the
+  // person reading the items below is the one who has to go and look — so they are told, here,
+  // once, whatever the items say.
+  const noEvidenceLayer = noEvidenceLayerNote(horde);
   // withProvenance names the tree this ran in; `branch` and `sha` stay the ticket's own, because
   // the throwaway tree is detached and would otherwise report the branch as null — erasing the one
   // field every reader of this result needs. The tree sits at exactly `sha` either way.
   const full = {
     ...withProvenance({
       ...result,
+      noEvidenceLayer,
       level,
       parent: parent.branch,
       stackedOn: parent.stacked ? parent.stackedOn : null,
@@ -1774,6 +1782,7 @@ function finish(horde, ticketId, result, head, flags, parent, level) {
     `land ${result.branch} (level: ${level})${parent.stacked ? ` · stacked on ${parent.stackedOn}` : ''}`,
     `change size: ${sizeLine(result.size)}${result.size && result.size.biggestQuarter ? ' of this mission — worth a look at how the next ticket like it is cut' : ''}`,
     ...asArray(result.lock).map((n) => `· ${n}`),
+    ...(noEvidenceLayer ? [noEvidenceLayer] : []),
     ...result.checks.map((c) => `${c.ok ? '✓' : '✗'} ${c.name} — ${c.note}`),
     result.landed ? `LANDED ${short(result.landed.sha)}` : 'NOT LANDED',
     provenanceLine(head),

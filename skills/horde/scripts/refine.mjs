@@ -28,7 +28,7 @@ import { execFileSync } from 'node:child_process';
 import {
   hordePath, readJSON, readText, writeText, readConfig, fail, parseArgs, emit, isMain,
   resolveHorde, resolveTree, git, claimLease, assertLeaseAvailable, provenanceLine, withProvenance,
-  firstClass, parseEvidenceRows,
+  firstClass, parseEvidenceRows, noEvidenceLayerIn,
   runMain,
 } from './_lib.mjs';
 import {
@@ -1021,7 +1021,7 @@ function stepFrame(horde, flags) {
     .filter((p) => p.kind === 'rule' && p.status !== 'vetoed')
     .map((p) => ({ says: String(p.text).trim(), where: p.node || null }));
 
-  const noEvidenceLayer = /no evidence layer found/i.test(charterSection(charter, EVIDENCE_SECTION) || '');
+  const noEvidenceLayer = noEvidenceLayerIn(charter);
   const oneOfEach = areas.length === 1 && areas[0].work.length === 1;
   const shape = oneOfEach
     ? 'One area, one piece of work, one check before it counts as done.'

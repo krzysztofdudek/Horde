@@ -45,7 +45,7 @@ import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   hordePath, readJSON, writeJSON, nowIso, fail, parseArgs, emit, isMain,
-  resolveHorde, resolveTree, readConfig, asArray, parseLogEntries,
+  resolveHorde, resolveTree, readConfig, asArray, parseLogEntries, noEvidenceLayerNote,
   runMain,
 } from './_lib.mjs';
 import {
@@ -589,6 +589,11 @@ export function acquireRetroLock(horde, waitMs = LOCK_WAIT_MS) {
 function render(doc) {
   const lines = [`# Retrospective — ${doc.horde}`, '', `at: ${doc.at}`, ''];
 
+  // Before anything the mission wrote down is read back: what the mission had to prove itself
+  // with. A retrospective on a mission with no evidence layer is read differently from one on a
+  // mission with a suite behind it, and nobody should have to work out which this was.
+  if (doc.noEvidenceLayer) lines.push(doc.noEvidenceLayer, '');
+
   lines.push('## What the law could say', '');
   if (doc.law.length === 0) lines.push('(nothing — no refusal and no remark on this mission turned out to be a rule)');
   for (const p of doc.law) {
@@ -696,6 +701,7 @@ function cmdRetro(flags) {
       schema: RETRO_SCHEMA,
       horde,
       at: nowIso(),
+      noEvidenceLayer: noEvidenceLayerNote(horde),
       state: missionState(input.landed),
       items: classified.map((it) => ({
         key: it.key, source: it.source, ticket: it.ticket, text: it.text, class: it.class, node: it.node, proposal: it.proposal,
@@ -712,6 +718,7 @@ function cmdRetro(flags) {
     writeJSON(retroPath(horde), doc, { render });
 
     emit(doc, flags, () => [
+      ...(doc.noEvidenceLayer ? [doc.noEvidenceLayer] : []),
       `${doc.returns.length} return(s) after landing — ${doc.returns.filter((r) => r.source === 'reopen').length} reopened, `
         + `${doc.returns.filter((r) => r.source === 'revert').length} reverted.`,
       `${doc.law.length} rule proposal(s), ${doc.taste.length} taste item(s), ${doc.inexpressible.length} the law will not say `
