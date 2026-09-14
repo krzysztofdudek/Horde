@@ -1,6 +1,6 @@
 # 029 · los biletu w misji
 
-**Status:** open
+**Status:** done
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong
@@ -21,4 +21,6 @@ Testy: revert i reopen zapisane i policzone w zamknięciu fali; retro pokazuje p
 Dowód, którego oczekuję: skills/horde/scripts/tests/land.test.mjs, skills/horde/scripts/tests/wave.test.mjs, skills/horde/scripts/tests/retro.test.mjs.
 
 ## Evidence
+
+- **ran:** node --test tests/wave.test.mjs tests/retro.test.mjs tests/docs.test.mjs tests/tk.test.mjs tests/land.test.mjs (rebased tip, then merged main) · **saw:** 184/184 and 70/70 pass, both runs
 
