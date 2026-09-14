@@ -34,7 +34,7 @@ import {
   hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, git, gitError, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine,
   withProvenance, nowIso, parseDecisionEntries, decisionField, diffSize, sizeRanks, sizeLine,
-  noEvidenceLayerNote, createLockFile, processAlive, sleepSync,
+  noEvidenceLayerNote, createLockFile, processAlive, sleepSync, HordeError,
   runMain,
 } from './_lib.mjs';
 import {
@@ -48,7 +48,7 @@ import {
 import { recordMerged, buildPlan } from './queue.mjs';
 import { noteFate } from './wave.mjs';
 
-const USAGE = `usage: land.mjs <ticket|branch> [--level trunk] [--no-gate] [--background] [--tree p] [--horde h]
+const USAGE = `usage: land.mjs <ticket|branch>[,<ticket|branch>...] [--level trunk] [--no-gate] [--background] [--tree p] [--horde h]
        land.mjs <ticket> --fate reverted --by <sha> [--tree p] [--horde h]
        land.mjs <ticket> --fate reopened --by <ticket> [--tree p] [--horde h]
 
@@ -75,6 +75,17 @@ for either way.
   8. journal        — a log entry newer than the last commit
   9. graph text     — charters, logs and "graph:" commits touched by the branch carry no mission
                       language (wave, ticket NNN, mission, horde, E<n>, .temp/)
+
+Two or more tickets, comma-separated, land under ONE shared run of items 5-7 (gate, graph, mapping)
+when they are eligible to: the same parent branch at the same tip, and no changed file in common.
+Items 1-4, 8 and 9, and both guards below, still run per ticket, individually, exactly as for one.
+A ticket that is not eligible — a different parent, an overlapping file, or a conflict once its
+branch is actually combined with the rest for the shared run — lands on its own instead, in this
+same call, rather than being dropped; and a shared run that comes back red falls back to landing
+every ticket in it on its own too, in this same call, rather than working out which one is guilty.
+Either way, a ticket that lands gets its own merge commit, its own journal bullet and its own size
+figure, exactly as it would landing alone. A single ticket is entirely unaffected: this is exactly
+the nine-item run above, unchanged.
 
 Three guards run before the items and refuse outright rather than reporting an item, because
 none of them is a thing a worker can fix by trying again:
@@ -1556,6 +1567,531 @@ function missionSize(horde, team, cfg, root, ticketId, parentBranch, branch) {
   return measured ? (sizeRanks([{ id: ticketId, size: measured }]).get(ticketId) || null) : null;
 }
 
+// ---- batching multiple tickets under one gate ------------------------------------------
+//
+// `run()` above is untouched by any of this — every single-ticket call, `main()`'s included,
+// still reaches it directly, unchanged, so a batch of one behaves byte-for-byte as it always has.
+// Everything below exists only for two or more tickets asked for in one call, and its whole job is
+// to share ONE hold of the gate lock and ONE run of items 5-7 across as many of them as it safely
+// can, then land each survivor exactly as `run()` would have on its own.
+//
+// The shape, in order:
+//   1. resolveBatchCandidate  — a LENIENT, non-throwing twin of run()'s own opening section. A
+//      ticket this cannot even resolve (no queue item, no branch, no parent) never aborts the
+//      others in the same call the way run()'s own fail() would — it just falls to "lands alone".
+//   2. groupBatchCandidates   — the batching precondition: same parent branch at the same parent
+//      tip, and no changed file in common (Yggdrasil's own derived lock files never count).
+//   3. screenBatchMember      — the per-ticket cheap items and both guards, run individually,
+//      exactly as run() runs them, against a scratch tree built for that one ticket. A member
+//      whose own check or guard already refuses never enters the shared preview tree at all — its
+//      content could only spoil the shared gate for tickets that did nothing wrong, and it was
+//      never going to land this round regardless of what the shared gate said.
+//   4. combineBatchGroup      — the throwaway combined tree: parentTip, then each surviving
+//      member's branch merged on in sequence. A merge that unexpectedly conflicts drops that one
+//      ticket and continues with the rest — "declared files can lie" is the design's own words for
+//      exactly this.
+//   5. runSharedGate          — items 5-7 (gate, graph, mapping) plus the judge item, ONCE,
+//      against the combined tree, under ONE hold of the gate lock.
+//   6. green:  landBatchGreen — each survivor merged into the REAL parent individually, in
+//      sequence (mergeIntoParent, unchanged, threaded through the evolving parent tip), so the
+//      landing history, the size figure and the journal bullet are one per ticket, same as today.
+//      red:    every survivor falls back to standalone — no bisection, ever (the design's own
+//      call: worst case costs what it costs today, N runs; best case costs one).
+//   7. landAlone              — the fallback, and the home for anything groupBatchCandidates or
+//      screenBatchMember ever excludes: `land.mjs <ticket>` run again, as its own subprocess, with
+//      nothing carried over from the batch attempt — the same command tick.mjs already runs today,
+//      so a ticket landing this way is landing exactly as it always has.
+
+// splitTickets(raw) — one bare token (today's only shape, and the only one `run()` ever sees) or a
+// comma-separated list, the same convention this tool set already uses for a multi-value CLI
+// argument (queue.mjs's --depends, horde.mjs's testGlobs). Blank entries and exact duplicates are
+// dropped; anything else is handed on exactly as typed. A real refusal — an unknown ticket, a
+// branch name that collides with nothing — is still land's own job further down, never this one's.
+function splitTickets(raw) {
+  const seen = new Set();
+  const out = [];
+  for (const part of String(raw).split(',')) {
+    const t = part.trim();
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
+// resolveBatchCandidate(horde, root, cfg, arg, level) — everything run()'s own opening section
+// resolves before its first check, mirrored field for field, but never throwing: a problem that
+// would be run()'s own fail() here just comes back as {ok: false, arg, note}, so one unreadable
+// ticket in a batch of five costs the other four nothing. Nothing this returns IS a landing — a
+// candidate it hands back ok:true still runs every one of its own checks fresh, later, exactly as
+// if it had been asked for alone; this function only ever decides whether, and with whom, a ticket
+// MIGHT share a gate.
+function resolveBatchCandidate(horde, root, cfg, arg, level) {
+  try {
+    const found = findQueueItem(horde, arg);
+    if (!found) return { ok: false, arg, note: `no queue item names ${arg} — is the ticket tracked by queue.mjs?` };
+    const { team, teamDir, item } = found;
+    const branch = item.branch;
+    if (!branch) {
+      return {
+        ok: false, arg, note: `ticket ${item.ticket} has no branch yet — nothing to land (queue.mjs set ${item.ticket} running cuts one)`,
+      };
+    }
+    const branchSha = git(['rev-parse', '--verify', branch]);
+    if (!branchSha) {
+      const detail = gitError();
+      return { ok: false, arg, note: `no such branch: ${branch}${detail ? ` — ${detail}` : ''}` };
+    }
+    const ticketId = String(item.ticket);
+    const issueDirName = findIssueDir(teamDir, ticketId);
+    if (!issueDirName) return { ok: false, arg, note: `no ticket found for ${ticketId} in team ${team}` };
+    const issueDirPath = join(teamDir, 'issues', issueDirName);
+    const issueText = readText(join(issueDirPath, 'issue.md'));
+    const logText = readText(join(issueDirPath, 'log.md'));
+    const nodes = ticketNodes(issueText);
+    const declaredFiles = ticketFiles(issueText);
+    const kind = ticketKind(issueText);
+
+    const parentResolved = parentBranchOf(horde, team, item, { cwd: root });
+    const parentBranch = prototypeGuard(horde, kind, ticketId, branch, parentResolved);
+    const parent = { ...parentResolved, branch: parentBranch };
+    const parentTip = git(['rev-parse', '--verify', parentBranch]);
+    if (!parentTip) {
+      const detail = gitError();
+      return { ok: false, arg, note: `no such branch: ${parentBranch}${detail ? ` — ${detail}` : ''}` };
+    }
+
+    const changedFiles = diffPaths(['diff', '--name-only', `${parentBranch}...${branch}`]);
+    const size = missionSize(horde, team, cfg, root, ticketId, parentBranch, branch);
+
+    return {
+      ok: true,
+      arg,
+      ticketId,
+      team,
+      branch,
+      branchSha,
+      issueDirPath,
+      issueText,
+      logText,
+      nodes,
+      declaredFiles,
+      parent,
+      parentBranch,
+      parentTip,
+      changedFiles,
+      size,
+      level,
+    };
+  } catch (e) {
+    if (e instanceof HordeError) return { ok: false, arg, note: e.message };
+    throw e;
+  }
+}
+
+function changedFilesOverlap(a, b) {
+  if (!a.length || !b.length) return false;
+  const set = new Set(a);
+  return b.some((f) => set.has(f));
+}
+
+// groupBatchCandidates(candidates) — the batching precondition, applied before a single scratch
+// tree is built for any of it: only candidates sharing one (parentBranch, parentTip) pair mean
+// anything by "non-overlapping" — two tickets against different bases are not landing onto the
+// same tree, whatever their files say. Within one such pair, a candidate whose changed files (the
+// same DERIVED_LOCK-filtered reading checkScope already uses to set aside Yggdrasil's own derived
+// lock files) collide with one already accepted falls to the overflow list — greedy, in the order
+// handed in, so which of two colliding tickets keeps its place is simply whichever came first. A
+// pair with fewer than two survivors is not a batch either: nothing is shared with nobody.
+function groupBatchCandidates(candidates) {
+  const byKey = new Map();
+  for (const ctx of candidates) {
+    const key = `${ctx.parentBranch} ${ctx.parentTip}`;
+    if (!byKey.has(key)) byKey.set(key, { parentBranch: ctx.parentBranch, parentTip: ctx.parentTip, candidates: [] });
+    byKey.get(key).candidates.push(ctx);
+  }
+  const groups = [];
+  const overflow = [];
+  for (const g of byKey.values()) {
+    const accepted = [];
+    let acceptedFiles = [];
+    for (const ctx of g.candidates) {
+      const files = ctx.changedFiles.filter((f) => !DERIVED_LOCK.test(f));
+      if (changedFilesOverlap(files, acceptedFiles)) { overflow.push(ctx); continue; }
+      accepted.push(ctx);
+      acceptedFiles = acceptedFiles.concat(files);
+    }
+    if (accepted.length >= 2) groups.push({ parentBranch: g.parentBranch, parentTip: g.parentTip, members: accepted });
+    else overflow.push(...accepted);
+  }
+  return { groups, overflow };
+}
+
+// screenBatchMember(root, cfg, horde, ctx, basePath, cleaner) — items 1, 3, 4, 8, 9 and both
+// guards, for one candidate, exactly as run() runs them: a scratch tree at that ticket's own
+// branch tip (basePath is the group's, built once and shared — every member of a group is
+// measured against the identical parent tip, so one tree read by all of them is the same reading
+// run() would have made per ticket, not a shortcut). A guard refusal or a stopped guard read is
+// reported the same as any other screen failure here — the caller's only question is whether this
+// member may enter the shared preview tree, never why not.
+function screenBatchMember(root, cfg, horde, ctx, basePath, cleaner) {
+  const head = resolveTree({ scratch: ctx.branchSha }, { cwd: root });
+  cleaner.add(() => cleanupTree(head, root));
+
+  const results = {};
+  results['base freshness'] = checkBaseFreshness(ctx.branch, ctx.parentBranch);
+  results.scope = checkScope(root, cfg, ctx.nodes, ctx.changedFiles, ctx.declaredFiles);
+  results['revert test'] = checkRevertTest(horde, root, cfg, ctx.branch, ctx.parentBranch, ctx.changedFiles, ctx.issueText);
+  results.journal = checkJournal(ctx.logText, ctx.branch);
+  results['graph text'] = checkGraphText(root, ctx.branch, ctx.parentBranch, ctx.changedFiles);
+
+  const law = lawGuard(cfg, horde, basePath, head.path);
+  if (law.stopped) return { ok: false, note: law.stopped };
+  const refusals = [...law.refusals];
+  const conflict = conflictGuard(cfg, basePath, head.path, ctx.changedFiles, law.headReach);
+  refusals.push(...conflict.refusals);
+  if (refusals.length) {
+    return {
+      ok: false,
+      note: `${refusals.length} refusal(s) — this branch may not land as it stands:\n${refusals.map((g) => `- ${g.aspect} (${g.case}): ${g.note}`).join('\n')}`,
+    };
+  }
+  if (!Object.values(results).every((r) => r.ok)) {
+    return { ok: false, note: 'a per-ticket check already refuses this branch — excluded from the shared gate rather than spending it on content that cannot land this round', results };
+  }
+  return { ok: true, results, lawUsed: law.used };
+}
+
+// combineBatchGroup(root, group, cleaner) — step 3 of the design: one throwaway worktree at the
+// group's own parent tip, each surviving member's branch merged on in sequence, `--no-ff` like
+// every other merge this tool writes. Expected to be conflict-free by construction (the tickets
+// were pre-filtered as non-overlapping); a merge that conflicts anyway drops that one ticket and
+// continues combining the rest, exactly as the design calls for. Nothing here is committed to any
+// branch — the tree is discarded the moment this run ends, win or lose.
+function combineBatchGroup(root, group, cleaner) {
+  const info = resolveTree({ scratch: group.parentTip }, { cwd: root });
+  cleaner.add(() => cleanupTree(info, root));
+  const surviving = [];
+  const dropped = [];
+  for (const ctx of group.members) {
+    const message = `combine ${ctx.ticketId}: preview merge of ${ctx.branch} for a shared landing gate\n\n`
+      + 'Discarded the moment the gate has run; never referenced by any branch.\n';
+    try {
+      execFileSync('git', ['merge', '--no-ff', '-m', message, ctx.branch], { cwd: info.path, stdio: 'pipe' });
+      surviving.push(ctx);
+    } catch {
+      let files = [];
+      try { files = conflictingFiles(info.path); } finally { git(['merge', '--abort'], info.path); }
+      dropped.push({
+        ctx,
+        note: `combine conflict against the batch's shared preview tree — excluded from the batch and landed on its own: ${files.length ? files.join(', ') : '(git named no file)'}`,
+      });
+    }
+  }
+  return { info, surviving, dropped };
+}
+
+// runSharedGate(cfg, level, worktreePath, addedFiles) — items 5-7 plus the judge item, each run
+// exactly once, on the combined tree, exactly as run() runs them on a single ticket's own tree.
+// The caller holds the gate lock around this call and only this call, mirroring run()'s own
+// lock-around-the-expensive-half shape, now paid once for the whole group rather than once per
+// member.
+function runSharedGate(cfg, level, worktreePath, addedFiles) {
+  const gate = checkGate(cfg, level, worktreePath, null, false);
+  const graph = checkGraph(cfg, worktreePath, false);
+  const mapping = checkMapping(cfg, worktreePath, addedFiles, false);
+  const judge = checkJudge(cfg, 'batch', graph, false);
+  return {
+    gate, graph, mapping, judge,
+  };
+}
+
+// finishBatchMember(horde, ctx, outcome, provenanceInfo, flags, group, level, lockNotes) — the
+// batch's own twin of run()'s finish(): writes the result file when asked (--background's child
+// always is) and hands back the same shape a single-ticket run's own result carries. Never exits
+// the process — a batch keeps going whatever one member's own outcome was, so the exit code is the
+// whole batch's to decide, once, at the very end.
+function finishBatchMember(horde, ctx, outcome, provenanceInfo, flags, group, level, lockNotes) {
+  const noEvidenceLayer = noEvidenceLayerNote(horde);
+  const full = {
+    ...withProvenance({
+      ticket: ctx.ticketId,
+      branch: ctx.branch,
+      sha: ctx.branchSha,
+      ok: outcome.ok,
+      checks: outcome.checks,
+      pairs: [],
+      brief: null,
+      landed: outcome.landed,
+      lock: lockNotes,
+      size: ctx.size,
+      noEvidenceLayer,
+      level,
+      parent: group.parentBranch,
+      stackedOn: ctx.parent.stacked ? ctx.parent.stackedOn : null,
+      at: nowIso(),
+    }, provenanceInfo),
+    branch: ctx.branch,
+    sha: ctx.branchSha,
+  };
+  if (flags.result) writeLandResult(horde, ctx.ticketId, full);
+  return full;
+}
+
+// landBatchGreen(...) — step 5 of the design, on green: each surviving member merged into the REAL
+// parent individually, in sequence — mergeIntoParent unchanged, the evolving parent tip threaded
+// through so the second merge lands on top of the first exactly as the throwaway combine already
+// proved it would. A member whose branch moved since the shared gate ran, or whose own merge fails
+// for any other reason, does not stop the rest — it is reported, on its own result, exactly as
+// run() would report the same thing for a single ticket, and the tip carried into the next
+// member's merge is left wherever the last successful one put it. The gate cache is written once,
+// after the loop, at whatever tip the batch actually reached — the tree a later `done` or `close`
+// will actually find.
+function landBatchGreen(root, cfg, horde, level, group, provenanceInfo, shared, lockNotes, flags, cleaner) {
+  let currentTip = group.parentTip;
+  const landedPairs = [];
+  const sharedChecks = {
+    judge: shared.judge, gate: shared.gate, graph: shared.graph, mapping: shared.mapping,
+  };
+  for (const ctx of group.members) {
+    const perTicket = { ...ctx.screen.results, ...sharedChecks };
+    const checks = CHECK_ORDER.map((name) => ({ name, ok: !!perTicket[name].ok, note: perTicket[name].note }));
+
+    const nowSha = git(['rev-parse', '--verify', ctx.branch]);
+    if (nowSha !== ctx.branchSha) {
+      checks.push({
+        name: 'merge',
+        ok: false,
+        note: `${ctx.branch} moved while this landing ran — every item above was measured at ${short(ctx.branchSha)} and the branch now stands at ${short(nowSha)}. Nothing was merged for this ticket; land it again`,
+      });
+      recordChanges(horde, ctx.ticketId, checks);
+      landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: false, checks, landed: null }, provenanceInfo, flags, group, level, lockNotes) });
+      continue;
+    }
+
+    const merged = mergeIntoParent(root, cfg, ctx.branch, group.parentBranch, currentTip, ctx.ticketId, cleaner, horde);
+    if (!merged.ok) {
+      checks.push({ name: 'merge', ok: false, note: merged.note });
+      recordChanges(horde, ctx.ticketId, checks);
+      landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: false, checks, landed: null }, provenanceInfo, flags, group, level, lockNotes) });
+      continue;
+    }
+
+    currentTip = merged.sha;
+    const landed = { ticket: ctx.ticketId, sha: merged.sha, at: nowIso() };
+    recordMerged(horde, ctx.team, ctx.ticketId, merged.sha, { tree: root });
+    appendLanded(ctx.issueDirPath, landed, group.parentBranch);
+    ctx.screen.lawUsed.forEach((answer) => consumeAnswer(horde, answer, ctx.ticketId, ctx.branchSha));
+    checks.push({ name: 'merge', ok: true, note: `${merged.note} — ${short(merged.sha)}` });
+    landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: true, checks, landed }, provenanceInfo, flags, group, level, lockNotes) });
+  }
+  if (currentTip !== group.parentTip && shared.gate.cache) {
+    recordGateCache(
+      horde,
+      level,
+      { ...shared.gate.cache, sha: currentTip },
+      `batch(${group.members.map((m) => m.ticketId).join(',')})`,
+      null,
+      cfg,
+    );
+  }
+  return landedPairs;
+}
+
+// landAlone(self, root, horde, level, noGate, argForTicket) — the fallback, and the ONLY thing
+// this file ever does with a ticket that groupBatchCandidates, screenBatchMember or a red shared
+// gate excludes from a batch: run `land.mjs <argForTicket>` again, fresh, as its own subprocess,
+// with --tree pinned at the exact worktree this run is already using (never --horde alone, which
+// would let the child re-resolve — and re-sync — a horde's trunk tree independently of what this
+// run has been reading and writing). Nothing about the batch attempt is carried over: no consumed
+// answer, no screened check, nothing — the child re-derives all of it itself, which is what makes
+// this identical to land.mjs <ticket> run on its own, the same command tick.mjs already runs
+// today.
+function landAlone(self, root, horde, level, noGate, argForTicket) {
+  const args = [argForTicket];
+  if (level === 'trunk') args.push('--level', 'trunk');
+  if (noGate) args.push('--no-gate');
+  args.push('--tree', root, '--horde', horde, '--result', '--json');
+  try {
+    const out = execFileSync(process.execPath, [self, ...args], {
+      cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { ticket: argForTicket, full: JSON.parse(out) };
+  } catch (e) {
+    const stdout = e && e.stdout ? String(e.stdout) : '';
+    if (stdout.trim()) {
+      try { return { ticket: argForTicket, full: JSON.parse(stdout) }; } catch { /* fall through */ }
+    }
+    const stderr = e && e.stderr ? String(e.stderr).trim() : String((e && e.message) || e);
+    return { ticket: argForTicket, full: null, refused: stderr || 'land.mjs exited without a parseable result' };
+  }
+}
+
+function landEachAlone(self, root, horde, level, noGate, argList) {
+  return argList.map((argForTicket) => landAlone(self, root, horde, level, noGate, argForTicket));
+}
+
+// normalizeOutcome(arg, full, refused) — every outcome this file produces, whether a real landing
+// result (from finishBatchMember, in-process) or a fallback subprocess's own answer, folded to one
+// shape keyed by `arg` — the exact token the caller asked this run to land, ticket id or branch
+// name, never the resolved ticket id alone: the two can differ, and the final report has to find
+// every one of the caller's own tickets again, in the caller's own order, however it was landed.
+function normalizeOutcome(arg, full, refused) {
+  return full
+    ? {
+      arg, ok: !!full.ok, ticket: full.ticket, landed: full.landed || null, refused: null, full,
+    }
+    : {
+      arg, ok: false, ticket: arg, landed: null, refused: refused || 'land.mjs exited without a parseable result', full: null,
+    };
+}
+
+function finishMany(tickets, outcomes, flags) {
+  const byArg = new Map(outcomes.map((o) => [o.arg, o]));
+  const ordered = tickets.map((t) => byArg.get(t) || {
+    arg: t, ok: false, ticket: t, landed: null, refused: 'not processed',
+  });
+  const allOk = ordered.every((o) => o.ok);
+  const landedCount = ordered.filter((o) => o.ok).length;
+  const summary = {
+    tickets, ok: allOk, results: ordered, at: nowIso(),
+  };
+  emit(summary, flags, () => [
+    `land batch: ${tickets.length} ticket(s) — ${landedCount} landed, ${tickets.length - landedCount} not`,
+    ...ordered.map((o) => `${o.ok ? '✓' : '✗'} ${o.ticket}${o.landed ? ` LANDED ${short(o.landed.sha)}` : ''}${!o.ok && o.refused ? ` — ${o.refused}` : ''}`),
+  ].join('\n'));
+  if (!allOk) process.exit(1);
+  return summary;
+}
+
+// startBatchInBackground(horde, root, level, noGate, tickets) — the batch's own twin of
+// startInBackground(): one detached worker for the whole request instead of one per ticket. A
+// ticket this foreground pass cannot even find a queue item for is refused right here, exactly as
+// the single-ticket --background path already refuses inline, and — unlike that path, which is
+// the whole call — it does not hold up any OTHER ticket in the same request: the same independence
+// N separate `land.mjs --background` calls already had, kept even though this is now one call.
+function startBatchInBackground(horde, root, level, noGate, tickets) {
+  const resolved = [];
+  const items = [];
+  for (const t of tickets) {
+    const found = findQueueItem(horde, t);
+    if (found) {
+      resolved.push({ arg: t, ticket: String(found.item.ticket), branch: found.item.branch });
+    } else {
+      items.push({
+        ticket: t, branch: null, resultFile: null, started: false, note: `no queue item names ${t} — is the ticket tracked by queue.mjs?`,
+      });
+    }
+  }
+  if (resolved.length) {
+    const self = fileURLToPath(import.meta.url);
+    const args = [resolved.map((r) => r.arg).join(',')];
+    if (level === 'trunk') args.push('--level', 'trunk');
+    if (noGate) args.push('--no-gate');
+    args.push('--horde', horde, '--result', '--json');
+    const child = spawn(process.execPath, [self, ...args], {
+      detached: true, stdio: 'ignore', cwd: root,
+    });
+    child.unref();
+    for (const r of resolved) {
+      items.push({
+        ticket: r.ticket, branch: r.branch, resultFile: resultPath(horde, r.ticket), started: true, note: null,
+      });
+    }
+  }
+  return items;
+}
+
+// runMany(horde, root, cfg, tickets, level, noGate, flags) — the entry point for two or more
+// tickets. --no-gate never merges and skips items 2, 5, 6 and 7 outright (see USAGE) — with
+// nothing expensive left to share, batching buys nothing, so every ticket just runs alone, in this
+// same process, exactly as --no-gate already behaves for one. Otherwise: resolve every ticket
+// leniently, group what is eligible to batch, screen and combine each group, run its shared gate
+// once, and land what survives — everything this excludes along the way, for any reason, lands
+// alone instead, in this same run.
+function runMany(horde, root, cfg, tickets, level, noGate, flags) {
+  const self = fileURLToPath(import.meta.url);
+
+  if (noGate) {
+    const alone = landEachAlone(self, root, horde, level, noGate, tickets);
+    return finishMany(tickets, alone.map((o) => normalizeOutcome(o.ticket, o.full, o.refused)), flags);
+  }
+
+  const cleaner = makeCleaner();
+  const outcomes = [];
+  const standalone = [];
+  try {
+    const candidates = tickets.map((t) => resolveBatchCandidate(horde, root, cfg, t, level));
+    for (const c of candidates) if (!c.ok) standalone.push(c.arg);
+    const resolvable = candidates.filter((c) => c.ok);
+
+    const { groups, overflow } = groupBatchCandidates(resolvable);
+    for (const c of overflow) standalone.push(c.arg);
+
+    for (const group of groups) {
+      const baseTree = resolveTree({ scratch: group.parentTip }, { cwd: root });
+      cleaner.add(() => cleanupTree(baseTree, root));
+
+      const survivors = [];
+      for (const ctx of group.members) {
+        const screen = screenBatchMember(root, cfg, horde, ctx, baseTree.path, cleaner);
+        if (!screen.ok) { standalone.push(ctx.arg); continue; }
+        ctx.screen = screen;
+        survivors.push(ctx);
+      }
+      if (survivors.length < 2) {
+        for (const ctx of survivors) standalone.push(ctx.arg);
+        continue;
+      }
+
+      const combined = combineBatchGroup(root, { ...group, members: survivors }, cleaner);
+      for (const d of combined.dropped) standalone.push(d.ctx.arg);
+      if (combined.surviving.length < 2) {
+        for (const ctx of combined.surviving) standalone.push(ctx.arg);
+        continue;
+      }
+
+      const combinedSha = git(['rev-parse', 'HEAD'], combined.info.path);
+      const addedFiles = diffPaths(['diff', '--name-only', '--diff-filter=A', `${group.parentTip}...HEAD`], combined.info.path);
+
+      const lock = acquireGateLock(`batch(${combined.surviving.map((m) => m.ticketId).join(',')})`, null, { waitMs: lockWait(cfg) });
+      if (!lock.ok) {
+        // The whole point of one hold was to avoid N of them — refused once here is refused for
+        // every member alike; none of them ran the shared gate, so all of them fall back.
+        for (const ctx of combined.surviving) standalone.push(ctx.arg);
+        continue;
+      }
+      cleaner.add(lock.release);
+      let shared;
+      try {
+        shared = runSharedGate(cfg, level, combined.info.path, addedFiles);
+      } finally {
+        lock.release();
+      }
+      const sharedOk = shared.gate.ok && shared.graph.ok && shared.mapping.ok && shared.judge.ok;
+      if (!sharedOk) {
+        // Design: on red, do not bisect. Fall back to landing every member of this group on its
+        // own, in this same run — the worst case costs exactly what it costs today.
+        for (const ctx of combined.surviving) standalone.push(ctx.arg);
+        continue;
+      }
+
+      const provenanceInfo = { path: combined.info.path, branch: null, sha: combinedSha };
+      const landed = landBatchGreen(
+        root, cfg, horde, level, { ...group, members: combined.surviving }, provenanceInfo, shared, lock.notes, flags, cleaner,
+      );
+      for (const pair of landed) outcomes.push(normalizeOutcome(pair.arg, pair.full, null));
+    }
+
+    const alone = landEachAlone(self, root, horde, level, noGate, standalone);
+    for (const o of alone) outcomes.push(normalizeOutcome(o.ticket, o.full, o.refused));
+
+    return finishMany(tickets, outcomes, flags);
+  } finally {
+    cleaner.runAll();
+  }
+}
+
 // ---- main -------------------------------------------------------------------------
 
 function run(horde, root, cfg, arg, level, noGate, flags) {
@@ -1860,21 +2396,39 @@ function main() {
   const info = resolveTree({ tree: flags.tree, horde: flags.horde }, { cwd: process.cwd() });
   const root = info.path;
   const cfg = readConfig() || {};
+  // One bare token (today's only shape) or a comma-separated list — `arg` itself, never split, is
+  // what every single-ticket branch below still reads, so a plain `land.mjs <ticket>` call is
+  // untouched byte for byte. Splitting only matters once there is a second one to batch with.
+  const tickets = splitTickets(arg);
 
   if (flags.background) {
-    const found = findQueueItem(horde, arg);
-    if (!found) fail(`no queue item names ${arg} — is the ticket tracked by queue.mjs?`);
-    const ticketId = String(found.item.ticket);
-    const path = startInBackground(horde, ticketId, argv);
-    emit(
-      { ticket: ticketId, branch: found.item.branch, resultFile: path, started: nowIso() },
-      flags,
-      () => `land ${ticketId} started in the background — its result will be written to ${path}`,
-    );
+    if (tickets.length <= 1) {
+      const found = findQueueItem(horde, arg);
+      if (!found) fail(`no queue item names ${arg} — is the ticket tracked by queue.mjs?`);
+      const ticketId = String(found.item.ticket);
+      const path = startInBackground(horde, ticketId, argv);
+      emit(
+        { ticket: ticketId, branch: found.item.branch, resultFile: path, started: nowIso() },
+        flags,
+        () => `land ${ticketId} started in the background — its result will be written to ${path}`,
+      );
+      return;
+    }
+    const items = startBatchInBackground(horde, root, level, !!flags['no-gate'], tickets);
+    emit({ tickets, items, started: nowIso() }, flags, () => [
+      `land batch of ${tickets.length} ticket(s) started in the background:`,
+      ...items.map((it) => (it.started
+        ? `  ${it.ticket} — result will be written to ${it.resultFile}`
+        : `  ${it.ticket} — not started: ${it.note}`)),
+    ].join('\n'));
     return;
   }
 
-  run(horde, root, cfg, arg, level, !!flags['no-gate'], flags);
+  if (tickets.length <= 1) {
+    run(horde, root, cfg, arg, level, !!flags['no-gate'], flags);
+    return;
+  }
+  runMany(horde, root, cfg, tickets, level, !!flags['no-gate'], flags);
 }
 
 if (isMain(import.meta.url)) runMain(main);
