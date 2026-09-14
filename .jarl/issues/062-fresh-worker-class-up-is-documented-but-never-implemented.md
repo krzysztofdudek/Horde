@@ -1,6 +1,6 @@
 # 062 · fresh worker class up is documented but never implemented
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Add a test that drives a ticket to round `resume+1` 
 Refuterzy: Verified directly: tk.mjs:99 (and comment at 207-208, label at tk.mjs:229 "fresh worker, class up") documents that past config.fixRounds.resume a ticket gets a fresh worker "one class heavier." SKILL. | Verified directly against both sides of the claim. tick.mjs's dispatch() (line 366) sets `model` purely from `parseField(ticket.text, 'Class') || started.class`, and queue.mjs's startRunning (line 215
 
 ## Evidence
+
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/tick.test.mjs skills/horde/scripts/tests/lib.test.mjs · **saw:** 130/130 pass on rebased branch tip and again on merged main; independently re-read classUp() and its wiring in dispatch() to confirm the report before merging
 
