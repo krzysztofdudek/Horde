@@ -1,6 +1,6 @@
 # 021 · nic co chroni nie slabnie
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 1
 **Tier:** strong
