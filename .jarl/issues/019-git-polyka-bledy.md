@@ -1,6 +1,6 @@
 # 019 · git polyka bledy
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -21,4 +21,7 @@ Przegląd każdego wywołania: tam, gdzie null oznacza odmowę, odmowa niesie te
 Dowód, którego oczekuję: skills/horde/scripts/tests/lib.test.mjs.
 
 ## Evidence
+
+- **ran:** node --test tests/lib.test.mjs tests/land.test.mjs tests/blame.test.mjs (rebased tip); then full suite tests/*.test.mjs after merge · **saw:** 98/98 pass on the three touched files; full suite 1032 pass/0 fail/4 skip (known env-conditional: root-bypass chmod x3, missing RatatoskrSkill checkout)
+- **ran:** node --test tests/lib.test.mjs tests/land.test.mjs tests/blame.test.mjs (rebased tip); then full suite tests/*.test.mjs after merge · **saw:** 98/98 pass on the three touched files; full suite 1032 pass/0 fail/4 skip (known env-conditional: root-bypass chmod x3, missing RatatoskrSkill checkout)
 
