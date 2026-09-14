@@ -3,7 +3,11 @@
 Every tool: Node ESM, zero dependencies, `--help`, `--json`, exit non-zero on failure with one line on
 stderr. All tools resolve the repository root by walking up to `.git`, then the shared state root as
 `<git common dir>/../.horde` so a worktree and the main checkout see the same state. `--horde <name>`
-selects the horde; when only one exists it is the default. `--team <name>` selects a team; default is
+selects the horde; when only one exists it is the default. On its own (no `--tree`/`--ticket`/`--scratch`),
+`--horde` resolves to that horde's own trunk worktree — read-only for everything but `land.mjs`'s merge
+commits, and resynced to the branch's tip (`git reset --hard`) on every read. A dirty trunk tree still
+gets reset, but not silently: the resync counts what it is about to discard first and, when that is not
+zero, says so in one line on stderr before it runs. `--team <name>` selects a team; default is
 `trunk`, and on anything filed at 6.0.0 or later that is the only value there is: nothing spawns a
 sub-team any more. `<name>` is always a team's short LEAF name (`alfa`), unique per horde;
 `_lib.mjs`'s `teamPath()` still resolves the nested layout (`teams/<parent>/teams/<child>/`) that a

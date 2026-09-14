@@ -208,6 +208,10 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
   somebody else's diff, and the worker stops and reports.
 - The director works in the main checkout and touches no branch of the horde; the trunk checkout
   itself is written only by `land.mjs`'s own merge commits.
+- The trunk worktree is resynced to the branch's tip on every read (`git reset --hard`). A hand
+  edit left there is still discarded — trunk stays written only by the landing script — but not
+  silently: the resync counts what it is about to discard first and, when that is not zero, says so
+  in one line on stderr before it runs.
 
 ### The `.horde/` tree — uncommitted, one per repository
 

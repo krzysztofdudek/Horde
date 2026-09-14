@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync,
+  existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, rmSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { makeRepo, rmRepo } from './helpers.mjs';
@@ -219,6 +219,46 @@ test('_lib.mjs resolveTree: narrowest scope wins, cwd and trunk defaults, scratc
       assert.equal(typeof viaHorde.cleanup, 'function');
       viaHorde.cleanup();
       assert.equal(existsSync(viaHorde.path), true); // still there — cleanup does nothing for trunk
+    });
+
+    // 012: the resync used to run `git reset --hard` unconditionally, discarding a manual edit to
+    // the trunk tree without a word. It still discards it — trunk is written only by the landing
+    // script — but now it says so first, once, on stderr, with a count.
+    await t.test('a dirty trunk tree: the resync warns once on stderr with a discard count, then still resets; an untracked file is not counted and survives; a clean read stays silent', () => {
+      const trunkPath = join(hordeRootFn(), 'worktrees', 'h1', 'trunk');
+      writeFileSync(join(trunkPath, 'README.md'), 'edited by hand, never committed\n');
+      writeFileSync(join(trunkPath, 'untracked.txt'), 'never staged\n');
+
+      const origWrite = process.stderr.write;
+      const calls = [];
+      process.stderr.write = (chunk) => { calls.push(String(chunk)); return true; };
+      let resynced;
+      try {
+        resynced = resolveTree({ horde: 'h1' });
+      } finally {
+        process.stderr.write = origWrite;
+      }
+
+      assert.equal(resynced.kind, 'trunk');
+      assert.equal(calls.length, 1, 'exactly one stderr write for the dirty resync');
+      assert.equal(calls[0].split('\n').filter((l) => l.length).length, 1, 'a single line, not a dump');
+      assert.match(calls[0], /discarded 1 uncommitted change\b/);
+      assert.match(calls[0], /h1\/trunk/);
+
+      // the hand edit to a tracked file really was discarded — back to what the branch committed
+      assert.equal(readFileSync(join(trunkPath, 'README.md'), 'utf8'), 'hi\n');
+      // `git reset --hard` never touches an untracked file, so it is not counted, and survives
+      assert.equal(existsSync(join(trunkPath, 'untracked.txt')), true);
+
+      rmSync(join(trunkPath, 'untracked.txt'));
+      const calls2 = [];
+      process.stderr.write = (chunk) => { calls2.push(String(chunk)); return true; };
+      try {
+        resolveTree({ horde: 'h1' });
+      } finally {
+        process.stderr.write = origWrite;
+      }
+      assert.equal(calls2.length, 0, 'a clean trunk tree resyncs without a word');
     });
 
     await t.test('no flags at all: cwd, kind "cwd"', () => {
