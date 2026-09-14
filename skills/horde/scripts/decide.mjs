@@ -14,11 +14,11 @@
 
 import { join, dirname } from 'node:path';
 import {
-  mkdirSync, writeFileSync, rmSync,
+  mkdirSync, readFileSync, rmSync,
 } from 'node:fs';
 import {
   hordePath, readConfig, readText, appendText, today, fail, parseArgs, emit, isMain, resolveHorde,
-  parseDecisionEntries,
+  parseDecisionEntries, createLockFile, processAlive, sleepSync, nowIso,
   runMain,
 } from './_lib.mjs';
 import { ygCommand } from './node.mjs';
@@ -55,30 +55,55 @@ export function parseEntries(text) {
 
 // A duplicate-slug check that reads, then a write some time later, is a race between two
 // processes — two `ask answer` calls landing on the same item, say — that a check alone cannot
-// close: both can read "no such slug" before either has written. `withDecisionsLock` closes it
-// with the same exclusive-create trick land.mjs's gate lock uses (`wx` refuses when the file
-// already exists), scoped to this one horde's decisions.md and held only for the check-and-append
-// itself, never across a caller's own work.
+// close: both can read "no such slug" before either has written. `withDecisionsLock` closes it,
+// scoped to this one horde's decisions.md and held only for the check-and-append itself, never
+// across a caller's own work.
+//
+// Built on `_lib.mjs`'s shared lock primitives — `createLockFile` (content written whole to a
+// name nobody is watching and only then linked into place, so a racing caller can never read a
+// lock still being written as an abandoned one), `processAlive` and `sleepSync` — the same three
+// land.mjs's gate lock, retro.mjs's own lock and `_lib.mjs`'s own tree and queue locks already
+// use, rather than a lock of its own that knows nothing of any of that. A process that dies
+// holding this lock (killed outright, a container recycled) must not wedge every decision and
+// answer on this horde forever, so the lock file names the pid that took it, and a lock whose pid
+// is no longer running is taken over immediately rather than waited out.
 function decisionsLockPath(horde) { return decisionsPath(horde) + '.lock'; }
 
-function withDecisionsLock(horde, fn) {
+const DECISIONS_LOCK_WAIT_MS = 10000;
+const DECISIONS_LOCK_POLL_MS = 20;
+
+export function withDecisionsLock(horde, fn, { waitMs = DECISIONS_LOCK_WAIT_MS } = {}) {
   const path = decisionsLockPath(horde);
-  const deadline = Date.now() + 10000;
+  const deadline = Date.now() + waitMs;
   for (;;) {
     try {
       mkdirSync(dirname(path), { recursive: true });
-      writeFileSync(path, String(process.pid), { flag: 'wx' });
+      createLockFile(path, `${JSON.stringify({ pid: process.pid, horde, at: nowIso() }, null, 2)}\n`);
       break;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
-      if (Date.now() > deadline) throw new Error(`decisions.md is locked by another process — timed out waiting for ${path}`);
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
+    let held = null;
+    try { held = JSON.parse(readFileSync(path, 'utf8')); } catch { held = null; }
+    // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
+    // like a dead one: taken over rather than waited on.
+    if (!held || !processAlive(held.pid)) {
+      try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
+      continue;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`decisions.md for "${horde}" is locked by another process (pid ${held.pid}, taken ${held.at || 'at an unrecorded time'}) — timed out waiting for ${path}`);
+    }
+    sleepSync(DECISIONS_LOCK_POLL_MS);
   }
   try {
     return fn();
   } finally {
-    try { rmSync(path, { force: true }); } catch { /* already gone */ }
+    try {
+      const holder = JSON.parse(readFileSync(path, 'utf8'));
+      if (holder.pid !== process.pid) throw new Error('not ours');
+      rmSync(path, { force: true });
+    } catch { /* unreadable, already gone, or already taken over by someone else: nothing to do */ }
   }
 }
 
