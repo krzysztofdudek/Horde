@@ -82,13 +82,18 @@ commands:
       found the law will not say, how many questions the client answered, and what the mission did
       to the law. Reads the archive and writes nothing. Each consultant gets the part of this that
       belongs to its own territory, in its own brief (refine.mjs --step consult).
-  done [--horde h]
+  done [--tree p] [--horde h]
       the mission's final gate. Refuses, listing every reason, when any evidence row is not
       reproduced, the trunk gate (config.gates.trunk) is not green at the trunk tip, or the
       retrospective (retro.mjs) has not been run over the mission as it now stands. Otherwise
       stamps the charter, appends the completion block to the mission journal, archives the
       horde the way "archive" does, and prints what to do next (push — that decision is the
-      chairman's, never this tool's).
+      chairman's, never this tool's). The trunk gate's own fresh re-run (when no cached green
+      already covers the tip) runs from --tree, or without one, cwd — the same ordinary default
+      this tool set reads everywhere else, not this horde's trunk just because a horde was
+      resolvable. --horde h written out (no --tree) is what changes that, exactly as
+      queue.mjs plan/quality, tick.mjs and land.mjs already read it; what gets tested is always
+      the trunk branch's own tip either way, so this rarely shows.
 
 options: --json  --help`;
 
@@ -1308,7 +1313,15 @@ function runGateAt(root, cmd, branch) {
 function cmdDone(positional, flags) {
   const horde = resolveHorde(flags);
   const cfg = readConfig() || {};
-  const root = resolveTree({ tree: flags.tree, horde }).path;
+  // No --tree: cwd, same as an ordinary read anywhere else in this tool set — NOT this horde's
+  // trunk just because a horde was resolvable, which is what ask a-002 ruled on (decisions.md):
+  // always cwd, full stop, however many hordes the repository runs. What this DOES honor is
+  // --horde typed explicitly: `flags.horde`, never `horde` above (resolveHorde's own
+  // default-to-the-sole-horde reading), so a bare `horde.mjs done` run from any cwd is untouched
+  // and only a caller who actually wrote --horde gets that mission's own trunk tree for the fresh
+  // gate re-run below — the same distinction tick.mjs (041) and land.mjs (109) already draw; this
+  // command carried the same gap until issue 113 closed it.
+  const root = resolveTree({ tree: flags.tree, horde: flags.horde }).path;
   const reasons = [];
 
   // 1. Every promised proof, reproduced. stampMissionEvidence promotes whatever a merged ticket
