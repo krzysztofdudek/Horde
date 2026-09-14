@@ -1,6 +1,6 @@
 # 059 · queue mjs plan s out flag is undocumented in
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Run `queue.mjs plan --out /tmp/plan.md` — succeeds
 Refuterzy: Confirmed. queue.mjs USAGE at line 86 reads `plan [--team t] [--apply-order] [--out <file>] [--horde h]` with line 87 explaining --out writes the plan to a file for the architect reader. README.md's p | Verified against both files. queue.mjs lines 86-87 show the plan command's USAGE includes `--out <file>` with an explanation of its purpose (writing the whole plan to a file for the architect rather t
 
 ## Evidence
+
+- **ran:** node --test tests/docs.test.mjs · **saw:** 31/31 pass; merged
 
