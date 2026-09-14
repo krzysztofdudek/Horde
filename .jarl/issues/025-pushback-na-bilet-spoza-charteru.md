@@ -1,6 +1,6 @@
 # 025 · pushback na bilet spoza charteru
 
-**Status:** in-progress
+**Status:** done
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong
@@ -21,4 +21,6 @@ Test: bilet poza terytorium odmówiony z nazwą terytoriów; z odpowiedzianym py
 Dowód, którego oczekuję: skills/horde/scripts/tests/tk.test.mjs, skills/horde/scripts/tests/queue.test.mjs.
 
 ## Evidence
+
+- **ran:** node --test tests/queue.test.mjs tests/tk.test.mjs tests/wave.test.mjs (rebased then merged tip) · **saw:** 165 pass, 0 fail
 

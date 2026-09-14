@@ -1,6 +1,6 @@
 # 026 · bilet prototyp
 
-**Status:** in-progress
+**Status:** done
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong
@@ -21,4 +21,6 @@ Testy: prototyp nie merguje do trunku; akceptacja bez sha256 odmówiona; wiersz 
 Dowód, którego oczekuję: skills/horde/scripts/tests/tk.test.mjs, skills/horde/scripts/tests/land.test.mjs, skills/horde/scripts/tests/plan-out.test.mjs.
 
 ## Evidence
+
+- **ran:** node --test tests/land.test.mjs (full run, rebased/merged tip) · **saw:** 54 pass, 0 fail
 
