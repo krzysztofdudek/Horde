@@ -1,6 +1,6 @@
 # 116 · land.test.mjs: two tests fail when the commit-signing service returns 503 under heavy concurrent load
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -19,4 +19,6 @@ A test suite that can fail on infrastructure flakiness unrelated to the code und
 The two named tests (or whatever shared fixture helper commits on their behalf) either retries a transient signing failure a bounded number of times, or the failure is surfaced with a clear enough message that a 503 from the signing service is distinguishable from a real assertion failure at a glance. A repeated run under the same heavy load stays green.
 
 ## Evidence
+
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/land.test.mjs · **saw:** 82/82 pass, 0 fail, on the merged tip
 
