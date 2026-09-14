@@ -122,6 +122,13 @@ function writeClasses(dir, horde, items) {
 //     `codeMoves` moved the content out from under it — is not "still holding" here either, exactly
 //     as the real graph would see it. A REFUSED entry never triggers this, in force or not: the
 //     real CLI's `kind === 'refused'` branch is one `resolvePair` lets straight through.
+//   * `verdict read` derives the `inForce` it hands back the same way, fresh on every call, from
+//     that same `hashes` tracking — never from a flag `verdict record` freezes at the moment it
+//     writes the entry. A pass read as in force right after being recorded reads back out of force
+//     the moment `codeMoves` moves the content out from under it, with nothing else about the entry
+//     disturbed, exactly as the real CLI's own live recomputation would answer. A fixture that names
+//     `inForce` on a seeded verdict itself (`recordingYg`'s own `verdicts:`) gets that value back
+//     unchanged — the derivation only fills in what `verdict record` itself leaves unset.
 function stubSource({ calls, lock, content, packageFails }) {
   return `import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -164,10 +171,18 @@ if (args[0] === '--version') { console.log('6.0.0'); process.exit(0); }
 
 if (args[0] === 'verdict' && args[1] === 'read') {
   const lock = readJson(LOCK, {});
-  console.log(JSON.stringify({
-    schema: 'yg-verdicts/1',
-    verdicts: Object.keys(lock).sort().map((k) => lock[k]),
-  }));
+  // inForce is derived here, live, never trusted from whatever the entry already carries: the
+  // real CLI recomputes it on every read from whether the recorded hash still matches the content
+  // on disk right now, so a pass in force when it was recorded reads out of force the moment the
+  // content under it moves, with the recorded verdict/judge/hash themselves untouched. A seeded
+  // fixture that names inForce explicitly is left exactly as given — this only fills in what
+  // verdict record itself no longer sets.
+  const verdicts = Object.keys(lock).sort().map((k) => {
+    const entry = lock[k];
+    const derived = entry.hash === hashes(k)[entry.verdict];
+    return { ...entry, inForce: entry.inForce === undefined ? derived : entry.inForce };
+  });
+  console.log(JSON.stringify({ schema: 'yg-verdicts/1', verdicts }));
   process.exit(0);
 }
 
@@ -192,7 +207,10 @@ if (args[0] === 'verdict' && args[1] === 'record') {
     process.exit(1);
   }
   const lock = readJson(LOCK, {});
-  lock[k] = { aspect, unit, verdict, judge: flag('--by'), hash: want, inForce: true };
+  // inForce is not written here: it is not a fact this moment can know for good, only a snapshot
+  // that verdict read re-derives, live, from this same hash against the content on disk at read
+  // time — see verdict read above. Writing a flag here would only be true until the next codeMoves.
+  lock[k] = { aspect, unit, verdict, judge: flag('--by'), hash: want };
   writeFileSync(LOCK, JSON.stringify(lock, null, 2) + '\\n');
   process.exit(0);
 }
@@ -992,6 +1010,66 @@ test('retro.mjs: a real verdict-package refusal on a still-in-force pass is skip
     'the inventory said inForce: false, so this never took the predicted shortcut — it is a real refusal landing in the ordinary skip pile',
   );
   assert.ok(!existsSync(samplesFile(dir)), 'nothing was written down — the refusal was met before there was a first judgement to keep');
+});
+
+// The mirror gap (issue 121): everything above proves the REFUSAL is content-keyed — never a static
+// flag frozen at record time. But until now the `inForce` field `verdict read` hands a caller was
+// exactly that kind of static flag: `verdict record` wrote `inForce: true` on every entry it ever
+// produced, and nothing ever recomputed it afterwards. A pass could go stale — `codeMoves` moves the
+// tracked content out from under it — and the inventory would go on reporting it as still in force
+// forever, because nothing re-derived it. `measureJudge`'s own `!held` branch reads exactly that
+// field, unread by any other check, to decide whether a recorded pass can be predicted still in
+// force without spending a real `verdict package` call — so a stub that can never produce
+// `{verdict: 'pass', inForce: false}` can never exercise that prediction on the one input it most
+// needs to get right. These two tests close the gap: the stand-in's own re-derivation, proved
+// directly; and retro.mjs meeting a genuinely stale pass for real, not merely a prediction of one.
+test('the stand-in CLI recomputes inForce live on every verdict read, not a flag frozen at record time', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  recordingYg(dir);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'pass' });
+
+  const [before] = ygVerdicts(dir);
+  assert.equal(before.judge, 'tier-a');
+  assert.equal(before.verdict, 'pass');
+  assert.equal(before.inForce, true, 'a freshly recorded pass, content unmoved since, is in force');
+
+  // No new `verdict record` in between — the only thing that happens between the two reads is the
+  // content moving. The recorded entry itself is untouched; only the derived field can move.
+  codeMoves(dir, THE_PAIR);
+  const [after] = ygVerdicts(dir);
+  assert.equal(after.judge, 'tier-a', 'the judge on file did not change');
+  assert.equal(after.verdict, 'pass', 'the verdict word on file did not change');
+  assert.equal(after.hash, before.hash, 'the hash on file did not change — only inForce is re-derived');
+  assert.equal(after.inForce, false, 'the code moved out from under it, so the pass no longer holds');
+});
+
+test('retro.mjs: a pass whose code has since moved is stale, not in force, and reaches a real verdict-package call rather than the passInForce shortcut', async (t) => {
+  const dir = judgeFixture(t);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'pass' });
+  // The move happens after the pass is recorded and before retro.mjs ever reads the inventory back
+  // — the one sequence the stub could never produce before issue 121, because `verdict read` used
+  // to hand back the `inForce: true` `verdict record` had frozen in, whatever codeMoves had done
+  // since.
+  codeMoves(dir, THE_PAIR);
+
+  const r = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(r.code, 0, `a measurement never refuses: ${r.stderr}`);
+  assert.equal(r.json.judge.passInForce.length, 0, 'the pass is stale, not in force — never the passInForce shortcut');
+  assert.equal(r.json.judge.pairs.length, 0, 'nothing on file yet to compare a first judgement against');
+  assert.equal(r.json.judge.disagreements, 0);
+  assert.equal(r.json.judge.skipped.length, 0, JSON.stringify(r.json.judge.skipped));
+  // A stale pass does not block packaging — the refusal is content-keyed (issue 117), and the
+  // content has moved past what tier-a judged — so the pair reaches a real `verdict package` call,
+  // which succeeds, and is written down as a fresh first judgement waiting on a second.
+  assert.equal(r.json.judge.pending.length, 1);
+  assert.equal(r.json.judge.pending[0].ticket, '001');
+  assert.equal(r.json.judge.pending[0].held, 'pass');
+  assert.equal(r.json.judge.pending[0].heldBy, 'tier-a');
+
+  const [kept] = onFile(dir);
+  assert.equal(kept.judge, 'tier-a');
+  assert.equal(kept.verdict, 'pass');
 });
 
 test('ticketDeclares: a verdict\'s unit belongs to a ticket by its declared Files, never by substring', (t) => {
