@@ -1,6 +1,6 @@
 # 068 · status mjs branchcategory tests queue item state for values
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Run a mission where a ticket lands (`queue set NNN l
 Refuterzy: Verified both sides exactly as claimed. status.mjs:38 checks state === 'verified' || state === 'changes', but it.state (status.mjs:53-58, from teamDigest) is read from queue.json items, whose state vo | Confirmed exactly as stated. queue.mjs:37 defines STATES=['proposed','queued','waiting','running','landed','blocked','merged','escalated','dropped'] as the only values queue.mjs:587's `set` command ac
 
 ## Evidence
+
+- **ran:** node --test tests/status.test.mjs · **saw:** 14/14 pass; merged
 
