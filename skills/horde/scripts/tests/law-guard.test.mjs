@@ -1,8 +1,9 @@
-// The two guards that run before a landing is judged at all: a branch may not weaken the rules it
-// is judged by, and a branch may not sharpen a rule and change the code that rule refuses in the
-// same landing. Both are deterministic — no model is asked whether a change is a weakening;
-// Yggdrasil's own documents say so — and both are measured here against the real CLI and a real
-// graph, never a stand-in.
+// The guards that run before a landing is judged at all. A branch may not weaken the rules it is
+// judged by, may not weaken the proof or the gates it is measured with, and may not sharpen a rule
+// and change the code that rule refuses in the same landing. Every one of them is deterministic —
+// no model is asked whether a change is a weakening; two trees and Yggdrasil's own documents say
+// so — and every one of them is measured here against the real CLI, a real graph, a real suite and
+// a real gate, never a stand-in.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -613,4 +614,325 @@ test('law guard: a CLI that cannot inventory suppressions stops the run rather t
   assert.match(out, /added yg-suppress marker is exactly that/);
   assert.match(out, /npm i -g @chrisdudek\/yg|config\.ygCommand at a build/);
   assert.equal(git(['rev-list', '--count', '--merges', 'mission1/trunk'], dir), '0', 'and nothing landed');
+});
+
+// ---- the proof and the gates: everything else that protects (021) --------------------------
+//
+// The law guard above says a branch may not weaken the rules it is judged by. Two more say the
+// same about the other two things a mission is held to — the proof it is judged by and the gates
+// it is measured through — through the same ask.mjs channel, one answered question per exact
+// thing being weakened.
+//
+// The fixture below is a real repository of each: two source files, two test files, a promise with
+// a real test keeping it, the repository's own gate script, and a commit hook. Nothing here is a
+// stand-in, and nothing here is mapped to a node except what the rule already reached — a promise
+// and a suite are not a component's own files, and a fixture that pretended otherwise would be
+// measuring Yggdrasil's mapping rules rather than these guards.
+
+const SECOND_TEST = [
+  "import test from 'node:test';",
+  "import assert from 'node:assert/strict';",
+  "import { a } from '../src/a.mjs';",
+  "import { b } from '../src/b.mjs';",
+  '',
+  "test('a is one', () => { assert.equal(a, 1); });",
+  "test('b is two', () => { assert.equal(b, 2); });",
+  '',
+].join('\n');
+
+const PROMISE_TEST = [
+  "import test from 'node:test';",
+  "import assert from 'node:assert/strict';",
+  "import { a } from '../src/a.mjs';",
+  "import { b } from '../src/b.mjs';",
+  '',
+  "test('adds two numbers', () => { assert.equal(a + b, 3); });",
+  '',
+].join('\n');
+
+function promiseDoc(status) {
+  return [
+    '---',
+    'id: adds-two-numbers',
+    `status: ${status}`,
+    '---',
+    '',
+    '## What it checks',
+    '',
+    'Adding the two numbers gives their sum.',
+    '',
+  ].join('\n');
+}
+
+const GATE_SCRIPT = ["# this repository's own gate", 'exit 0', ''].join('\n');
+const HOOK_SCRIPT = ['#!/bin/sh', 'sh gate.sh', ''].join('\n');
+
+const PROTECTED_DECLARED = [
+  'src/a.mjs', 'src/b.mjs',
+  'tests/feature.test.mjs', 'tests/second.test.mjs', 'tests/renamed.test.mjs',
+  'promises/adds-two-numbers.md', 'promises/adds-two-numbers.test.mjs',
+  'gate.sh', '.husky/pre-commit',
+  '.yggdrasil/model/feature/yg-node.yaml',
+];
+
+// Breaks both source files at once, in a throwaway copy of the branch's own tip, so whichever case
+// a ticket below leaves running goes red under it. The revert-test item is not what any of these
+// tests is about — this is what keeps it honest while they run.
+const MUTATE = 'node -e "const f=require(\'fs\');f.writeFileSync(\'src/a.mjs\',\'export const a = 999;\');f.writeFileSync(\'src/b.mjs\',\'export const b = 999;\')"';
+
+function seedProtectionTicket(dir, id, branch, declared) {
+  const dst = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${id}-sample-ticket`);
+  mkdirSync(dst, { recursive: true });
+  writeFileSync(join(dst, 'issue.md'), [
+    `# ${id} · Sample ticket`, '',
+    '**Status:** landed',
+    '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',
+    `**Depends on:** none · **Branch:** ${branch}`,
+    `**Files:** ${declared.join(', ')}`,
+    `**Mutate:** ${MUTATE}`,
+    '**No new tests:** what this ticket exercises is a guard, and the suite it starts from already covers the code',
+    '',
+    '## Acceptance — evidence', '', '- [ ] does the thing', '',
+  ].join('\n'));
+  writeFileSync(join(dst, 'log.md'), `- ${new Date().toISOString()} status: landed — ready to land\n`);
+  const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
+  const doc = JSON.parse(readFileSync(queuePath, 'utf8'));
+  doc.items.push({
+    ticket: id, state: 'landed', class: 'standard', branch, dependsOn: [], agent: 'worker1', sha: null, notes: [], worktree: null,
+  });
+  writeFileSync(queuePath, JSON.stringify(doc, null, 2));
+  return dst;
+}
+
+function protectionFixture(dir, id, mutate, { declared = PROTECTED_DECLARED } = {}) {
+  initHorde(dir);
+  // A gate command that names a file this repository actually tracks — which is the only kind a
+  // two-tree guard can say anything about, and the only kind a branch can quietly rewrite.
+  run('horde.mjs', ['config', 'set', 'gates.team', 'sh gate.sh'], dir);
+  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
+
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  write(dir, 'src/a.mjs', 'export const a = 1;\n');
+  write(dir, 'src/b.mjs', 'export const b = 2;\n');
+  write(dir, 'tests/feature.test.mjs', [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    "import { a } from '../src/a.mjs';",
+    "test('a', () => { assert.equal(a, 1); });",
+    '',
+  ].join('\n'));
+  write(dir, 'tests/second.test.mjs', SECOND_TEST);
+  write(dir, 'promises/adds-two-numbers.md', promiseDoc('implemented'));
+  write(dir, 'promises/adds-two-numbers.test.mjs', PROMISE_TEST);
+  write(dir, 'gate.sh', GATE_SCRIPT);
+  write(dir, '.husky/pre-commit', HOOK_SCRIPT);
+  git(['add', '--', 'src', 'tests', 'promises', 'gate.sh', '.husky'], dir);
+  git(['commit', '-qm', 'the code, the proof and the gates both trees start from'], dir);
+
+  baseGraph(dir);
+  git(['add', '.yggdrasil'], dir);
+  git(['commit', '-qm', 'graph: the rule and the component it reaches'], dir);
+
+  const branch = `mission1/t-${id}`;
+  git(['checkout', '-q', '-b', branch], dir);
+  mutate(dir);
+  git(['add', '-A', '--', 'src', 'tests', 'promises', 'gate.sh', '.husky', '.yggdrasil'], dir);
+  git(['commit', '-qm', `ticket ${id}`], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+
+  seedProtectionTicket(dir, id, branch, declared);
+  return { branch };
+}
+
+function decisionsOf(dir) {
+  return readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'decisions.md'), 'utf8');
+}
+
+function asRegExp(literal) {
+  return new RegExp(literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+}
+
+// ---- the six ways a branch can weaken what protects it ------------------------------------
+
+const PROTECTION_CASES = [
+  {
+    name: 'a test file removed on the branch',
+    label: 'test removed',
+    target: 'evidence:tests/second.test.mjs',
+    mutate: (dir) => rmSync(join(dir, 'tests', 'second.test.mjs'), { force: true }),
+  },
+  {
+    name: 'an assertion removed on the branch',
+    label: 'assertions dropped',
+    target: 'evidence:tests/second.test.mjs',
+    mutate: (dir) => write(dir, 'tests/second.test.mjs', SECOND_TEST.replace("test('b is two', () => { assert.equal(b, 2); });\n", '')),
+  },
+  {
+    name: 'a skip marker added on the branch',
+    label: 'skip added',
+    target: 'evidence:tests/second.test.mjs',
+    mutate: (dir) => write(dir, 'tests/second.test.mjs', SECOND_TEST.replace("test('a is one'", "test.skip('a is one'")),
+  },
+  {
+    name: 'a promise put back to planned on the branch',
+    label: 'promise parked',
+    target: 'evidence:adds-two-numbers',
+    mutate: (dir) => write(dir, 'promises/adds-two-numbers.md', promiseDoc('planned')),
+  },
+  {
+    name: "the gate command's own script changed on the branch",
+    label: 'gate changed',
+    target: 'gate:gate.sh',
+    mutate: (dir) => write(dir, 'gate.sh', GATE_SCRIPT.replace('own gate', 'own gate, loosened')),
+  },
+  {
+    name: 'a commit hook removed on the branch',
+    label: 'gate removed',
+    target: 'gate:.husky/pre-commit',
+    mutate: (dir) => rmSync(join(dir, '.husky', 'pre-commit'), { force: true }),
+  },
+];
+
+for (const [i, kase] of PROTECTION_CASES.entries()) {
+  test(`protection guards: ${kase.name} refuses, naming the exact thing and the case`, async (t) => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const { branch } = protectionFixture(dir, String(201 + i), kase.mutate);
+
+    const r = run('land.mjs', [branch], dir);
+    assert.equal(r.code, 1, said(r));
+    const out = said(r);
+    assert.match(out, /may not land as it stands/);
+    assert.match(out, asRegExp(kase.target), 'the refusal names the exact thing that weakened');
+    assert.match(out, asRegExp(`(${kase.label})`), `the refusal names the case (${kase.label})`);
+    assert.match(out, /decisions\.md/, 'and names the way out');
+    assert.match(out, /ask\.mjs add/);
+    assert.match(out, /--kind lower/);
+    // Nothing landed.
+    assert.equal(git(['rev-list', '--count', '--merges', 'mission1/trunk'], dir), '0');
+  });
+
+  test(`protection guards: ${kase.name} passes on the client's answer, and spends a "once" one`, async (t) => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const id = String(211 + i);
+    const { branch } = protectionFixture(dir, id, kase.mutate);
+    recordAnswer(dir, { aspect: kase.target, scope: 'once' });
+
+    const r = run('land.mjs', [branch], dir);
+    assert.doesNotMatch(said(r), /may not land as it stands/, said(r));
+    assert.equal(r.code, 0, said(r));
+    assert.ok(r.json.landed, 'and it landed');
+    // The answer now says, in the file itself, which landing spent it.
+    assert.match(decisionsOf(dir), new RegExp(`\\*\\*Consumed:\\*\\* ticket ${id} at [0-9a-f]{40} on `));
+  });
+}
+
+test('protection guards: an answer about something else lets none of this through', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = protectionFixture(dir, '221', (d) => rmSync(join(d, 'tests', 'second.test.mjs'), { force: true }));
+  // A real rule id, answered for real — and nothing to do with the test file this branch deleted.
+  // One answer lets one thing through, never a category and never a neighbour.
+  recordAnswer(dir, { aspect: 'no-marker', scope: 'mission' });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, said(r));
+  assert.match(said(r), asRegExp('evidence:tests/second.test.mjs (test removed)'));
+});
+
+test('protection guards: an ask nobody has answered yet lets nothing through', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = protectionFixture(dir, '222', (d) => write(d, 'promises/adds-two-numbers.md', promiseDoc('planned')));
+  recordAnswer(dir, { aspect: 'evidence:adds-two-numbers', scope: 'mission', answer: null });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, said(r));
+  assert.match(said(r), asRegExp('evidence:adds-two-numbers (promise parked)'));
+});
+
+test('protection guards: an answer that refused the ask lets nothing through either', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = protectionFixture(dir, '223', (d) => rmSync(join(d, '.husky', 'pre-commit'), { force: true }));
+  recordAnswer(dir, { aspect: 'gate:.husky/pre-commit', scope: 'mission', answer: 'no — that hook is why we stopped shipping this by hand.' });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, said(r));
+  assert.match(said(r), asRegExp('gate:.husky/pre-commit (gate removed)'));
+});
+
+// ---- what is not a weakening ----------------------------------------------------------------
+
+test('protection guards: more assertions than it found is never a weakening', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = protectionFixture(dir, '224', (d) => write(
+    d,
+    'tests/second.test.mjs',
+    `${SECOND_TEST}test('a and b differ', () => { assert.notEqual(a, b); });\n`,
+  ));
+
+  const r = run('land.mjs', [branch], dir);
+  assert.doesNotMatch(said(r), /may not land as it stands/, said(r));
+  assert.equal(r.code, 0, said(r));
+  assert.ok(r.json.landed, 'and it landed');
+});
+
+test('protection guards: a test file that moved is not a test file that went', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // The same bytes under a new name. Nothing stopped being run, so nothing here is the client's to
+  // sign off — a guard that refused this would be refusing tidying up.
+  const { branch } = protectionFixture(dir, '225', (d) => {
+    write(d, 'tests/renamed.test.mjs', SECOND_TEST);
+    rmSync(join(d, 'tests', 'second.test.mjs'), { force: true });
+    addNode(d, 'feature', {
+      mapping: ['src/a.mjs', 'src/b.mjs', 'tests/feature.test.mjs', 'tests/renamed.test.mjs'],
+      aspects: ['no-marker'],
+    });
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.doesNotMatch(said(r), /test removed/, said(r));
+  assert.doesNotMatch(said(r), /may not land as it stands/, said(r));
+  assert.equal(r.code, 0, said(r));
+});
+
+test('protection guards: a branch that touches none of it is not asked about any of it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = protectionFixture(dir, '226', (d) => write(d, 'src/a.mjs', 'export const a = 1; // reworded\n'));
+
+  const r = run('land.mjs', [branch], dir);
+  assert.doesNotMatch(said(r), /may not land as it stands/, said(r));
+  assert.equal(r.code, 0, said(r));
+  assert.ok(r.json.landed);
+});
+
+// ---- a spent answer stays spent --------------------------------------------------------------
+
+test('protection guards: "scope: once" is spent by the landing that used it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = protectionFixture(dir, '231', (d) => write(d, 'gate.sh', GATE_SCRIPT.replace('own gate', 'own gate, loosened')));
+  recordAnswer(dir, { aspect: 'gate:gate.sh', scope: 'once' });
+
+  const first = run('land.mjs', [branch], dir);
+  assert.equal(first.code, 0, said(first));
+  assert.ok(first.json.landed);
+  assert.match(decisionsOf(dir), /\*\*Consumed:\*\* ticket 231 at [0-9a-f]{40} on /);
+
+  // A second branch rewriting the same gate script finds the answer spent.
+  git(['checkout', '-q', '-b', 'mission1/t-232', 'mission1/trunk'], dir);
+  write(dir, 'gate.sh', ["# this repository's own gate, loosened again", 'exit 0', ''].join('\n'));
+  git(['add', '--', 'gate.sh'], dir);
+  git(['commit', '-qm', 'ticket 232'], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  seedProtectionTicket(dir, '232', 'mission1/t-232', PROTECTED_DECLARED);
+
+  const second = run('land.mjs', ['mission1/t-232'], dir);
+  assert.equal(second.code, 1, said(second));
+  assert.match(said(second), asRegExp('gate:gate.sh (gate changed)'));
 });

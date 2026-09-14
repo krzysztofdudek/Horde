@@ -47,6 +47,7 @@ import {
 } from './tk.mjs';
 import { recordMerged, buildPlan } from './queue.mjs';
 import { noteFate } from './wave.mjs';
+import { detectEvidenceLayer, HOOK_FILES } from './horde.mjs';
 
 const USAGE = `usage: land.mjs <ticket|branch>[,<ticket|branch>...] [--level trunk] [--no-gate] [--background] [--tree p] [--horde h]
        land.mjs <ticket> --fate reverted --by <sha> [--tree p] [--horde h]
@@ -78,7 +79,7 @@ for either way.
 
 Two or more tickets, comma-separated, land under ONE shared run of items 5-7 (gate, graph, mapping)
 when they are eligible to: the same parent branch at the same tip, and no changed file in common.
-Items 1-4, 8 and 9, and both guards below, still run per ticket, individually, exactly as for one.
+Items 1-4, 8 and 9, and every guard below, still run per ticket, individually, exactly as for one.
 A ticket that is not eligible — a different parent, an overlapping file, or a conflict once its
 branch is actually combined with the rest for the shared run — lands on its own instead, in this
 same call, rather than being dropped; and a shared run that comes back red falls back to landing
@@ -87,7 +88,7 @@ Either way, a ticket that lands gets its own merge commit, its own journal bulle
 figure, exactly as it would landing alone. A single ticket is entirely unaffected: this is exactly
 the nine-item run above, unchanged.
 
-Three guards run before the items and refuse outright rather than reporting an item, because
+Five guards run before the items and refuse outright rather than reporting an item, because
 none of them is a thing a worker can fix by trying again:
 
   the prototype guard    — a prototype ticket's branch must be cut from "<horde>/prototype", and
@@ -99,6 +100,15 @@ none of them is a thing a worker can fix by trying again:
                            yg-suppress marker or an aspect detached from a node all refuse, unless
                            the mission's decisions.md carries the client's answer to an "ask" of
                            kind "lower" naming that exact aspect.
+  the evidence guard     — a branch may not weaken the proof it is judged by. A promise that stops
+                           reading "implemented", a promise whose paired case is gone, a test file
+                           removed, a test file carrying fewer assertions than it had, or a new
+                           skip marker in one, all refuse — unless the same answered "lower" ask
+                           names that promise ("evidence:<id>") or that file ("evidence:<path>").
+  the gate guard         — a branch may not weaken the gates it is measured through. The script a
+                           config.gates.* command runs, a commit or push hook, or a CI workflow
+                           file, removed or rewritten, refuses — unless the same answered "lower"
+                           ask names it ("gate:<path>").
   the conflict guard     — a branch may not sharpen a rule and change the code that rule refuses in
                            the same landing. Split it into a code ticket and a legislative one.
 
@@ -927,8 +937,11 @@ function checkJournal(text, branch) {
 // The fields below are read out of the block regardless of what the heading says — this guard has
 // never cared about the heading itself, only decide.mjs's own duplicate-slug check needs it, which
 // is why the document's parser hands back every block and not just the ones whose heading reads as
-// an entry. Kind is "lower" for a rule the branch weakens, matched by the law guard below. Scope is
-// "once" (used up by one landing, and this file records which) or "mission" (stands until the
+// an entry. Kind is "lower" for anything the branch weakens; Aspect names the one thing being
+// weakened, and the guards below match on it exactly as it is written: a rule's own id for the law
+// guard, "evidence:<promise id>" or "evidence:<test file path>" for the evidence guard, and
+// "gate:<path>" for the gate guard. One answer lets one thing through and never a category. Scope
+// is "once" (used up by one landing, and this file records which) or "mission" (stands until the
 // mission closes). An ask with no Answer is still open and passes nothing.
 //
 // The conflict-of-interest guard further down (conflictGuard) has no exception of its own: a
@@ -1246,6 +1259,426 @@ function conflictGuard(cfg, baseTree, headTree, changedFiles, headReach) {
     });
   }
   return { ok: refusals.length === 0, refusals };
+}
+
+// ---- reading one tree's files ------------------------------------------------------------
+//
+// The two guards below read ordinary tracked content off each tree, the way the law guard reads
+// each tree's graph: `baseTree` and `headTree` are real checked-out worktrees, so the question
+// "what did this file hold on the base, and what does it hold now" is answered by reading it in
+// each of them.
+//
+// `git ls-files` rather than a directory walk, for the same reason horde.mjs's own evidence-layer
+// reading uses it: an untracked leftover is not content this branch is proposing, and counting one
+// would refuse a landing over a file nobody committed.
+function trackedIn(tree) {
+  const out = git(['-c', 'core.quotepath=false', 'ls-files'], tree);
+  if (out === null) {
+    const detail = gitError();
+    fail(`git ls-files could not say what ${tree} holds, so this landing cannot tell what the branch took away — and reading that as "the tree is empty" would wave every removal through${detail ? `: ${detail}` : ''}`);
+  }
+  return new Set(out.split('\n').filter(Boolean));
+}
+
+function contentAt(tree, rel) {
+  try { return readFileSync(join(tree, rel), 'utf8'); } catch { return null; }
+}
+
+// ---- how much of a test there is -----------------------------------------------------------
+//
+// Two closed lists, one per question, each combined into a single alternation and counted by
+// scanning the file once. One regex rather than one per pattern, deliberately: a match consumes
+// the text it covers, so `assert.Equal(` cannot be counted twice for landing in two lists at once.
+//
+// Crude on purpose. Nothing here is asked what a test MEANS — only whether there is less of it
+// than there was — and a pattern that over-counts or under-counts does so identically on both
+// trees, where the comparison cancels it out. There is no threshold anywhere below and no number
+// to configure: the only figure that decides anything is the difference between two of them.
+//
+// The languages are the ones this tool already recognises elsewhere and no others: the six build
+// systems `horde init` reads a repository with (npm, Maven, Gradle, Cargo, Go, Python), plus .NET,
+// which the skip list below already names. A suite written in anything else simply counts zero
+// assertions on both trees, which compares equal and refuses nothing — an unknown language is
+// never read as a suite that lost its assertions.
+const ASSERTIONS = {
+  // JavaScript and TypeScript — node:assert, Jest, Vitest, Chai, Playwright.
+  'assert(': String.raw`\bassert(?:\s*\.\s*\w+)*\s*\(`,
+  'expect(': String.raw`\bexpect\s*\(`,
+  // Python — pytest's bare statement, unittest's own methods, and the raises helper.
+  'assert <expr>': String.raw`^[ \t]*assert\b`,
+  'self.assert…(': String.raw`\bself\s*\.\s*assert\w*\s*\(`,
+  'pytest.raises(': String.raw`\bpytest\s*\.\s*raises\s*\(`,
+  // Go — the standard library's own failure calls, and testify's two entry points.
+  't.Error/Fatal(': String.raw`\bt\s*\.\s*(?:Error|Errorf|Fatal|Fatalf)\s*\(`,
+  'require.…(': String.raw`\brequire\s*\.\s*\w+\s*\(`,
+  // Java and Kotlin — JUnit's own assertions and AssertJ's entry point.
+  'assertThat(': String.raw`\bassert(?:That|Equals|True|False|Null|NotNull|Throws|ArrayEquals|Same|NotSame)\s*\(`,
+  // C# — xUnit, NUnit and MSTest all spell it the same way.
+  'Assert.…(': String.raw`\bAssert\s*\.\s*\w+\s*\(`,
+  // Rust — the macro forms.
+  'assert!': String.raw`\bassert(?:_eq|_ne)?\s*!`,
+};
+
+// The ways a suite says "not this one", mirrored by hand from the `promises` package's own
+// evidence-is-live rule — that package is optional and installed separately, so this skill's own
+// self-containment rule keeps it out of reach from here. The list is closed there and closed here:
+// a marker nobody wrote a matcher for would be added silently.
+//
+// Both kinds count the same way for this guard's one question. A `skip` turns off the case it sits
+// on and an `only` turns off every case it does not; either one appearing where it was not before
+// is a suite that runs less than it ran.
+const SKIP_MARKERS = {
+  'test.skip': String.raw`\btest\s*\.\s*skip\b`,
+  'test.fixme': String.raw`\btest\s*\.\s*fixme\b`,
+  'test.only': String.raw`\btest\s*\.\s*only\b`,
+  xit: String.raw`\bxit\s*\(`,
+  xdescribe: String.raw`\bxdescribe\s*\(`,
+  '@pytest.mark.skip': String.raw`@\s*pytest\s*\.\s*mark\s*\.\s*skip`,
+  'pytest.skip(': String.raw`\bpytest\s*\.\s*skip\s*\(`,
+  't.Skip(': String.raw`\bt\s*\.\s*Skip\s*\(`,
+  '[Ignore]': String.raw`\[\s*Ignore\s*[\](]`,
+  'Skip =': String.raw`[(,]\s*Skip\s*=\s*["@]`,
+};
+
+function counterFor(patterns) {
+  const source = Object.values(patterns).join('|');
+  return (text) => {
+    if (!text) return 0;
+    const re = new RegExp(source, 'gm');
+    let n = 0;
+    for (let m = re.exec(text); m !== null; m = re.exec(text)) {
+      n += 1;
+      // No pattern above can match the empty string, and this is here so that a later one added
+      // carelessly costs a wrong count rather than a landing that never returns.
+      if (m.index === re.lastIndex) re.lastIndex += 1;
+    }
+    return n;
+  };
+}
+const countAssertions = counterFor(ASSERTIONS);
+const countSkips = counterFor(SKIP_MARKERS);
+
+// ---- reading one tree's promises -----------------------------------------------------------
+//
+// Where the promises are is horde.mjs's own answer, asked of each tree in turn: the graph's own
+// mapping for the doc-shape rule first, and the four usual directory names after it. Asking it per
+// tree costs one more `yg aspects --json --reach` per side on a landing that already runs four of
+// them plus two `yg check`s, and it is the only reading that finds a promises directory an adopter
+// installed at a path of their own.
+//
+// What is read back per promise is only what these guards compare: its id, its status, and what
+// keeps it. The frontmatter reader is the same shape the package's own rules use — flat `key:
+// value` scalars plus one level of nesting — mirrored here for the same reason the skip list is.
+const SPEC_SUFFIX = '.test';
+const PROMISE_CASE_BY_NAME = [
+  (n) => new RegExp(String.raw`\b[xf]?(?:test|it)\b(?:\.\w+)*\s*\(\s*[\`'"]${escapeForRegExp(n)}[\`'"]`),
+  (n) => new RegExp(`Scenario:[ \\t]*${escapeForRegExp(n)}[ \\t]*$`, 'm'),
+  (n) => new RegExp(String.raw`\bdef\s+test_${escapeForRegExp(asSnake(n))}\s*\(`),
+  (n) => new RegExp(String.raw`\bfunc\s+Test${escapeForRegExp(asPascal(n))}\s*\(`),
+];
+
+function escapeForRegExp(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function asSnake(name) { return String(name).trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, ''); }
+function asPascal(name) {
+  return String(name).split(/[^a-zA-Z0-9]+/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join('');
+}
+function stemOf(path) {
+  const base = path.split('/').pop() || path;
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(0, dot) : base;
+}
+
+function promiseFrontmatter(text) {
+  const lines = String(text || '').split('\n');
+  if ((lines[0] || '').trim() !== '---') return null;
+  let end = -1;
+  for (let i = 1; i < lines.length && end === -1; i += 1) if ((lines[i] || '').trim() === '---') end = i;
+  if (end === -1) return null;
+  const fields = Object.create(null);
+  const blocks = Object.create(null);
+  let open = null;
+  for (let i = 1; i < end; i += 1) {
+    const raw = lines[i] || '';
+    if (raw.trim() === '' || raw.trim().startsWith('#')) continue;
+    if (/^\s+\S/.test(raw) && open !== null) {
+      const at = raw.indexOf(':');
+      if (at !== -1) blocks[open][raw.slice(0, at).trim()] = raw.slice(at + 1).trim().replace(/^["'](.*)["']$/, '$1');
+      continue;
+    }
+    if (/^\s/.test(raw)) continue;
+    const at = raw.indexOf(':');
+    if (at === -1) continue;
+    const key = raw.slice(0, at).trim();
+    const value = raw.slice(at + 1).trim().replace(/^["'](.*)["']$/, '$1');
+    if (value === '') { open = key; blocks[key] = Object.create(null); } else { open = null; fields[key] = value; }
+  }
+  return { fields, blocks };
+}
+
+// What keeps this promise, as the path of the file that keeps it — or a sentence, for the one
+// pairing that is not a file that runs. Null means nothing here keeps it. The four pairings are
+// the package's own four, read the same way it reads them.
+function pairingOf(tree, tracked, promiseRel, front) {
+  if (front.blocks.artefact !== undefined) {
+    const block = front.blocks.artefact;
+    const complete = ['path', 'sha256', 'accepted_by', 'at'].every((f) => block[f]);
+    return complete ? `the accepted artefact ${block.path}` : null;
+  }
+  if (front.fields.evidence === 'self') return promiseRel;
+  if (front.fields.evidence !== undefined) {
+    const raw = String(front.fields.evidence);
+    const hash = raw.indexOf('#');
+    if (hash <= 0 || hash === raw.length - 1) return null;
+    const target = raw.slice(0, hash).trim();
+    const name = raw.slice(hash + 1).trim();
+    const path = [...tracked].find((f) => f === target || f.endsWith(`/${target}`));
+    if (!path) return null;
+    const text = contentAt(tree, path);
+    return PROMISE_CASE_BY_NAME.some((build) => build(name).test(text || '')) ? path : null;
+  }
+  const want = `${stemOf(promiseRel)}${SPEC_SUFFIX}`;
+  const found = [...tracked].filter((f) => stemOf(f) === want);
+  return found.length === 1 ? found[0] : null;
+}
+
+function promisesIn(tree, cfg) {
+  const layer = detectEvidenceLayer(tree, cfg);
+  const dir = layer.promises && layer.promises.dir;
+  if (!dir) return [];
+  const tracked = trackedIn(tree);
+  const out = [];
+  for (const rel of [...tracked].sort()) {
+    if (!rel.startsWith(`${dir}/`) || !rel.endsWith('.md') || rel.slice(dir.length + 1).includes('/')) continue;
+    const front = promiseFrontmatter(contentAt(tree, rel));
+    if (!front || front.fields.status === undefined) continue;
+    out.push({
+      id: front.fields.id || stemOf(rel),
+      path: rel,
+      status: front.fields.status,
+      // The package accepts "implemented" or one of the repository's own parked words, and the
+      // only move that takes a promise out of what anything enforces is leaving "implemented".
+      // So that, and only that, is what these two trees are compared on — no parked list to
+      // configure, and a repository that renamed its parked words is read exactly the same.
+      live: front.fields.status === 'implemented',
+      keptBy: pairingOf(tree, tracked, rel, front),
+    });
+  }
+  return out;
+}
+
+// ---- the guards on everything else that protects ---------------------------------------------
+//
+// The law guard above says a branch may not weaken the rules it is judged by. These two say the
+// same thing about the other two ways a mission is held to its work: the proof it is judged by,
+// and the gates it is measured through. Same shape, same mechanism, same one way past it — the
+// client's own answered "ask" of kind "lower", naming the exact thing being weakened.
+//
+// The target named on that ask is what tells one refusal from another, and there are three kinds
+// of name across the three guards, deliberately spelled so no two can collide:
+//
+//   <rule id>          a rule in the graph                        (the law guard, unchanged)
+//   evidence:<name>    a promise's own id, or a test file's path  (the evidence guard)
+//   gate:<path>        a file a gate, a hook or CI actually runs  (the gate guard)
+//
+// A rule id is a bare directory name under `.yggdrasil/aspects/`, so it can never carry the `:`
+// the other two open with; a promise id is a filename stem and a test file is a path, so the two
+// that share the `evidence:` prefix never spell each other either.
+//
+// Nothing here asks a model anything. Both guards read two trees and compare two numbers or two
+// pieces of text — a landing is never refused on a judgement about whether a change was fair.
+function protectionBook(horde) {
+  const refusals = [];
+  const used = [];
+  return {
+    refusals,
+    used,
+    // Hands back nothing: what the caller does about a refusal is always the same, so the answer,
+    // when there is one, is banked here rather than passed back to be banked again at each site.
+    refuse(target, kase, what) {
+      const answer = findAnswer(horde, 'lower', target);
+      if (answer) {
+        if (!used.includes(answer)) used.push(answer);
+        return;
+      }
+      refusals.push({
+        aspect: target,
+        case: kase,
+        note: `${what} Nothing that protects the work is the work's own to weaken. If this really is right, it is the client's call, not this gate's: `
+          + `ask.mjs add "<why>" --kind lower --aspect "${target}", then ask.mjs answer <id> "<answer>" [--scope once|mission] — `
+          + 'once for this landing, mission to stand until the mission closes. The answer lands in decisions.md, which is what this guard reads.',
+      });
+    },
+  };
+}
+
+// A promise that was being kept on the base has to still be being kept here. Three ways it can
+// stop, and each is named separately because the fix differs: the promise is gone, the promise
+// stopped saying anything runs it, or the thing that kept it is no longer there to run.
+//
+// A promise that was already parked on the base is left entirely alone — nothing was being kept,
+// so nothing can have stopped being kept — and so is one this branch invents.
+function promiseRefusals(book, basePromises, headPromises, touched) {
+  if (!basePromises.length) return;
+  const head = new Map(headPromises.map((p) => [p.id, p]));
+  for (const was of basePromises) {
+    if (!was.live) continue;
+    if (!touched.has(was.path) && !(was.keptBy && touched.has(was.keptBy))) continue;
+    const now = head.get(was.id);
+    if (!now) {
+      book.refuse(`evidence:${was.id}`, 'promise gone', `The promise "${was.id}" reads as implemented on the base and is gone from this branch.`);
+      continue;
+    }
+    if (!now.live) {
+      book.refuse(`evidence:${was.id}`, 'promise parked', `The promise "${was.id}" stands at "${was.status}" on the base and "${now.status}" on this branch, which takes it out of everything that enforces it.`);
+      continue;
+    }
+    if (was.keptBy && !now.keptBy) {
+      book.refuse(`evidence:${was.id}`, 'pairing gone', `The promise "${was.id}" is kept by ${was.keptBy} on the base, and on this branch nothing here keeps it.`);
+    }
+  }
+}
+
+// The suite itself. Every file this repository's own `config.testGlobs` recognise on the base
+// tree, plus whatever keeps a live promise there, and three ways a branch can leave less of one
+// behind than it found: the file is gone, it carries fewer assertions, or it carries a marker
+// that switches part of it off.
+//
+// Per file and never in total, which is the strictest of the readings available: assertions moved
+// out of one file into another are a split, and a split is a thing to say out loud rather than a
+// number that happens to come out even. A file whose bytes turn up unchanged under a NEW name is
+// the one exception — that is a rename, nothing was taken away, and refusing it would refuse
+// tidying up.
+function testFileRefusals(book, cfg, baseTree, headTree, basePromises, touched) {
+  const globs = Array.isArray(cfg.testGlobs) ? cfg.testGlobs.filter(Boolean) : [];
+  const baseTracked = trackedIn(baseTree);
+  const headTracked = trackedIn(headTree);
+  const isTest = (f) => globs.some((g) => globToRegExp(g).test(f));
+
+  const watched = new Set([...baseTracked].filter((f) => isTest(f) && touched.has(f)));
+  // A promise paired with something the globs do not recognise is still something that keeps a
+  // promise, and a skip marker added to it switches that promise off just the same.
+  for (const p of basePromises) if (p.live && p.keptBy && baseTracked.has(p.keptBy) && touched.has(p.keptBy)) watched.add(p.keptBy);
+  if (!watched.size) return;
+
+  const arrived = new Set();
+  for (const f of headTracked) if (isTest(f) && !baseTracked.has(f)) arrived.add(contentAt(headTree, f));
+
+  for (const path of [...watched].sort()) {
+    const was = contentAt(baseTree, path);
+    if (!headTracked.has(path)) {
+      if (arrived.has(was)) continue;
+      book.refuse(`evidence:${path}`, 'test removed', `${path} is on the base with ${countAssertions(was)} assertion(s) and gone from this branch.`);
+      continue;
+    }
+    const now = contentAt(headTree, path);
+    if (now === was) continue;
+    const wasAssertions = countAssertions(was);
+    const nowAssertions = countAssertions(now);
+    if (nowAssertions < wasAssertions) {
+      book.refuse(`evidence:${path}`, 'assertions dropped', `${path} carries ${nowAssertions} assertion(s) on this branch and ${wasAssertions} on the base.`);
+    }
+    const wasSkips = countSkips(was);
+    const nowSkips = countSkips(now);
+    if (nowSkips > wasSkips) {
+      book.refuse(`evidence:${path}`, 'skip added', `${path} carries ${nowSkips} skip or exclusivity marker(s) on this branch and ${wasSkips} on the base — a case switched off still lets the suite go green.`);
+    }
+  }
+}
+
+function evidenceGuard(cfg, horde, baseTree, headTree, touched) {
+  const book = protectionBook(horde);
+  // Read once per tree and handed to both passes: each reading asks the graph where this
+  // repository keeps its promises, and asking twice for one answer would cost a landing an extra
+  // round trip to the CLI for nothing.
+  const basePromises = promisesIn(baseTree, cfg);
+  const headPromises = basePromises.length ? promisesIn(headTree, cfg) : [];
+  promiseRefusals(book, basePromises, headPromises, touched);
+  testFileRefusals(book, cfg, baseTree, headTree, basePromises, touched);
+  return { ok: book.refusals.length === 0, refusals: book.refusals, used: book.used };
+}
+
+// ---- the gate guard ---------------------------------------------------------------------------
+//
+// What actually runs before a change is allowed through: the script a `config.gates.*` command
+// invokes, the commit and push hooks, and the CI workflows. A branch may not take one away or
+// rewrite one without the client's word — the hand that writes the code is not the hand that gets
+// to decide what checks it.
+//
+// `config.gates.*` itself lives in `.horde/`, which is not in the repository and is therefore in
+// neither tree: there is no earlier version of it to compare against, and a guard that read two
+// trees could only ever invent one. What IS in both trees is the file each command actually runs,
+// so that is what this watches — a command's own tokens, kept where one of them names a file the
+// base tree tracks. A command made of nothing but shell builtins (`true`, `npm run gate`) names no
+// tracked file and contributes nothing here, which is the honest answer: this tool cannot see
+// inside `npm run gate` and does not pretend to.
+//
+// `config.protectedPaths` is deliberately NOT watched here, though it belongs to the same family.
+// The scope item already refuses any branch that so much as touches one, with no way through at
+// all — stricter than this guard, and unanswerable. Watching them here would add a refusal naming
+// a client answer that still could not land the change, which is worse than saying nothing.
+const CI_WORKFLOW = /^\.github\/workflows\/[^/]+\.ya?ml$/;
+const PUSH_HOOKS = ['.git/hooks/pre-push', '.husky/pre-push'];
+
+// The tokens of a shell command, as candidates for "a file this command runs". Split on whitespace
+// and the shell's own separators, unquoted, with a leading `./` taken off — every token is then
+// offered to the tracked set, which is what decides whether it names a real file.
+function commandTokens(command) {
+  return String(command || '')
+    .split(/[\s;&|()<>]+/)
+    .map((t) => t.replace(/^['"]|['"]$/g, '').replace(/^\.\//, ''))
+    .filter(Boolean);
+}
+
+function gateGuard(cfg, horde, baseTree, headTree, touched) {
+  const baseTracked = trackedIn(baseTree);
+  const headTracked = trackedIn(headTree);
+  const watched = new Set();
+  const why = new Map();
+  const watch = (rel, reason) => {
+    if (!baseTracked.has(rel) || !touched.has(rel) || watched.has(rel)) return;
+    watched.add(rel);
+    why.set(rel, reason);
+  };
+
+  for (const level of ['commit', 'team', 'trunk']) {
+    const command = cfg.gates && cfg.gates[level];
+    for (const token of commandTokens(command)) watch(token, `config.gates.${level} runs it`);
+  }
+  for (const rel of [...HOOK_FILES, ...PUSH_HOOKS]) watch(rel, 'it is a commit or push hook');
+  for (const rel of [...baseTracked].sort()) if (CI_WORKFLOW.test(rel)) watch(rel, 'CI runs it');
+
+  const book = protectionBook(horde);
+  for (const rel of [...watched].sort()) {
+    if (!headTracked.has(rel)) {
+      book.refuse(`gate:${rel}`, 'gate removed', `${rel} is on the base — ${why.get(rel)} — and gone from this branch.`);
+      continue;
+    }
+    if (contentAt(baseTree, rel) !== contentAt(headTree, rel)) {
+      book.refuse(`gate:${rel}`, 'gate changed', `${rel} reads differently on this branch — ${why.get(rel)}, so what it now runs is what every later change is checked by.`);
+    }
+  }
+  return { ok: book.refusals.length === 0, refusals: book.refusals, used: book.used };
+}
+
+// Both new guards, run together, and every answer either of them leaned on. One call site's worth
+// of wiring written once, because a landing runs this in two places — a ticket on its own and a
+// ticket being screened into a batch — and a guard that ran in only one of them would be a guard
+// a worker could get past by landing two tickets at a time.
+//
+// `changedFiles` is what the branch itself did — the same three-dot diff against the parent branch
+// that the scope item and the conflict guard already read — and every comparison below is confined
+// to it. Without that confinement a branch merely left behind by its parent would read as having
+// deleted every test the parent has added since: two trees differ for two reasons, and only one of
+// them is this branch's doing. (The other is item 1's to report, which it does.)
+function protectionGuards(cfg, horde, baseTree, headTree, changedFiles) {
+  const touched = new Set(changedFiles);
+  if (!touched.size) return { refusals: [], used: [] };
+  const evidence = evidenceGuard(cfg, horde, baseTree, headTree, touched);
+  const gates = gateGuard(cfg, horde, baseTree, headTree, touched);
+  return {
+    refusals: [...evidence.refusals, ...gates.refusals],
+    used: [...evidence.used, ...gates.used],
+  };
 }
 
 // ---- the prototype guard ---------------------------------------------------------------
@@ -1727,8 +2160,8 @@ function groupBatchCandidates(candidates) {
   return { groups, overflow };
 }
 
-// screenBatchMember(root, cfg, horde, ctx, basePath, cleaner) — items 1, 3, 4, 8, 9 and both
-// guards, for one candidate, exactly as run() runs them: a scratch tree at that ticket's own
+// screenBatchMember(root, cfg, horde, ctx, basePath, cleaner) — items 1, 3, 4, 8, 9 and every
+// guard, for one candidate, exactly as run() runs them: a scratch tree at that ticket's own
 // branch tip (basePath is the group's, built once and shared — every member of a group is
 // measured against the identical parent tip, so one tree read by all of them is the same reading
 // run() would have made per ticket, not a shortcut). A guard refusal or a stopped guard read is
@@ -1750,6 +2183,8 @@ function screenBatchMember(root, cfg, horde, ctx, basePath, cleaner) {
   const refusals = [...law.refusals];
   const conflict = conflictGuard(cfg, basePath, head.path, ctx.changedFiles, law.headReach);
   refusals.push(...conflict.refusals);
+  const protection = protectionGuards(cfg, horde, basePath, head.path, ctx.changedFiles);
+  refusals.push(...protection.refusals);
   if (refusals.length) {
     return {
       ok: false,
@@ -1759,7 +2194,7 @@ function screenBatchMember(root, cfg, horde, ctx, basePath, cleaner) {
   if (!Object.values(results).every((r) => r.ok)) {
     return { ok: false, note: 'a per-ticket check already refuses this branch — excluded from the shared gate rather than spending it on content that cannot land this round', results };
   }
-  return { ok: true, results, lawUsed: law.used };
+  return { ok: true, results, answersUsed: [...law.used, ...protection.used] };
 }
 
 // combineBatchGroup(root, group, cleaner) — step 3 of the design: one throwaway worktree at the
@@ -1881,7 +2316,7 @@ function landBatchGreen(root, cfg, horde, level, group, provenanceInfo, shared, 
     const landed = { ticket: ctx.ticketId, sha: merged.sha, at: nowIso() };
     recordMerged(horde, ctx.team, ctx.ticketId, merged.sha, { tree: root });
     appendLanded(ctx.issueDirPath, landed, group.parentBranch);
-    ctx.screen.lawUsed.forEach((answer) => consumeAnswer(horde, answer, ctx.ticketId, ctx.branchSha));
+    ctx.screen.answersUsed.forEach((answer) => consumeAnswer(horde, answer, ctx.ticketId, ctx.branchSha));
     checks.push({ name: 'merge', ok: true, note: `${merged.note} — ${short(merged.sha)}` });
     landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: true, checks, landed }, provenanceInfo, flags, group, level, lockNotes) });
   }
@@ -2125,7 +2560,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
   // against and merged into, not the one the queue's own shape would have implied.
   const parent = { ...parentResolved, branch: parentBranch };
   const parentTip = git(['rev-parse', '--verify', parentBranch]);
-  // The law guard and the conflict guard read two trees and compare them. Without a base there is
+  // Every guard but the prototype one reads two trees and compares them. Without a base there is
   // no comparison to make,
   // and a landing that skipped the comparison because the base was missing would be the one
   // landing where the law could be rewritten freely.
@@ -2173,17 +2608,20 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     results['graph text'] = checkGraphText(root, branch, parentBranch, changedFiles);
 
     if (!noGate) {
-      // Both guards run before the expensive half and before anything merges: a branch that
-      // rewrote the law it is judged by would otherwise be judged by the law it wrote.
+      // Every guard runs before the expensive half and before anything merges: a branch that
+      // rewrote the law it is judged by would otherwise be judged by the law it wrote, and one
+      // that took away the proof or the gate would be measured by what it left behind.
       const law = lawGuard(cfg, horde, base.path, head.path);
       if (law.stopped) fail(law.stopped);
       guards.push(...law.refusals);
       const conflict = conflictGuard(cfg, base.path, head.path, changedFiles, law.headReach);
       guards.push(...conflict.refusals);
+      const protection = protectionGuards(cfg, horde, base.path, head.path, changedFiles);
+      guards.push(...protection.refusals);
       if (guards.length) {
         fail(`${guards.length} refusal(s) — this branch may not land as it stands:\n${guards.map((g) => `- ${g.aspect} (${g.case}): ${g.note}`).join('\n')}`);
       }
-      law.used.forEach((answer) => consumeAnswer(horde, answer, ticketId, branchSha));
+      [...law.used, ...protection.used].forEach((answer) => consumeAnswer(horde, answer, ticketId, branchSha));
     }
 
     // The lock covers the repository's own gate command and both `yg check` runs, and nothing

@@ -1959,7 +1959,10 @@ test('land.mjs --fate: --horde written out resolves to that horde\'s own trunk t
 // every ticket branch here is, on trunk, until its own node lands. Without it, Yggdrasil reads a
 // directory that is not there as "no .yggdrasil/ project here at all", a confusing stand-in for
 // the real answer ("no node by that name yet") that has nothing to do with land.mjs itself.
-function setupBatchLandable(dir, ids, { judge = 'one-shot', perTicket = {} } = {}) {
+// `baseFiles` is content every ticket branches FROM rather than content any of them adds: a
+// commit hook, a gate script, a suite already there — whatever a test needs the base tree to hold
+// before the branches are cut, so a branch can be seen taking it away.
+function setupBatchLandable(dir, ids, { judge = 'one-shot', perTicket = {}, baseFiles = {} } = {}) {
   initHorde(dir);
   addAspect(dir, 'no-marker', {
     description: 'Source files must not carry an unfinished-work marker.',
@@ -1970,7 +1973,12 @@ function setupBatchLandable(dir, ids, { judge = 'one-shot', perTicket = {} } = {
   git(['checkout', '-q', 'mission1/trunk'], dir);
   mkdirSync(join(dir, '.yggdrasil', 'model'), { recursive: true });
   writeFileSync(join(dir, '.yggdrasil', 'model', '.gitkeep'), '');
-  git(['add', '.yggdrasil'], dir);
+  for (const [path, content] of Object.entries(baseFiles)) {
+    const abs = join(dir, path);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, content);
+  }
+  git(['add', '--', '.yggdrasil', ...Object.keys(baseFiles)], dir);
   git(['commit', '-qm', 'graph: the rule this batch is judged by'], dir);
 
   const branches = {};
@@ -2177,6 +2185,55 @@ test('land.mjs batch: --no-gate on two or more tickets lands each on its own, ne
     const item = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === id);
     assert.equal(item.state, 'landed', `${id} was not supposed to merge under --no-gate`);
   }
+});
+
+// The guards that keep a landing from weakening what protects it run per ticket, individually, on
+// the batch path exactly as they do for a ticket landing alone (021). Landing three tickets at
+// once is not a way past them: a member that weakens something is screened out of the shared run
+// and refused on its own, while its two siblings still batch and still land.
+test('land.mjs batch: a member that weakens a gate is refused in the screen, not carried in by its siblings', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ids = ['141', '142', '143'];
+  const branches = setupBatchLandable(dir, ids, {
+    baseFiles: { '.husky/pre-commit': '#!/bin/sh\nnpm run gate\n' },
+  });
+  const gateLog = join(dir, 'gate-calls.log');
+  run('horde.mjs', ['config', 'set', 'gates.team', `echo run >> "${gateLog}"`], dir);
+
+  // 142 takes the commit hook away. Nothing else about it differs from its two siblings — same
+  // parent, same tip, no file in common with either of them.
+  git(['checkout', '-q', branches['142']], dir);
+  git(['rm', '-q', '.husky/pre-commit'], dir);
+  git(['commit', '-qm', 'drop the commit hook'], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  writeTicketLog(writeIssue(dir, 'trunk', '142', {
+    node: 'feature142',
+    files: ['.yggdrasil/model/feature142/yg-node.yaml', 'feature-142.mjs', 'feature-142.test.mjs', '.husky/pre-commit'],
+  }));
+
+  const r = run('land.mjs', [ids.join(',')], dir);
+
+  // The two that weaken nothing batch together and land, exactly as they would have without 142.
+  for (const id of ['141', '143']) {
+    const res = resultFor(r, id);
+    assert.ok(res, `no result for ${id}`);
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === id).state, 'merged', `${id} did not land`);
+  }
+
+  // 142 is refused by name. A guard that ran only for a ticket landing alone would have let this
+  // one through on the shared gate its siblings paid for.
+  const res142 = resultFor(r, '142');
+  assert.ok(res142, 'no result for 142');
+  assert.equal(res142.ok, false);
+  assert.match(String(res142.refused || ''), /gate:\.husky\/pre-commit \(gate removed\)/);
+  assert.equal(run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === '142').state, 'landed', 'nothing landed for 142');
+  assert.equal(r.code, 1, 'the run as a whole is not all-green while 142 has not landed');
+
+  // One shared run for {141, 143}, and none at all for 142 — a branch refused outright never
+  // reaches the expensive half.
+  assert.equal(gateCallCount(gateLog), 1);
 });
 
 test('land.mjs batch: a batch naming exactly one ticket behaves exactly like the plain single-ticket call', async (t) => {
