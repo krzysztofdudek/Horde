@@ -437,6 +437,11 @@ function measureJudge(horde, root, cfg, tickets, landed) {
         });
         continue;
       }
+      // find(), not filter(): yg-verdicts/1 holds at most one live verdict per (aspect, unit) —
+      // Yggdrasil's lock writes that slot unconditionally on every record, judge included, so
+      // there is no history to pick the wrong entry from. (There is a real, separate problem one
+      // level up: recording a second judge's verdict on a pair overwrites the first judge's in
+      // that same slot, so this comparison can only ever find itself — see issue 104.)
       const second = tier
         ? verdicts.find((o) => o && o.judge === tier && o.aspect === v.aspect && o.unit && o.unit.path === v.unit.path && o.unit.kind === v.unit.kind)
         : null;
