@@ -1,6 +1,6 @@
 # 088 · CHANGELOG chmod/root skip wording will say 'two' when three tests now carry the guard
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -26,4 +26,6 @@ Dowód, którego oczekuję: `grep -rn "chmod cannot force a write to fail as roo
 
 
 ## Evidence
+
+- **ran:** grep -rn chmod tests/*.mjs · **saw:** count 3, matches corrected wording; merged
 

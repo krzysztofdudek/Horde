@@ -402,3 +402,5 @@
 - 2026-09-14 02:07 · decided tk-boundary-cwd-is-intentional
 - 2026-09-14 02:15 · 040 evidence row · node --test tests/tk.test.mjs
 - 2026-09-14 02:15 · 040 → done · merged
+- 2026-09-14 02:16 · 088 evidence row · grep -rn chmod tests/*.mjs
+- 2026-09-14 02:16 · 088 → done · merged
