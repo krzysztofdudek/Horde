@@ -296,6 +296,13 @@ it. The file carries that pid, so a lock left behind by a process that died is *
 note** rather than waited on forever, and an unreadable (half-written) lock file is treated the same
 way.
 
+Two or more tickets asked for in one `land.mjs` call take this same lock **once** for the whole
+group, when they are eligible to share it — the same parent branch at the same tip, and no changed
+file in common — rather than once each: `tick.mjs` hands every ticket its own pass finds ready to
+`land.mjs` in one call, and it is `land.mjs` itself that works out which of them can actually share a
+hold. A ticket that is not eligible, or whose shared run comes back red, lands on its own instead, in
+the same call — see "batching" in `scripts/README.md` for the full shape.
+
 ## Runner
 
 `tick.mjs` is a script; something drives it. There are two runners, and the loop's own four steps are

@@ -657,7 +657,6 @@
 - 2026-09-14 10:38 · 121 → in-progress · dispatched to a worker in its own worktree/branch
 - 2026-09-14 10:38 · 123 → in-progress · dispatched to a worker in its own worktree/branch
 - 2026-09-14 10:38 · 124 → in-progress · dispatched to a worker in its own worktree/branch
-<<<<<<< HEAD
 - 2026-09-14 10:44 · decided 122-consolidate-shared-git-helper
 - 2026-09-14 10:44 · decided 120-fifth-catalogue-column
 - 2026-09-14 10:44 · 120 evidence · Krzysztof approved: a fifth column on the catalogue naming the evidence class outright (see .jarl/decisions.md, 120-fifth-catalogue-column). Ready for implementation dispatch. Held out of dispatch until the current wave lands — issue 124 (in progress) touches _lib.mjs, where parseEvidenceRows lives.
@@ -675,3 +674,4 @@
 - 2026-09-14 11:02 · 123 evidence row · HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/drill.test.mjs
 - 2026-09-14 11:02 · 123 review approve · Mirrors issue 108's fix precisely but with a genuinely justified deviation: the branch/merge-base reality checks stay unconditional, NOT folded under the exemption, because they answer a different question (is this ticket's git state real) that the evidence-layer judgement has no bearing on — verified this reasoning is sound and the dedicated test (a queued-but-never-dispatched ticket still reports 'no such branch', not silently exempted) proves it correctly rather than just asserting it. noEvidenceLayerNote import and ctx.horde destructuring both verified already-available, no new plumbing needed beyond what's shown. Four tests cover: exempted case, missing-branch-not-swallowed case, evidence-layer-unchanged case, and not-yet-judged-unchanged case (distinguishing 'no layer' from 'not judged yet', a real distinction noEvidenceLayerIn makes). CHANGELOG entry correctly mirrors 108's register, adapted for 'drilled directly' vs 'at landing'. Verified independently: 26/26 pass on the merged tip.
 - 2026-09-14 11:02 · 123 → done · drill.mjs check tdd now exempts the 'test patterns' item outright on a mission whose charter has judged 'no evidence layer', citing that judgment — mirroring land.mjs's revert-test fix (issue 108) for the discipline drill, while still reporting a genuinely broken ticket branch rather than papering over it.
+- 2026-09-14 11:54 · 080 evidence row · cd skills/horde/scripts && HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" timeout 900 node --test tests/land.test.mjs tests/tick.test.mjs

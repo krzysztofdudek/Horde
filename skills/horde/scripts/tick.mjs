@@ -230,20 +230,52 @@ function readQueue(horde) {
 }
 
 // ---- 2. land what is ready ----------------------------------------------------------------
+//
+// One `land.mjs` call for every ticket this pass found ready, not one call per ticket: land.mjs
+// (080) does its own non-overlap/same-parent batching internally, sharing one run of its own
+// expensive items across as many of them as it safely can and falling every other one back to
+// landing on its own — this loop only has to gather the ready set and hand it over once. Nothing
+// about WHICH tickets are ready, or what tick does with the answer, changed to make this true.
 
-function landCommand(horde, ticket) {
-  return ['node', join(SCRIPTS, 'land.mjs'), ticket, '--background', '--horde', horde, '--json'];
+function landCommand(horde, tickets) {
+  return ['node', join(SCRIPTS, 'land.mjs'), tickets.join(','), '--background', '--horde', horde, '--json'];
 }
 
-function startGate(horde, ticket, root) {
-  const [, ...args] = landCommand(horde, ticket);
+// startGate(horde, tickets, root) — one `land.mjs --background` call for the whole list, read back
+// into one breakdown per ticket, in the caller's own order. land.mjs replies with today's
+// single-ticket shape ({ticket, branch, resultFile}) whenever exactly one ticket was actually
+// asked for — including when a longer list narrowed to one because land.mjs itself refused every
+// other ticket in it inline — and with the batch shape ({items: [...]}) for two or more; either
+// way this reads back the same per-ticket {ticket, started, resultFile, note}, so the caller below
+// never has to know which shape land.mjs actually sent. A ticket the reply does not mention at all
+// (a shape neither of the above ever produces in practice, but never assumed away) is reported the
+// same as one land.mjs itself could not start.
+function startGate(horde, tickets, root) {
+  const [, ...args] = landCommand(horde, tickets);
   try {
     const out = execFileSync(process.execPath, args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     const parsed = JSON.parse(out);
-    return { started: true, resultFile: parsed.resultFile || null, note: null };
+    const items = Array.isArray(parsed.items)
+      ? parsed.items
+      : [{
+        ticket: parsed.ticket, branch: parsed.branch, resultFile: parsed.resultFile || null, started: true, note: null,
+      }];
+    const byTicket = new Map(items.map((it) => [String(it.ticket), it]));
+    return tickets.map((t) => {
+      const it = byTicket.get(String(t));
+      return it
+        ? {
+          ticket: t, started: !!it.started, resultFile: it.resultFile || null, note: it.note || null,
+        }
+        : {
+          ticket: t, started: false, resultFile: null, note: 'land.mjs did not report on this ticket',
+        };
+    });
   } catch (e) {
     const stderr = e && e.stderr ? String(e.stderr).trim() : String((e && e.message) || e);
-    return { started: false, resultFile: null, note: stderr };
+    return tickets.map((t) => ({
+      ticket: t, started: false, resultFile: null, note: stderr,
+    }));
   }
 }
 
@@ -316,15 +348,22 @@ function landTheLanded(horde, cfg, root, holds) {
 
   const results = [];
   // The gates first: they start a detached process and touch no state, so nothing below depends on
-  // the order and a refusal further down leaves no half-started run behind.
-  for (const step of plan.filter((s) => s.action === 'gate')) {
-    const started = startGate(horde, step.ticket, root);
-    results.push({
-      ticket: step.ticket,
-      action: started.started ? 'gate' : 'gate-refused',
-      note: started.started ? `${step.note} (result will be written to ${started.resultFile})` : `could not start the gate: ${started.note}`,
-      resultFile: started.resultFile,
-    });
+  // the order and a refusal further down leaves no half-started run behind. One land.mjs call for
+  // the whole ready set — not one per ticket — is what lets non-overlapping tickets share a single
+  // run of its own expensive items instead of paying for one each.
+  const gateSteps = plan.filter((s) => s.action === 'gate');
+  if (gateSteps.length) {
+    const started = startGate(horde, gateSteps.map((s) => s.ticket), root);
+    const byTicket = new Map(started.map((s) => [s.ticket, s]));
+    for (const step of gateSteps) {
+      const s = byTicket.get(step.ticket);
+      results.push({
+        ticket: step.ticket,
+        action: s.started ? 'gate' : 'gate-refused',
+        note: s.started ? `${step.note} (result will be written to ${s.resultFile})` : `could not start the gate: ${s.note}`,
+        resultFile: s.resultFile,
+      });
+    }
   }
 
   // Each merge is its own write — recordMerged owns the queue document while it applies one, and

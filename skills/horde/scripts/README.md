@@ -851,11 +851,15 @@ Beyond the counts it always carried, `close` states six figures the chairman rea
 
 ## land.mjs — the gate a change lands through
 
-`land.mjs <ticket|branch> [--level trunk] [--no-gate] [--background] [--tree p] [--horde h]`, for a
-ticket branch (`<horde>/t-NNN`). This is the last command a worker runs. Nine items, ✓/✗ each;
+`land.mjs <ticket|branch>[,<ticket|branch>...] [--level trunk] [--no-gate] [--background] [--tree p] [--horde h]`,
+for a ticket branch (`<horde>/t-NNN`). This is the last command a worker runs. Nine items, ✓/✗ each;
 **every one green means the branch is merged into its parent here and now**, and a single ✗ means
 it is not. Nobody signs anything either way — a green run is the signature, and the landed sha is
 the only trace.
+
+A comma-separated list of two or more lands under one shared run of the three expensive items when
+they are eligible to — see "batching" below; a single ticket (today's only shape) is entirely
+unaffected.
 
 It runs in a **fresh detached worktree at the branch's own tip**, made for the run and removed on
 every way out. It does not read whichever worktree happens to hold the branch: a gate that measures
@@ -932,11 +936,15 @@ read cannot give two answers to one question, and a plan that cannot be built ri
 landing nothing (the size is still measured, just without a position beside it). No item passes or
 fails on it.
 
-`--no-gate` skips items 2, 5, 6 and 7, and never merges. `--background` starts the run, prints the
-path of the result file it will write (`.horde/hordes/<h>/land/<ticket>.json`, shape
-`{ticket, branch, sha, ok, checks: [{name, ok, note}], at}` plus the tree it ran in) and returns at
-once. A half-written result file reads as no file at all — the gate never trusts a recorded result,
-its own or anyone's, and simply runs again.
+`--no-gate` skips items 2, 5, 6 and 7, and never merges — on two or more tickets it also skips the
+batching mechanic entirely, since there is nothing expensive left to share, and lands each on its
+own. `--background` starts the run, prints the path of the result file it will write
+(`.horde/hordes/<h>/land/<ticket>.json`, shape `{ticket, branch, sha, ok, checks: [{name, ok, note}], at}`
+plus the tree it ran in) and returns at once, for a single ticket; for two or more it prints one
+`{tickets, items: [{ticket, branch, resultFile, started, note}], started}` instead — one detached
+worker for the whole list, not one per ticket, with each ticket's own result file at the same path
+it would carry landed on its own. A half-written result file reads as no file at all — the gate
+never trusts a recorded result, its own or anyone's, and simply runs again.
 
 ### the two guards
 
@@ -996,6 +1004,49 @@ repository serialize instead of running each other's commands over each other's 
 waits `config.gateLockWaitMs` (default two minutes) and then refuses, naming the pid holding it. The
 file carries that pid, so a lock left behind by a process that died is **taken over with a note**
 rather than waited on forever, and an unreadable (half-written) lock file is treated the same way.
+
+### batching
+
+Two or more tickets asked for in one call — a comma-separated list on the command line, or the
+comma-joined ready set `tick.mjs` hands over (see its own step 2, below) — never simply run the nine
+items once each in a loop: `land.mjs` works out which of them can share the lock above, and shares it.
+
+**Eligible** means both of two things at once: the same parent branch at the same tip (nothing else
+makes "non-overlapping" mean anything — two tickets against different bases are not landing onto the
+same tree), and no changed file in common with another eligible ticket (the same comparison scope
+already uses, read off each branch's own diff — Yggdrasil's own derived lock files never count
+toward a collision). A ticket that fails either test is not excluded from the run, only from
+**this** shared hold; it lands on its own instead, in the same call.
+
+For an eligible group: items 1, 3, 4, 8 and 9, and both guards, still run per ticket, individually,
+exactly as for one — nothing about batching changes what they measure or when. What changes is items
+5-7 plus the judge item: a throwaway worktree at the group's own parent tip, each member's branch
+merged onto it in sequence (`--no-ff`, discarded the moment the gate has run — never referenced by
+any branch), and the gate lock taken **once**, around one run of the repository's own gate command,
+`yg check`, and the mapping item, against that combined tree. A branch that unexpectedly conflicts
+while combining — declared files can lie, or two tickets can touch the same file under different
+declared components — drops out of the group right there and lands on its own instead; the rest keep
+combining.
+
+**Green** merges each surviving member into the real parent individually, in sequence, exactly as a
+solo landing would — the batching only changed how the gate ran, never how a member's own merge
+commit, size figure or journal bullet look. **Red is never bisected**: every member of the group
+falls back to landing on its own instead, in the same call, one at a time — the worst case (something
+is actually wrong) costs exactly what N separate landings cost today; the best case (everything
+passes) costs one run instead of N.
+
+"Lands on its own" always means the same thing land.mjs already does for a single ticket, run fresh,
+with nothing about the batch attempt carried over — no consumed "once" answer, no already-computed
+check. It can still refuse, for the same reasons a solo landing always could — most notably, base
+freshness: two tickets that shared one parent tip and are landed one after another (whether as a
+batch's own fallback, or as two ordinary solo landings racing today) will see the first one's own
+merge move the tip out from under the second, which has never incorporated it. That is not something
+batching introduces — a worker's own branch has to catch up with its parent before it can land,
+batched or not — but it is worth knowing before reading a red "base freshness" on a ticket that
+looked, moments earlier, like it was about to land clean.
+
+`--no-gate` never batches — with items 5-7 skipped outright, there is nothing expensive left to
+share, so every ticket in the list just lands on its own, exactly as `--no-gate` behaves for one.
 
 ### landing
 
@@ -1208,8 +1259,12 @@ inherits whatever tree the session's shell is already in.
    answer says what was salvaged, because whoever reads it is usually reading it after a crash.
 2. **Land what is ready.** Every `landed` item: the gate's own result file
    (`hordes/<h>/land/<ticket>.json`) is read, and when it is missing, unreadable, or about a sha the
-   branch has moved past, `land --background` runs again — a record of a run is never a substitute
-   for one. Green merges the item and writes the wave-journal bullet. Red puts the ticket back with
+   branch has moved past, it is added to the gate's own re-run list. Every item on that list, this
+   whole run, goes out as **one** `land --background` call (comma-joined), not one call each — so any
+   of them that turn out non-overlapping and on the same base share `land.mjs`'s own one run of its
+   expensive items instead of each paying for one (see "batching" in `land.mjs`'s own section above);
+   which of them actually can is entirely `land.mjs`'s own call, made once it has all of them in
+   hand. Green merges the item and writes the wave-journal bullet. Red puts the ticket back with
    the gate's own words and the round counted; when the rounds are spent the item and the ticket
    both go to `blocked` and one `stuck` ask is filed for the client, carrying those last words and
    the path of the ticket's log. A `landed` item whose branch has vanished is a refusal naming the

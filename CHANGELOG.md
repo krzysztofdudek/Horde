@@ -62,6 +62,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - The architect, legislate and retro briefs no longer switch to the mission's own trunk on their own just because only one mission is running — a bare run now stays on whatever checkout you are already in; name `--horde <mission>` to point it at that mission's trunk instead.
 - `wave start` no longer reads the mission's own trunk on its own, just because only one mission is running, when it records the wave's planned parallelism — a bare run now reads whatever checkout you are already in; name `--horde <mission>` to point it at that mission's trunk instead.
 - `retro` no longer switches to the mission's own trunk on its own just because only one mission is running, for its taste-item logging and its judge measurement — a bare run now stays on whatever checkout you are already in; name `--horde <mission>` to point it at that mission's trunk instead.
+- When two or more tickets are ready to land at once and touch none of the same files, they now share one run of the landing gate's expensive checks instead of each paying for its own — landing several ready tickets at the same time is faster. Each still gets its own merge commit, its own journal entry and its own size figure, exactly as before. A ticket that does not fit for sharing — a different base, a file another ready ticket also touches, or a shared run that comes back red — lands on its own instead, automatically, in the same pass.
 
 ### Removed
 
