@@ -68,7 +68,12 @@ for either way.
                       applied, fail there. Diff carries none of those: ✗, unless the ticket declares
                       "**No new tests:**" with a reason. ✗ when this repository's test patterns are
                       unknown
-  5. gate           — config.gates.<level> green on the branch's own tree, run fresh
+  5. gate           — config.gates.<level> green on the branch's own tree, run fresh; and, when
+                      config.gates.report names the report that run leaves behind ({path, format},
+                      format junit|tap|playwright-json), every live promise's own paired case in
+                      that report, passing. Missing, skipped or failed there is a red gate naming
+                      the promise. No report configured: the item says so rather than passing for
+                      a run nobody confirmed
   6. graph          — the free deterministic verdicts recorded, every prose rule still waiting
                       on a judgement named, and a full "yg check" green on this branch's tree
   7. mapping        — every file the branch added is owned by a node on the branch's own tree
@@ -635,7 +640,14 @@ function checkRevertTest(horde, root, cfg, branch, parentBranch, files, issueTex
 // match against without re-running anything.
 //
 // A command that hangs is not a verdict either, so the run carries a timeout and says so rather
-// than leaving a stuck process behind a checklist that never finishes.
+// than leaving a stuck process behind a checklist that never finishes. A stopped command is the
+// end of the item — nothing below it is asked anything, the report a half-finished run left
+// behind least of all.
+//
+// The exit code is only half of what this item measures. The other half is the report that
+// command's own test runner wrote, when `config.gates.report` names one: a green exit code says
+// the command finished, never that a promise's own case ran. See "the gate's own report" further
+// down for that half.
 const GATE_TIMEOUT_MS = 15 * 60 * 1000;
 function gateTimeout(cfg) {
   const asked = Number(cfg && cfg.gateTimeoutMs);
@@ -670,10 +682,18 @@ function checkGate(cfg, level, worktree, branchSha, noGate) {
     };
   }
   const summary = parseNodeTestSummary(out);
+  // The command's exit code is one half of this item; what its own runner recorded is the other.
+  // Read whether the command was green or red, because a report can name a skipped case under a
+  // command that exited 0 — which is the whole reason this half exists. See "the gate's own
+  // report" below for the config surface, the three formats and the two matching rules; with no
+  // `config.gates.report` it reads nothing, refuses nothing, and says so rather than letting a
+  // green exit code pass for a run nobody confirmed.
+  const report = gateReportVerdict(cfg, worktree);
+  const ok = green && report.ok;
   return {
-    ok: green,
-    note: green ? `green (${cmd})` : `red (${cmd})`,
-    cache: { sha: branchSha, result: green ? 'green' : 'red', count: summary.tests },
+    ok,
+    note: `${green ? 'green' : 'red'} (${cmd}) — ${report.note}`,
+    cache: { sha: branchSha, result: ok ? 'green' : 'red', count: summary.tests },
   };
 }
 
@@ -1443,6 +1463,28 @@ function pairingOf(tree, tracked, byStem, promiseRel, front) {
   return found.length === 1 ? found[0] : null;
 }
 
+// Which of the four pairings a promise declares, and — for the one that names a case — what that
+// case is called. Read off the frontmatter alone, taking exactly the branching `pairingOf` above
+// takes, so the two can never disagree about which pairing a promise has. `pairingOf` answers
+// "what keeps this promise"; this answers "how", which is what item 5's report reading needs and
+// what `pairingOf`'s own answer cannot carry: a `<file>#<case name>` pairing collapses to the file
+// there, and the name is the half a runner's report is searched by.
+//
+// A `named` pairing whose `evidence:` field is malformed (no `#`, or nothing either side of it)
+// comes back with a null case name — the same field shape `pairingOf` reads as "nothing keeps
+// this", so such a promise carries no `keptBy` either and nothing below looks for it in a report.
+function pairingKind(front) {
+  if (front.blocks.artefact !== undefined) return { kind: 'artefact', caseName: null };
+  if (front.fields.evidence === 'self') return { kind: 'self', caseName: null };
+  if (front.fields.evidence !== undefined) {
+    const raw = String(front.fields.evidence);
+    const hash = raw.indexOf('#');
+    if (hash <= 0 || hash === raw.length - 1) return { kind: 'named', caseName: null };
+    return { kind: 'named', caseName: raw.slice(hash + 1).trim() };
+  }
+  return { kind: 'mirror', caseName: null };
+}
+
 function promisesIn(tree, cfg) {
   const layer = detectEvidenceLayer(tree, cfg);
   const dir = layer.promises && layer.promises.dir;
@@ -1468,6 +1510,9 @@ function promisesIn(tree, cfg) {
       // configure, and a repository that renamed its parked words is read exactly the same.
       live: front.fields.status === 'implemented',
       keptBy: pairingOf(tree, tracked, byStem, rel, front),
+      // Which pairing it is, and the case name when the pairing names one. Nothing in the guards
+      // reads this; item 5's report reading does — see "the gate's own report" below.
+      pairing: pairingKind(front),
     });
   }
   return out;
@@ -1690,6 +1735,449 @@ function protectionGuards(cfg, horde, baseTree, headTree, changedFiles) {
   return {
     refusals: [...evidence.refusals, ...gates.refusals],
     used: [...evidence.used, ...gates.used],
+  };
+}
+
+// ---- the gate's own report: what the runner says it actually ran -----------------------------
+//
+// Everything above this line reads source. Source cannot say what ran. A test file that exists and
+// pairs with a promise passes every rule in the `promises` package and every guard in this file
+// while being skipped, or while sitting in a directory the gate command's own runner never looks
+// at — and a landing measured that way is measured on the presence of a file, not on a run.
+//
+// The one thing that does say what ran is the runner's own report of its own run. So when
+// `config.gates.report` names one, item 5 reads it back after the gate command returns and
+// requires every live promise's own paired case to be in it, passing. A promise whose case is
+// missing from the report, or in it as skipped or failed, is a promise nothing executed clean.
+//
+// This is an ordinary red gate, not a guard. The guards above refuse outright because no worker
+// can fix a rewritten rule or a deleted test by trying again; a case that did not run is fixed by
+// writing it, un-skipping it, or making it pass, and running again — exactly like any failing
+// test. So there is no client answer that waives it and none is offered.
+//
+// Horde runs no runner and configures none: the environment and the runner are the repository's
+// own. All of this reads a file that the repository's own gate command left behind.
+//
+//   horde.mjs config set gates.report.path "<path, relative to the tree the gate ran in>"
+//   horde.mjs config set gates.report.format junit|tap|playwright-json
+//
+// Nothing in horde.mjs needed changing for that: `config set` already writes any dotted path.
+const REPORT_FORMATS = ['junit', 'tap', 'playwright-json'];
+
+// Three fixed strings and one path, validated here by reading them — not through a schema system,
+// because there is nothing general about three strings. `configured: false` and a refusal are two
+// different answers and the item says them differently: nobody asked for this, versus somebody
+// asked for it and wrote it wrong.
+function gateReportConfig(cfg) {
+  const raw = cfg && cfg.gates ? cfg.gates.report : undefined;
+  if (raw === undefined || raw === null || raw === '') return { configured: false };
+  const how = `set both: horde.mjs config set gates.report.path "<file the gate writes>" and horde.mjs config set gates.report.format ${REPORT_FORMATS.join('|')}`;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { configured: true, error: `config.gates.report is ${JSON.stringify(raw)} — it is a path and a format, not one value. ${how}` };
+  }
+  const path = typeof raw.path === 'string' ? raw.path.trim() : '';
+  const format = typeof raw.format === 'string' ? raw.format.trim().toLowerCase() : '';
+  if (!path) return { configured: true, error: `config.gates.report names no path, so there is nothing to read. ${how}` };
+  if (!REPORT_FORMATS.includes(format)) {
+    return { configured: true, error: `config.gates.report.format is ${format ? `"${format}"` : 'not set'} — the formats this reads are ${REPORT_FORMATS.join(', ')}, and a format it cannot read is not a report it can check. ${how}` };
+  }
+  return { configured: true, path, format };
+}
+
+// ---- the three formats, each read into one shape ---------------------------------------------
+//
+// Every parser below answers the same question in the same words: a flat list of
+// `{file, name, status}`, where `status` is exactly one of "passed", "failed" or "skipped" and
+// `file` is whatever the format could say about where the case lives — null when the format
+// cannot say at all, which is the honest answer for TAP and never a guess. The correlation that
+// follows reads only that shape and never knows which format produced it.
+
+function decodeXmlText(value) {
+  return String(value).replace(/&(lt|gt|amp|quot|apos|#\d+|#x[0-9a-fA-F]+);/g, (whole, entity) => {
+    if (entity === 'lt') return '<';
+    if (entity === 'gt') return '>';
+    if (entity === 'amp') return '&';
+    if (entity === 'quot') return '"';
+    if (entity === 'apos') return "'";
+    if (entity[0] === '#') {
+      const code = entity[1] === 'x' || entity[1] === 'X' ? parseInt(entity.slice(2), 16) : parseInt(entity.slice(1), 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : whole;
+    }
+    return whole;
+  });
+}
+
+function xmlAttrs(raw) {
+  const out = Object.create(null);
+  const re = /([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+  for (let m = re.exec(raw); m !== null; m = re.exec(raw)) {
+    out[m[1].toLowerCase()] = decodeXmlText(m[2] !== undefined ? m[2] : m[3]);
+  }
+  return out;
+}
+
+// JUnit XML. An optional `<testsuites>` wrapper, one or more `<testsuite>` (which may nest), and
+// inside each a `<testcase name= classname= …>` that is empty when it passed, carries a
+// `<failure>` or an `<error>` when it did not, and a `<skipped/>` when it never ran.
+//
+// Where a case lives is the one field JUnit writers genuinely disagree about. Read in this order:
+// the case's own `file`/`filepath`/`filename`, then the enclosing suite's, then the case's
+// `classname` (which most writers use for exactly this, spelled with dots), then the suite's
+// `name`. Whichever of those turns up is handed to the deliberately generous attribution rule
+// below rather than compared as a string — see `sameFile`.
+function parseJUnitReport(text) {
+  const cleaned = String(text || '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '');
+  if (!/<\s*testsuite\b/i.test(cleaned) && !/<\s*testcase\b/i.test(cleaned)) {
+    return { error: 'no <testsuite> or <testcase> element is in it' };
+  }
+  const entries = [];
+  const suites = [];
+  let open = null;
+  const re = /<(\/?)([A-Za-z][\w:.-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g;
+  for (let m = re.exec(cleaned); m !== null; m = re.exec(cleaned)) {
+    const closing = m[1] === '/';
+    const tag = m[2].toLowerCase();
+    const rest = m[3];
+    const selfClosing = /\/\s*$/.test(rest);
+    const attrs = closing ? Object.create(null) : xmlAttrs(rest);
+    if (tag === 'testsuite') {
+      if (closing) { suites.pop(); continue; }
+      const parent = suites[suites.length - 1];
+      suites.push({
+        file: attrs.file || attrs.filepath || attrs.filename || (parent && parent.file) || null,
+        name: attrs.name || (parent && parent.name) || null,
+      });
+      if (selfClosing) suites.pop();
+      continue;
+    }
+    if (tag === 'testcase') {
+      if (closing) { if (open) { entries.push(open); open = null; } continue; }
+      if (open) { entries.push(open); open = null; }
+      const suite = suites[suites.length - 1];
+      const entry = {
+        file: attrs.file || attrs.filepath || attrs.filename || (suite && suite.file)
+          || attrs.classname || (suite && suite.name) || null,
+        name: attrs.name || '',
+        status: 'passed',
+      };
+      if (selfClosing) entries.push(entry); else open = entry;
+      continue;
+    }
+    if (!open || closing) continue;
+    // A case carrying both a failure and a skip is a failure: a failure is the stronger fact and
+    // neither one is "it ran and passed", which is all this asks.
+    if (tag === 'failure' || tag === 'error') open.status = 'failed';
+    else if (tag === 'skipped' && open.status === 'passed') open.status = 'skipped';
+  }
+  if (open) entries.push(open);
+  return { entries };
+}
+
+// TAP, version 13-ish. A plan line (`1..N`), then `ok <n> - <description>` and
+// `not ok <n> - <description>`, each optionally followed by an indented YAML block and optionally
+// carrying a trailing `# SKIP <reason>` or `# TODO <reason>` directive. Indentation is a subtest
+// nesting, and both the nested lines and the parent's own line are read: a skipped case inside a
+// passing parent is exactly what this is looking for.
+//
+// A `# TODO` counts as skipped, not as passed and not as failed. TAP says a failing TODO is not a
+// failure, and that is the point: a case marked TODO is not proof either way, which is the same
+// thing a skip is, and this only ever asks whether something ran and passed.
+//
+// TAP carries no file attribution, structurally — a line says what ran, never where it lives — so
+// every entry comes back with `file: null`. That is the format's real limit and the correlation
+// below says so out loud rather than inventing one.
+function parseTapReport(text) {
+  const lines = String(text || '').split('\n');
+  const entries = [];
+  let inYaml = false;
+  let sawPlan = false;
+  const re = /^(\s*)(not\s+)?ok\b[ \t]*(\d+)?[ \t]*(?:-[ \t]*)?(.*)$/;
+  for (const raw of lines) {
+    const line = raw.replace(/\r$/, '');
+    const trimmed = line.trim();
+    if (inYaml) { if (trimmed === '...') inYaml = false; continue; }
+    if (trimmed === '---') { inYaml = true; continue; }
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    if (/^TAP\s+version\b/i.test(trimmed)) continue;
+    if (/^\d+\.\.\d+\b/.test(trimmed)) { sawPlan = true; continue; }
+    const m = re.exec(line);
+    if (m === null) continue;
+    const { name, directive } = tapDirective(m[4] || '');
+    entries.push({
+      file: null,
+      name,
+      status: directive ? 'skipped' : (m[2] ? 'failed' : 'passed'),
+    });
+  }
+  if (!entries.length && !sawPlan) return { error: 'it carries no plan line and no "ok"/"not ok" line' };
+  return { entries };
+}
+
+// The trailing `# SKIP`/`# TODO` directive, split off the description. The last `#` on the line is
+// the candidate, and it is only a directive when the word after it is one this recognises —
+// a description that merely contains a `#` keeps it.
+function tapDirective(description) {
+  const at = description.lastIndexOf('#');
+  if (at === -1) return { name: description.trim(), directive: null };
+  const word = (description.slice(at + 1).trim().split(/\s+/)[0] || '').toUpperCase();
+  if (word !== 'SKIP' && word !== 'SKIPPED' && word !== 'TODO') return { name: description.trim(), directive: null };
+  return { name: description.slice(0, at).trim(), directive: word === 'TODO' ? 'TODO' : 'SKIP' };
+}
+
+// Playwright's `--reporter=json`. A top-level object with `suites`, each suite carrying a `file`
+// and either `specs` or nested `suites` (a nested describe block); each spec a `title` and a
+// `tests` array (one per project the spec ran under); each test a `results` array whose entries
+// carry a `status`.
+//
+// One entry per test rather than per result, taking the LAST result's status: the earlier ones are
+// retries, and a spec that failed once and passed on the retry is reported by Playwright itself as
+// having passed. Anything other than "passed" (or the test-level "expected") is read as failed,
+// except "skipped" — so `timedOut` and `interrupted` are failures, which is what they are.
+function parsePlaywrightReport(text) {
+  let doc = null;
+  try { doc = JSON.parse(String(text || '')); } catch (e) { return { error: `it is not readable JSON (${e.message})` }; }
+  if (!doc || typeof doc !== 'object' || !Array.isArray(doc.suites)) {
+    return { error: 'it has no top-level "suites" array' };
+  }
+  const list = (v) => (Array.isArray(v) ? v : []);
+  const entries = [];
+  const walk = (suite, inherited) => {
+    if (!suite || typeof suite !== 'object') return;
+    const file = suite.file || inherited || null;
+    for (const spec of list(suite.specs)) {
+      const name = String((spec && spec.title) || '');
+      const specFile = (spec && spec.file) || file || null;
+      const tests = list(spec && spec.tests);
+      if (!tests.length) {
+        entries.push({ file: specFile, name, status: spec && spec.ok === true ? 'passed' : 'failed' });
+        continue;
+      }
+      for (const one of tests) {
+        const results = list(one && one.results);
+        const last = results.length ? results[results.length - 1] : null;
+        const raw = (last && last.status) || (one && one.status) || null;
+        entries.push({ file: specFile, name, status: playwrightStatus(raw) });
+      }
+    }
+    for (const child of list(suite.suites)) walk(child, file);
+  };
+  for (const suite of doc.suites) walk(suite, null);
+  return { entries };
+}
+
+function playwrightStatus(raw) {
+  const status = String(raw || '').toLowerCase();
+  if (status === 'passed' || status === 'expected') return 'passed';
+  if (status === 'skipped') return 'skipped';
+  return 'failed';
+}
+
+export function parseReport(text, format) {
+  if (format === 'junit') return parseJUnitReport(text);
+  if (format === 'tap') return parseTapReport(text);
+  return parsePlaywrightReport(text);
+}
+
+// ---- matching a promise's pairing to what the report says --------------------------------------
+//
+// Two rules, because a promise's pairing is one of two shapes and they prove different things.
+//
+// FILE-LEVEL — a `mirror` pairing (a test file named after the promise), a `self` pairing (the
+// promise document is itself what runs) — proves "this whole file ran and everything in it
+// passed". So the report must carry at least one case attributed to that file, and every case
+// attributed to it must have passed.
+//
+// CASE-LEVEL — a `named` pairing, `evidence: <file>#<case name>` — proves "this one case ran and
+// passed", inside a file that may hold other cases the promise says nothing about. So the report
+// must carry a case of that name, attributed to that file where the format can say, and every
+// such case must have passed. Other cases in the same file are not this promise's business.
+//
+// The fourth pairing, an accepted artefact, is not checked here at all and never refuses: nothing
+// runs an artefact, so there is nothing a runner's report could ever say about it. A live promise
+// with no pairing at all is not checked either — "nothing keeps this promise" is the evidence
+// layer's own question and the evidence guard's, not a question about whether a run happened.
+
+// Every spelling of "a file extension" and "a generic test-file tail" this drops before comparing.
+// Closed lists, on purpose: an unrecognised suffix simply stays as one more segment to match on,
+// which can only make the comparison stricter, never looser.
+const REPORT_FILE_EXTENSIONS = new Set([
+  'js', 'mjs', 'cjs', 'jsx', 'ts', 'mts', 'cts', 'tsx', 'py', 'go', 'java', 'kt', 'kts', 'rb', 'rs',
+  'cs', 'php', 'swift', 'scala', 'groovy', 'feature', 'sh', 'ex', 'exs', 'dart', 'md',
+]);
+const REPORT_GENERIC_TAILS = new Set(['test', 'tests', 'spec', 'specs', 'e2e', 'it', 'testcase']);
+
+// A file attribution — from anywhere, in any spelling — cut into segments that can be compared.
+// Windows separators folded to "/", a leading "./" dropped, then split on BOTH "/" and "." so a
+// dotted JUnit class name (`promises.adds-two-numbers.test`) and a real path
+// (`promises/adds-two-numbers.test.mjs`) come out as the same segments; any trailing extension and
+// any trailing generic test word are then dropped so the two genuinely match. Lower-cased,
+// because JUnit writers case these fields freely and two test files differing only in case is not
+// a thing this would rather refuse a real green run over.
+function attributionSegments(value) {
+  const cleaned = String(value || '').trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!cleaned) return [];
+  const parts = cleaned.split(/[/.]+/).map((p) => p.trim().toLowerCase()).filter(Boolean);
+  while (parts.length > 1 && REPORT_FILE_EXTENSIONS.has(parts[parts.length - 1])) parts.pop();
+  while (parts.length > 1 && REPORT_GENERIC_TAILS.has(parts[parts.length - 1])) parts.pop();
+  return parts;
+}
+
+function endsWithSegments(longer, shorter) {
+  if (!shorter.length || shorter.length > longer.length) return false;
+  const offset = longer.length - shorter.length;
+  return shorter.every((segment, i) => longer[offset + i] === segment);
+}
+
+// A report entry is attributed to a file when one of the two segment lists ENDS WITH the other.
+// Deliberately generous in exactly one direction — depth — because that is the only axis writers
+// disagree on: an absolute path (`/build/repo/promises/adds-two-numbers.test.mjs`), a
+// repo-relative one, a path relative to some inner root (`adds-two-numbers.test.mjs`) and a bare
+// class name (`adds-two-numbers`) are all the same file, and a rule demanding one spelling would
+// refuse real green runs. It is not generous sideways: `tests/foo` and `promises/foo` are two
+// different files and neither ends with the other.
+export function sameFile(attribution, file) {
+  const a = attributionSegments(attribution);
+  const b = attributionSegments(file);
+  if (!a.length || !b.length) return false;
+  return endsWithSegments(a, b) || endsWithSegments(b, a);
+}
+
+// A report entry's name matches a declared case name when it IS that name, or when it ends with
+// it after a separator — runners prefix a case with its suite path in several spellings (`>`, `›`,
+// `»`, `::`) and some simply join them with a space. Anchored at the end, never a substring
+// search anywhere in the middle.
+const CASE_PATH_SEPARATORS = '>›»:|·';
+export function sameCase(entryName, declared) {
+  const name = String(entryName || '').trim();
+  const want = String(declared || '').trim();
+  if (!want) return false;
+  if (name === want) return true;
+  if (name.length <= want.length || !name.endsWith(want)) return false;
+  const before = name[name.length - want.length - 1];
+  return /\s/.test(before) || CASE_PATH_SEPARATORS.includes(before);
+}
+
+// The last thing left when a report carries no file attribution ANYWHERE — which is every TAP
+// stream, by the format's own shape. A file can then only be looked for by the name of the case
+// inside it, so this compares the paired file's own stem with a case name, both flattened to
+// lower-case words: `promises/adds-two-numbers.test.mjs` matches a case called `adds two numbers`,
+// `adds-two-numbers` or `Adds Two Numbers`.
+//
+// That is a convention, not an attribution — the `promises` package's own mirror pairing names the
+// test after the promise — and the refusal below says so, because a repository that wants this
+// checked exactly should either pair by `<file>#<case name>`, where the name is declared instead
+// of inferred, or have its gate write JUnit XML or Playwright's JSON, both of which carry the file.
+function flattenWords(value) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function fileStemWords(file) {
+  return flattenWords(stemOf(file).replace(/\.(?:test|spec|it)$/i, ''));
+}
+
+// Why this promise has no clean run in the report, as one sentence — or null when it has one.
+// `reportNamesFiles` is a fact about the parsed report rather than about the configured format: a
+// JUnit writer that emits neither `file` nor `classname` is in exactly TAP's position and is told
+// so in the same words.
+function promiseReportMiss(entries, reportNamesFiles, promise) {
+  const file = promise.keptBy;
+  const wanted = promise.pairing.caseName;
+
+  if (wanted) {
+    const named = entries.filter((e) => sameCase(e.name, wanted));
+    if (!named.length) return `no case named "${wanted}" is in the report at all (${promise.path} pairs it as ${file}#${wanted})`;
+    const withFile = named.filter((e) => e.file);
+    let used = named;
+    if (withFile.length) {
+      const inFile = withFile.filter((e) => sameFile(e.file, file));
+      if (!inFile.length) {
+        const seen = [...new Set(withFile.map((e) => e.file))].slice(0, 3).join(', ');
+        return `the report has a case named "${wanted}", but none of them under ${file} — it is filed under ${seen}`;
+      }
+      used = inFile;
+    }
+    const bad = used.find((e) => e.status !== 'passed');
+    return bad ? `"${wanted}" is in the report as ${bad.status}, not passed` : null;
+  }
+
+  if (reportNamesFiles) {
+    const inFile = entries.filter((e) => e.file && sameFile(e.file, file));
+    if (!inFile.length) return `nothing in the report is attributed to ${file}, which is what keeps it — so far as the runner's own record goes, it did not run`;
+    const bad = inFile.find((e) => e.status !== 'passed');
+    return bad ? `${file} is in the report with "${bad.name}" ${bad.status}, not passed` : null;
+  }
+
+  const stem = fileStemWords(file);
+  const byName = entries.filter((e) => flattenWords(e.name) === stem);
+  if (!byName.length) {
+    return `this report carries no file attribution at all, so ${file} could only be looked for by name, and no case in it is named "${stem}". Pair the promise as "<file>#<case name>", or have the gate write junit or playwright-json — both carry the file`;
+  }
+  const bad = byName.find((e) => e.status !== 'passed');
+  return bad ? `the case named after ${file} is in the report as ${bad.status}, not passed` : null;
+}
+
+// What the item says when a report is configured and there is nevertheless nothing in this tree
+// for it to require — the same "empty is not a finding" discipline the `promises` package's own
+// has-evidence rule takes, said out loud rather than reported as a pass over nothing.
+function nothingToRequire(all, live) {
+  if (!all.length) return 'there are no promises here to require a case for';
+  if (!live.length) return `none of this repository's ${all.length} promise(s) reads "implemented"`;
+  const artefact = live.filter((p) => p.pairing.kind === 'artefact').length;
+  const unpaired = live.filter((p) => !p.keptBy).length;
+  const bits = [];
+  if (artefact) bits.push(`${artefact} kept by an accepted artefact, which no runner runs`);
+  if (unpaired) bits.push(`${unpaired} with nothing paired to them at all`);
+  return `no live promise here has a case a runner could have run (${bits.join('; ')})`;
+}
+
+// The whole of item 5's second half, as one sentence the gate item carries. Called only after the
+// gate command has returned, green or red alike: a report can name a skipped case under a command
+// whose own exit code was 0, and that is the exact thing this exists to catch.
+function gateReportVerdict(cfg, worktree) {
+  const conf = gateReportConfig(cfg);
+  if (!conf.configured) {
+    return {
+      ok: true,
+      note: `report: no report configured — nothing here confirms any promise's paired case actually ran (horde.mjs config set gates.report.path "<file the gate writes>" and gates.report.format ${REPORT_FORMATS.join('|')})`,
+    };
+  }
+  if (conf.error) return { ok: false, note: `report: ${conf.error}` };
+
+  const all = promisesIn(worktree, cfg);
+  const live = all.filter((p) => p.live);
+  const runnable = live.filter((p) => p.keptBy && p.pairing.kind !== 'artefact');
+  if (!runnable.length) {
+    return { ok: true, note: `report: ${conf.path} (${conf.format}) not read — ${nothingToRequire(all, live)}` };
+  }
+
+  const abs = join(worktree, conf.path);
+  if (!existsSync(abs)) {
+    return {
+      ok: false,
+      note: `report: config.gates.report names ${conf.path} and the gate command left no such file in the tree it ran in, so ${runnable.length} live promise(s) have a paired case with nothing to show it ran. Either the command does not write the report, or it writes it elsewhere — check the runner's own reporter setting, or point config.gates.report.path at where the file actually lands`,
+    };
+  }
+  const parsed = parseReport(readText(abs), conf.format);
+  if (parsed.error) return { ok: false, note: `report: ${conf.path} does not read as ${conf.format} — ${parsed.error}` };
+
+  const entries = parsed.entries;
+  const reportNamesFiles = entries.some((e) => e.file);
+  const misses = [];
+  for (const promise of runnable) {
+    const miss = promiseReportMiss(entries, reportNamesFiles, promise);
+    if (miss) misses.push(`${promise.id}: ${miss}`);
+  }
+  if (misses.length) {
+    return {
+      ok: false,
+      note: `report: ${conf.path} (${conf.format}) shows no clean run for ${misses.length} of ${runnable.length} live promise(s) — ${misses.join('; ')}`,
+    };
+  }
+  return {
+    ok: true,
+    note: `report: ${conf.path} (${conf.format}) — all ${runnable.length} live promise(s) ran and passed in it (${entries.length} case(s) read)`,
   };
 }
 
