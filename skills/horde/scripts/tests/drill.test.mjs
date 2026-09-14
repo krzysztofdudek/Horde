@@ -49,11 +49,11 @@ const IMPL_FILE = `export async function retry(fn) {
 // A real repository under a real horde, built only through the tools: the node map is committed
 // onto the team branch (as an architect files it) so that every branch cut from that tip is judged
 // against a boundary, and ticket 001 is running in the worktree the queue made for it.
-function missionRepo(t, { files } = {}) {
+function missionRepo(t, { files, mapping = ['src/**'] } = {}) {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir, 'mission1');
-  addNode(dir, 'core', { mapping: ['src/**'] });
+  addNode(dir, 'core', { mapping });
   git(['checkout', '-q', 'mission1/trunk'], dir);
   git(['add', '.yggdrasil'], dir);
   git(['commit', '-qm', 'graph: the core component and its boundary'], dir);
@@ -322,6 +322,19 @@ test('drill.mjs check scope: the files the ticket declared bound it, tighter tha
   const r = run('drill.mjs', ['check', 'scope', '--repo', red.dir, '--ticket', '001'], red.dir);
   assert.equal(r.code, 1);
   assert.match(r.json.checks.find((c) => c.name === 'diff inside the boundary').note, /src\/extra\.mjs/);
+});
+
+// Mirrors node.mjs's own pathInBoundary fix (issue 091): a boundary of "src/a" must not swallow
+// the sibling "src/ab" just because the two strings share a text prefix. drill.mjs used to carry
+// its own unimported copy of the same buggy check (issue 094).
+test('drill.mjs check scope: a sibling directory sharing the boundary prefix is still outside it', async (t) => {
+  const m = missionRepo(t, { mapping: ['src/a'] });
+  commit(m.worktree, 'a file that only looks like it belongs under src/a',
+    { 'src/ab/file.js': 'export const x = 1;\n' });
+
+  const r = run('drill.mjs', ['check', 'scope', '--repo', m.dir, '--ticket', '001'], m.dir);
+  assert.equal(r.code, 1);
+  assert.match(r.json.checks.find((c) => c.name === 'diff inside the boundary').note, /src\/ab\/file\.js/);
 });
 
 test('drill.mjs record: refuses a case whose state contradicts --expect', async (t) => {

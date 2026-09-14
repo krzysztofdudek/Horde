@@ -90,6 +90,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - Refusals that trace back to a git problem — a missing branch, a worktree that could not be made — now show what git itself reported, not just that something went wrong.
 - A ticket whose acceptance items are ticked with a capital X now counts as having them. It used to read as a ticket with no acceptance at all, and could not be queued.
 - A charter's quality policy that is not `autonomous` or `only-the-work` is now refused, instead of quietly running as the more permissive of the two.
+- A check meant to catch a ticket touching files outside its allowed area now compares whole folder names, instead of just their starting letters — so a different, similarly named folder is no longer mistaken for being inside that area.
 
 ### Migrating a mission already in flight
 
