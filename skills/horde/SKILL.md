@@ -188,7 +188,11 @@ the agents that carry the plan out:
   what, what it proves and what it did to the rules belong to git, which outlives `.horde/`. It is
   the only place trailers are written, because it is the only place a merge commit is made. Where an
   adopter's history already has its own convention for this, take theirs and say so. On red it refuses, puts the ticket back on `changes` with the gate's own words, and
-  ticks the round counter. Two things it refuses outright rather than reporting: a branch that
+  ticks the round counter. A test file that exists is not a test that ran, so where
+  `config.gates.report` names the report the gate command's own runner leaves behind (`junit`, `tap`
+  or `playwright-json`), the gate reads it back: every live promise's own paired case has to be in
+  it and passed, and one missing, skipped or failed is a red gate naming that promise. With none
+  configured the gate says so rather than passing for a run nobody confirmed. Two things it refuses outright rather than reporting: a branch that
   weakens anything protecting the work — a rule it is judged by, a promise, a test file or an
   assertion, a skip marker added, the script a gate runs, a commit or push hook, a CI workflow —
   and a branch that sharpens a rule while changing the code that rule refuses. The first goes

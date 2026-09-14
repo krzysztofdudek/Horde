@@ -63,6 +63,9 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   writes the charter's quality policy; the template's own default is `autonomous`.
 - `list` — hordes with trunk, base, wave, open tickets, leased nodes, last activity.
 - `config get|set <key> [value]` — `.horde/config.json`: `base`, `gates.commit|team|trunk` (commands),
+  `gates.report.path` and `gates.report.format` (`junit`, `tap` or `playwright-json` — the report the
+  gate command's own runner leaves behind, which the landing reads back to confirm every live
+  promise's paired case actually ran; unset means nothing reads one),
   `testGlobs[]` (the patterns this repository's tests are named under — the merge checklist refuses
   rather than guess when it is empty), `ygCommand` (how this
   repository invokes the Yggdrasil CLI
@@ -920,14 +923,19 @@ the JSON, and every item below is measured against it:
    is always the ticket's own choice, never a `land.mjs` flag. The result is derived by running
    them; nothing declares it to this gate, and no flag offers to say so, because a declaration
    about a test is not evidence about a test;
-5. gate — `config.gates.<level>` run fresh on the branch's own tree. No recorded green run is
-   accepted from anywhere: a "green at sha …" line in a ticket's log is a claim about a run this
-   gate did not see. A command that hangs is stopped at `config.gateTimeoutMs` (default 15 minutes)
-   and the limit is named, rather than a stuck process left behind a checklist that never finishes.
-   Once the branch actually merges, what this measured is recorded in `cache/last-gate.json` at the
-   sha the merge produced — the same file and the same matching-sha acceptance `horde.mjs done` and
-   `wave.mjs close` already read, so either sees this landing's own result right away instead of
-   finding nothing there and running the gate a second time over a tree it was just run on;
+5. gate — `config.gates.<level>` run fresh on the branch's own tree, **and** the report that run
+   left behind. No recorded green run is accepted from anywhere: a "green at sha …" line in a
+   ticket's log is a claim about a run this gate did not see. A command that hangs is stopped at
+   `config.gateTimeoutMs` (default 15 minutes) and the limit is named, rather than a stuck process
+   left behind a checklist that never finishes — and a stopped command ends the item there, with
+   nothing below it asked anything. Otherwise the exit code is only half the item: when
+   `config.gates.report` names the report the command's own runner wrote, every live promise's own
+   paired case has to be in it, passing, or the gate is red and names the promise. See
+   [the gate's own report](#the-gates-own-report) below. Once the branch actually merges, what this
+   measured is recorded in `cache/last-gate.json` at the sha the merge produced — the same file and
+   the same matching-sha acceptance `horde.mjs done` and `wave.mjs close` already read, so either
+   sees this landing's own result right away instead of finding nothing there and running the gate a
+   second time over a tree it was just run on;
 6. graph — the graph's own verdict on the branch's tree, on every run whatever `config.gates` holds:
    the graph is the node map, so it is what says the code is right there, and a repository whose own
    gate command never calls `yg` would otherwise show a green gate over a tree `yg check` exits 1
@@ -963,6 +971,109 @@ plus the tree it ran in) and returns at once, for a single ticket; for two or mo
 worker for the whole list, not one per ticket, with each ticket's own result file at the same path
 it would carry landed on its own. A half-written result file reads as no file at all — the gate
 never trusts a recorded result, its own or anyone's, and simply runs again.
+
+### the gate's own report
+
+A test file that exists and pairs with a promise is not proof that anything ran. It can be skipped,
+or sit where the gate command's own runner never looks, and every rule in the `promises` package and
+every guard below still reads it as proof — they all read source, and source cannot say what ran.
+The only thing that can is the runner's own record of its own run.
+
+So item 5 reads it back. Configure it and nothing else changes:
+
+```
+horde.mjs config set gates.report.path   "<path, relative to the tree the gate ran in>"
+horde.mjs config set gates.report.format junit|tap|playwright-json
+```
+
+The path is where the gate command's own runner leaves its report — resolved inside the fresh tree
+the gate was just run in, because that is where the run that counts actually happened, and it has to
+stay inside it: an absolute path, or one climbing out with `..`, would read a file some other run
+wrote and is refused rather than read. Horde runs no runner and configures none: the environment and
+the runner are the repository's, and all this does is read the file that run left behind. A format
+outside those three is refused by name, and so is a file that does not read as the format it claims.
+
+Reading it costs one look at the tree's own promises and one read of the report file, paid only where
+a report is configured at all.
+
+**What it requires.** Every **live** promise (`status: implemented`) whose pairing is something a
+runner runs has to be in the report, passing. Missing, `skipped` or `failed` is a red gate that names
+the promise, not just "gate failed" — the fix is a worker's to make: write the case, un-skip it, or
+make it pass, and run again. That is why this is an item and not a guard: nothing here refuses
+outright and no client answer waives it, because unlike a rewritten rule or a deleted test this is
+something trying again can fix. The report is read whether the command exited green or red — a
+command can exit 0 over a runner that quietly skipped something, which is the exact case this exists
+to catch.
+
+**File-level and case-level.** A promise's pairing is one of two shapes and they prove different
+things, so they are matched differently:
+
+- a **mirror** pairing (a test file named after the promise) and a **self** pairing (the promise
+  document is itself what runs) prove "this whole file ran and everything in it passed". The report
+  must carry at least one case attributed to that file, and every case attributed to it must have
+  passed;
+- a **named** pairing (`evidence: <file>#<case name>`) proves "this one case ran and passed", inside
+  a file that may hold other cases the promise says nothing about. The report must carry a case of
+  that name, under that file where the format can say so, and every such case must have passed.
+  Another case failing in the same file is not that promise's business.
+
+The fourth pairing, an **accepted artefact**, is never looked for and never refuses: nothing runs an
+artefact, so no runner's report could say anything about it. A live promise with nothing paired to it
+at all is not looked for either — "nothing keeps this promise" is the evidence layer's question and
+the evidence guard's, not a question about whether a run happened. A repository with no promises, or
+none live, has nothing here to require: the item says which of those it found and reads nothing.
+
+**How a case is matched to a file.** Writers spell this field four different ways, so the comparison
+is deliberately generous about depth and strict about everything else. Both the paired file's path
+and whatever the report carries (`file` on the case, `file` on the suite, `classname`, or the suite's
+`name`) are cut into segments on `/` **and** `.`, any trailing file extension and any trailing
+`test`/`tests`/`spec`/`specs`/`e2e`/`it` segment dropped, and compared case-insensitively; one is
+attributed to the other when either segment list **ends with** the other. So
+`promises/adds-two-numbers.test.mjs`, `/build/checkout/promises/adds-two-numbers.test.mjs`,
+`promises.adds-two-numbers.test` and a bare `adds-two-numbers` are all the same file — while
+`tests/adds-two-numbers.test.mjs` is a different one, because neither list ends with the other.
+A case **name** matches when it is the declared name exactly, or ends with it after a separator a
+runner uses to join a suite path to a case (`>`, `›`, `»`, `:`, `|`, `·`, or plain whitespace) —
+anchored at the end, never a substring found in the middle.
+
+**The three formats, and what each can actually tell you.**
+
+- **JUnit XML** — an optional `<testsuites>` wrapper, one or more `<testsuite>` (which may nest), and
+  a `<testcase name= classname=>` per case: empty when it passed, carrying a `<failure>` or `<error>`
+  when it failed, a `<skipped/>` when it never ran. A case with both a failure and a skip counts as
+  failed. This is the format with the best file attribution, and the one the acceptance test for this
+  is written on.
+- **Playwright JSON** (`--reporter=json`) — `suites`, each with a `file` and `specs` (or nested
+  `suites`, which inherit the file), each spec a `title` and a `tests` array, each test a `results`
+  array carrying a `status`. One entry per test, taking the **last** result's status: the earlier
+  ones are retries, and a spec that failed once and passed on the retry is what Playwright itself
+  reports as passed. `skipped` is skipped; `timedOut` and `interrupted` are failures, which is what
+  they are.
+- **TAP** — a plan line, then `ok`/`not ok` lines with a description, an optional indented YAML block
+  and an optional trailing `# SKIP` or `# TODO` directive. Both a nested subtest's lines and its
+  parent's own line are read, so a skipped case inside a passing parent is visible. A `# TODO` counts
+  as **skipped**: TAP says a failing TODO is not a failure, and that is the point — a TODO is not
+  proof either way, exactly like a skip.
+
+**TAP's real limit.** A TAP stream carries no file attribution at all, structurally: a line says what
+ran, never where it lives. So under `tap` a file-level pairing is matched the only way the format
+allows — by name, against the paired file's own stem, with `-`, `_` and `.` read as spaces and the
+comparison case-insensitive, so `promises/adds-two-numbers.test.mjs` matches a case called
+`adds two numbers`, `adds-two-numbers` or `Adds Two Numbers`. That is a convention, not an
+attribution; it is the `promises` package's own mirror convention read back, and the refusal says so
+in those words. A repository that wants this checked exactly should pair by `<file>#<case name>`,
+where the name is declared instead of inferred, or have its gate write JUnit XML or Playwright's
+JSON, which carry the file. The fallback is keyed to the parsed report rather than to the format
+name, so a JUnit writer that emits neither `file` nor `classname` is in the same position and is told
+so in the same words.
+
+**No report configured is not the same as a report that should be there and is not.** With no
+`config.gates.report` at all, nothing is read and nothing is refused — the landing is exactly as
+strong as it was before any of this existed — and the item says `no report configured` rather than
+reporting a green it never checked, so a chairman reading a wave close or a `horde.mjs done` can tell
+"verified against a real run" from "nobody configured one". With a report configured and no such file
+in the tree the gate ran in, that is a red gate of its own: the command either does not write the
+report or writes it somewhere else, and the refusal says both.
 
 ### the guards
 

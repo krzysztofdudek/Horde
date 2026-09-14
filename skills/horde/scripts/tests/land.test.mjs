@@ -11,6 +11,7 @@ import {
   writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE,
 } from './helpers.mjs';
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
+import { parseReport, sameFile, sameCase } from '../land.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -108,9 +109,14 @@ function makeTicketBranch(dir, id, { fromRef = 'mission1/trunk', extraFiles = {}
 // The whole of what a landable ticket needs: a graph with a script rule the tree satisfies, a
 // green repository gate, a judge policy, a branch that really changes something and carries a new
 // test, and a queue item naming it.
+// `trunkFiles` land on the trunk BEFORE the ticket branches off it, so they are part of what
+// every item measures without being part of this ticket's own diff — which is where a repository's
+// promises and the tests keeping them actually sit. `gate` is the repository's own gate command;
+// the default runs nothing and exits 0, as it always has.
 function setupLandable(dir, id, {
   marker = false, prose = false, reviewer = false, judge = 'one-shot', files = null, extraFiles = {}, mapping = null,
   evidence = null, kind = null, cutPrototypeBranch = false, fromRef = 'mission1/trunk',
+  trunkFiles = {}, gate = 'true',
 } = {}) {
   initHorde(dir);
   if (reviewer) assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
@@ -128,8 +134,18 @@ function setupLandable(dir, id, {
     mapping: mapping || [`feature-${id}.mjs`, `feature-${id}.test.mjs`, ...Object.keys(extraFiles)],
     aspects: prose ? ['no-marker', 'reads-well'] : ['no-marker'],
   });
-  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+  run('horde.mjs', ['config', 'set', 'gates.team', gate], dir);
   run('horde.mjs', ['config', 'set', 'judge', judge], dir);
+  if (Object.keys(trunkFiles).length) {
+    git(['checkout', '-q', 'mission1/trunk'], dir);
+    for (const [path, content] of Object.entries(trunkFiles)) {
+      const abs = join(dir, path);
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, content);
+    }
+    git(['add', '--', ...Object.keys(trunkFiles)], dir);
+    git(['commit', '-qm', 'the promises and the proof this repository starts from'], dir);
+  }
   commitGraph(dir);
   if (cutPrototypeBranch) git(['branch', 'mission1/prototype', 'mission1/trunk'], dir);
 
@@ -807,6 +823,480 @@ test('land.mjs: a green landing at --level trunk records the gate cache, so `don
   const close = run('wave.mjs', ['close'], dir);
   assert.equal(close.code, 0, close.stderr);
   assert.equal(close.json.gate, 'green');
+});
+
+// ---- the gate's own report: the paired case actually ran (022) ------------------------------
+//
+// A test file that exists and pairs with a promise is not proof that anything ran. Item 5 reads
+// the report the gate command's own runner left behind — JUnit XML, TAP or Playwright's JSON —
+// and requires every live promise's own paired case to be in it, passing. Every fixture below
+// writes a REAL report file in the real shape that runner writes, from the gate command itself,
+// into the tree the gate actually ran in; nothing here stubs the reading.
+
+const PROMISE_DOC = [
+  '---',
+  'id: adds-two-numbers',
+  'status: implemented',
+  '---',
+  '',
+  '## What it checks',
+  '',
+  'Adding the two numbers gives their sum.',
+  '',
+].join('\n');
+
+const PROMISE_SPEC = [
+  "import test from 'node:test';",
+  "import assert from 'node:assert/strict';",
+  '',
+  "test('adds two numbers', () => { assert.equal(1 + 2, 3); });",
+  "test('leaves them alone', () => { assert.equal(1, 1); });",
+  '',
+].join('\n');
+
+// The promise and the file that keeps it, on the trunk, paired the way the `promises` package
+// pairs them by default: a test file named after the promise.
+const MIRROR_PROMISE = {
+  'promises/adds-two-numbers.md': PROMISE_DOC,
+  'promises/adds-two-numbers.test.mjs': PROMISE_SPEC,
+};
+
+// A gate command that writes a real report file into the tree it runs in, byte for byte, the way
+// a runner's own reporter would. Base64 so nothing in the report's own punctuation can be eaten
+// by the shell on its way through the command.
+function gateWriting(path, content, { exit = 0 } = {}) {
+  const payload = Buffer.from(content, 'utf8').toString('base64');
+  return `node -e "const fs=require('fs');const p='${path}';fs.mkdirSync(require('path').dirname(p),{recursive:true});fs.writeFileSync(p,Buffer.from('${payload}','base64'))" && exit ${exit}`;
+}
+
+// A JUnit suite, in the shape a JUnit writer actually emits: a <testsuites> wrapper, a <testsuite>
+// per file, a <testcase name= classname=> per case, empty when it passed and carrying a <failure>
+// or a <skipped/> child when it did not.
+function junitReport(suites) {
+  const cases = (list) => list.map(({ name, status }) => {
+    if (status === 'failed') return `    <testcase name="${name}" classname="promises.adds-two-numbers.test" time="0.01"><failure message="boom">stack</failure></testcase>`;
+    if (status === 'skipped') return `    <testcase name="${name}" classname="promises.adds-two-numbers.test" time="0"><skipped message="not today"/></testcase>`;
+    return `    <testcase name="${name}" classname="promises.adds-two-numbers.test" time="0.01"/>`;
+  }).join('\n');
+  return ['<?xml version="1.0" encoding="UTF-8"?>', '<testsuites name="gate" tests="0" failures="0">',
+    ...suites.map((s) => [
+      `  <testsuite name="${s.file}" file="${s.file}" tests="${s.cases.length}" failures="0" errors="0" skipped="0">`,
+      cases(s.cases),
+      '  </testsuite>',
+    ].join('\n')),
+    '</testsuites>', ''].join('\n');
+}
+
+function setupReported(dir, id, { report, path = 'reports/junit.xml', format = 'junit', trunkFiles = MIRROR_PROMISE, exit = 0 } = {}) {
+  const out = setupLandable(dir, id, {
+    trunkFiles,
+    gate: report === null ? 'true' : gateWriting(path, report, { exit }),
+  });
+  if (format !== null) {
+    run('horde.mjs', ['config', 'set', 'gates.report.path', path], dir);
+    run('horde.mjs', ['config', 'set', 'gates.report.format', format], dir);
+  }
+  return out;
+}
+
+test('land.mjs: a JUnit report the gate itself wrote proves the promise\'s own case ran, and the landing goes through', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupReported(dir, '300', {
+    report: junitReport([{
+      file: 'promises/adds-two-numbers.test.mjs',
+      cases: [{ name: 'adds two numbers', status: 'passed' }, { name: 'leaves them alone', status: 'passed' }],
+    }]),
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  if (r.code !== 0) console.error(r.stdout, r.stderr);
+  assert.equal(r.code, 0);
+  const item = byName(r).gate;
+  assert.equal(item.ok, true, item.note);
+  assert.match(item.note, /reports\/junit\.xml \(junit\)/);
+  assert.match(item.note, /all 1 live promise\(s\) ran and passed in it/);
+  assert.match(item.note, /2 case\(s\) read/);
+  assert.equal(r.json.landed.sha, git(['rev-parse', 'mission1/trunk'], dir));
+});
+
+test('land.mjs: a report that never mentions the promise\'s paired file is a red gate naming the promise, not a green one', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const before = (d) => git(['rev-parse', 'mission1/trunk'], d);
+  const { branch } = setupReported(dir, '301', {
+    report: junitReport([{
+      file: 'tests/something-else.test.mjs',
+      cases: [{ name: 'something else entirely', status: 'passed' }],
+    }]),
+  });
+  const trunkBefore = before(dir);
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1);
+  const item = byName(r).gate;
+  assert.equal(item.ok, false);
+  // The command itself was green — the report is what refuses, and it names the promise.
+  assert.match(item.note, /^green \(/);
+  assert.match(item.note, /no clean run for 1 of 1 live promise\(s\)/);
+  assert.match(item.note, /adds-two-numbers:/);
+  assert.match(item.note, /nothing in the report is attributed to promises\/adds-two-numbers\.test\.mjs/);
+  assert.equal(r.json.landed, null);
+  assert.equal(before(dir), trunkBefore, 'and nothing landed');
+});
+
+test('land.mjs: a paired case present in the report but skipped is a red gate — a skipped case is not a run', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupReported(dir, '302', {
+    report: junitReport([{
+      file: 'promises/adds-two-numbers.test.mjs',
+      cases: [{ name: 'adds two numbers', status: 'skipped' }, { name: 'leaves them alone', status: 'passed' }],
+    }]),
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1);
+  const item = byName(r).gate;
+  assert.equal(item.ok, false);
+  assert.match(item.note, /adds-two-numbers:/);
+  assert.match(item.note, /"adds two numbers" skipped, not passed/);
+  assert.equal(r.json.landed, null);
+});
+
+test('land.mjs: a paired case present in the report but failed is a red gate naming the promise', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupReported(dir, '303', {
+    report: junitReport([{
+      file: 'promises/adds-two-numbers.test.mjs',
+      cases: [{ name: 'adds two numbers', status: 'failed' }],
+    }]),
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1);
+  const item = byName(r).gate;
+  assert.equal(item.ok, false);
+  assert.match(item.note, /adds-two-numbers:/);
+  assert.match(item.note, /"adds two numbers" failed, not passed/);
+});
+
+test('land.mjs: with no report configured the gate is exactly what it was, and says "no report configured" rather than passing for a run nobody confirmed', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupReported(dir, '304', { report: null, format: null });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const item = byName(r).gate;
+  assert.equal(item.ok, true, item.note);
+  assert.match(item.note, /green \(true\)/);
+  assert.match(item.note, /no report configured/);
+  assert.match(item.note, /gates\.report\.path/);
+  assert.match(item.note, /junit\|tap\|playwright-json/);
+  // A live promise sits right there in the tree and nothing refused it: with no report configured
+  // this landing is exactly as strong as it was before any of this existed.
+  assert.equal(r.json.ok, true);
+});
+
+test('land.mjs: a report that is configured and not where the gate left it is a different finding from no report at all', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // The gate writes its report somewhere else entirely — config names a path nothing writes.
+  const { branch } = setupReported(dir, '305', {
+    report: junitReport([{ file: 'promises/adds-two-numbers.test.mjs', cases: [{ name: 'adds two numbers', status: 'passed' }] }]),
+    path: 'reports/elsewhere.xml',
+  });
+  run('horde.mjs', ['config', 'set', 'gates.report.path', 'reports/junit.xml'], dir);
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1);
+  const item = byName(r).gate;
+  assert.equal(item.ok, false);
+  assert.match(item.note, /names reports\/junit\.xml and the gate command left no such file in the tree it ran in/);
+  assert.match(item.note, /1 live promise\(s\) have a paired case with nothing to show it ran/);
+  assert.doesNotMatch(item.note, /no report configured/, 'this is not the same finding as nobody configuring one');
+});
+
+test('land.mjs: a format this cannot read is refused by name, and so is a report that is not in the format it claims', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupReported(dir, '306', {
+    report: junitReport([{ file: 'promises/adds-two-numbers.test.mjs', cases: [{ name: 'adds two numbers', status: 'passed' }] }]),
+  });
+  run('horde.mjs', ['config', 'set', 'gates.report.format', 'xunit'], dir);
+
+  const bad = run('land.mjs', [branch], dir);
+  assert.equal(bad.code, 1);
+  assert.match(byName(bad).gate.note, /config\.gates\.report\.format is "xunit"/);
+  assert.match(byName(bad).gate.note, /junit, tap, playwright-json/);
+
+  // The same JUnit file, read as TAP: the format is one this knows, the file is not in it.
+  run('horde.mjs', ['config', 'set', 'gates.report.format', 'tap'], dir);
+  const wrong = run('land.mjs', [branch], dir);
+  assert.equal(wrong.code, 1);
+  assert.match(byName(wrong).gate.note, /does not read as tap/);
+
+  // And a path that would reach out of the tree the gate ran in is refused before anything is read:
+  // the only report that proves anything about this branch is the one that run left behind.
+  run('horde.mjs', ['config', 'set', 'gates.report.format', 'junit'], dir);
+  run('horde.mjs', ['config', 'set', 'gates.report.path', '../elsewhere/junit.xml'], dir);
+  const outside = run('land.mjs', [branch], dir);
+  assert.equal(outside.code, 1);
+  assert.match(byName(outside).gate.note, /has to stay inside the tree the gate ran in/);
+});
+
+test('land.mjs: a TAP report matches a file-level pairing by name, which is all TAP can say — and a skipped line still refuses', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const green = ['TAP version 13', 'ok 1 - adds two numbers', '  ---', '  duration_ms: 1.2', '  ...', 'ok 2 - leaves them alone', '1..2', ''].join('\n');
+  const { branch } = setupReported(dir, '307', { report: green, path: 'reports/run.tap', format: 'tap' });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, `${r.stderr}\n${JSON.stringify(byName(r).gate)}`);
+  assert.equal(byName(r).gate.ok, true);
+  assert.match(byName(r).gate.note, /reports\/run\.tap \(tap\)/);
+  assert.match(byName(r).gate.note, /all 1 live promise\(s\) ran and passed/);
+});
+
+test('land.mjs: a TAP line marked SKIP refuses, and a TAP report with no line named after the paired file says what TAP cannot tell anyone', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const skipped = ['TAP version 13', 'ok 1 - adds two numbers # SKIP not today', '1..1', ''].join('\n');
+  const { branch } = setupReported(dir, '308', { report: skipped, path: 'reports/run.tap', format: 'tap' });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1);
+  assert.match(byName(r).gate.note, /adds-two-numbers:/);
+  assert.match(byName(r).gate.note, /skipped, not passed/);
+
+  const dir2 = makeRepo();
+  t.after(() => rmRepo(dir2));
+  const silent = ['TAP version 13', 'ok 1 - something else entirely', '1..1', ''].join('\n');
+  const { branch: b2 } = setupReported(dir2, '309', { report: silent, path: 'reports/run.tap', format: 'tap' });
+  const r2 = run('land.mjs', [b2], dir2);
+  assert.equal(r2.code, 1);
+  assert.match(byName(r2).gate.note, /this report carries no file attribution at all/);
+  assert.match(byName(r2).gate.note, /named "adds two numbers"/);
+  assert.match(byName(r2).gate.note, /junit or playwright-json — both carry the file/);
+});
+
+test('land.mjs: a Playwright JSON report carries the file, so a failing spec in the paired file refuses and a passing one does not', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const pw = (status) => JSON.stringify({
+    config: {}, suites: [{
+      title: 'promises/adds-two-numbers.test.mjs',
+      file: 'promises/adds-two-numbers.test.mjs',
+      specs: [{ title: 'adds two numbers', ok: status === 'passed', tests: [{ status: status === 'passed' ? 'expected' : 'unexpected', results: [{ status }] }] }],
+    }],
+  });
+  const { branch } = setupReported(dir, '310', { report: pw('passed'), path: 'pw.json', format: 'playwright-json' });
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, `${r.stderr}\n${JSON.stringify(byName(r).gate)}`);
+  assert.match(byName(r).gate.note, /pw\.json \(playwright-json\)/);
+
+  const dir2 = makeRepo();
+  t.after(() => rmRepo(dir2));
+  const { branch: b2 } = setupReported(dir2, '311', { report: pw('timedOut'), path: 'pw.json', format: 'playwright-json' });
+  const r2 = run('land.mjs', [b2], dir2);
+  assert.equal(r2.code, 1);
+  assert.match(byName(r2).gate.note, /adds-two-numbers:/);
+  assert.match(byName(r2).gate.note, /"adds two numbers" failed, not passed/);
+});
+
+test('land.mjs: a promise paired to one named case answers for that case only — another case failing in the same file is not its business', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const named = {
+    'promises/named-case.md': ['---', 'id: named-case', 'status: implemented', 'evidence: promises/kept.test.mjs#the one that counts', '---', '', '## What it checks', '', 'One named case keeps it.', ''].join('\n'),
+    'promises/kept.test.mjs': [
+      "import test from 'node:test';",
+      "import assert from 'node:assert/strict';",
+      '',
+      "test('the one that counts', () => { assert.equal(1, 1); });",
+      "test('a neighbour nobody promised', () => { assert.equal(2, 2); });",
+      '',
+    ].join('\n'),
+  };
+  const report = ['<?xml version="1.0" encoding="UTF-8"?>', '<testsuites>',
+    '  <testsuite name="promises/kept.test.mjs" file="promises/kept.test.mjs" tests="2">',
+    '    <testcase name="the one that counts" classname="promises.kept.test"/>',
+    '    <testcase name="a neighbour nobody promised" classname="promises.kept.test"><failure message="boom">stack</failure></testcase>',
+    '  </testsuite>', '</testsuites>', ''].join('\n');
+  const { branch } = setupReported(dir, '312', { report, trunkFiles: named });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, `${r.stderr}\n${JSON.stringify(byName(r).gate)}`);
+  assert.equal(byName(r).gate.ok, true, byName(r).gate.note);
+
+  // And the same promise with its own named case skipped is refused, so the pass above is not
+  // this rule simply looking at nothing.
+  const dir2 = makeRepo();
+  t.after(() => rmRepo(dir2));
+  const skipped = report.replace('<testcase name="the one that counts" classname="promises.kept.test"/>',
+    '<testcase name="the one that counts" classname="promises.kept.test"><skipped/></testcase>');
+  const { branch: b2 } = setupReported(dir2, '313', { report: skipped, trunkFiles: named });
+  const r2 = run('land.mjs', [b2], dir2);
+  assert.equal(r2.code, 1);
+  assert.match(byName(r2).gate.note, /named-case:/);
+  assert.match(byName(r2).gate.note, /"the one that counts" is in the report as skipped, not passed/);
+});
+
+test('land.mjs: a repository with no live promise has nothing for the report to require, and the item says which', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const parked = { 'promises/adds-two-numbers.md': PROMISE_DOC.replace('status: implemented', 'status: planned') };
+  const { branch } = setupReported(dir, '314', { report: junitReport([]), trunkFiles: parked });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(byName(r).gate.ok, true, byName(r).gate.note);
+  assert.match(byName(r).gate.note, /not read — none of this repository's 1 promise\(s\) reads "implemented"/);
+
+  // And a repository with no promises at all is not a finding either.
+  const dir2 = makeRepo();
+  t.after(() => rmRepo(dir2));
+  const { branch: b2 } = setupReported(dir2, '315', { report: junitReport([]), trunkFiles: {} });
+  const r2 = run('land.mjs', [b2], dir2);
+  assert.equal(r2.code, 0, r2.stderr);
+  assert.match(byName(r2).gate.note, /there are no promises here to require a case for/);
+});
+
+test('land.mjs: a promise kept by an accepted artefact is never looked for in a report — nothing runs an artefact', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const artefact = {
+    'promises/the-look.md': ['---', 'id: the-look', 'status: implemented', 'artefact:', '  path: docs/look.png', '  sha256: 0f1e2d', '  accepted_by: the client', '  at: 2026-01-01', '---', '', '## What it checks', '', 'The client accepted what they were shown.', ''].join('\n'),
+  };
+  const { branch } = setupReported(dir, '316', { report: junitReport([]), trunkFiles: artefact });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(byName(r).gate.ok, true, byName(r).gate.note);
+  assert.match(byName(r).gate.note, /1 kept by an accepted artefact, which no runner runs/);
+});
+
+test('land.mjs: a red gate command is still red, and its report is read anyway so the reason names the promise too', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupReported(dir, '317', {
+    report: junitReport([{ file: 'promises/adds-two-numbers.test.mjs', cases: [{ name: 'adds two numbers', status: 'skipped' }] }]),
+    exit: 1,
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1);
+  const item = byName(r).gate;
+  assert.equal(item.ok, false);
+  assert.match(item.note, /^red \(/);
+  assert.match(item.note, /adds-two-numbers:/);
+});
+
+// ---- the three formats, read directly ---------------------------------------------------------
+//
+// The end-to-end cases above prove the whole item; these pin the exact shape each parser reads,
+// which is the part a future reader would otherwise have to re-derive from the format standards.
+
+test('land.mjs parseReport: JUnit XML — failures, errors, skips, nested suites and every spelling of the file', () => {
+  const xml = ['<testsuites>',
+    '<testsuite name="Outer" file="src/outer.test.ts">',
+    '  <testcase name="passes" classname="Outer"/>',
+    '  <testcase name="fails" classname="Outer"><failure message="x">t</failure></testcase>',
+    '  <testcase name="errors" classname="Outer"><error message="x"/></testcase>',
+    '  <testcase name="skips" classname="Outer"><skipped/></testcase>',
+    '</testsuite>',
+    '<testsuite name="NoFile">',
+    '  <testcase name="by classname" classname="tests.inner.spec"/>',
+    '  <testcase name="by suite name"/>',
+    '</testsuite>',
+    '</testsuites>'].join('\n');
+  assert.deepEqual(parseReport(xml, 'junit').entries, [
+    { file: 'src/outer.test.ts', name: 'passes', status: 'passed' },
+    { file: 'src/outer.test.ts', name: 'fails', status: 'failed' },
+    { file: 'src/outer.test.ts', name: 'errors', status: 'failed' },
+    { file: 'src/outer.test.ts', name: 'skips', status: 'skipped' },
+    { file: 'tests.inner.spec', name: 'by classname', status: 'passed' },
+    { file: 'NoFile', name: 'by suite name', status: 'passed' },
+  ]);
+  // Entity-escaped names come back as they were written, and comments carry no cases.
+  assert.deepEqual(parseReport('<testsuite name="S"><!-- <testcase name="ghost"/> --><testcase name="a &amp; b"/></testsuite>', 'junit').entries,
+    [{ file: 'S', name: 'a & b', status: 'passed' }]);
+  assert.match(parseReport('{"suites":[]}', 'junit').error, /no <testsuite> or <testcase>/);
+});
+
+test('land.mjs parseReport: TAP — directives, YAML blocks, nesting, and no file attribution ever', () => {
+  const tap = ['TAP version 13',
+    '# Subtest: outer',
+    '    ok 1 - inner passes',
+    '    not ok 2 - inner fails',
+    '      ---',
+    '      error: not ok 3 - a line inside the YAML block',
+    '      ...',
+    '    1..2',
+    'ok 1 - outer',
+    'ok 2 - parked # SKIP not today',
+    'not ok 3 - later # TODO',
+    'ok 4 - a description with a # in it',
+    '1..4'].join('\n');
+  assert.deepEqual(parseReport(tap, 'tap').entries, [
+    { file: null, name: 'inner passes', status: 'passed' },
+    { file: null, name: 'inner fails', status: 'failed' },
+    { file: null, name: 'outer', status: 'passed' },
+    { file: null, name: 'parked', status: 'skipped' },
+    { file: null, name: 'later', status: 'skipped' },
+    { file: null, name: 'a description with a # in it', status: 'passed' },
+  ]);
+  assert.match(parseReport('nothing here at all\n', 'tap').error, /no plan line and no "ok"/);
+});
+
+test('land.mjs parseReport: Playwright JSON — nested suites inherit the file, and the last result is the outcome', () => {
+  const doc = JSON.stringify({
+    suites: [{
+      title: 'a.spec.ts',
+      file: 'a.spec.ts',
+      specs: [{ title: 'flaky then green', tests: [{ results: [{ status: 'failed' }, { status: 'passed' }] }] }],
+      suites: [{ title: 'a describe block', specs: [{ title: 'nested', tests: [{ results: [{ status: 'skipped' }] }] }] }],
+    }, {
+      title: 'b.spec.ts', file: 'b.spec.ts',
+      specs: [{ title: 'timed out', tests: [{ results: [{ status: 'timedOut' }] }] }, { title: 'no results', ok: false, tests: [] }],
+    }],
+  });
+  assert.deepEqual(parseReport(doc, 'playwright-json').entries, [
+    { file: 'a.spec.ts', name: 'flaky then green', status: 'passed' },
+    { file: 'a.spec.ts', name: 'nested', status: 'skipped' },
+    { file: 'b.spec.ts', name: 'timed out', status: 'failed' },
+    { file: 'b.spec.ts', name: 'no results', status: 'failed' },
+  ]);
+  assert.match(parseReport('<testsuite/>', 'playwright-json').error, /not readable JSON/);
+  assert.match(parseReport('{"ok":true}', 'playwright-json').error, /no top-level "suites" array/);
+});
+
+test('land.mjs sameFile: every spelling of one file matches it, and a different directory does not', () => {
+  const file = 'promises/adds-two-numbers.test.mjs';
+  for (const spelling of [
+    'promises/adds-two-numbers.test.mjs',
+    './promises/adds-two-numbers.test.mjs',
+    '/build/checkout/promises/adds-two-numbers.test.mjs',
+    'promises\\adds-two-numbers.test.mjs',
+    'promises.adds-two-numbers.test',
+    'PROMISES/ADDS-TWO-NUMBERS.TEST.MJS',
+    'adds-two-numbers.test.mjs',
+    'adds-two-numbers',
+  ]) assert.equal(sameFile(spelling, file), true, spelling);
+  for (const other of ['tests/adds-two-numbers.test.mjs', 'promises/adds-three-numbers.test.mjs', 'test', 'tests', '', null]) {
+    assert.equal(sameFile(other, file), false, String(other));
+  }
+});
+
+test('land.mjs sameCase: a case name matches itself and its own suite-prefixed spellings, never a longer name that merely contains it', () => {
+  for (const spelling of ['adds two numbers', 'maths > adds two numbers', 'maths › adds two numbers', 'Maths::adds two numbers', 'maths adds two numbers']) {
+    assert.equal(sameCase(spelling, 'adds two numbers'), true, spelling);
+  }
+  for (const other of ['adds two numbers slowly', 'readds two numbers', 'adds two', '', null]) {
+    assert.equal(sameCase(other, 'adds two numbers'), false, String(other));
+  }
 });
 
 // ---- the graph item -----------------------------------------------------------------------
