@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import {
-  existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync,
+  existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1084,6 +1084,40 @@ test('land.mjs: the ticket\'s own branch missing refuses by name, carrying git\'
   assert.equal(r.code, 1);
   assert.match(r.stderr, new RegExp(`no such branch: ${branch.replace('/', '\\/')}`));
   assert.match(r.stderr, /Needed a single revision/);
+});
+
+// A git diff that fails outright (a corrupted object, an unreadable ref, a disk error mid-diff)
+// must not come back as [] — the same shape as a genuinely empty diff — or the scope and mapping
+// items would pass on a change this landing never actually read. Both items, and the run as a
+// whole, must refuse instead.
+test('land.mjs: a diff git cannot answer (a corrupted tree) refuses rather than reading as an empty, passing diff', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '097');
+  const trunkBefore = git(['rev-parse', 'mission1/trunk'], dir);
+
+  // The branch's own tip still resolves fine — `rev-parse --verify` only opens the commit object,
+  // which is exactly why base freshness and the branch-existence checks above stay green on this.
+  // What breaks is the diff this landing takes next: it has to walk that tip's tree, and cannot,
+  // the same shape a corrupted object or a disk error mid-diff leaves on a real repository.
+  const treeSha = git(['rev-parse', `${branch}^{tree}`], dir);
+  const objPath = join(dir, '.git', 'objects', treeSha.slice(0, 2), treeSha.slice(2));
+  assert.ok(existsSync(objPath), `expected a loose object at ${objPath} to corrupt`);
+  rmSync(objPath);
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1);
+  // Not scope or mapping reporting red on a checklist — the run refused outright, before either
+  // item, or anything else that reads this diff, ever ran.
+  assert.equal(r.json, null, `expected no checklist at all, got:\n${r.stdout}`);
+  assert.match(r.stderr, /git diff --name-only .* failed/);
+  assert.match(r.stderr, /nothing changed/);
+  // git's own reason rides along too, the same convention the sibling refusals above rely on —
+  // proves this reads a real git failure rather than quietly treating it as an empty diff.
+  assert.match(r.stderr, new RegExp(treeSha));
+
+  assert.equal(git(['rev-parse', 'mission1/trunk'], dir), trunkBefore, 'nothing merged on a diff the gate never read');
+  assert.deepEqual(scratchDirs(dir), []);
 });
 
 test('land.mjs: unicode and spaces in a touched path survive scope, mapping and graph text', async (t) => {
