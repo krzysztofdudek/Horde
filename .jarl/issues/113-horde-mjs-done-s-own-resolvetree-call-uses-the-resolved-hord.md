@@ -1,6 +1,6 @@
 # 113 · horde.mjs done's own resolveTree call uses the resolved horde, not flags.horde raw
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -21,4 +21,5 @@ Once ask a-002 is ruled: if the ruling is "no --horde always means cwd, full sto
 ## Evidence
 
 - **ran:** read skills/horde/scripts/horde.mjs's `cmdDone()` (the `--horde`/`--tree`/`resolveTree` lines) alongside `resolveHorde`'s own doc comment in `_lib.mjs` ("the sole existing horde is the default") · **saw:** `resolveHorde(flags)`'s return value, not `flags.horde`, is what reaches `resolveTree({ tree: flags.tree, horde })` — confirmed by reading the source directly, not by a failing test (no test in this suite currently pins `horde.mjs done`'s tree default either way)
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/horde.test.mjs skills/horde/scripts/tests/docs.test.mjs · **saw:** 105/106 pass (1 pre-existing unrelated skip) on rebased branch tip and again on merged main; independently reviewed the diff, confirmed flags.horde used consistently, matching 041/109's established convention exactly
 
