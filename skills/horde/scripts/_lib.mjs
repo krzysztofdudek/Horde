@@ -482,6 +482,20 @@ export function firstClass(cfg) {
   return keys.length ? keys[0] : Object.keys(DEFAULT_CLASSES)[0];
 }
 
+// classUp(cfg, cls) — the next rung on the ladder above `cls`: the mission's own config.classes
+// key order when it configured one (the same order firstClass reads its first key from),
+// otherwise DEFAULT_CLASSES'. This is the "class up" a fix round's fresh worker gets once a
+// ticket's rounds pass config.fixRounds.resume (tick.mjs dispatch, gated on `takeover`) — one
+// rung heavier, not a jump to the top. `cls` comes back unchanged when it is already the heaviest
+// rung on that ladder, or is not on it at all (an unrecognized class name, or none) — this never
+// throws; an unrecognized class is not this helper's problem to solve.
+export function classUp(cfg, cls) {
+  const configured = Object.keys((cfg && cfg.classes) || {});
+  const keys = configured.length ? configured : Object.keys(DEFAULT_CLASSES);
+  const i = keys.indexOf(cls);
+  return i === -1 || i === keys.length - 1 ? cls : keys[i + 1];
+}
+
 export function writeConfig(cfg) {
   writeJSON(configPath(), cfg);
 }

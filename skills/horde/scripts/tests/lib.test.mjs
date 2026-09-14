@@ -344,6 +344,35 @@ test('_lib.mjs: DEFAULT_CLASSES and firstClass are host-neutral', async (t) => {
   });
 });
 
+// classUp is the fresh, one-class-heavier worker's own class — never a plain default, and never
+// something it invents when handed a class it does not recognise.
+test('_lib.mjs: classUp walks the ladder one rung, and refuses to invent one', async (t) => {
+  const { DEFAULT_CLASSES, classUp } = await import('../_lib.mjs');
+
+  await t.test('one rung up DEFAULT_CLASSES\' own order with no config.classes at all', () => {
+    assert.equal(classUp(null, 'light'), 'standard');
+    assert.equal(classUp({}, 'standard'), 'heavy');
+    assert.equal(classUp({ classes: {} }, 'heavy'), 'max');
+  });
+
+  await t.test('one rung up the mission\'s own configured order and names, whatever they are', () => {
+    const cfg = { classes: { mini: 1, mid: 3, big: 10 } };
+    assert.equal(classUp(cfg, 'mini'), 'mid');
+    assert.equal(classUp(cfg, 'mid'), 'big');
+  });
+
+  await t.test('already the heaviest rung: comes back unchanged, not wrapped or invented', () => {
+    assert.equal(classUp(null, Object.keys(DEFAULT_CLASSES).at(-1)), Object.keys(DEFAULT_CLASSES).at(-1));
+    assert.equal(classUp({ classes: { only: 1 } }, 'only'), 'only');
+  });
+
+  await t.test('a class not on the ladder at all comes back unchanged — never throws', () => {
+    assert.equal(classUp(null, 'made-up'), 'made-up');
+    assert.equal(classUp(null, null), null);
+    assert.equal(classUp({ classes: { mini: 1 } }, 'heavy'), 'heavy');
+  });
+});
+
 // ---- one parser per document ------------------------------------------------------------------
 //
 // The same markdown documents used to be taken apart by a regex in each tool that read them: the
