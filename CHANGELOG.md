@@ -79,7 +79,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - Status now also shows a ticket's work branch when its queue entry has been lost, labelled as needing attention, instead of hiding it.
 - Landing a change that edits an existing test without adding a new one used to pass silently. It is now refused unless the change says plainly that it adds no test, with a reason — and an edited test is checked the same way a new one is.
 - A repository keeping its promises directory somewhere other than one of the usual four spots is now found correctly, once the evidence package is installed, instead of being read as having no evidence at all.
-- Two permission-based tests no longer fail with a false alarm when the test suite runs as an administrator account, which ignores file permissions by design.
+- Three permission-based tests no longer fail with a false alarm when the test suite runs as an administrator account, which ignores file permissions by design.
 - The plan review now refuses with a plain reason when the plan itself can't be built, instead of crashing with a raw error.
 - Two states a ticket could still be moved to — one for a separate verification step, one for an escalation — belonged to the roles that are gone. Setting either is now refused, and the refusal says what replaced it. Old work already sitting in either state still reads and still shows up everywhere it used to.
 - Narrowing the status screen to a team other than the mission's own used to print a mission with nothing in it, reading as "nothing is happening here". It now says plainly that there is no such team.
