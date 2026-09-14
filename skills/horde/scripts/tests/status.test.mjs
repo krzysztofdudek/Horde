@@ -176,6 +176,44 @@ test('status.mjs: a ticket branch with no queue entry shows up as orphaned', asy
   assert.match(human.stdout, /mission1\/t-999/);
 });
 
+// 068 — branchCategory has to read the ticket's own issue Status (issue.md), not just the queue
+// item's state (queue.json): the two vocabularies are disjoint (queue.json's `state` can never be
+// "verified" or "changes" — those are issue.md Status values), so a ticket the gate has just sent
+// back for changes must read as "unverified" even while the queue item itself still says "landed"
+// (recordChanges in land.mjs, and the red-gate path in tick.mjs, both write the ticket's Status
+// without necessarily moving the queue item off "landed" in the same beat).
+test('status.mjs: a ticket whose issue Status is "changes" reads as unverified, even with a stale "landed" queue state', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const ticket = run('tk.mjs', [
+    'new', 'widget-fix', '--title', 'Fix the widget', '--node', 'widget', '--class', 'standard',
+    '--evidence', 'widget behaves correctly',
+  ], dir);
+  assert.equal(ticket.code, 0, ticket.stderr);
+  const id = ticket.json.id;
+
+  assert.equal(run('queue.mjs', ['add', id], dir).code, 0);
+  assert.equal(run('queue.mjs', ['set', id, 'running', '--agent', 'w'], dir).code, 0);
+  const landed = run('queue.mjs', ['set', id, 'landed'], dir);
+  assert.equal(landed.code, 0, landed.stderr);
+  assert.equal(landed.json.state, 'landed');
+
+  // The gate sends the ticket back for changes — exactly what land.mjs's recordChanges and
+  // tick.mjs's red-gate path do to the ticket's own Status — without anything touching the queue
+  // item's state, which stays "landed", stale.
+  const changes = run('tk.mjs', ['status', id, 'changes', 'gate red: some check failed'], dir);
+  assert.equal(changes.code, 0, changes.stderr);
+
+  const r = run('status.mjs', ['--horde', 'mission1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const tb = r.json.hordes[0].teams[0].ticketBranches.find((t2) => t2.ticket === id);
+  assert.ok(tb, 'ticket branch present in the digest');
+  assert.equal(tb.state, 'landed', "the queue item's own state never moved");
+  assert.equal(tb.category, 'unverified', 'a ticket whose real Status is "changes" must not read as "landed"');
+});
+
 // E13 — status.mjs's evidence block: every charter row in one of five states, derived from
 // tickets' own **Status:** and acceptance checklists, never from a second, hand-kept count.
 test('status.mjs: the evidence block shows all five coverage states', async (t) => {

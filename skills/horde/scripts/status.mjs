@@ -13,6 +13,7 @@ import {
 } from './_lib.mjs';
 import { currentWaveNumber, evidenceCoverage } from './wave.mjs';
 import { missionNodes } from './node.mjs';
+import { findTicket, parseField } from './tk.mjs';
 
 const USAGE = `usage: status.mjs [--horde h] [--team t] [--json]
 
@@ -34,9 +35,16 @@ function aheadBehind(base, branch) {
   return { ahead, behind };
 }
 
-function branchCategory(state) {
+// `state` is the queue item's own state (queue.json — STATES in queue.mjs: never "verified" or
+// "changes", those belong to a disjoint vocabulary). `issueStatus` is the ticket's own **Status:**
+// line (issue.md — STATUSES in tk.mjs), read separately because the queue item can lag behind it:
+// the gate sends a ticket back for changes (land.mjs's recordChanges, tick.mjs's red-gate path)
+// by writing the ticket's Status alone, with no guarantee the queue item moves off "landed" in the
+// same beat. Checked first, so a ticket the gate has actually ruled on reads as "unverified"
+// whatever the queue item still says.
+function branchCategory(state, issueStatus) {
+  if (issueStatus === 'verified' || issueStatus === 'changes') return 'unverified';
   if (state === 'landed') return 'landed';
-  if (state === 'verified' || state === 'changes') return 'unverified';
   if (state === 'waiting') return 'waiting';
   return 'unmerged';
 }
@@ -53,10 +61,12 @@ function teamDigest(horde, team) {
     .map((it) => {
       const sha = git(['rev-parse', '--short', it.branch]);
       const aheadOut = tip && sha ? git(['rev-list', '--count', `${branch}..${it.branch}`]) : null;
+      const issueTicket = findTicket(horde, it.ticket);
+      const issueStatus = issueTicket ? parseField(issueTicket.text, 'Status') : null;
       return {
         ticket: it.ticket, branch: it.branch, sha: sha || '-',
         ahead: aheadOut === null ? null : Number(aheadOut),
-        state: it.state, category: branchCategory(it.state),
+        state: it.state, category: branchCategory(it.state, issueStatus),
       };
     });
   const allBranches = items.filter((it) => it.branch).map((it) => it.branch);
