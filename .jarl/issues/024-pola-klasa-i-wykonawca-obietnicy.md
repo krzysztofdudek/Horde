@@ -1,6 +1,6 @@
 # 024 · pola klasa i wykonawca obietnicy
 
-**Status:** in-progress
+**Status:** done
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong
@@ -23,4 +23,6 @@ Dowód, którego oczekuję: packages/promises/doc-shape/drills/*.
 Uwagi: Listy do potwierdzenia z klientem.
 
 ## Evidence
+
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/docs.test.mjs skills/horde/scripts/tests/promises-package.test.mjs · **saw:** 105/105 pass, 0 fail, on the rebased branch tip
 
