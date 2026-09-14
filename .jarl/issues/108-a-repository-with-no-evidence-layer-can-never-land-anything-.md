@@ -37,4 +37,5 @@ with no evidence layer proves it.
 
 ## Evidence
 Ruled by Krzysztof (see .jarl/decisions.md, 108-no-evidence-layer-exempts-revert-test): checkRevertTest exempts every ticket when the charter has judged 'no evidence layer' — return ok:true immediately citing the charter's own judgment, before the testGlobs-empty check and before requiring a per-ticket **No new tests: declaration. Held out of dispatch until issue 109 (also touching land.mjs) lands, to avoid a self-inflicted merge conflict.
+- **ran:** cd skills/horde/scripts && HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" timeout 900 node --test tests/land.test.mjs · **saw:** tests 87, pass 87, fail 0, cancelled 0, skipped 0, todo 0 (63 top-level tests incl. 3 new/changed for this ticket) — exit code 0
 

@@ -93,6 +93,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - Recovering a crashed worker's dirty, uncommitted work now writes a line to that ticket's own log, with the reason and the commit it saved — not only to the internal queue record.
 - Status now also shows a ticket's work branch when its queue entry has been lost, labelled as needing attention, instead of hiding it.
 - Landing a change that edits an existing test without adding a new one used to pass silently. It is now refused unless the change says plainly that it adds no test, with a reason — and an edited test is checked the same way a new one is.
+- A mission with nothing in the repository to prove anything with used to have every ticket refused at landing anyway, by the check that looks for a new test in the change. That check is now skipped there too — nothing in such a mission is proved by running it.
 - A repository keeping its promises directory somewhere other than one of the usual four spots is now found correctly, once the evidence package is installed, instead of being read as having no evidence at all.
 - Three permission-based tests no longer fail with a false alarm when the test suite runs as an administrator account, which ignores file permissions by design.
 - The plan review now refuses with a plain reason when the plan itself can't be built, instead of crashing with a raw error.

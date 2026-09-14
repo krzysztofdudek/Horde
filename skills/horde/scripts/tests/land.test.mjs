@@ -1772,12 +1772,17 @@ test('land.mjs: a mission whose charter found no evidence layer says so on every
   });
 
   await t.test('and so does a refused one — it is a fact about the mission, not about this run', () => {
-    // What a "nothing here to point at" judgement actually describes: a repository whose tests
-    // cannot even be named, so the revert test refuses on its own account.
+    // A no-evidence-layer mission exempts the revert test outright (issue 108) — it is never the
+    // item that refuses here, even with testGlobs unset (the same emptiness the charter's own
+    // judgement is made from). Refuse on something the exemption has nothing to do with instead —
+    // a stale log entry — so this still proves the sentence is said on a refused run too, not only
+    // a green one.
     run('horde.mjs', ['config', 'set', 'testGlobs', ''], dir);
+    writeTicketLog(issueDir(dir, 'trunk', '080'), { whenIso: '2000-01-01T00:00:00.000Z' });
     const r = run('land.mjs', [branch, '--no-gate'], dir);
     assert.equal(r.code, 1);
-    assert.equal(byName(r)['revert test'].ok, false);
+    assert.equal(byName(r).journal.ok, false);
+    assert.equal(byName(r)['revert test'].ok, true, byName(r)['revert test'].note);
     assert.match(r.json.noEvidenceLayer, /^No evidence layer in this repository:/);
   });
 
@@ -1822,6 +1827,83 @@ test('land.mjs: a charter whose evidence judgement has not been made yet claims 
   const r = run('land.mjs', [branch, '--no-gate'], dir);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.json.noEvidenceLayer, null);
+});
+
+// ---- the no-evidence-layer exemption on the revert-test item itself (issue 108) -----------------
+//
+// config.testGlobs is empty on a no-evidence-layer repository BY CONSTRUCTION — the same emptiness
+// the charter's judgement is made from — so the testGlobs-unset refusal used to fire on every
+// single ticket in exactly the repositories Horde tells to prove their catalogue rows some other
+// way (a scenario, a screenshot, a recording), before a ticket's own "**No new tests:**" exemption
+// was even read. The charter's judgement now reaches this item directly instead: exempted outright,
+// first, citing that judgement, rather than refusing on empty testGlobs or asking for an excuse a
+// mission with nothing to run a proof against cannot give.
+
+test('land.mjs: a mission with no evidence layer exempts the revert test outright, even with testGlobs unset and a real new test file in the diff', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '116'); // adds feature-116.test.mjs; no "**No new tests:**" declared
+  await writeEvidenceJudgement(dir, NO_EVIDENCE_LAYER);
+  // The same emptiness the charter's judgement is made from — construction, not a separate mutation.
+  run('horde.mjs', ['config', 'set', 'testGlobs', ''], dir);
+
+  const r = run('land.mjs', [branch, '--no-gate'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const item = byName(r)['revert test'];
+  assert.equal(item.ok, true, item.note);
+  assert.doesNotMatch(item.note, /testGlobs is unset/);
+  assert.doesNotMatch(item.note, /no new or changed test files/);
+  assert.match(item.note, /^No evidence layer in this repository:/);
+  assert.match(item.note, /stands on what it names itself/);
+});
+
+test('land.mjs: the no-evidence-layer exemption is checked before even the ticket\'s own --mutate/--revert-base conflict guard', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: dst } = setupLandable(dir, '117');
+  await writeEvidenceJudgement(dir, NO_EVIDENCE_LAYER);
+  // A ticket that would otherwise be refused outright for naming both fields (see the "names both
+  // --mutate and a revert base" test above) — proof the exemption really runs first, ahead of every
+  // other branch in the function, not only the two the ticket names by name.
+  const path = join(dst, 'issue.md');
+  writeFileSync(path, readFileSync(path, 'utf8').replace('## Acceptance', '**Revert base:** develop\n**Mutate:** true\n\n## Acceptance'));
+
+  const r = run('land.mjs', [branch, '--no-gate'], dir);
+  const item = byName(r)['revert test'];
+  assert.equal(item.ok, true, item.note);
+  assert.doesNotMatch(item.note, /names both --mutate and a revert base/);
+  assert.match(item.note, /^No evidence layer in this repository:/);
+});
+
+test('land.mjs: a mission with an evidence layer keeps the old testGlobs-unset refusal and the old "**No new tests:**" exemption, unchanged', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: dst } = setupLandable(dir, '118');
+  await writeEvidenceJudgement(dir, A_TEST_SUITE);
+
+  await t.test('testGlobs unset still refuses, exactly as before', () => {
+    run('horde.mjs', ['config', 'set', 'testGlobs', ''], dir);
+    const r = run('land.mjs', [branch, '--no-gate'], dir);
+    assert.equal(r.code, 1);
+    const item = byName(r)['revert test'];
+    assert.equal(item.ok, false);
+    assert.match(item.note, /config.testGlobs is unset/);
+    assert.match(item.note, /"not looked", not "none"/);
+  });
+
+  await t.test('and a declared "**No new tests:**" reason still passes it when the diff adds or changes none, exactly as before', () => {
+    run('horde.mjs', ['config', 'set', 'testGlobs', '**/*.test.*,**/*.spec.*'], dir);
+    git(['checkout', branch], dir);
+    git(['rm', '-q', 'feature-118.test.mjs'], dir);
+    git(['commit', '-qm', 'no test after all'], dir);
+    git(['checkout', 'mission1/trunk'], dir);
+    addField(dst, '**No new tests:** pure rename, behaviour covered by existing evidence rows');
+
+    const r = run('land.mjs', [branch, '--no-gate'], dir);
+    const item = byName(r)['revert test'];
+    assert.equal(item.ok, true, item.note);
+    assert.match(item.note, /declared no-new-tests: pure rename/);
+  });
 });
 
 // ---- the tree land.mjs itself runs in, with and without --horde written out (issue 109) --------
