@@ -5,7 +5,7 @@
 //
 //   1. the frontmatter is there and parses
 //   2. `id` is the filename with its extension taken off
-//   3. `status` is one of planned / implemented / disabled
+//   3. `status` is `implemented`, or one of the configured `parked_markers`
 //   4. every section this repository asks for is present
 //   5. no section it did not ask for is present
 //
@@ -21,11 +21,17 @@
 
 const DEFAULT_SECTIONS = 'What it checks, Why it matters, How to see it';
 
-/** The three things a promise can be. Nothing else is a status. */
-export const STATUSES = ['planned', 'implemented', 'disabled'];
+// Statuses that mean "nothing runs this yet, and that is fine", comma separated — the same
+// key, read the same way, that has-evidence, evidence-is-live and evidence-matches-promise each
+// declare under their own name. Kept in step with them: this is the first rule every promise
+// meets, so a status they would treat as parked has to be accepted here too, or a promise using
+// it would be refused before any of them ever saw it.
+const DEFAULT_PARKED = 'planned, disabled';
 
 export function check(ctx) {
   const required = splitList(ctx.config?.sections ?? DEFAULT_SECTIONS);
+  const parked = splitList(ctx.config?.parked_markers ?? DEFAULT_PARKED);
+  const accepted = ['implemented', ...parked];
   const out = [];
 
   for (const file of ctx.files) {
@@ -71,13 +77,13 @@ export function check(ctx) {
       out.push({
         file: file.path,
         line: front.startLine,
-        message: `This promise declares no status. It must declare one of ${STATUSES.join(', ')} — whether anything runs this yet is the first thing a reader needs and the last thing to leave implicit.`,
+        message: `This promise declares no status. It must declare one of ${accepted.join(', ')} — whether anything runs this yet is the first thing a reader needs and the last thing to leave implicit.`,
       });
-    } else if (!STATUSES.includes(status)) {
+    } else if (!accepted.includes(status)) {
       out.push({
         file: file.path,
         line: front.lineOf.status ?? front.startLine,
-        message: `This promise's status is '${status}', which is not one of ${STATUSES.join(', ')}. A status outside the three is a state nothing downstream knows how to treat.`,
+        message: `This promise's status is '${status}', which is not one of ${accepted.join(', ')}. A status outside this set is a state nothing downstream knows how to treat.`,
       });
     }
 

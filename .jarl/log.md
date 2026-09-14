@@ -519,3 +519,4 @@
 - 2026-09-14 05:59 · 061 → done · node.mjs's own USAGE text now shows veto's reason as optional, matching approve and matching the real optional behavior; README.md was already correct.
 - 2026-09-14 05:59 · 105 review approve · Filed by the 061 worker, renumbered from its original 104 (collided with the independently-filed issue 104 on retro.mjs's two-judge measurement). Not yet worked — left open in the queue.
 - 2026-09-14 06:02 · filed 106 · external runner spawns a fix-round worker without --takeover or its round-aware name
+- 2026-09-14 06:00 · filed 107 · doc-shape's yg-aspect.yaml description still says 'the fixed three' statuses (filed as 104 by the worker branch; renumbered to 107 on merge — 104, 105 and 106 were already taken)

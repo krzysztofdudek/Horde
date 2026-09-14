@@ -314,7 +314,7 @@ test('an id that is not the filename is refused', () => {
 
 test('a status outside the three is refused', () => {
   const out = refusal({ promises: { 'orders-are-confirmed.md': promise({ status: 'shipped' }) } });
-  assert.match(out, /status is 'shipped', which is not one of planned, implemented, disabled/);
+  assert.match(out, /status is 'shipped', which is not one of implemented, planned, disabled/);
 });
 
 test('a promise missing a section this repository asks for is refused', () => {
@@ -832,6 +832,26 @@ test('the companion honors a repository-configured parked status, matching has-e
     fs: { exists: () => false, read: () => { throw new Error('nothing to read'); }, list: () => [] },
   };
   assert.deepEqual(companion(ctx), []);
+});
+
+test('doc-shape honors a repository-configured parked status too, matching has-evidence', async () => {
+  const { check } = await import(join(PACKAGE_DIR, 'doc-shape', 'check.mjs'));
+  const ctx = {
+    files: [{ path: 'promises/orders-are-confirmed.md', content: promise({ status: 'deferred' }) }],
+    config: { parked_markers: 'planned, disabled, deferred' },
+  };
+  assert.deepEqual(check(ctx), []);
+});
+
+test('doc-shape still refuses that same status when nothing configured it as parked', async () => {
+  const { check } = await import(join(PACKAGE_DIR, 'doc-shape', 'check.mjs'));
+  const ctx = {
+    files: [{ path: 'promises/orders-are-confirmed.md', content: promise({ status: 'deferred' }) }],
+    config: {},
+  };
+  const out = check(ctx);
+  assert.equal(out.length, 1, `expected exactly one finding, got:\n${JSON.stringify(out, null, 2)}`);
+  assert.match(out[0].message, /status is 'deferred', which is not one of implemented, planned, disabled/);
 });
 
 test('the companion refuses to guess when a promise says it is kept and nothing keeps it', async () => {
