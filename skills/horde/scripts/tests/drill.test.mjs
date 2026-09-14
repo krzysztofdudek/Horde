@@ -337,6 +337,30 @@ test('drill.mjs check scope: a sibling directory sharing the boundary prefix is 
   assert.match(r.json.checks.find((c) => c.name === 'diff inside the boundary').note, /src\/ab\/file\.js/);
 });
 
+test('drill.mjs check scope: a protected path\'s sibling directory is not mistaken for it', async (t) => {
+  const m = missionRepo(t);
+  assert.equal(run('horde.mjs', ['config', 'set', 'protectedPaths', 'src/protected'], m.dir).code, 0);
+  commit(m.worktree, 'a file that only looks like it belongs under the protected path',
+    { 'src/protected-ish/file.js': 'export const x = 1;\n' });
+
+  const r = run('drill.mjs', ['check', 'scope', '--repo', m.dir, '--ticket', '001'], m.dir);
+  const protectedCheck = r.json.checks.find((c) => c.name === 'no protected path');
+  assert.equal(protectedCheck.ok, true, protectedCheck.note);
+  assert.equal(protectedCheck.note, 'none touched');
+});
+
+test('drill.mjs check scope: a file genuinely under a protected path is still caught', async (t) => {
+  const m = missionRepo(t);
+  assert.equal(run('horde.mjs', ['config', 'set', 'protectedPaths', 'src/protected'], m.dir).code, 0);
+  commit(m.worktree, 'a file actually under the protected path',
+    { 'src/protected/file.js': 'export const x = 1;\n' });
+
+  const r = run('drill.mjs', ['check', 'scope', '--repo', m.dir, '--ticket', '001'], m.dir);
+  const protectedCheck = r.json.checks.find((c) => c.name === 'no protected path');
+  assert.equal(protectedCheck.ok, false);
+  assert.match(protectedCheck.note, /src\/protected\/file\.js/);
+});
+
 test('drill.mjs record: refuses a case whose state contradicts --expect', async (t) => {
   const m = testFirstBranch(t);
   const corpus = tempCorpus(t);

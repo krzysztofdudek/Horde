@@ -14,7 +14,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 ### Added
 
 - Landing is automatic: a change that passes every check merges immediately; a failing one is refused with the reason. Only one change lands at a time; a crash mid-landing no longer blocks the next.
-- `land --background` returns immediately and writes its result to a file. `worker.copy`/`worktree.copy` copies files into every new worktree.
+- `land --background` returns immediately and writes its result to a file. `worktree.copy` copies files into every new worktree.
 - Weakening a rule (deleting, lowering, moving its review date, narrowing scope, unhooking, disabling for a file) requires the client's written approval — once per landing or for the whole mission.
 - A change cannot both alter a rule and alter the code that rule judges in one landing; both are refused together.
 - Every landing runs the full test suite against a real Yggdrasil build; the architecture check runs on the branch itself and must be fully green.
@@ -100,6 +100,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - A git failure partway through reading what a change touched used to be read as an empty change, letting the checks that depend on it pass without ever looking. They now refuse instead.
 - Landings and mission closes run one at a time even when two of them start at the very same instant: two changes never land together, and the same closing line never reaches a component's history twice.
 - A change that has just landed is no longer re-checked from scratch when the mission's final check runs right after it — it reuses that landing's own result. Closing a round of work straight after a landing now correctly shows that landing as checked, instead of showing it as not yet checked.
+- A check meant to catch a ticket touching a path it must not is no longer fooled by a similarly named neighbour — a path you protect from `src/a` no longer lets `src/ab` through.
 
 ### Migrating a mission already in flight
 

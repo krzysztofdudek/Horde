@@ -489,7 +489,7 @@ function checkScope(ctx) {
   });
 
   const protectedPaths = cfg.protectedPaths || [];
-  const touched = files.filter((f) => protectedPaths.some((p) => f === p || f.startsWith(p)));
+  const touched = files.filter((f) => pathInBoundary(f, protectedPaths));
   checks.push({
     name: 'no protected path',
     ok: touched.length === 0,

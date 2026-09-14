@@ -56,13 +56,15 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   repository invokes the Yggdrasil CLI
   — default `yg` on PATH; set it to e.g. `node path/to/bin.js` for a local build), `grainCommand`
   (how it invokes Grain, when it has one — default none, and `init` says what naming one would add),
-  `keyContext` (how many lines of surrounding code a review's key is bound to — default 3; see
-  "keys are bound to the diff" below), `protectedPaths[]`, `fixRounds.resume|fresh` (the fix-loop
+  `protectedPaths[]`, `fixRounds.resume|fresh` (the fix-loop
   breaker `tk.mjs status <ticket> changes` reads: rounds 1..`resume` resume the same worker, the
   next `fresh` rounds spawn a fresh one a class up, beyond that the command refuses — defaults 3
   and 2), `classes` (weights: light 1, standard 3, heavy 10, max 30 — defaults, host-neutral;
   an adopter maps each tier onto a real model, e.g. Claude Code: `light: haiku, standard: sonnet,
-  heavy: opus`), `parallelism`.
+  heavy: opus`), `parallelism`, `worktree.copy[]` (repository-root-relative paths copied into
+  every ticket, trunk or scratch tree the moment it is made — for whatever a worker's tools need
+  that git itself does not check out, e.g. an untracked env file or a dependency cache; a path git
+  already tracks is refused — default none).
   A list-valued key (`testGlobs`, `protectedPaths`) takes either a comma-separated list or a JSON
   array and is stored as a list either way — never as the text of one.
 - `charter show|edit [--ask id]` — the mission charter. `show` prints it; `edit` replaces it
@@ -96,18 +98,18 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   as missing (`null`) and the rest is still read — half a book is worth more than none. The same
   reader scopes the archive into each consultant's brief (`refine.mjs --step consult`, below).
 - `done [--horde h]` — the mission's final gate (ruling `evidence-is-the-plan`: "the queue is empty"
-  is never "done"). Refuses, listing every reason at once, when: any charter evidence row is not
-  reproduced (first promoting whatever a merged ticket's own verdict already proved, mission-wide
-  and regardless of wave, into the charter's "reproduced by" cell — the same reading `wave.mjs
-  close` uses for one wave, stretched over the whole mission); the empty catalogue itself is also a
-  reason (nothing to reproduce is not the same as done); `config.gates.trunk` is not green at the
-  trunk branch's tip (a matching recorded green in `cache/last-gate.json` is accepted, anything else
-  is run fresh in a scratch worktree); no audit verdict (`wave.mjs audit`) was recorded anywhere in
-  the mission's last wave — "current" once that wave is closed means "the last one", not "none
-  open", and a verdict recorded *after* that close counts toward it, since `audit-plan` draws its
-  sample from the wave that has just closed. Otherwise: the charter is already stamped (a side effect of the evidence check above),
-  the completion block (`templates/mission-close.md`) is appended to the mission's `plan.md`, and
-  the result says what to do next — push, a decision that stays the chairman's, never this tool's.
+  is never "done"). Refuses, listing every reason at once, when: the charter's evidence catalogue is
+  empty (nothing to reproduce is not the same as done); any charter evidence row is not reproduced
+  (first promoting whatever a merged ticket's own verdict already proved, mission-wide and
+  regardless of wave, into the charter's "reproduced by" cell — the same reading `wave.mjs close`
+  uses for one wave, stretched over the whole mission); the trunk branch does not exist, or
+  `config.gates.trunk` is not configured, or it is not green at the trunk branch's tip (a matching
+  recorded green in `cache/last-gate.json` is accepted, anything else is run fresh in a scratch
+  worktree); no retrospective has been run on this mission at all, or the one on file was taken over
+  a different set of landed tickets than the mission now has (run `retro.mjs --horde h` again).
+  Otherwise: the charter is already stamped (a side effect of the evidence check above), the
+  completion block (`templates/mission-close.md`) is appended to the mission's `plan.md`, and the
+  result says what to do next — push, a decision that stays the chairman's, never this tool's.
 
 ## status.mjs — the digest
 
@@ -270,7 +272,7 @@ earning no row at all claims nothing — neither is a mismatch.
   can be started now on top of one. The lock holds there too: the ticket it would start from is
   often the one holding the file. Without `--stack`, such an item is skipped as before, and
   `--why` says which tip it could have started from.
-  `rm NNN`, `move NNN --team t`, `render`, `reconcile` (every `running` item: a commit beyond its
+  `rm NNN`, `render`, `reconcile` (every `running` item: a commit beyond its
   parent's tip → `landed`; a dirty worktree → `git add -A && git commit -m "wip: reclaimed"` on the
   ticket branch, then `queued` with a note; a clean worktree and no commit → `queued`, worktree
   removed. A `waiting` item is left untouched — it has nothing running to reconcile).
@@ -1196,7 +1198,6 @@ others — where a number has that kind of backing and where it does not.
 
 | Constant | Value | Set in | Where it comes from |
 | --- | --- | --- | --- |
-| `keyContext` | 3 (lines) | `horde.mjs` `defaultConfig()` | Not recorded. The comment explains the mechanism — more context makes a key more sensitive to a nearby landing, and zero is refused outright as unusable — never why three lines rather than two or five. |
 | `parallelism` | 6 | `horde.mjs` `defaultConfig()` | Not recorded. No comment or history explains this count; it has carried the same value since the plugin's first release. |
 | `fixRounds.resume` | 3 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | Not recorded. The comment explains the two-phase mechanism — resume the same worker, then a fresh one a class up — never why three rounds of the first phase. |
 | `fixRounds.fresh` | 2 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | Not recorded, same comment as the resume count above — the fresh-worker round count is equally unexplained. |
@@ -1262,27 +1263,36 @@ runs.
 
 ## land.mjs's revert test — how a new test file is found and run
 
-The item detects a new test file generically by name, against `config.testGlobs` rather than by
-inspecting file content — a repository's own test patterns aren't otherwise knowable from this tool
-set. `horde init` fills that key from the repository's build files; when it is empty the item is ✗,
-because a ✓ reading "no new test files in diff" over a repository whose tests this tool cannot
-recognize is the strongest guarantee in the checklist passing without looking. A ✓ names the
-patterns it did look for. A matched file whose extension `node --test`
-can run directly is extracted and run that way; anything else falls back to running the whole
-`config.gates.commit` command in the scratch worktree, treating any red as "this file's a failure" —
-isolating just one file's test lane out of an arbitrary configured command isn't possible in general.
+The item detects a new OR changed test file generically by name, against `config.testGlobs` rather
+than by inspecting file content — a repository's own test patterns aren't otherwise knowable from
+this tool set. A modified existing test file is treated the same as a new one: its content on the
+branch is extracted onto the revert base exactly like a new file's, and must show a failure there
+too — a change to an existing test's assertions proves nothing about the code it now checks if it
+already passed on the base unmodified. `horde init` fills `testGlobs` from the repository's build
+files; when it is empty the item is ✗, because a ✓ reading "no new or changed test files in diff"
+over a repository whose tests this tool cannot recognize is the strongest guarantee in the checklist
+passing without looking. A ✓ names the patterns it did look for. A matched file whose extension
+`node --test` can run directly is extracted and run that way; anything else falls back to running
+the whole `config.gates.commit` command in the scratch worktree, treating any red as "this file's a
+failure" — isolating just one file's test lane out of an arbitrary configured command isn't possible
+in general.
+
+A diff with no new or changed test file is not automatically refused: a ticket can declare
+`**No new tests:** <reason>` in its issue.md, and the item passes on that declared exemption
+instead of running anything. Without that declaration, no new or changed test file is a refusal —
+naming the patterns it looked for and the field that would explain the gap.
 
 Two variants exist, chosen by the ticket itself — never by a `land.mjs` flag. The default is the
-revert-to-base one above: new test files extracted onto the parent branch's tip (or another ref, via
-`--revert-base`), where the ticket's own implementation doesn't yet exist and the tests must
-therefore fail. When the ticket instead carries a `**Mutate:**` command (`tk.mjs new --mutate`),
-`land.mjs` runs the mutation variant: it builds a scratch copy of the branch's own tip — which
-already holds both the ticket's new tests and its implementation, so nothing needs extracting — runs
-the ticket's command there to deliberately break that implementation, and requires the same new test
-files to fail against the broken result. A ticket naming both `--revert-base` and `--mutate` is
-refused outright, at `tk.mjs new` and again as a defense-in-depth check inside `land.mjs`: only one
-variant ever runs, so the other would be silently unused, which is exactly the kind of ambiguity
-this tool set refuses rather than resolves by guessing.
+revert-to-base one above: the new or changed test files extracted onto the parent branch's tip (or
+another ref, via `--revert-base`), where the ticket's own implementation doesn't yet exist and the
+tests must therefore fail. When the ticket instead carries a `**Mutate:**` command (`tk.mjs new
+--mutate`), `land.mjs` runs the mutation variant: it builds a scratch copy of the branch's own tip —
+which already holds both the ticket's tests and its implementation, so nothing needs extracting —
+runs the ticket's command there to deliberately break that implementation, and requires the same new
+or changed test files to fail against the broken result. A ticket naming both `--revert-base` and
+`--mutate` is refused outright, at `tk.mjs new` and again as a defense-in-depth check inside
+`land.mjs`: only one variant ever runs, so the other would be silently unused, which is exactly the
+kind of ambiguity this tool set refuses rather than resolves by guessing.
 
 The gate item accepts no recorded green run from anywhere — not a cache, not a ticket's own log.
 It runs `config.gates.<level>` fresh on the branch's tree, every time. (`horde.mjs done` still

@@ -1,10 +1,11 @@
 // The documentation's own shape, read off disk — modelled on the deleted brief-paths.test.mjs's
 // idiom: these tests read files and compare what they say against each other or against the code,
 // never render a brief or run a tool. The one scan that walks arbitrary files (the retired-role
-// scan, below) decodes as latin1 rather than utf8, because escalate.mjs carries a literal NUL byte
-// (its composite-key separator) that would make a naive reader — or a plain `grep` — treat the file
-// as binary and skip it; every other test here reads a named file as real utf8 text instead, since
-// it has to compare actual prose (em dashes, checkmarks), not just look for an ASCII substring.
+// scan, below) decodes as latin1 rather than utf8: latin1 maps every byte value to a character and
+// never throws, so a stray non-UTF-8 byte anywhere in the scanned set can't make the scan crash or
+// silently skip a file the way a strict UTF-8 decode would; every other test here reads a named
+// file as real utf8 text instead, since it has to compare actual prose (em dashes, checkmarks), not
+// just look for an ASCII substring.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,9 +23,9 @@ const SKILL_DIR = join(dirname(dirname(dirname(fileURLToPath(import.meta.url))))
 const REPO_ROOT = join(SKILL_DIR, '..', '..');
 const SCRIPTS_DIR = join(SKILL_DIR, 'scripts');
 
-// latin1: never chokes on a NUL byte (escalate.mjs carries one, its composite-key separator) —
-// used only for the retired-role-name scan below, which only ever looks for plain ASCII words and
-// does not care that a multi-byte UTF-8 character elsewhere decodes to mangled bytes under it.
+// latin1: never throws on any byte sequence, unlike a strict utf8 decode — used only for the
+// retired-role-name scan below, which only ever looks for plain ASCII words and does not care that
+// a multi-byte UTF-8 character elsewhere decodes to mangled bytes under it.
 function readRaw(path) {
   return readFileSync(path).toString('latin1');
 }
@@ -902,8 +903,7 @@ test('scripts/README.md\'s wave.mjs command list names only commands wave.mjs\'s
 // already has one and is the pattern the rest follow. Every value below is read live off the
 // source that actually defines it — never retyped as a literal here — so a row goes stale the
 // moment the code and the table disagree, exactly like `landCheckOrder()`/`readmeGateItems()`
-// above hold land.mjs's own gate list to its docs. Issue 096 later found one more number 013's
-// own sweep had missed — `keyContext` — and added it here the same way.
+// above hold land.mjs's own gate list to its docs.
 
 function defaultConfigSlice() {
   const text = readText(join(SCRIPTS_DIR, 'horde.mjs'));
@@ -948,7 +948,6 @@ function liveConstants() {
   };
 
   return [
-    ['keyContext', need(/keyContext:\s*(\d+)/, cfg, 'keyContext')],
     ['parallelism', need(/parallelism:\s*(\d+)/, cfg, 'parallelism')],
     ['fixRounds.resume', need(/fixRounds:\s*\{\s*resume:\s*(\d+)/, cfg, 'fixRounds.resume')],
     ['fixRounds.fresh', need(/fixRounds:\s*\{\s*resume:\s*\d+,\s*fresh:\s*(\d+)/, cfg, 'fixRounds.fresh')],
@@ -964,7 +963,7 @@ function liveConstants() {
 
 test('every constant issue 013 found has a row in scripts/README.md\'s constants table, with its current value', () => {
   const rows = tableRows();
-  assert.ok(rows.length >= 11, `expected at least 11 data rows in the constants table, found ${rows.length}`);
+  assert.ok(rows.length >= 10, `expected at least 10 data rows in the constants table, found ${rows.length}`);
 
   const constants = liveConstants();
   assert.equal(new Set(constants.map(([k]) => k)).size, constants.length, 'two constants share the same lookup key');

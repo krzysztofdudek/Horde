@@ -156,6 +156,9 @@ commands:
       --depends adds dependencies to the ticket's queue item, one per number, through the same
       path "queue.mjs dep" uses — so a dependency is written the same way whoever writes it, and
       the cycle check lives in one place. The ticket has to be in the queue for that.
+  move <ticket> --team <t> [--horde h]
+      relocates the issue folder to another team, writing the new "**Team:**" on the way. Refuses
+      a team the ticket is already in, and a destination that already holds a folder of that id.
 
 options: --json  --help`;
 

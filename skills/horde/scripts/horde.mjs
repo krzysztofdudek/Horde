@@ -58,10 +58,6 @@ commands:
   config set <key> <value>
       dotted paths into .horde/config.json, e.g. "gates.trunk", "territory.maxBytes",
       "fixRounds.resume". A list-valued key takes a comma-separated list or a JSON array.
-      "keyContext" (default 3) is how much surrounding code a review's key is bound to: a
-      judgement already recorded against a branch survives that branch catching up with the trunk
-      as long as nothing landed within this many lines of the ticket's own change. Raise it to send
-      more tickets back for a re-review, lower it to send fewer; 1 is the lowest offered.
       "ygCommand" is how this repository invokes the Yggdrasil CLI (default "yg"); "grainCommand"
       how it invokes Grain, when it has one (default: none). "worktree.copy" (default: none) is a
       list of repository-root-relative paths copied into every ticket, trunk or scratch tree the
@@ -414,8 +410,6 @@ function defaultConfig(root) {
     // gate refuses rather than guess, because guessing wrong either invents a reviewer that does
     // not exist or pays for one twice.
     judge: detectJudge(root),
-    // How many lines of surrounding code a review's key is bound to (see _lib.mjs patchIdOf).
-    keyContext: 3,
     protectedPaths: [],
     classes: { ...DEFAULT_CLASSES },
     parallelism: 6,
