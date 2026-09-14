@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  mkdirSync, rmSync, realpathSync,
+  mkdirSync, rmSync, realpathSync, existsSync, readFileSync, writeFileSync,
 } from 'node:fs';
 import {
   makeRepo, rmRepo, run, initHorde,
@@ -63,11 +63,21 @@ test('node.mjs log --run: refuses a graph write from wherever it was not explici
   git(['checkout', 'develop'], dir);
 
   await t.test('cwd sitting on the mission\'s own base branch, no --tree: refused, naming the branch and trunk\'s tree', () => {
+    // Issue 124: composing that suggestion must not provision the tree it names. Nothing has
+    // resolved mission1's trunk tree yet at this point in the test, so it does not exist on disk
+    // before the refusal — and a command that writes nothing must leave it exactly that way after.
+    const trunkPath = `${dir}/.horde/worktrees/mission1/trunk`;
+    assert.equal(existsSync(trunkPath), false, 'trunk worktree must not exist before the refusal');
     const r = run('node.mjs', ['log', 'core', 'a reason', '--run'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /"develop"/);
     assert.match(r.stderr, /worktrees[\\/]mission1[\\/]trunk/);
     assert.doesNotMatch(r.stderr, /at Object|at Module|node:internal/); // a refusal, not a stack trace
+    assert.equal(
+      existsSync(trunkPath),
+      false,
+      'refusing the write must not provision the trunk worktree as a side effect (issue 124)',
+    );
   });
 
   await t.test('--horde alone: trunk itself, refused — only the landing script writes there', () => {
@@ -85,6 +95,42 @@ test('node.mjs log --run: refuses a graph write from wherever it was not explici
     assert.doesNotMatch(r.stderr, /landing script/);
     assert.doesNotMatch(r.stderr, /is on "develop"/);
   });
+});
+
+// Issue 124: when mission1's trunk tree already exists on disk, the refusal above still has to name
+// it correctly — same content as always — but composing that suggestion must not be the thing that
+// resyncs it (resolveHordeTrunk's own `git reset --hard` on every read of an existing trunk tree),
+// which would discard whatever uncommitted state happened to be sitting there. Kept as its own test
+// (a fresh repo, the trunk worktree provisioned by hand with plain git) rather than folded into the
+// block above, so it never depends on an earlier sub-test's own side effects to set the tree up.
+test('node.mjs log --run: the refusal names an already-existing trunk tree without resyncing it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const trunkPath = `${dir}/.horde/worktrees/mission1/trunk`;
+  mkdirSync(`${dir}/.horde/worktrees/mission1`, { recursive: true });
+  git(['worktree', 'add', '--detach', trunkPath, 'mission1/trunk'], dir);
+  t.after(() => { try { git(['worktree', 'remove', '--force', trunkPath], dir); } catch { /* already gone */ } });
+
+  // Uncommitted, on a tracked file — resolveHordeTrunk's resync (`git reset --hard`) would discard
+  // exactly this and nothing else; an untracked file would survive a hard reset regardless and
+  // would not tell the two cases apart.
+  const before = `${readFileSync(`${trunkPath}/README.md`, 'utf8')}uncommitted change from the test\n`;
+  writeFileSync(`${trunkPath}/README.md`, before);
+
+  git(['checkout', 'develop'], dir);
+  const r = run('node.mjs', ['log', 'core', 'a reason', '--run'], dir);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /"develop"/);
+  assert.match(r.stderr, /worktrees[\\/]mission1[\\/]trunk/); // unchanged: still names the real tree
+
+  const after = readFileSync(`${trunkPath}/README.md`, 'utf8');
+  assert.equal(
+    after,
+    before,
+    'a refused write must not resync (git reset --hard) the trunk tree it merely names in its message, discarding uncommitted state there',
+  );
 });
 
 test('node.mjs --ticket: a worker\'s own tree, and every way it can be wrong', async (t) => {

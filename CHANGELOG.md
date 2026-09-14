@@ -118,6 +118,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - Two commands reading one mission's trunk at the same moment — a running loop and one you type yourself, or two sessions side by side — no longer fail one of them with a raw git error. They take turns, and both get the trunk.
 - Two commands changing one mission's queue at the same moment — a running loop and one you type yourself, or two sessions side by side — could rarely both believe they held the lock protecting it and overwrite each other's change. They now always take turns.
 - Recording a decision or answering a question, interrupted partway through — killed outright, a container recycled — used to block every one after it until someone cleared it by hand. The next one now recovers on its own.
+- A graph write refused for sitting on the mission's own base branch no longer creates the mission's trunk tree — or discards uncommitted work already sitting in it — just to name that tree in the refusal message.
 
 ### Migrating a mission already in flight
 
