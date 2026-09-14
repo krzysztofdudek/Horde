@@ -76,6 +76,12 @@ The mission's retrospective, in two runs.
      input and writes .horde/hordes/<h>/retro.json (with retro.md beside it): the rule proposals,
      what came back after landing, the items the law will not express, and the judge measurement.
 
+The first run resolves no tree at all — it reads only .horde/. The second run's own graph reads
+(the taste log and the judge measurement) run against the tree --tree names; without it, cwd, same
+as an ordinary read anywhere else in this tool set, not this horde's trunk just because a horde was
+resolvable. --horde h WRITTEN OUT (no --tree) is what changes that, exactly as queue.mjs
+plan/quality, tick.mjs, land.mjs and horde.mjs done already read it.
+
 A "taste" item leaves one line in its component's own log through \`yg log add\` and goes nowhere
 else. An item already logged by an earlier run is never logged twice.
 
@@ -811,7 +817,16 @@ function cmdRetro(flags) {
   }
 
   const classified = readClasses(horde, input.items);
-  const info = resolveTree({ tree: flags.tree, horde });
+  // No --tree: cwd, same as an ordinary read anywhere else in this tool set — NOT this horde's
+  // trunk just because a horde was resolvable (ask a-002, decisions.md: always cwd, full stop,
+  // however many hordes the repository runs). What this DOES honor is --horde typed explicitly:
+  // `flags.horde`, never `horde` above (main()'s own resolveHorde(flags), which defaults to the
+  // sole horde in a single-horde repository even with nothing typed at all) — the same distinction
+  // tick.mjs (041), land.mjs (109) and horde.mjs done (113) already draw. Only logTaste's
+  // `yg log add` and measureJudge's own reads below actually touch this tree; the gathering run
+  // above (collectRetroInput) reads only .horde/ and resolves no tree at all, on purpose (see its
+  // own comment) — issue 114 caught this command's tree resolution up to the same rule.
+  const info = resolveTree({ tree: flags.tree, horde: flags.horde });
   const lock = acquireRetroLock(horde);
   try {
     const previous = readJSON(retroPath(horde), null);

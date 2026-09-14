@@ -1370,3 +1370,51 @@ test('retro.mjs: a mission that has an evidence layer says nothing about one', a
   assert.equal(r.json.noEvidenceLayer, null);
   assert.doesNotMatch(readFileSync(hordeFile(dir, 'mission1', 'retro.md'), 'utf8'), /No evidence layer in this repository/);
 });
+
+// ---- the tree the second run's own graph read (taste logging, judge measurement) runs in, with
+// and without --horde written out (issue 114) ------------------------------------------------------
+//
+// The same shared contract every other tool here reads (node.mjs main()'s own comment above its
+// resolveTree call, tree.test.mjs, and tick.test.mjs/land.test.mjs/horde.test.mjs's own versions of
+// this test): an ordinary run with neither --tree nor --horde stays on cwd, whatever tree that
+// happens to be — a resolvable horde is not by itself a second signal for "read trunk instead"
+// (ask a-002, decisions.md: always cwd, full stop). --horde WRITTEN OUT is the one thing that does
+// mean this horde's own trunk, exactly as queue.mjs plan/quality, tick.mjs, land.mjs and horde.mjs
+// done already read it. Before this fix, the second run's own resolveTree call forwarded the
+// RESOLVED horde (main()'s own resolveHorde(flags), which defaults to the sole horde in a
+// single-horde repository even with nothing typed at all) instead of the raw flag, so a bare second
+// run in this single-horde fixture read trunk unconditionally, never cwd. The first (gathering) run
+// resolves no tree at all — see its own comment in retro.mjs — and is not retested here.
+//
+// retro-classes.json has to already exist for the second run to be reached at all (with none on
+// file, cmdRetro returns the "spawn the one-shot" reading before any tree is ever resolved) —
+// written here exactly like every other second-run test in this file, empty, so this test proves
+// only the tree question and nothing about classification. What is left to differ, and what this
+// test actually proves, is whether the second run ever provisions this horde's own trunk WORKTREE —
+// a resource only --horde written out reaches — while running from a shell sitting on "develop"
+// (the mission's own base branch, checked out but never itself mission1/trunk).
+test('retro.mjs: no --horde stays on cwd; --horde written out resolves to that horde\'s own trunk instead', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  initHorde(dir);
+  seedTicket(dir, 'mission1', '001', { states: ['queued'] });
+  writeClasses(dir, 'mission1', {});
+  const trunkWorktree = join(dir, '.horde', 'worktrees', 'mission1', 'trunk');
+  git(['checkout', 'develop'], dir);
+
+  await t.test('no --horde at all: cwd — trunk\'s own separate worktree is never touched', () => {
+    const r = run('retro.mjs', [], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(existsSync(trunkWorktree), false, 'trunk\'s own separate worktree was never provisioned');
+    assert.equal(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim(), 'develop');
+  });
+
+  await t.test('--horde mission1 written out: this horde\'s own trunk worktree gets provisioned, a different tree entirely', () => {
+    const r = run('retro.mjs', ['--horde', 'mission1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(existsSync(trunkWorktree), true, '--horde written out: trunk\'s own separate worktree was provisioned');
+    // Shared state, not part of either tree: the main checkout is left exactly where it was.
+    assert.equal(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim(), 'develop');
+  });
+});

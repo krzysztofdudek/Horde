@@ -486,6 +486,16 @@ export function assertGraphWritable(info, { horde, cfg } = {}) {
   }
   const base = cfg && cfg.base;
   if (info.kind === 'cwd' && base && info.branch === base) {
+    // Audited under issue 114, against ask a-002, and left as-is: this `horde` is the caller's own
+    // resolved value (node.mjs main() passes resolveHorde(flags), not flags.horde), and that is
+    // deliberate here, not the ordinary-read gap 114 fixed elsewhere. This line is reached only
+    // when `info` — resolved above THIS function, by the caller, the correct flags.horde way —
+    // already came back "cwd", which happens only when --horde was NOT typed; using flags.horde
+    // here too would always be undefined at exactly this point and the hint below would never fire.
+    // It is also not an ordinary read: nothing is resolved FOR the write itself here, only a path
+    // to name in a refusal already decided above, one line up — and for a graph write specifically,
+    // trunk is where the write belongs once named on purpose (node.mjs main()'s own comment above
+    // its resolveTree call: "a graph WRITE ... is the one place --horde alone DOES mean trunk").
     const trunkPath = horde ? resolveTree({ horde }, { cwd: info.path }).path : null;
     fail(`${info.path} is on "${base}" — a graph write from here is almost certainly the wrong tree found by accident, not named on purpose${trunkPath ? `; the mission's tree is at ${trunkPath}` : ''}. Pass --tree explicitly if this checkout really is what you mean`);
   }

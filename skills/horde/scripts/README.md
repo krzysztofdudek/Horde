@@ -8,7 +8,8 @@ which TREE a command reads: ordinarily that is cwd, whatever checkout the caller
 in, the same as any other read in this tool set — a horde being resolvable, on its own, is never a
 second signal to read trunk instead. `--horde` WRITTEN OUT BY THE CALLER, with no `--tree`/`--ticket`/
 `--scratch`, is what changes that, and only for the handful of commands built to read it that way —
-`queue.mjs plan`/`quality`, `tick.mjs`, and `land.mjs` — never for a horde a command merely resolved on
+`queue.mjs plan`/`quality`, `tick.mjs`, `land.mjs`, `horde.mjs done`, `brief.mjs` (architect,
+legislate, retro), `wave.mjs start` and `retro.mjs` — never for a horde a command merely resolved on
 its own by other means (the sole horde in the repository, with nothing typed at all). On those commands,
 with the flag typed and no tree flag, it resolves to that horde's own trunk worktree — read-only for
 everything but `land.mjs`'s merge commits, and resynced to the branch's tip (`git reset --hard`) on
@@ -460,6 +461,13 @@ role's own text it appends a `## Law` section: the disciplines that role is held
 texts live there once, so an edit to a discipline reaches every brief that carries it. Records
 nothing. The caller copies the output into the Agent tool's prompt verbatim.
 
+Every role's own graph read runs against the tree `--tree` names; without it, cwd, the same
+ordinary default every read in this tool set takes, not this horde's trunk just because a horde was
+resolvable. `--horde h` written out (no `--tree`) is what changes that, exactly as `queue.mjs
+plan`/`quality`, `tick.mjs`, `land.mjs` and `horde.mjs done` already read it — all four roles read
+it the same way (issue 114 caught `architect`, `legislate` and `retro` up to `worker`'s own reading
+of it).
+
 `legislate <territory>` is the one-shot that writes a territory's law down. Everything in its brief is
 scoped to that territory and to nothing else: the landing gate's refusals on ITS tickets (from
 `land`'s own result files under `hordes/<horde>/land/`), those tickets' own logs, and the rules the
@@ -766,7 +774,8 @@ says so whenever `--node` is given, and prints the `yg log add` command instead.
 
 ## wave.mjs — the journal
 
-Appends to `hordes/<horde>/plan.md` (team waves to `teams/<team>/plan.md`): `start [n] [--team t]`,
+Appends to `hordes/<horde>/plan.md` (team waves to `teams/<team>/plan.md`): `start [n] [--team t]
+[--tree p] [--horde h]`,
 `note "…"`, `merged NNN <sha>`,
 `close [--gate green|red] [--sha <tip>]
 [--evidence E5,…] [--team t]` (renders `templates/wave-close.md` with counts from the queue and the
@@ -783,7 +792,12 @@ re-derive it independently.
 `start` also writes the wave's own plan bullet: the layer sizes `queue.mjs plan` derives from the
 tickets at that moment (imported, never a second derivation of the DAG), the parallelism the first
 layer allows within `config.parallelism`, and the instant the wave opened — the three things the
-close reads back to say what the wave planned, and to know which rulings belong to it.
+close reads back to say what the wave planned, and to know which rulings belong to it. That DAG is
+built from the tree `--tree` names; without it, cwd, the same ordinary default every read in this
+tool set takes, not this horde's trunk just because a horde was resolvable. `--horde h` written out
+(no `--tree`) is what changes that, exactly as `queue.mjs plan`/`quality`, `tick.mjs`, `land.mjs`
+and `horde.mjs done` already read it (issue 114 — before it, `start` read this horde's own trunk
+unconditionally, the one `buildPlan` caller that never named its own tree).
 
 Beyond the counts it always carried, `close` states six figures the chairman reads:
 
@@ -1127,6 +1141,11 @@ sentence, its component and `check`/`prose`, a `taste` carrying a component and 
 judge, threshold, notes}`. A `taste` item leaves one line in its component's own log through
 `yg log add` and nowhere else; a key already on the previous document is never logged twice, and one
 retrospective runs at a time (`hordes/<h>/retro.lock`, taken over when the pid holding it is gone).
+That `yg log add` write, and the judge measurement beside it, run against the tree `--tree` names;
+without it, cwd, the same ordinary default every read in this tool set takes, not this horde's
+trunk just because a horde was resolvable. `--horde h` written out (no `--tree`) is what changes
+that, exactly as `queue.mjs plan`/`quality`, `tick.mjs`, `land.mjs` and `horde.mjs done` already
+read it (issue 114 — before it, the second run read this horde's own trunk unconditionally).
 Writing twice replaces the document; nothing is appended.
 
 `law` is the rule proposals, ready for whoever works that area to write. `inexpressible` is structured

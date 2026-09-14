@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  mkdirSync, readFileSync, writeFileSync, rmSync, cpSync, mkdtempSync,
+  existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, cpSync, mkdtempSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,10 @@ import {
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const REAL_ROLES_DIR = join(SCRIPTS_DIR, '..', 'reference', 'roles');
+
+function git(args, cwd) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
 
 // A scratch copy of reference/roles/, so a test that deletes or corrupts a role template never
 // touches the real file on disk — brief.mjs is pointed at the copy via HORDE_TEST_ROLES_DIR, kept
@@ -464,4 +468,63 @@ test('brief.mjs: a role whose template has a key nothing fills refuses, naming t
   assert.equal(r.code, 1);
   assert.match(r.stderr, /brief for "legislate" has unfilled placeholder\(s\): aKeyNothingFills/);
   assert.doesNotMatch(r.stdout, /\{\{/);
+});
+
+// ---- the tree architect/legislate/retro build their own brief from, with and without --horde
+// written out (issue 114) ------------------------------------------------------------------------
+//
+// The same shared contract every other tool here reads (node.mjs main()'s own comment above its
+// resolveTree call, tree.test.mjs, and tick.test.mjs/land.test.mjs/horde.test.mjs's own versions of
+// this test): an ordinary run with neither --tree nor --horde stays on cwd, whatever tree that
+// happens to be — a resolvable horde is not by itself a second signal for "read trunk instead"
+// (ask a-002, decisions.md: always cwd, full stop). --horde WRITTEN OUT is the one thing that does
+// mean this horde's own trunk, exactly as queue.mjs plan/quality, tick.mjs, land.mjs and horde.mjs
+// done already read it. Before this fix, cmdArchitect, cmdLegislate and cmdRetro's own resolveTree
+// calls forwarded the RESOLVED horde (main()'s own resolveHorde(flags), which defaults to the sole
+// horde in a single-horde repository even with nothing typed at all) instead of the raw flag, so a
+// bare run in this single-horde fixture read trunk unconditionally, never cwd. cmdWorker already
+// read the raw flag before this fix (see the "worker" sub-test above) and is not retested here.
+//
+// What is left to differ, and what this test actually proves, is whether a brief ever provisions
+// this horde's own trunk WORKTREE — a resource only --horde written out reaches — while running
+// from a shell sitting on "develop" (the mission's own base branch, checked out but never itself
+// mission1/trunk).
+test('brief.mjs: architect/legislate/retro — no --horde stays on cwd; --horde written out resolves to that horde\'s own trunk instead', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
+  seedTerritories(dir, 'mission1', { heart: { nodes: ['nodeA'], class: 'standard', why: 'the middle' } });
+  const trunkWorktree = join(dir, '.horde', 'worktrees', 'mission1', 'trunk');
+  // Neither the mission's own base branch nor mission1/trunk would be assumed by accident — a
+  // shell sitting here has wandered somewhere none of these commands were told about, on purpose,
+  // matching the issue this is about.
+  git(['checkout', 'develop'], dir);
+
+  const roles = [
+    { role: 'architect', args: ['architect', '--name', 'mission1-architect-1'] },
+    { role: 'legislate', args: ['legislate', 'heart', '--name', 'mission1-legislate-heart-1'] },
+    { role: 'retro', args: ['retro', '--name', 'mission1-retro-1'] },
+  ];
+
+  // Every "no --horde" case runs before any "--horde written out" case: the worktree, once
+  // provisioned, stays on disk, so the negative assertion below only means anything read first.
+  for (const { role, args } of roles) {
+    await t.test(`${role}: no --horde at all — cwd, trunk's own separate worktree never touched`, () => {
+      const r = run('brief.mjs', args, dir);
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(existsSync(trunkWorktree), false, `${role}: trunk's own separate worktree was never provisioned`);
+      assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], dir), 'develop');
+    });
+  }
+
+  for (const { role, args } of roles) {
+    await t.test(`${role}: --horde mission1 written out — this horde's own trunk worktree gets provisioned`, () => {
+      const r = run('brief.mjs', [...args, '--horde', 'mission1'], dir);
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(existsSync(trunkWorktree), true, `${role}: --horde written out should provision trunk's own separate worktree`);
+      // Shared state, not part of either tree: the main checkout is left exactly where it was.
+      assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], dir), 'develop');
+    });
+  }
 });

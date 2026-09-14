@@ -70,7 +70,7 @@ const ROLE_LAW = {
   retro: ['review', 'verification'],
 };
 
-const USAGE = `usage: brief.mjs <role> [args] --name <n> [--horde h] [--json] [--out <path>]
+const USAGE = `usage: brief.mjs <role> [args] --name <n> [--tree p] [--horde h] [--json] [--out <path>]
 
 roles:
   architect --name <n>
@@ -87,6 +87,12 @@ roles:
       ticket's log, sorted into the rules the law could have said, the taste that goes to a
       component's own log, and what the law will not express at all. Writes one classification
       file; retro.mjs turns it into the document.
+
+Every role's own graph read (repoRoot, the charter path, gate refusals, dead-rule lookups) runs
+against the tree --tree names; without it, cwd, same as an ordinary read anywhere else in this
+tool set, not this horde's trunk just because a horde was resolvable. --horde h WRITTEN OUT (no
+--tree) is what changes that: it resolves to that horde's own trunk worktree instead, exactly as
+queue.mjs plan/quality, tick.mjs, land.mjs and horde.mjs done already read it.
 
 Prints the rendered brief for the Agent tool's prompt, verbatim. Refuses — listing every unfilled
 placeholder — rather than print one with "{{…}}" left in it. A role held to a discipline gets it
@@ -353,7 +359,14 @@ function takeoverBlockFor(horde, t) {
 
 function cmdArchitect(horde, cfg, flags) {
   const name = requireName(flags);
-  const info = resolveTree({ tree: flags.tree, horde });
+  // No --tree: cwd, same as an ordinary read anywhere else in this tool set — NOT this horde's
+  // trunk just because a horde was resolvable (ask a-002, decisions.md: always cwd, full stop,
+  // however many hordes the repository runs). What this DOES honor is --horde typed explicitly:
+  // `flags.horde`, never `horde` above (main()'s own resolveHorde(flags), which defaults to the
+  // sole horde in a single-horde repository even with nothing typed at all) — the same distinction
+  // tick.mjs (041), land.mjs (109) and horde.mjs done (113) already draw. cmdWorker below already
+  // read it this way; issue 114 caught cmdArchitect, cmdLegislate and cmdRetro up to it too.
+  const info = resolveTree({ tree: flags.tree, horde: flags.horde });
   const vars = {
     repoRoot: info.path,
     name, horde,
@@ -515,7 +528,9 @@ function cmdLegislate(horde, cfg, positional, flags) {
   const nodes = asArray(entry.nodes).filter(Boolean);
   if (nodes.length === 0) fail(`territory "${territory}" names no component, so there is no area to write law for`);
 
-  const info = resolveTree({ tree: flags.tree, horde });
+  // Same fix as cmdArchitect above (issue 114): flags.horde, not the resolved horde parameter — a
+  // bare call stays on cwd, --horde written out is what reaches this horde's own trunk instead.
+  const info = resolveTree({ tree: flags.tree, horde: flags.horde });
   const tickets = ticketsOfTerritory(horde, nodes);
   const law = (cfg && cfg.law) || {};
   const vars = {
@@ -553,7 +568,8 @@ function cmdLegislate(horde, cfg, positional, flags) {
 // the cross-area repetitions are the whole point, and nobody who sees one area can see them.
 function cmdRetro(horde, cfg, flags) {
   const name = requireName(flags);
-  const info = resolveTree({ tree: flags.tree, horde });
+  // Same fix as cmdArchitect above (issue 114): flags.horde, not the resolved horde parameter.
+  const info = resolveTree({ tree: flags.tree, horde: flags.horde });
   const input = collectRetroInput(horde);
   const listing = (items, empty) => (items.length
     ? items.map((it) => `- \`${it.key}\` · ticket ${it.ticket} — ${it.text}`).join('\n')
