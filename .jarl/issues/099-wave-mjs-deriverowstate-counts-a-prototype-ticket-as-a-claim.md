@@ -1,6 +1,6 @@
 # 099 · wave.mjs deriveRowState counts a prototype ticket as a claimant, so status.mjs reports its row as queued
 
-**Status:** open
+**Status:** done
 **Kind:** cleanup
 **Priority:** 3
 **Tier:** standard
@@ -28,4 +28,6 @@ correct on reflection. A test pinning whichever choice is made.
 
 
 ## Evidence
+
+- **ran:** node --test tests/wave.test.mjs tests/status.test.mjs (rebased tip, then merged main) · **saw:** 34/34 pass both times
 
