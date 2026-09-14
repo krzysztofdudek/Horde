@@ -1,6 +1,6 @@
 # 124 · assertGraphWritable's refusal-message hint provisions the mission's trunk worktree as a side effect
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -23,4 +23,5 @@ Not ruled on here — flagged as a candidate for one of: (a) leave as-is if a ch
 - **ran:** cd skills/horde/scripts && HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" node --test tests/docs.test.mjs · **saw:** 35/35 tests passed, 0 failures — run as a targeted check because this ticket also edited CHANGELOG.md; confirms the new entry under the existing [6.0.0] Fixed section does not break any doc/changelog-consistency test (Unreleased heading still present and untouched, top released section still 6.0.0, no Agent Teams/teammate wording introduced).
 - **ran:** manual repro (scratch script, not committed): horde.mjs init mission1 --base develop, then from the checkout on develop run node.mjs log core "a reason" --run --json, checking existsSync(.horde/worktrees/mission1/trunk) immediately before and immediately after that call, against the code both before and after this fix (git stash / stash pop of the same worktree) · **saw:** Before the fix: worktree absent beforehand, present afterward — "git worktree list" showed a new detached worktree at .horde/worktrees/mission1/trunk that nobody asked for, created purely by composing the refusal message. After the fix: absent both before and after; the refusal exit code (1) and message text ("... is on \"develop\" — ... the mission's tree is at <path> ...") are byte-for-byte identical in both cases.
 - **ran:** manual repro (scratch script, not committed): same as above, but the trunk worktree is pre-created with plain git first, and an uncommitted change is put on its tracked README.md before triggering the same refusal · **saw:** Before the fix, the refusal also printed "trunk resync discarded 1 uncommitted change ..." and the change was gone afterward (a real git reset --hard ran against the tree just to name it). After the fix, no such stderr line appears and the uncommitted change survives untouched, while the suggested path in the refusal message is unchanged.
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/tree.test.mjs skills/horde/scripts/tests/docs.test.mjs · **saw:** 56/56 pass, 0 fail, on the merged tip
 
