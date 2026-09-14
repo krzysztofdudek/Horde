@@ -53,7 +53,7 @@ commands:
       rules the port is to be held to; the filed record always carries the field, empty when
       none was named.
   contract approve <id> ["why"] --by <name> [--horde h]
-  contract veto <id> "why" --by <name> [--horde h]
+  contract veto <id> ["why"] --by <name> [--horde h]
       the architect rules on a port proposal; an approved one is filed by editing the node's
       yg-node.yaml and recording the why with "yg log add" — the command prints both.
   contracts [--pending] [--node n] [--horde h]
@@ -68,7 +68,7 @@ commands:
       so apply can name the exact edit later, not just record that it happened.
   proposals [--open] [--horde h]
   approve <id> ["why"] --by <name> [--horde h]
-  veto <id> "why" --by <name> [--horde h]
+  veto <id> ["why"] --by <name> [--horde h]
   apply <proposal-id> [--horde h]
       closes an approved graph-change proposal and prints the filing steps for whoever works
       that area, who makes them in their own branch.
