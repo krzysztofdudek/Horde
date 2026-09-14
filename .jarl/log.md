@@ -623,3 +623,5 @@
 - 2026-09-14 09:50 · 117 → in-progress · dispatched to a worker in its own worktree/branch
 - 2026-09-14 09:50 · 118 → in-progress · dispatched to a worker in its own worktree/branch
 - 2026-09-14 09:50 · 119 → in-progress · dispatched to a worker in its own worktree/branch
+- 2026-09-14 10:02 · decided 080-batch-landing-approved
+- 2026-09-14 10:02 · 080 evidence · Krzysztof approved the design as proposed (see .jarl/decisions.md, 080-batch-landing-approved). Ready for implementation dispatch. Held out of dispatch until issue 108 lands — both touch land.mjs (108: checkRevertTest; 080: run()'s gate-lock/merge flow), avoiding a self-inflicted merge conflict.

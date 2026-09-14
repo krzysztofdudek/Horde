@@ -34,3 +34,6 @@ Krzysztof ruled: when a mission's charter judges 'no evidence layer' (no test su
 ## 2026-09-14 · ask-001
 **Question:** Issue 024 needs client-approved closed lists for a promise's optional 'class' (evidence type: e2e scenario, hermetic test, mutation, recorded stub, artifact, client testimony) and 'executor' (who reproduces it: gate, guard, worker, client) fields before implementation can start. Proposed lists are in the issue body's Where/Acceptance. Holding 024 open, not raised.
 **Answer:** Krzysztof: approved as proposed, no changes. class = e2e scenario, hermetic test, mutation, recorded stub, artifact, client testimony; executor = gate, guard, worker, client. Issue 024 can move to implementation.
+
+## 2026-09-14 · 080-batch-landing-approved
+Krzysztof: zatwierdzam projekt jak jest, bez zmian (patrz issue 080's Evidence dla pełnej notatki projektowej — rozłączne pliki + ten sam parentBranch/parentTip kwalifikują bilety do wsadu; jeden tymczasowy worktree, jedno uruchomienie bramki (acquireGateLock raz) dla całego wsadu; przy sukcesie osobne scalenie per bilet (własny commit, wpis journala, rozmiar — bez zmian względem dziś); przy czerwonym wyniku fallback do lądowania jeden po jednym w tym samym przebiegu, bez bisekcji. Implementacja może ruszyć — held do czasu wylądowania issue 108 (oba dotykają land.mjs, unikamy samo-zadanego konfliktu).
