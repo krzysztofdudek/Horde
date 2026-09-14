@@ -21,16 +21,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, requireYg,
+  makeRepo, rmRepo, run, initHorde, addNode, requireYg, git,
 } from './helpers.mjs';
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
 
 test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async (t) => {
   const dir = makeRepo();

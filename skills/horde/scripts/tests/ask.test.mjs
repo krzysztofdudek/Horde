@@ -1,18 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import {
   appendFileSync, chmodSync, mkdirSync, readFileSync, readdirSync, writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
+import {
+  makeRepo, rmRepo, run, initHorde, git,
+} from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
-}
 
 function ticketLogPath(dir, ticket, horde = 'mission1') {
   const issues = join(dir, '.horde', 'hordes', horde, 'teams', 'trunk', 'issues');

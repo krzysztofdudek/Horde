@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  run, findRealYg,
+  run, findRealYg, git,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -125,10 +125,6 @@ const YG = findYg();
 const GRAIN = findGrain();
 
 // ---- the fixture repository --------------------------------------------------------------
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
 
 function write(dir, rel, text) {
   const path = join(dir, rel);
