@@ -18,12 +18,8 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, requireYg,
+  makeRepo, rmRepo, run, initHorde, requireYg, git,
 } from './helpers.mjs';
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
 
 const planPath = (dir, horde = 'mission1') => join(dir, '.horde', 'hordes', horde, 'plan.md');
 const aspectPath = (dir, id) => join(dir, '.yggdrasil', 'aspects', id, 'yg-aspect.yaml');

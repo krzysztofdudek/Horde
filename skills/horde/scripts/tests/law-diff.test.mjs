@@ -13,12 +13,8 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, requireYg, addAspect, addNode, MARKER_CHECK,
+  makeRepo, rmRepo, run, initHorde, requireYg, addAspect, addNode, MARKER_CHECK, git,
 } from './helpers.mjs';
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
 
 function ygRun(dir, ygCommand, args) {
   const parts = ygCommand.split(/\s+/);

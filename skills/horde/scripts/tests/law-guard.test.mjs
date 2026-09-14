@@ -6,16 +6,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, MARKER_CHECK,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, MARKER_CHECK, git,
 } from './helpers.mjs';
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
 
 function write(dir, rel, text) {
   const path = join(dir, rel);
