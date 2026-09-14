@@ -1,6 +1,6 @@
 # 080 · land mjs moglby scalac paczke biletow pod jednym przebiegiem bramki
 
-**Status:** open
+**Status:** in-progress
 **Kind:** research
 **Priority:** 3
 **Tier:** standard

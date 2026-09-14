@@ -1,6 +1,6 @@
 # 121 · retro.test.mjs's stand-in yg CLI hardcodes inForce: true, so a stale pass can never be told apart from one still in force
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 3
 **Tier:** standard

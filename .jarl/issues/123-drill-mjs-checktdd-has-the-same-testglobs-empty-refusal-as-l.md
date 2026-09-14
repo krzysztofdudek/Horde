@@ -1,6 +1,6 @@
 # 123 · drill.mjs checkTdd has the same testGlobs-empty refusal as land.mjs's revert test had before issue 108, with no no-evidence-layer exemption
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 3
 **Tier:** standard

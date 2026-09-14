@@ -1,6 +1,6 @@
 # 124 · assertGraphWritable's refusal-message hint provisions the mission's trunk worktree as a side effect
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
