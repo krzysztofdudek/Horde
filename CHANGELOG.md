@@ -117,6 +117,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - Under `--runner external`, a worker started automatically after a ticket has gone through enough rounds of changes is now briefed the same way a worker you start yourself would be — told a prior worker already tried this ticket, and given its own fresh identity — instead of being started as if it were a first attempt.
 - Two commands reading one mission's trunk at the same moment — a running loop and one you type yourself, or two sessions side by side — no longer fail one of them with a raw git error. They take turns, and both get the trunk.
 - Two commands changing one mission's queue at the same moment — a running loop and one you type yourself, or two sessions side by side — could rarely both believe they held the lock protecting it and overwrite each other's change. They now always take turns.
+- Recording a decision or answering a question, interrupted partway through — killed outright, a container recycled — used to block every one after it until someone cleared it by hand. The next one now recovers on its own.
 
 ### Migrating a mission already in flight
 

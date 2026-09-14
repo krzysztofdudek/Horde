@@ -16,7 +16,9 @@ import { fileURLToPath } from 'node:url';
 
 const CONTENDER = join(dirname(fileURLToPath(import.meta.url)), 'contender.mjs');
 
-const LOCK_NAMES = { gate: 'gate.lock', retro: 'retro.lock', queue: 'queue.json.lock' };
+const LOCK_NAMES = {
+  gate: 'gate.lock', retro: 'retro.lock', queue: 'queue.json.lock', decide: 'decisions.md.lock',
+};
 
 function safeJSON(s) {
   try { return JSON.parse(s); } catch { return null; }
@@ -43,8 +45,8 @@ function startContender(dir, kind, args, env) {
   });
 }
 
-// raceOneLock(dir, 'gate' | 'retro') — the race, once. `paused` says the widening actually
-// happened: without it a green result would mean nothing was ever injected.
+// raceOneLock(dir, 'gate' | 'retro' | 'queue' | 'decide') — the race, once. `paused` says the
+// widening actually happened: without it a green result would mean nothing was ever injected.
 export async function raceOneLock(dir, kind, {
   delayMs = 1200, pausedHold = 150, otherHold = 2500,
 } = {}) {
