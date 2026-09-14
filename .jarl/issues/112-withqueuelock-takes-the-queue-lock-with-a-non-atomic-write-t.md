@@ -1,6 +1,6 @@
 # 112 · withQueueLock takes the queue lock with a non-atomic write, the same flaw issue 098 fixed elsewhere
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard

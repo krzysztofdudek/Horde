@@ -1,6 +1,6 @@
 # 103 · createLockFile is duplicated identically in land.mjs and retro.mjs
 
-**Status:** open
+**Status:** in-progress
 **Kind:** cleanup
 **Priority:** 3
 **Tier:** standard

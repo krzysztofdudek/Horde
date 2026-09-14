@@ -1,6 +1,6 @@
 # 115 · The two-judge measurement can only ever sample a pair a judge refused, never one they passed
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
