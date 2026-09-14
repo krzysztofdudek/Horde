@@ -96,7 +96,7 @@ export function repoRoot() {
 // D2 (narrowed by D6, once 014 removed sub-teams and every seat but worker/architect): the tree a
 // command reads or writes is always named outright — `--tree` (any worktree of this repository),
 // `--ticket` (a worker's own tree), `--scratch` (a throwaway detached tree at a sha — only the
-// future landing script uses this), `--horde` (the tip of that horde's trunk, read-only — the
+// landing script uses this), `--horde` (the tip of that horde's trunk, read-only — the
 // only writer of trunk is the landing script), or, for a command with no horde scope at all,
 // bare cwd. The narrowest scope given wins; a command that took `--horde` never quietly falls
 // back to cwd just because that flag was left off by a caller that meant to pass it.
@@ -195,7 +195,7 @@ function resolveTicketTree(ticket, horde, cwd) {
 }
 
 // resolveHordeTrunk(horde, cwd) — the tip of `<horde>/trunk`, read-only for everything but the
-// future landing script. Trunk is a branch that `horde.mjs init` deliberately leaves unchecked
+// landing script. Trunk is a branch that `horde.mjs init` deliberately leaves unchecked
 // out, so there is nothing on disk to hand back until something asks: the first ask provisions a
 // worktree for it, once, at a fixed path under `.horde/`; every ask after that resyncs that same
 // worktree to the branch's current tip (`git reset --hard`) rather than making — and leaking — a
@@ -218,7 +218,7 @@ function resolveHordeTrunk(horde, cwd) {
   if (!existsSync(path)) {
     // Detached at trunk's current tip, never attached to the branch itself: an attached worktree
     // would hold the branch name exclusively, and nothing else on the repository — not the main
-    // checkout, not a test, not a future landing script — could then check `<horde>/trunk` out
+    // checkout, not a test, not the landing script — could then check `<horde>/trunk` out
     // anywhere else. Detached, this tree is free to exist alongside any of that.
     try {
       provisionTree(path, tip, cfg);
@@ -242,7 +242,7 @@ function resolveHordeTrunk(horde, cwd) {
 }
 
 // resolveScratchTree(sha, cwd) — a throwaway detached worktree at a sha already in this
-// repository, for the future landing script (015) alone. Unlike every other kind, its `cleanup()`
+// repository, for the landing script (015) alone. Unlike every other kind, its `cleanup()`
 // really does remove what it made — and it is called here too, the moment provisioning itself
 // fails partway (`git worktree add` succeeded, the `worktree.copy` copy did not): a scratch tree
 // that failed to finish provisioning is not left behind for `git worktree list` to still know
