@@ -804,3 +804,31 @@ test('a graph.json from before the shared counter reads without collision, and n
     }
   });
 });
+
+// ---- pathInBoundary: a full path-segment boundary, not a string prefix ---------------------
+
+test('node.mjs pathInBoundary: a sibling directory that shares a prefix is outside the boundary', async () => {
+  const { pathInBoundary } = await import('../node.mjs');
+
+  // The bug this guards: a boundary of "src/a" must not swallow "src/ab" — "ab" is a sibling
+  // directory, not a child of "a", even though the string "src/ab" starts with the string "src/a".
+  assert.equal(pathInBoundary('src/ab/file.js', ['src/a']), false);
+  assert.equal(pathInBoundary('src/ab', ['src/a']), false);
+
+  // Legitimate matches still hold: the boundary itself, and anything under it.
+  assert.equal(pathInBoundary('src/a', ['src/a']), true);
+  assert.equal(pathInBoundary('src/a/file.js', ['src/a']), true);
+  assert.equal(pathInBoundary('src/a/sub/dir/file.js', ['src/a']), true);
+
+  // Glob boundaries (nodeBoundary entries with a "*") already matched on a real regexp, unaffected.
+  assert.equal(pathInBoundary('src/a/x.js', ['src/a/**']), true);
+  assert.equal(pathInBoundary('src/ab/x.js', ['src/a/**']), false);
+
+  // nodeGraphPathPrefix hands pathInBoundary a boundary entry that already carries a trailing
+  // slash (e.g. ".yggdrasil/model/foo/") — the fix must not double it into "foo//" and break that
+  // caller, while still refusing the same-prefix sibling "foobar".
+  const graphPrefix = ['.yggdrasil/model/foo/'];
+  assert.equal(pathInBoundary('.yggdrasil/model/foo/yg-node.yaml', graphPrefix), true);
+  assert.equal(pathInBoundary('.yggdrasil/model/foo/sub/log.md', graphPrefix), true);
+  assert.equal(pathInBoundary('.yggdrasil/model/foobar/x.md', graphPrefix), false);
+});
