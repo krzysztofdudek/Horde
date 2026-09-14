@@ -1,6 +1,6 @@
 # 125 · brief.test.mjs, docs.test.mjs and horde.test.mjs each still carry a raw, unretried git commit exposed to the same signing 503 issue 122 just consolidated everywhere else
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
