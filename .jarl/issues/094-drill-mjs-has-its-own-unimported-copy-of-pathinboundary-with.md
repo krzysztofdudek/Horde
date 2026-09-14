@@ -1,6 +1,6 @@
 # 094 · drill.mjs has its own unimported copy of pathInBoundary with the same prefix bug
 
-**Status:** open
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -29,4 +29,6 @@ red before, green after.
 
 
 ## Evidence
+
+- **ran:** node --test tests/drill.test.mjs (rebased tip, then merged main) · **saw:** 20/20 pass both times
 
