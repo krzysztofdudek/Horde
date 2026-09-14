@@ -1,6 +1,6 @@
 # 091 · pathInBoundary is a prefix check, not a path-boundary check
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -31,4 +31,6 @@ existing tests live).
 
 
 ## Evidence
+
+- **ran:** node --test tests/node.test.mjs · **saw:** 65/65 pass; merged
 
