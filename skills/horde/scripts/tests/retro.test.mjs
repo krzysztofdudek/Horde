@@ -99,28 +99,134 @@ function writeClasses(dir, horde, items) {
 }
 
 // A stand-in Yggdrasil CLI that records every invocation to a file, so a test can assert that a
-// command was never run at all — the one thing a real CLI cannot be asked.
+// command was never run at all — the one thing a real CLI cannot be asked — and that holds
+// verdicts the way a real graph does, because the whole of the two-judge measurement turns on that
+// shape:
+//
+//   * ONE slot per (rule, unit) pair. The lock below is a map keyed by the pair, so two verdicts
+//     for one pair cannot be represented at all, and `verdict read` can never answer with two. A
+//     fixture free to hand back two entries for one pair — which this used to be — lets a test go
+//     green against a CLI nobody has.
+//   * Every `verdict record` overwrites that slot, whoever wrote what was there before. Recording
+//     the second judge's opinion is what destroys the first, and a test drives that sequence for
+//     real rather than describing it.
+//   * A verdict is bound to a hash of the inputs WITH THE VERDICT WORD FOLDED IN — `hashFor` over
+//     the same code gives one hash for a pass and a different one for a refusal, which is exactly
+//     why the recorded entry's own hash cannot be used to ask whether the code moved. `verdict
+//     package` prints both, from one content token per pair that `codeMoves` below bumps.
+function stubSource({ calls, lock, content, packageFails }) {
+  return `import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+
+const CALLS = ${JSON.stringify(calls)};
+const LOCK = ${JSON.stringify(lock)};
+const CONTENT = ${JSON.stringify(content)};
+const PACKAGE_FAILS = ${packageFails ? 'true' : 'false'};
+
+const args = process.argv.slice(2);
+appendFileSync(CALLS, args.join(' ') + '\\n');
+
+const readJson = (p, fallback) => (existsSync(p) ? JSON.parse(readFileSync(p, 'utf8')) : fallback);
+const flag = (name) => { const i = args.indexOf(name); return i === -1 ? null : args[i + 1]; };
+const target = () => {
+  const node = flag('--node');
+  return node === null ? { kind: 'file', path: flag('--file') } : { kind: 'node', path: node };
+};
+const key = (aspect, unit) => aspect + ' ' + unit.kind + ':' + unit.path;
+const hashes = (k) => {
+  const content = readJson(CONTENT, {})[k] || 'c1';
+  return { pass: content + '-pass', refused: content + '-refused' };
+};
+
+if (args[0] === '--version') { console.log('6.0.0'); process.exit(0); }
+
+if (args[0] === 'verdict' && args[1] === 'read') {
+  const lock = readJson(LOCK, {});
+  console.log(JSON.stringify({
+    schema: 'yg-verdicts/1',
+    verdicts: Object.keys(lock).sort().map((k) => lock[k]),
+  }));
+  process.exit(0);
+}
+
+if (args[0] === 'verdict' && args[1] === 'package') {
+  if (PACKAGE_FAILS) { console.error('no pending pair for that rule and unit'); process.exit(1); }
+  const unit = target();
+  console.log(JSON.stringify({ schema: 'yg-review/1', unit, hashes: hashes(key(flag('--aspect'), unit)) }));
+  process.exit(0);
+}
+
+if (args[0] === 'verdict' && args[1] === 'record') {
+  const aspect = flag('--aspect');
+  const unit = target();
+  const k = key(aspect, unit);
+  const verdict = flag('--verdict');
+  const want = hashes(k)[verdict];
+  if (want === undefined || flag('--hash') !== want) {
+    console.error('The hash this verdict is bound to is not the hash of what is on disk now.');
+    process.exit(1);
+  }
+  const lock = readJson(LOCK, {});
+  lock[k] = { aspect, unit, verdict, judge: flag('--by'), hash: want, inForce: true };
+  writeFileSync(LOCK, JSON.stringify(lock, null, 2) + '\\n');
+  process.exit(0);
+}
+
+process.exit(0);
+`;
+}
+
+const stubPath = (dir) => join(dir, 'yg-stub.mjs');
+const lockPath = (dir) => join(dir, 'yg-lock.json');
+const contentPath = (dir) => join(dir, 'yg-content.json');
+
 function recordingYg(dir, { record = 'yg-calls.txt', verdicts = null, packageFails = false } = {}) {
-  const stub = join(dir, 'yg-stub.mjs');
-  writeFileSync(stub, [
-    "import { appendFileSync } from 'node:fs';",
-    'const args = process.argv.slice(2);',
-    `appendFileSync(${JSON.stringify(join(dir, record))}, args.join(' ') + '\\n');`,
-    "if (args[0] === '--version') { console.log('6.0.0'); process.exit(0); }",
-    "if (args[0] === 'verdict' && args[1] === 'read') {",
-    `  console.log(JSON.stringify(${JSON.stringify({ schema: 'yg-verdicts/1', verdicts: verdicts || [] })}));`,
-    '  process.exit(0);',
-    '}',
-    "if (args[0] === 'verdict' && args[1] === 'package') {",
-    `  if (${packageFails ? 'true' : 'false'}) { console.error('no pending pair for that rule and unit'); process.exit(1); }`,
-    "  console.log(JSON.stringify({ schema: 'yg-review/1', hashes: { pass: 'p', refused: 'r' } }));",
-    '  process.exit(0);',
-    '}',
-    'process.exit(0);',
-    '',
-  ].join('\n'));
-  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${stub}`], dir);
+  writeFileSync(stubPath(dir), stubSource({
+    calls: join(dir, record), lock: lockPath(dir), content: contentPath(dir), packageFails,
+  }));
+
+  // A seed goes into the same one-slot map the stub itself writes, and two entries for one pair
+  // are refused here rather than quietly collapsing: a test that asked for an impossible shape
+  // should say so out loud, not get a plausible-looking one back.
+  const seeded = {};
+  for (const v of verdicts || []) {
+    const k = `${v.aspect} ${v.unit.kind}:${v.unit.path}`;
+    if (seeded[k]) {
+      throw new Error(`two verdicts seeded for "${k}": a graph holds one verdict per (rule, unit) pair, so `
+        + '`yg verdict read` can never answer with two');
+    }
+    seeded[k] = v;
+  }
+  writeFileSync(lockPath(dir), `${JSON.stringify(seeded, null, 2)}\n`);
+  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${stubPath(dir)}`], dir);
   return join(dir, record);
+}
+
+function stub(dir, args) {
+  return execFileSync('node', [stubPath(dir), ...args], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+// A judge takes the pair the tool handed back and runs the command it printed: package it, read
+// the hash for the verdict being given, record it. Whatever was in the slot is gone afterwards.
+function judgeRecords(dir, { aspect, unit, by, verdict }) {
+  const unitFlag = unit.kind === 'node' ? '--node' : '--file';
+  const pkg = JSON.parse(stub(dir, ['verdict', 'package', '--aspect', aspect, unitFlag, unit.path]));
+  stub(dir, [
+    'verdict', 'record', '--aspect', aspect, unitFlag, unit.path,
+    '--by', by, '--verdict', verdict, '--hash', pkg.hashes[verdict],
+  ]);
+}
+
+// The code under a pair changes, so its package prints hashes nothing already recorded is bound
+// to. Called again, it moves again.
+function codeMoves(dir, { aspect, unit }) {
+  const k = `${aspect} ${unit.kind}:${unit.path}`;
+  const content = existsSync(contentPath(dir)) ? JSON.parse(readFileSync(contentPath(dir), 'utf8')) : {};
+  content[k] = `${content[k] || 'c1'}+`;
+  writeFileSync(contentPath(dir), `${JSON.stringify(content, null, 2)}\n`);
+}
+
+function ygVerdicts(dir) {
+  return JSON.parse(stub(dir, ['verdict', 'read', '--json'])).verdicts;
 }
 
 // ---- the interval a disagreement is reported at ------------------------------------------------
@@ -515,7 +621,17 @@ test('retro.mjs: a packaging refusal on a sampled pair is a reason the sample wa
   assert.equal(r.json.judge.skipped[0].ticket, '001');
 });
 
-test('retro.mjs: two judges that disagree come back with the count and the interval at that sample size', async (t) => {
+// ---- the two-judge comparison, over the sequence that can actually happen -----------------------
+//
+// A graph holds one verdict per (rule, unit) pair, so the two opinions this measures are never on
+// disk at the same time: recording the second judge's is what destroys the first. Every test below
+// drives that sequence for real — one run writes the first judgement down, a judge then runs the
+// command the tool printed, and a second run puts the two side by side — rather than handing the
+// tool two entries for one pair at once, which is a shape no `yg verdict read` can answer with.
+
+const THE_PAIR = { aspect: 'one-sentence', unit: { kind: 'file', path: 'src/auth/login.mjs' } };
+
+function judgeFixture(t) {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   graphFixture(dir);
@@ -524,25 +640,169 @@ test('retro.mjs: two judges that disagree come back with the count and the inter
   writeClasses(dir, 'mission1', { 'gate:001:0': { class: 'inexpressible' } });
   run('horde.mjs', ['config', 'set', 'retro.judgeSampleRate', '1'], dir);
   run('horde.mjs', ['config', 'set', 'retro.judgeTier', 'tier-b'], dir);
-  recordingYg(dir, {
-    verdicts: [
-      {
-        aspect: 'one-sentence', unit: { kind: 'file', path: 'src/auth/login.mjs' }, verdict: 'pass', judge: 'tier-a', hash: 'h', inForce: true,
-      },
-      {
-        aspect: 'one-sentence', unit: { kind: 'file', path: 'src/auth/login.mjs' }, verdict: 'refused', judge: 'tier-b', hash: 'h', inForce: true,
-      },
-    ],
-  });
+  recordingYg(dir);
+  return dir;
+}
+
+const samplesFile = (dir) => hordeFile(dir, 'mission1', 'cache', 'judge-samples.json');
+const onFile = (dir) => Object.values(JSON.parse(readFileSync(samplesFile(dir), 'utf8')));
+
+test('retro.mjs: two judges that disagree come back with the count and the interval at that sample size', async (t) => {
+  const dir = judgeFixture(t);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'pass' });
+
+  // Run one. The slot holds tier-a's pass and nothing else, so there is nothing yet to compare:
+  // the pair comes back on `pending`, with tier-a's opinion written down and the command that
+  // puts the same pair to tier-b.
+  const first = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(first.code, 0, first.stderr);
+  assert.equal(first.json.judge.pairs.length, 0);
+  assert.equal(first.json.judge.disagreements, 0);
+  assert.equal(first.json.judge.pending.length, 1);
+  assert.equal(first.json.judge.pending[0].held, 'pass');
+  assert.equal(first.json.judge.pending[0].heldBy, 'tier-a');
+  assert.match(first.json.judge.pending[0].record, /verdict record .*--by tier-b/);
+
+  const [kept] = onFile(dir);
+  assert.equal(kept.judge, 'tier-a');
+  assert.equal(kept.verdict, 'pass');
+
+  // The second judge runs exactly that command, and it overwrites the slot. tier-a's verdict is
+  // gone from the graph — this is the one thing no later read can undo, and the reason the copy
+  // above had to be taken first.
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-b', verdict: 'refused' });
+  const inventory = ygVerdicts(dir);
+  assert.equal(inventory.length, 1, 'a graph holds one verdict per pair, never two');
+  assert.equal(inventory[0].judge, 'tier-b');
+  assert.equal(inventory[0].verdict, 'refused');
+
+  // Run two: one opinion on file, one in the slot, two different judges, and they disagree.
+  const second = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(second.code, 0, second.stderr);
+  assert.equal(second.json.judge.tier, 'tier-b');
+  assert.equal(second.json.judge.disagreements, 1);
+  assert.equal(second.json.judge.pairs.length, 1);
+  assert.equal(second.json.judge.pairs[0].agrees, false);
+  assert.deepEqual(second.json.judge.interval, wilson(1, 1));
+  assert.ok(second.json.judge.interval.low > 0 && second.json.judge.interval.high <= 1);
+
+  // Both sides of it are named, so the number can be read back and argued with. The two hashes
+  // here are NOT equal — a verdict binds to a hash with its own verdict word folded in, so two
+  // judges who disagree about code that never moved always record two different hashes. Reading
+  // that as "the code changed" would drop every disagreement there is.
+  const [p] = second.json.judge.pairs;
+  assert.equal(p.held, 'pass');
+  assert.equal(p.heldBy, 'tier-a');
+  assert.equal(p.second, 'refused');
+  assert.equal(p.secondBy, 'tier-b');
+  assert.notEqual(kept.hash, inventory[0].hash, 'the two judgements are bound to two different hashes');
+  assert.equal(kept.hashes.refused, inventory[0].hash, 'and to the same code, which is what makes them comparable');
+
+  // Running it again says the same thing: the copy is kept, not re-taken, so the measurement does
+  // not answer differently every time it is run over the same mission.
+  const third = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(third.json.judge.disagreements, 1);
+  assert.equal(third.json.judge.pairs.length, 1);
+  assert.equal(onFile(dir)[0].at, kept.at, 'the first judgement on file was not written over');
+});
+
+test('retro.mjs: two judges that agree are counted as a pair and not as a disagreement', async (t) => {
+  const dir = judgeFixture(t);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'pass' });
+  run('retro.mjs', ['--tree', dir], dir);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-b', verdict: 'pass' });
 
   const r = run('retro.mjs', ['--tree', dir], dir);
   assert.equal(r.code, 0, r.stderr);
-  assert.equal(r.json.judge.tier, 'tier-b');
-  assert.equal(r.json.judge.disagreements, 1);
   assert.equal(r.json.judge.pairs.length, 1);
-  assert.equal(r.json.judge.pairs[0].agrees, false);
-  assert.deepEqual(r.json.judge.interval, wilson(1, 1));
-  assert.ok(r.json.judge.interval.low > 0 && r.json.judge.interval.high <= 1);
+  assert.equal(r.json.judge.pairs[0].agrees, true);
+  assert.equal(r.json.judge.disagreements, 0);
+  assert.deepEqual(r.json.judge.interval, wilson(0, 1));
+  assert.equal(r.json.judge.skipped.length, 0, JSON.stringify(r.json.judge.skipped));
+});
+
+test('retro.mjs: two judgements taken over code that moved between them are counted neither way', async (t) => {
+  const dir = judgeFixture(t);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'pass' });
+  run('retro.mjs', ['--tree', dir], dir);
+
+  // The code under the pair changes, and only then does the second judge reach it. The two are
+  // judgements of two different things, and a disagreement between them would mean nothing.
+  codeMoves(dir, THE_PAIR);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-b', verdict: 'refused' });
+
+  const r = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(r.code, 0, `a measurement never refuses: ${r.stderr}`);
+  assert.equal(r.json.judge.pairs.length, 0, 'nothing comparable, so nothing compared');
+  assert.equal(r.json.judge.disagreements, 0);
+  assert.equal(r.json.judge.interval, null);
+  assert.equal(r.json.judge.skipped.length, 1);
+  assert.match(r.json.judge.skipped[0].why, /not the same code/);
+  assert.equal(r.json.judge.skipped[0].ticket, '001');
+  assert.equal(r.json.judge.skipped[0].unit, 'file:src/auth/login.mjs');
+});
+
+test('retro.mjs: a pair nobody has given a second judgement stays pending, run after run, with the first kept', async (t) => {
+  const dir = judgeFixture(t);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'refused' });
+
+  const first = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(first.code, 0, first.stderr);
+  assert.equal(first.json.judge.pending.length, 1);
+  assert.equal(first.json.judge.pairs.length, 0);
+  assert.match(first.json.judge.note, /waiting for the command beside it/);
+  const [kept] = onFile(dir);
+
+  const second = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(second.code, 0, second.stderr);
+  assert.equal(second.json.judge.pending.length, 1);
+  assert.equal(second.json.judge.pairs.length, 0);
+  assert.equal(second.json.judge.disagreements, 0);
+  assert.deepEqual(onFile(dir)[0], kept, 'the first judgement on file is written once and left alone');
+
+  // And the document says whose opinion is being held and what it is, not merely that something
+  // is waiting.
+  assert.match(
+    readFileSync(hordeFile(dir, 'mission1', 'retro.md'), 'utf8'),
+    /waiting on a second judgement: one-sentence on file:src\/auth\/login\.mjs \(tier-a said refused, written down here\)/,
+  );
+});
+
+test('retro.mjs: a pair only the second judge has ever judged is a skip, never a judge against themselves', async (t) => {
+  const dir = judgeFixture(t);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-b', verdict: 'pass' });
+
+  const r = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.judge.pairs.length, 0, 'one judge is not two judges');
+  assert.equal(r.json.judge.disagreements, 0);
+  assert.equal(r.json.judge.pending.length, 0);
+  assert.equal(r.json.judge.skipped.length, 1);
+  assert.match(r.json.judge.skipped[0].why, /no first judgement here for it to be compared against/);
+  assert.ok(!existsSync(samplesFile(dir)), 'and nothing was written down to be compared against itself later');
+});
+
+test('the stand-in CLI cannot be made to hold two verdicts for one pair, because a graph cannot', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  assert.throws(
+    () => recordingYg(dir, {
+      verdicts: [
+        { ...THE_PAIR, verdict: 'pass', judge: 'tier-a' },
+        { ...THE_PAIR, verdict: 'refused', judge: 'tier-b' },
+      ],
+    }),
+    /one verdict per \(rule, unit\) pair/,
+  );
+
+  // And the slot really is last-write-wins: two judges in turn leave one entry, the second's.
+  recordingYg(dir);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'pass' });
+  assert.deepEqual(ygVerdicts(dir).map((v) => `${v.judge} ${v.verdict}`), ['tier-a pass']);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-b', verdict: 'refused' });
+  assert.deepEqual(ygVerdicts(dir).map((v) => `${v.judge} ${v.verdict}`), ['tier-b refused'],
+    'recording the second judgement is what destroys the first');
 });
 
 test('ticketDeclares: a verdict\'s unit belongs to a ticket by its declared Files, never by substring', (t) => {
