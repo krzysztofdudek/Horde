@@ -1,6 +1,6 @@
 # 040 · tk new waliduje granice wobec cwd
 
-**Status:** in-progress
+**Status:** done
 **Kind:** research
 **Priority:** 3
 **Tier:** standard
@@ -19,4 +19,6 @@ Bilet zwalidowany wobec cudzego checkoutu.
 Ustalić w README, wobec którego drzewa tk new waliduje; jeśli trunk, poprawić jak w issue 037 i dodać test; jeśli cwd, zapisać to w USAGE i README. Wynik: decyzja w decisions.md i ewentualne nowe issue.
 
 ## Evidence
+
+- **ran:** node --test tests/tk.test.mjs · **saw:** 66/66 pass; merged
 

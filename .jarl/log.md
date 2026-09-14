@@ -400,3 +400,5 @@
 - 2026-09-14 02:14 · 090 review approve · Self-reviewed: this is a research ticket with a conclusive outcome. Worker's repro is rigorous (strace confirms writeFileSync(wx) is 3 syscalls not 1; deterministic fault injection reproduces the double-acquisition 6/6; a zero-delay control matches the earlier reviewer's clean 220+161 runs, explaining why the window wasn't hit naturally). Filed as 098 with full mechanism and suggested fix.
 - 2026-09-14 02:14 · 090 → done · outcome (a): real race confirmed via strace + deterministic repro, contradicting the earlier reviewer's code-reading conclusion; filed as 098
 - 2026-09-14 02:07 · decided tk-boundary-cwd-is-intentional
+- 2026-09-14 02:15 · 040 evidence row · node --test tests/tk.test.mjs
+- 2026-09-14 02:15 · 040 → done · merged
