@@ -1,6 +1,6 @@
 # 028 · pytania nie blokuja reszty
 
-**Status:** in-progress
+**Status:** done
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong
@@ -21,4 +21,6 @@ Test tick z otwartym pytaniem każdego rodzaju: przydział reszty zgodny z tabel
 Dowód, którego oczekuję: skills/horde/scripts/tests/tick.test.mjs.
 
 ## Evidence
+
+- **ran:** node --test tests/tick.test.mjs (67/67, round 2, reviewer-verified) · **saw:** merged as e689c02
 

@@ -1,6 +1,6 @@
 # 060 · readme documents wave mjs audit audit plan commands that
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Run `node skills/horde/scripts/wave.mjs audit-plan` 
 Refuterzy: wave.mjs USAGE (lines 38-84) documents exactly six commands: start, note, merged, close, evidence, current. main()'s switch (lines 959-965) has cases for exactly those six, with default failing as unk | Verified directly. wave.mjs USAGE block (lines 38-84) documents exactly six commands: start, note, merged, close, evidence, current. The main() switch (lines 960-965) has cases for exactly those six a
 
 ## Evidence
+
+- **ran:** node --test tests/docs.test.mjs · **saw:** 27/27 pass; merged as b4f4d21
 

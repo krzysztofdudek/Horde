@@ -1,6 +1,6 @@
 # 003 · resztki modelu podzespolow
 
-**Status:** in-progress
+**Status:** done
 **Kind:** cleanup
 **Priority:** 2
 **Tier:** strong
@@ -23,4 +23,6 @@ Dowód, którego oczekuję: npm test; grep po owner|verifier|steward|dissent w s
 Uwagi: Przed usunięciem czytelników sprawdzić, czy klient ma archiwa misji sprzed 6.0.0. Jeśli tak, pytanie do klienta.
 
 ## Evidence
+
+- **ran:** node --test tests/docs.test.mjs (28/28); full reviewer verification · **saw:** merged as c6faeb6
 

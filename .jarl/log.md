@@ -341,3 +341,20 @@
 - 2026-09-13 22:56 · 007 → done · merged, sub-batch A check green
 - 2026-09-13 22:56 · 045 → done · merged, sub-batch A check green
 - 2026-09-13 22:56 · 058 → done · merged, sub-batch A check green
+- 2026-09-14 01:38 · 049 evidence row · node --test tests/refine.test.mjs
+- 2026-09-14 01:38 · 049 → done · merged as c1ff0a7, confirmed present in branch history; bookkeeping was left open when the merger process was interrupted
+- 2026-09-14 01:46 · 060 evidence row · node --test tests/docs.test.mjs
+- 2026-09-14 01:46 · 060 → done · merged as b4f4d21
+- 2026-09-14 01:46 · 070 evidence row · reviewer's own independent stress test, 220+161 runs
+- 2026-09-14 01:46 · 070 → done · merged as b6ac837
+- 2026-09-14 01:46 · 063 evidence row · node --test tests/docs.test.mjs
+- 2026-09-14 01:46 · 063 → done · merged as 38b10f7
+- 2026-09-14 01:46 · 003 evidence row · node --test tests/docs.test.mjs (28/28); full reviewer verification
+- 2026-09-14 01:46 · 023 evidence row · node --test tests/docs.test.mjs tests/promises-package.test.mjs (88/88, round 2)
+- 2026-09-14 01:46 · 028 evidence row · node --test tests/tick.test.mjs (67/67, round 2, reviewer-verified)
+- 2026-09-14 01:46 · 003 review approve · Reviewer: README grep claim verified literally (7 hits for owner/verifier/steward, all in the new pre-6.0.0 history section, 0 above it). No reader function removed — full function-set comparison before/after identical across all 7 files; hordeDigest's teamFilter loss removes no reading capability since a non-trunk --team already produced an empty list pre-change. Red-before/green-after reproduced independently via git-archive scratch extraction against the real Yggdrasil 6.0.0 build, all 6 changed test files. CHANGELOG entries present and correct. 4 pre-existing suite failures reproduce identically on the branch's own parent, zero new failures. The stewardFor-kept judgment call resolved on the Acceptance's own terms (readers stay clause), not a dodge.
+- 2026-09-14 01:46 · 023 review approve · Reviewer (round 2, focused re-check): CHANGELOG moved to [6.0.0] correctly (single bullet, not duplicated); stale four-rules count corrected to five/four/fifth, verified against the package itself (5 aspects, 4 deterministic + 1 llm). Non-CHANGELOG diff hash-identical across both rounds, confirming marker-list correctly left untouched per the jarl's ruling. docs.test.mjs's own [Unreleased]-section assertion still passes with an empty section. 23/23 + 89/89, including the evidence-is-live drill green through the real Yggdrasil 6.0.0 CLI.
+- 2026-09-14 01:46 · 028 review approve · Reviewer (round 2, full re-check not a rubber-stamp): independently verified the hold-before-gate-start placement against the real code path (startGate shells land.mjs which performs the merge itself; recordMerged is only post-merge bookkeeping, so holding there would be too late). Wrote its own additional test for the gate-not-yet-started path, confirmed round-1 code merges under an open stop and round-2 doesn't. Close/--watch fix confirmed correct (both the flag and the printed command withheld). Red/green reproduced on both rounds; test-merged onto current base clean. CHANGELOG entry correct wording, scope clean, 5 Minor non-blocking findings only.
+- 2026-09-14 01:46 · 003 → done · merged as c6faeb6
+- 2026-09-14 01:46 · 023 → done · merged as 2bb9a76
+- 2026-09-14 01:46 · 028 → done · merged as e689c02

@@ -1,6 +1,6 @@
 # 070 · retro podwojny bieg blokada niestabilna pod obciazeniem
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -19,4 +19,6 @@ Losowe czerwone wyniki bez zmiany w kodzie kosztują czas na ponowne uruchamiani
 Test nie zależy od czasu wykonania (np. synchronizacja przez plik blokady zamiast wyścigu procesów). `npm test` w `skills/horde/scripts/` zielone powtarzalnie pod obciążeniem.
 
 ## Evidence
+
+- **ran:** reviewer's own independent stress test, 220+161 runs · **saw:** 0 flakes before-fix reproduced, 0 after; merged as b6ac837
 

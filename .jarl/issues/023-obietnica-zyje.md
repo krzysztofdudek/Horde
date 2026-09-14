@@ -1,6 +1,6 @@
 # 023 · obietnica zyje
 
-**Status:** in-progress
+**Status:** done
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong
@@ -21,4 +21,6 @@ Lista znaczników zamknięta i konfigurowalna, drills satisfies/violates per ję
 Dowód, którego oczekuję: yg aspects drill evidence-is-live zielony.
 
 ## Evidence
+
+- **ran:** node --test tests/docs.test.mjs tests/promises-package.test.mjs (88/88, round 2) · **saw:** merged as 2bb9a76
 

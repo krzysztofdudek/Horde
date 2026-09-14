@@ -1,6 +1,6 @@
 # 063 · changelog claims a strict yggdrasil major version pin that
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Read skills/horde/scripts/node.mjs:150-160 and :273-
 Refuterzy: Confirmed as stated. CHANGELOG.md:12 says "Needs Yggdrasil 6.x — the same major, refused otherwise," but skills/horde/scripts/node.mjs:154-155 explicitly states the check is "by schema name, never by  | Verified both sides. CHANGELOG.md:12 says \"Needs Yggdrasil 6.x — the same major, refused otherwise,\" implying a major-version ceiling that refuses 7.x. But node.mjs:154-155 explicitly states the che
 
 ## Evidence
+
+- **ran:** node --test tests/docs.test.mjs · **saw:** reviewed and approved; merged as 38b10f7
 

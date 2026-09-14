@@ -1,6 +1,6 @@
 # 049 · refine review buduje plan bez oslony na blad
 
-**Status:** in-progress
+**Status:** done
 **Kind:** research
 **Priority:** 3
 **Tier:** standard
@@ -19,4 +19,6 @@ Niespójna obsługa tego samego wywołania w dwóch miejscach.
 Przeczytać buildPlan w queue.mjs: jeśli rzuca, review dostaje tę samą osłonę i odmowę z powodem plus test; jeśli nie rzuca, zamknąć z notatką.
 
 ## Evidence
+
+- **ran:** node --test tests/refine.test.mjs · **saw:** 71/71 pass; merged as c1ff0a7
 
