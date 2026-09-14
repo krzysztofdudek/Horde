@@ -171,9 +171,17 @@ function resolveTicketTree(ticket, horde, cwd) {
 // future landing script. Trunk is a branch that `horde.mjs init` deliberately leaves unchecked
 // out, so there is nothing on disk to hand back until something asks: the first ask provisions a
 // worktree for it, once, at a fixed path under `.horde/`; every ask after that resyncs that same
-// worktree to the branch's current tip (`git reset --hard`, safe because nothing but this resync
-// ever writes there) rather than making — and leaking — a fresh one. That is also why its
-// `cleanup()` is a no-op: the tree is meant to be kept, not thrown away after one read.
+// worktree to the branch's current tip (`git reset --hard`) rather than making — and leaking — a
+// fresh one. That is also why its `cleanup()` is a no-op: the tree is meant to be kept, not thrown
+// away after one read.
+//
+// The rule that only the landing script writes trunk is right, but a manual edit can still land
+// in that tree (a maintainer poking around, a stray script) — and `git reset --hard` would discard
+// it without a trace. So the resync counts what it is about to discard first (every tracked path
+// `git status --porcelain` reports besides `??`, since those are exactly the ones `reset --hard`
+// touches — an untracked file survives it untouched) and, when that count is not zero, says so on
+// stderr in one line before proceeding. The reset still happens either way: trunk stays read-only,
+// this only stops it from being silent about the cost.
 function resolveHordeTrunk(horde, cwd) {
   const branch = `${horde}/trunk`;
   const tip = git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], cwd);
@@ -190,8 +198,15 @@ function resolveHordeTrunk(horde, cwd) {
     } catch (e) {
       fail(e.message);
     }
-  } else if (git(['reset', '--hard', branch], path) === null) {
-    fail(`could not sync the trunk tree at ${path} to ${branch}`);
+  } else {
+    const status = git(['status', '--porcelain'], path);
+    const discarded = status ? status.split('\n').filter((line) => line.length && !line.startsWith('??')).length : 0;
+    if (discarded > 0) {
+      process.stderr.write(`trunk resync discarded ${discarded} uncommitted change${discarded === 1 ? '' : 's'} at ${path} — trunk (${branch}) is written only by the landing script, so every read resets it to the branch's tip\n`);
+    }
+    if (git(['reset', '--hard', branch], path) === null) {
+      fail(`could not sync the trunk tree at ${path} to ${branch}`);
+    }
   }
   return {
     path, branch, sha: git(['rev-parse', branch], cwd), kind: 'trunk', cleanup: NOOP,
