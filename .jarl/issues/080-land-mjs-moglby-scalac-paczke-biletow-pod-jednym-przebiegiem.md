@@ -1,6 +1,6 @@
 # 080 · land mjs moglby scalac paczke biletow pod jednym przebiegiem bramki
 
-**Status:** in-progress
+**Status:** done
 **Kind:** research
 **Priority:** 3
 **Tier:** standard
@@ -36,4 +36,6 @@ TESTING: (a) fixture with 2-3 non-overlapping tickets ready to land — assert e
 
 APPROVED: Krzysztof approved the design above exactly as proposed, no changes (see .jarl/decisions.md, 080-batch-landing-approved). Ready for implementation dispatch. Was held out of dispatch until issue 108 landed — both touch land.mjs (108: checkRevertTest; 080: run()'s gate-lock/merge flow), avoiding a self-inflicted merge conflict; 108 is now done, so this is unblocked.
 - **ran:** cd skills/horde/scripts && HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" timeout 900 node --test tests/land.test.mjs tests/tick.test.mjs · **saw:** 170 tests, 170 pass, 0 fail (162 pre-existing + 8 new: 7 in land.test.mjs covering non-overlapping batch/one gate call, overlap exclusion, red-gate fallback, --no-gate, single-ticket equivalence, --background batch, --background partial refusal; 1 in tick.test.mjs covering dispatch's one-call hand-off)
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/land.test.mjs skills/horde/scripts/tests/tick.test.mjs · **saw:** 170/170 pass, 0 fail, on the merged tip
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/queue.test.mjs skills/horde/scripts/tests/wave.test.mjs skills/horde/scripts/tests/horde.test.mjs skills/horde/scripts/tests/retro.test.mjs skills/horde/scripts/tests/drill.test.mjs · **saw:** 251/252 pass, 0 fail, 1 pre-existing unrelated root-permission skip — broader sweep for regressions given the scale of this change, on the merged tip
 
