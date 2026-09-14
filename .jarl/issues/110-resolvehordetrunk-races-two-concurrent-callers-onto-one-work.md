@@ -1,6 +1,6 @@
 # 110 · resolveHordeTrunk races two concurrent callers onto one worktree path
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -22,4 +22,5 @@ Any two of the tools above racing on one horde's first-ever trunk read (a common
 ## Evidence
 
 - **ran (from a temp fixture, `HORDE_TEST_YG` set to a real Yggdrasil build; repo made with `makeRepo()`+`initHorde()`, mission1's trunk never yet read):** two `tick.mjs --horde mission1 --json` runs launched at once against the same repository (spawned back-to-back with no synchronization, both racing `resolveHordeTrunk`'s first-ever provision of `mission1/trunk`) · **saw:** one run failed with `error: could not create worktree at <path>/.horde/worktrees/mission1/trunk for <sha> — Preparing worktree (detached HEAD <short-sha>)\nfatal: '<path>/.horde/worktrees/mission1/trunk' already exists`, exit code 1 — reproduced this exactly while developing 041's own fix, before narrowing tick.mjs's change to the explicit-`--horde`-only form and moving its resolveTree call inside its own gate lock (which fixes tick.mjs's self-race but nothing else that calls resolveHordeTrunk)
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/lib.test.mjs skills/horde/scripts/tests/tree.test.mjs skills/horde/scripts/tests/queue.test.mjs skills/horde/scripts/tests/tick.test.mjs skills/horde/scripts/tests/land.test.mjs · **saw:** 296/296 pass on rebased branch tip and again on merged main; independently re-read withTreeLock/createTreeLockFile/resolveHordeTrunk/provisionTree's makeTree split to confirm no self-deadlock (resolveHordeTrunk holds the lock and calls the unlocked makeTree directly; every other caller goes through the locked provisionTree) and that queue.mjs's own ticket-worktree provisioning inherits the same protection
 
