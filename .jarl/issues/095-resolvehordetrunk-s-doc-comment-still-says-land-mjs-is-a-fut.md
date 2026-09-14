@@ -1,6 +1,6 @@
 # 095 · resolveHordeTrunk's doc comment still says land.mjs is a future script
 
-**Status:** open
+**Status:** done
 **Kind:** cleanup
 **Priority:** 3
 **Tier:** standard
@@ -24,4 +24,6 @@ Dowód, którego oczekuję: none needed beyond the diff itself — pure comment 
 
 
 ## Evidence
+
+- **ran:** node --check _lib.mjs; node --test tests/lib.test.mjs · **saw:** syntax OK; 57/57 pass
 
