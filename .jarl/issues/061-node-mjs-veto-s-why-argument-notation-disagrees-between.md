@@ -1,6 +1,6 @@
 # 061 · node mjs veto s why argument notation disagrees between
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Run `node.mjs veto g-001 --by architect` with no rea
 Refuterzy: Verified directly in both files. node.mjs USAGE text (lines 54-55 and 69-70) writes veto's reason unbracketed: `contract veto <id> "why" --by <name>` and `veto <id> "why" --by <name>`, while approve's | Verified directly: /home/user/Horde/skills/horde/scripts/node.mjs line 70 reads `veto <id> \"why\" --by <name> [--horde h]` (unbracketed reason), while line 69 reads `approve <id> [\"why\"] --by <name
 
 ## Evidence
+
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/docs.test.mjs skills/horde/scripts/tests/node.test.mjs · **saw:** 99/99 pass on rebased branch tip and again on merged main
 
