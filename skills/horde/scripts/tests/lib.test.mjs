@@ -5,6 +5,7 @@ import {
   existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, rmSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { makeRepo, rmRepo } from './helpers.mjs';
 
 test('_lib.mjs: hordeRoot, parseArgs, renderTemplate, appendText', async (t) => {
@@ -735,4 +736,58 @@ test('no tool but _lib.mjs spells out the shape of a document it reads', async (
     }
   }
   assert.deepEqual(offenders, [], `these documents are parsed in _lib.mjs; a second reading of one lives in:\n${offenders.join('\n')}`);
+});
+
+// qualityPolicy()'s resolving paths (no charter, no Quality section, or a recognized value) are
+// safe to call in-process; its refusal is not — fail() calls process.exit() and would take this
+// whole run with it, same reason resolveTree's, teamPath's and the lease claims' refusals above
+// are child-process tests rather than direct calls.
+test('_lib.mjs qualityPolicy: reads a recognized value or the ruling\'s own default, refuses anything else', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const origCwd = process.cwd();
+  process.chdir(dir);
+  try {
+    const mod = await import('../_lib.mjs');
+    const horde = 'pilot';
+    const charterPath = mod.hordePath(horde, 'charter.md');
+    mkdirSync(dirname(charterPath), { recursive: true });
+
+    await t.test('no charter file at all, and a charter with no Quality section, both read as autonomous', () => {
+      assert.equal(mod.qualityPolicy(horde), 'autonomous'); // charter.md does not exist yet
+      writeFileSync(charterPath, '# Mission · pilot\n\nno quality section in this one\n');
+      assert.equal(mod.qualityPolicy(horde), 'autonomous');
+    });
+
+    await t.test('a recognized value round-trips', () => {
+      writeFileSync(charterPath, '# Mission · pilot\n\n## Quality\n\n**Policy:** only-the-work\n');
+      assert.equal(mod.qualityPolicy(horde), 'only-the-work');
+    });
+
+    await t.test('a value nothing recognises is refused, naming both valid policies — never silently read as the more permissive default', () => {
+      writeFileSync(charterPath, '# Mission · pilot\n\n## Quality\n\n**Policy:** sometimes\n');
+      const libPath = fileURLToPath(new URL('../_lib.mjs', import.meta.url));
+      const script = join(dir, 'check-quality-policy.mjs');
+      writeFileSync(script, [
+        `import { qualityPolicy } from ${JSON.stringify(libPath)};`,
+        `qualityPolicy(${JSON.stringify(horde)});`,
+        '',
+      ].join('\n'));
+      assert.throws(() => {
+        execFileSync('node', [script], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      }, (e) => {
+        assert.equal(e.status, 1);
+        const stderr = e.stderr.toString();
+        assert.match(stderr, /sometimes/);
+        assert.match(stderr, /not a setting this horde has/);
+        // Names both valid policies — reused from QUALITY_POLICIES, not retyped here.
+        for (const p of mod.QUALITY_POLICIES) {
+          assert.ok(stderr.includes(p), `refusal should name valid policy "${p}" — got: ${stderr}`);
+        }
+        return true;
+      });
+    });
+  } finally {
+    process.chdir(origCwd);
+  }
 });
