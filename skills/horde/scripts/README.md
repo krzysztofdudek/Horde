@@ -1124,11 +1124,22 @@ visible as one.
 
 `judge` is a measurement and never a gate. At `config.retro.judgeSampleRate` above 0 a sample of
 LANDED tickets has the verdicts already recorded on its own files and components re-packaged through
-`yg verdict package`, and a second judgement by `config.retro.judgeTier` is compared against the one
-on file; the disagreement comes back with `wilson(k, n)` at that sample size. At a rate of 0 no
-`yg verdict` command runs at all. A pair the CLI will not package is a skip with its reason, a pair
-with no second judgement yet is `pending` with the command that takes one, and neither refuses
-anything.
+`yg verdict package`, and a second judgement by `config.retro.judgeTier` is put beside the first; the
+disagreement comes back with `wilson(k, n)` at that sample size. At a rate of 0 no `yg verdict`
+command runs at all.
+
+Reaching a comparison takes two runs, because a graph holds ONE verdict per (rule, unit) pair and
+every write replaces it: recording the second judgement is what destroys the first, and no single
+`yg verdict read` can ever answer with both. So the first run writes the first judgement down — who
+judged, what they said, and the two hashes the package binds a pass and a refusal to, in
+`hordes/<h>/cache/judge-samples.json` — and hands the pair back on `pending` with the command that
+puts it to the second judge. The second run reads the slot again, now holding that judge's answer,
+and puts the two side by side. Whether the code moved in between is answered by those two hashes and
+never by the recorded verdict's own: a verdict binds to a hash with its verdict word folded in, so
+two judges who disagree about code that never moved always record two different hashes, and reading
+that as a change would drop every disagreement there is. A pair the CLI will not package is a skip
+with its reason; so is one whose two judgements turn out to be about different code, and that one
+counts neither way. None of it refuses anything.
 
 `horde.mjs done` requires this document, and requires it to have been taken over the mission's landed
 tickets as they now stand — `state` is how it tells a current retrospective from one taken before the

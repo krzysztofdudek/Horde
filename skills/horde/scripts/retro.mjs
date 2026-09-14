@@ -35,8 +35,10 @@
 // The judge measurement is a measurement and never a gate. At a configured rate
 // (`config.retro.judgeSampleRate`, 0 by default, so nothing is re-judged until somebody asks for
 // it) a sample of landed tickets has its prose pairs re-packaged and put to a second judge, and
-// the disagreement between the two comes back with a Wilson interval at that sample size.
-// Nothing is refused over it.
+// the disagreement between the two comes back with a Wilson interval at that sample size. It
+// takes two runs to say anything, because a graph holds one verdict per pair and recording the
+// second judge's is what destroys the first: the first run writes the first judgement down here,
+// the second run reads what replaced it and puts the two side by side. Nothing is refused over it.
 
 import {
   existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, linkSync,
@@ -357,6 +359,52 @@ export function ticketDeclares(root, cfg, dir, unit) {
   return boundary.length ? pathInBoundary(unit, boundary) : false;
 }
 
+// ---- two judgements, one slot ------------------------------------------------------------------
+//
+// A graph holds at most ONE verdict for an (aspect, unit) pair. Every write puts its entry in that
+// slot and whatever was there is gone — a judge's `yg verdict record` and the reviewer's own fill
+// alike — and `yg verdict read` narrows what comes back further still, to the entries a judge
+// recorded by hand. So the two opinions this measurement is about can never be on disk together,
+// and no single read can ever see both: recording the second judgement is the act that destroys
+// the first. Asking one read for both is what this used to do, and it is why it could only ever
+// find the one entry twice and report every pair as waiting, however many times the command it
+// suggested was actually run.
+//
+// The measurement therefore takes two runs and keeps its own copy of the half that would be lost.
+// The first run writes down what the slot holds — who judged, what they said, and the two hashes
+// the package binds a pass and a refusal to — and hands the pair back with the command that puts
+// it to the second judge. The second run, after somebody has run that command, reads the slot
+// again: it now holds the second judge's answer, and the first judge's is on file here. That is
+// the comparison, and it is the only way there is to reach it.
+//
+// What answers "are these two judgements about the same code?" is NOT the recorded entry's own
+// hash. A verdict is bound to the hash of its inputs WITH THE VERDICT WORD FOLDED IN, so two
+// judges who disagree about code that never moved necessarily record two different hashes, and
+// reading that difference as "the code changed" would throw away every disagreement there is —
+// the only rows this measurement exists to count. The pair of hashes `yg verdict package` prints
+// does answer it: `pass` and `refused` come from the same rule, the same files, the same
+// references and the same tier, and differ only in that last word. So the first run keeps both,
+// and the second run asks whether the entry it now sees is bound to the hash that pair names for
+// the verdict it carries. If it is, the two judges were looking at the same thing.
+//
+// One pair whose first judgement is superseded by its OWN judge over changed code stays on
+// `pending` until a second judge reaches it, and is then a skip rather than a recount: the copy is
+// never refreshed once taken. That is deliberate. A measurement that re-took its own baseline
+// whenever the ground moved would answer differently on every run over the same mission, and a
+// number nobody can reproduce is not evidence.
+function judgeSamplesPath(horde) { return hordePath(horde, 'cache', 'judge-samples.json'); }
+
+// One (aspect, unit) pair as one key — the shape a graph keys its own verdicts by.
+function pairKey(aspect, unit) { return `${aspect} ${unit.kind}:${unit.path}`; }
+
+// Why a `yg` call asked for one document did not answer with one, in a single line.
+function ygWhy(res) {
+  if (res.state === 'no-cli') return 'there is no Yggdrasil CLI on this repository to package it with';
+  if (res.state === 'absent') return 'the graph no longer has that rule or that unit';
+  if (res.state === 'stale') return res.saw;
+  return String(res.detail === undefined || res.detail === null ? '' : res.detail).trim().split('\n')[0];
+}
+
 // Which landed tickets are re-judged, and what came back. Nothing here refuses: every way this can
 // fail to answer — no rate, nothing landed, a CLI that will not package a pair — is a reason
 // recorded on the document beside the numbers it could take.
@@ -413,6 +461,23 @@ function measureJudge(horde, root, cfg, tickets, landed) {
   const pending = [];
   let disagreements = 0;
 
+  // What an earlier run wrote down. A file that will not parse is a note on the document and a
+  // fresh start, never a stop: this is a copy of something a graph holds elsewhere, and a
+  // retrospective that refuses to run is a retrospective nobody has. The retrospective's own lock
+  // is held around all of this, so two runs never write it at once.
+  const samplesFile = judgeSamplesPath(horde);
+  let samples = {};
+  try {
+    samples = readJSON(samplesFile, {}) || {};
+  } catch {
+    samples = {};
+    skipped.push({
+      why: `${samplesFile} would not parse, so no first judgement an earlier run wrote down was read — every `
+        + 'pair in this sample was written down again from scratch, and each is waiting on a second judgement again',
+    });
+  }
+  let wrote = false;
+
   for (const p of picked) {
     const ticket = tickets.find((t) => t.id === p.ticket);
     const mine = verdicts.filter((v) => v && v.unit && ticket && ticketDeclares(root, cfg, ticket.dir, v.unit.path));
@@ -421,52 +486,110 @@ function measureJudge(horde, root, cfg, tickets, landed) {
       continue;
     }
     for (const v of mine) {
+      const key = pairKey(v.aspect, v.unit);
+      const unit = `${v.unit.kind}:${v.unit.path}`;
       const unitFlag = v.unit.kind === 'node' ? '--node' : '--file';
-      const args = ['verdict', 'package', '--aspect', v.aspect, unitFlag, v.unit.path];
-      let packaged = true;
-      let why = null;
-      try {
-        execFileSync(yg.cmd, [...yg.prefix, ...args], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
-      } catch (e) {
-        packaged = false;
-        why = (e.stderr ? String(e.stderr) : e.message).trim().split('\n')[0];
-      }
-      if (!packaged) {
-        skipped.push({
-          ticket: p.ticket, aspect: v.aspect, unit: `${v.unit.kind}:${v.unit.path}`, why: `\`${yg.display} ${args.join(' ')}\` refused — ${why}`,
-        });
-        continue;
-      }
-      // find(), not filter(): yg-verdicts/1 holds at most one live verdict per (aspect, unit) —
-      // Yggdrasil's lock writes that slot unconditionally on every record, judge included, so
-      // there is no history to pick the wrong entry from. (There is a real, separate problem one
-      // level up: recording a second judge's verdict on a pair overwrites the first judge's in
-      // that same slot, so this comparison can only ever find itself — see issue 104.)
-      const second = tier
-        ? verdicts.find((o) => o && o.judge === tier && o.aspect === v.aspect && o.unit && o.unit.path === v.unit.path && o.unit.kind === v.unit.kind)
-        : null;
-      if (!second || second.judge === v.judge) {
-        pending.push({
+      const held = samples[key] || null;
+
+      // Both opinions in hand: one on file from an earlier run, the other in the slot now. Nothing
+      // is packaged on this path — a pair whose verdict is a pass still in force is one
+      // `yg verdict package` refuses outright, and packaging here would throw away the very
+      // comparison this run came back for.
+      if (held && tier && v.judge === tier) {
+        if (held.judge === v.judge) {
+          skipped.push({
+            ticket: p.ticket,
+            aspect: v.aspect,
+            unit,
+            why: `both the judgement on file for this pair and the one recorded on it now are ${tier}'s own, and `
+              + `${tier} is the second judge — there is nobody else's opinion here to put beside it`,
+          });
+          continue;
+        }
+        const bound = held.hashes ? held.hashes[v.verdict] : null;
+        if (!bound || bound !== v.hash) {
+          skipped.push({
+            ticket: p.ticket,
+            aspect: v.aspect,
+            unit,
+            why: `${held.judge} and ${v.judge} both judged this pair, and not the same code — the verdict recorded `
+              + `on it now is not bound to the hash its package named when ${held.judge}'s was written down, so `
+              + 'neither agreement nor disagreement between the two would mean anything',
+          });
+          continue;
+        }
+        const agrees = held.verdict === v.verdict;
+        if (!agrees) disagreements += 1;
+        pairs.push({
           ticket: p.ticket,
           aspect: v.aspect,
-          unit: `${v.unit.kind}:${v.unit.path}`,
-          record: `${yg.display} verdict record --aspect ${v.aspect} ${unitFlag} ${v.unit.path} --by ${tier || '<the second judge>'} `
-            + '--verdict pass|refused --hash <hashes.pass or hashes.refused from the package>',
+          unit,
+          held: held.verdict,
+          heldBy: held.judge,
+          heldAt: held.at || null,
+          second: v.verdict,
+          secondBy: v.judge,
+          agrees,
         });
         continue;
       }
-      const agrees = second.verdict === v.verdict;
-      if (!agrees) disagreements += 1;
-      pairs.push({
+
+      if (!held) {
+        // The second judge's own verdict and nothing else is what this pair carries. Writing it
+        // down as the first judgement would set a judge up to be compared against themselves,
+        // which is the whole of what this measurement used to do.
+        if (tier && v.judge === tier) {
+          skipped.push({
+            ticket: p.ticket,
+            aspect: v.aspect,
+            unit,
+            why: `the only verdict recorded on this pair is ${tier}'s own, and ${tier} is the second judge — there `
+              + 'is no first judgement here for it to be compared against',
+          });
+          continue;
+        }
+        // Packaging is both halves of a first run: it is what proves the pair can still be handed
+        // to a judge at all, and it is where the two hashes that say whether the code moved
+        // afterwards come from.
+        const args = ['verdict', 'package', '--aspect', v.aspect, unitFlag, v.unit.path];
+        const pkg = ygJson(root, cfg, args, 'yg-review/1');
+        if (pkg.state !== 'ok') {
+          skipped.push({
+            ticket: p.ticket, aspect: v.aspect, unit, why: `\`${pkg.command}\` refused — ${ygWhy(pkg)}`,
+          });
+          continue;
+        }
+        const hashes = pkg.doc && pkg.doc.hashes;
+        samples[key] = {
+          aspect: v.aspect,
+          unit: { kind: v.unit.kind, path: v.unit.path },
+          judge: v.judge === undefined ? null : v.judge,
+          verdict: v.verdict,
+          hash: v.hash === undefined ? null : v.hash,
+          hashes: hashes && typeof hashes === 'object'
+            ? { pass: hashes.pass || null, refused: hashes.refused || null }
+            : null,
+          at: nowIso(),
+        };
+        wrote = true;
+      }
+
+      // Written down and waiting. The command is the same one it has always been — running it
+      // replaces what is in the slot, which is exactly why the copy above is taken first.
+      const first = samples[key] || held;
+      pending.push({
         ticket: p.ticket,
         aspect: v.aspect,
-        unit: `${v.unit.kind}:${v.unit.path}`,
-        held: v.verdict,
-        second: second.verdict,
-        agrees,
+        unit,
+        held: first ? first.verdict : v.verdict,
+        heldBy: first ? first.judge : (v.judge === undefined ? null : v.judge),
+        record: `${yg.display} verdict record --aspect ${v.aspect} ${unitFlag} ${v.unit.path} --by ${tier || '<the second judge>'} `
+          + '--verdict pass|refused --hash <hashes.pass or hashes.refused from the package>',
       });
     }
   }
+
+  if (wrote) writeJSON(samplesFile, samples);
 
   return {
     sampled: size,
@@ -479,7 +602,8 @@ function measureJudge(horde, root, cfg, tickets, landed) {
     skipped,
     pending,
     note: pairs.length === 0
-      ? 'the sample was drawn and no pair in it had a second judgement to compare against yet — the commands that take one are on `pending`.'
+      ? 'the sample was drawn and no pair in it has two judgements to put side by side yet — every pair on '
+        + '`pending` has its first written down here, and is waiting for the command beside it to leave a second.'
       : null,
   };
 }
@@ -633,7 +757,10 @@ function render(doc) {
     lines.push(`sample ${doc.judge.sampled} ticket(s): ${doc.judge.tickets.join(', ')} — ${doc.judge.pairs.length} pair(s) compared, ${doc.judge.disagreements} disagreement(s)`
       + `${doc.judge.interval ? `, 95% interval [${doc.judge.interval.low.toFixed(3)}, ${doc.judge.interval.high.toFixed(3)}]` : ''}.`);
     for (const s of doc.judge.skipped) lines.push(`- skipped${s.ticket ? ` ticket ${s.ticket}` : ''}: ${s.why}`);
-    for (const p of doc.judge.pending) lines.push(`- waiting on a second judgement: ${p.aspect} on ${p.unit} — ${p.record}`);
+    for (const p of doc.judge.pending) {
+      lines.push(`- waiting on a second judgement: ${p.aspect} on ${p.unit}`
+        + `${p.heldBy ? ` (${p.heldBy} said ${p.held}, written down here)` : ''} — ${p.record}`);
+    }
   }
   lines.push('', 'This is a measurement. Nothing was refused over it.', '');
 
