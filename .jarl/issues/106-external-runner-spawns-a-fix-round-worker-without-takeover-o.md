@@ -1,6 +1,6 @@
 # 106 · external runner spawns a fix-round worker without --takeover or its round-aware name
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -35,4 +35,6 @@ command, and asserts the spawned command line carries `--takeover` and the round
 name, not the flat `w-<ticket>`.
 
 ## Evidence
+
+Independent security review during merge found the worker's fix (execSync on entry.brief, a hand-joined string) opened a real command-injection surface: horde/worktree names are never validated at creation, and a horde name like 'mission1;>X' is a fully valid git ref — proved empirically (git check-ref-format accepts it, horde.mjs init accepts it) — while remaining a live shell payload with no spaces needed. Fixed by having dispatch() carry a briefParts argv array alongside the display-only brief string, and externalStart() run it via execFileSync(process.execPath, entry.briefParts, ...) — no shell. Added a dedicated test using exactly that payload shape; confirmed it fails against the reverted (execSync) code with the shell visibly splitting the command line on the injected ';', and passes clean after the fix.
 
