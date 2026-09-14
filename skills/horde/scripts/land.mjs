@@ -607,9 +607,19 @@ function checkRevertTest(root, cfg, branch, parentBranch, files, issueText) {
 
 // The repository's own gate command, run fresh on the branch's own tree. No recorded green run is
 // accepted from anywhere: a "**Gate:** green at sha …" line in a ticket's log is a claim about a
-// run this gate did not see, which is exactly the kind of second-hand evidence this command
-// exists to stop taking. (`horde.mjs done` still accepts a matching cached green for the trunk
-// gate; that is its own call, about a mission that is already merged, and it stays there.)
+// run this gate did not see, which is exactly the kind of second-hand evidence this command exists
+// to stop taking — checkGate itself never reads the cache recordGateCache writes, only ever
+// measures fresh and hands back what it found, keyed to `branchSha`: the ticket branch's own tip,
+// the tree actually under test here.
+//
+// That is not the sha a landing that succeeds leaves recorded, though. `run()` merges this tree in
+// with `--no-ff`, always — even a clean, fast-forwardable merge — so the commit that lands on the
+// parent branch is a new object, its own sha, distinct from `branchSha` by construction (it carries
+// two parents; nothing is ever its own parent). The tree the gate just measured and the tree that
+// commit carries are identical either way, so once the merge names that sha, that — not
+// `branchSha` — is what recordGateCache is called with: the one a later `git rev-parse` of the
+// parent branch will actually produce, and so the one `horde.mjs done` and `wave.mjs close` can
+// match against without re-running anything.
 //
 // A command that hangs is not a verdict either, so the run carries a timeout and says so rather
 // than leaving a stuck process behind a checklist that never finishes.
@@ -652,6 +662,38 @@ function checkGate(cfg, level, worktree, branchSha, noGate) {
     note: green ? `green (${cmd})` : `red (${cmd})`,
     cache: { sha: branchSha, result: green ? 'green' : 'red', count: summary.tests },
   };
+}
+
+// Writes a gate measurement to the same file horde.mjs's `done` and wave.mjs's `close` read
+// (hordes/<horde>/cache/last-gate.json), keyed by the same level name ("team" or "trunk") land.mjs
+// itself ran the gate command under — so a `done` or a `close` right after a landing reads exactly
+// what that landing measured, instead of finding nothing there and either re-running the whole gate
+// on a tree it was already run on, or reporting the gate as unrecorded. Called from run() only once
+// a landing has actually merged, with `cache.sha` already corrected to the sha that merge produced
+// (see checkGate's own comment for why that is never `branchSha`).
+//
+// This is never called from inside the gate-lock critical section above — the sha it needs to write
+// does not exist until after that section's own lock has released and the merge it protects nothing
+// of has completed — so it is not one continuous critical section with the measurement. It still
+// takes that same lock itself, briefly, around its own read-modify-write: two landings finishing at
+// once, each merging its own tree onto its own parent, would otherwise still race the exact
+// lost-update this file is one shared document for — whichever of the two writes last would erase
+// the other's entirely, cache entry and all, rather than merging the two into one file that carries
+// both.
+function recordGateCache(horde, level, cache, ticketId, branch, cfg) {
+  const lock = acquireGateLock(ticketId, branch, { waitMs: lockWait(cfg) });
+  // Best-effort: the ticket is already landed by the time this runs — a lock this contended (every
+  // other landing on the repository holding it past its own wait) is not a reason to report an
+  // already-merged ticket as failed over a cache entry that a later `done` or `close` can still get
+  // by running the gate fresh, exactly as either would have before this existed.
+  if (!lock.ok) return;
+  try {
+    const path = hordePath(horde, 'cache', 'last-gate.json');
+    const existing = readJSON(path, {});
+    writeJSON(path, { ...existing, [level]: { ...cache, at: nowIso(), by: `land ${ticketId}` } });
+  } finally {
+    lock.release();
+  }
 }
 
 // The graph gate. The node map IS the Yggdrasil graph, so the graph is what says the code is
@@ -1631,6 +1673,9 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       landed = { ticket: ticketId, sha: merged.sha, at: nowIso() };
       recordMerged(horde, team, ticketId, merged.sha, { tree: root });
       appendLanded(issueDirPath, landed, parentBranch);
+      // The gate item above measured `branchSha` — this merge's tree is that same tree, now under
+      // a sha `done` and `close` can actually find on the branch they read. See checkGate's comment.
+      if (results.gate.cache) recordGateCache(horde, level, { ...results.gate.cache, sha: merged.sha }, ticketId, branch, cfg);
       checks.push({ name: 'merge', ok: true, note: `${merged.note} — ${short(merged.sha)}` });
     } else if (!allOk && !noGate) {
       recordChanges(horde, ticketId, checks);

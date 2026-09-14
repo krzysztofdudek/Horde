@@ -827,7 +827,11 @@ the JSON, and every item below is measured against it:
 5. gate — `config.gates.<level>` run fresh on the branch's own tree. No recorded green run is
    accepted from anywhere: a "green at sha …" line in a ticket's log is a claim about a run this
    gate did not see. A command that hangs is stopped at `config.gateTimeoutMs` (default 15 minutes)
-   and the limit is named, rather than a stuck process left behind a checklist that never finishes;
+   and the limit is named, rather than a stuck process left behind a checklist that never finishes.
+   Once the branch actually merges, what this measured is recorded in `cache/last-gate.json` at the
+   sha the merge produced — the same file and the same matching-sha acceptance `horde.mjs done` and
+   `wave.mjs close` already read, so either sees this landing's own result right away instead of
+   finding nothing there and running the gate a second time over a tree it was just run on;
 6. graph — the graph's own verdict on the branch's tree, on every run whatever `config.gates` holds:
    the graph is the node map, so it is what says the code is right there, and a repository whose own
    gate command never calls `yg` would otherwise show a green gate over a tree `yg check` exits 1
