@@ -1405,7 +1405,13 @@ export function globToRegExp(glob) {
 }
 
 export function pathInBoundary(path, boundary) {
-  return boundary.some((pat) => (pat.includes('*') ? globToRegExp(pat).test(path) : path === pat || path.startsWith(pat)));
+  return boundary.some((pat) => {
+    if (pat.includes('*')) return globToRegExp(pat).test(path);
+    // Full path-segment match, not a string prefix: "src/a" must own "src/a/x" but not the
+    // sibling "src/ab" — appending the boundary slash only once, since nodeGraphPathPrefix
+    // already hands this a directory prefix that ends in one.
+    return path === pat || path.startsWith(pat.endsWith('/') ? pat : `${pat}/`);
+  });
 }
 
 // The whole boundary of a ticket: every named node's code boundary plus that node's own graph
