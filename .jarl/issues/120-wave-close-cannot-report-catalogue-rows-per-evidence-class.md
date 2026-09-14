@@ -1,6 +1,6 @@
 # 120 · wave close cannot report catalogue rows per evidence class
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 3
 **Tier:** standard

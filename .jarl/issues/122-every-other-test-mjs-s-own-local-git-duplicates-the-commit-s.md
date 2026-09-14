@@ -1,6 +1,6 @@
 # 122 · Every other *.test.mjs's own local git() duplicates the commit-signing 503 exposure fixed in helpers.mjs and land.test.mjs
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
