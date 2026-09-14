@@ -7,9 +7,13 @@ selects the horde; when only one exists it is the default. On its own (no `--tre
 `--horde` resolves to that horde's own trunk worktree — read-only for everything but `land.mjs`'s merge
 commits, and resynced to the branch's tip (`git reset --hard`) on every read. A dirty trunk tree still
 gets reset, but not silently: the resync counts what it is about to discard first and, when that is not
-zero, says so in one line on stderr before it runs. `--team <name>` selects a team; default is
-`trunk`, and on anything filed at 6.0.0 or later that is the only value there is: nothing spawns a
-sub-team any more. `<name>` is always a team's short LEAF name (`alfa`), unique per horde;
+zero, says so in one line on stderr before it runs. Making that tree and resyncing it both run one
+process at a time per worktree path (`<path>.lock` beside it, the holder's pid inside, a dead holder
+taken over): two commands asking for one horde's trunk at the same instant take turns instead of
+colliding, since git refuses a second `worktree add` at a path, and a second `reset --hard` on one
+worktree, outright. The same lock guards every worktree `provisionTree()` makes, a ticket's included.
+`--team <name>` selects a team; default is `trunk`, and on anything filed at 6.0.0 or later that is the
+only value there is: nothing spawns a sub-team any more. `<name>` is always a team's short LEAF name (`alfa`), unique per horde;
 `_lib.mjs`'s `teamPath()` still resolves the nested layout (`teams/<parent>/teams/<child>/`) that a
 mission started before 6.0.0 can carry on disk — see **pre-6.0.0 history** at the end. A full slash
 path (`trunk/alfa`) is also accepted, but only when it matches what that resolution independently

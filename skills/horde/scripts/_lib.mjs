@@ -5,7 +5,8 @@
 // repository sees the same state (a worktree's common dir points at the main checkout's .git).
 
 import {
-  existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, realpathSync, rmSync, cpSync,
+  existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, realpathSync, rmSync,
+  cpSync, linkSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -242,6 +243,101 @@ function resolveTicketTree(ticket, horde, cwd) {
   });
 }
 
+// ---- one process at a time per worktree path ---------------------------------------------------
+//
+// Making a worktree is a check-then-act: nothing is there, so make it. Two processes that both
+// reach the check before either has made anything both go on to make it, and git refuses the
+// second outright — `fatal: '<path>' already exists` — where the honest answer is the very tree
+// the first one just finished making. Nothing serialized those two: tick.mjs alone holds a lock
+// this far down (it took its own resolve inside the gate lock, for a self-race of its own), and
+// every other caller that resolves a horde's trunk — the queue, a brief, a refinement, a
+// retrospective, a graph write — reaches this code with nothing between it and a sibling doing
+// exactly the same thing at the same moment.
+//
+// Reading trunk has a second window of the same shape, one step further on. A trunk tree that
+// already exists is resynced with `git reset --hard`, and git takes its own index lock on that
+// worktree to do it; two resyncs at once and the second is refused by git for as long as the
+// first is running (`Unable to create '<gitdir>/index.lock': File exists`).
+//
+// A lock keyed by the worktree path closes both windows with one mechanism, which is why it is a
+// lock rather than the narrower alternative of reading git's "already exists" as success. That
+// alternative answers the first window only, and answers it slightly wrong: `git worktree add`
+// creates the directory before it has checked anything out into it, and `config.worktree.copy` is
+// copied in later still, so a caller that takes "the path is there" for "the tree is ready" can
+// hand back a tree another process is still filling. Waiting for the first caller to finish hands
+// back the finished tree instead, which is the answer both callers asked for.
+//
+// The lock itself is the one the rest of this tool set already uses (`withQueueLock` below, and
+// land.mjs's and retro.mjs's own): the file names the pid holding it, a pid no longer running is
+// taken over immediately rather than waited out, and the wait is bounded. It is created the way
+// the gate and retrospective locks are — written whole under a name nobody waits on, then linked
+// into place, since linking is the one step that is both atomic and exclusive — so the lock path
+// never exists as an empty file naming no holder.
+//
+// It lives beside the worktree, never inside it: `<path>.lock` is under `.horde/`, which is
+// gitignored whole, so `git worktree add` never sees it and `git reset --hard` never touches it.
+const TREE_LOCK_WAIT_MS = 120000;
+const TREE_LOCK_POLL_MS = 50;
+
+function treeLockProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+function createTreeLockFile(path, content) {
+  const temp = `${path}.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
+  writeFileSync(temp, content);
+  try {
+    linkSync(temp, path);
+  } catch (e) {
+    if (e.code === 'EEXIST') throw e;
+    // A filesystem that cannot make a second name for a file cannot be held this way. It keeps
+    // the single call, narrow window and all, rather than being left with no lock at all.
+    writeFileSync(path, content, { flag: 'wx' });
+  } finally {
+    try { rmSync(temp, { force: true }); } catch { /* the lock is the link, not this name */ }
+  }
+}
+
+// withTreeLock(treePath, fn) — runs `fn` with nothing else on this repository creating or
+// resyncing the worktree at `treePath`. Returns whatever `fn` returns; releases on the way out of
+// either a return or a throw, fail()'s HordeError included (it unwinds rather than exiting, so
+// the `finally` below really does run).
+function withTreeLock(treePath, fn, { waitMs = TREE_LOCK_WAIT_MS } = {}) {
+  const path = `${treePath}.lock`;
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      createTreeLockFile(path, `${JSON.stringify({ pid: process.pid, tree: treePath, at: nowIso() }, null, 2)}\n`);
+      break;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+    let held = null;
+    try { held = JSON.parse(readFileSync(path, 'utf8')); } catch { held = null; }
+    // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
+    // like a dead one: taken over rather than waited on.
+    if (!held || !treeLockProcessAlive(held.pid)) {
+      try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
+      continue;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`the worktree at ${treePath} is being made or resynced by another process (pid ${held.pid}, since ${held.at || 'an unrecorded time'}) — timed out waiting for ${path}`);
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, TREE_LOCK_POLL_MS);
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      const holder = JSON.parse(readFileSync(path, 'utf8'));
+      if (holder.pid !== process.pid) throw new Error('not ours');
+      rmSync(path, { force: true });
+    } catch { /* unreadable, already gone, or already taken over by someone else: nothing to do */ }
+  }
+}
+
 // resolveHordeTrunk(horde, cwd) — the tip of `<horde>/trunk`, read-only for everything but the
 // landing script. Trunk is a branch that `horde.mjs init` deliberately leaves unchecked
 // out, so there is nothing on disk to hand back until something asks: the first ask provisions a
@@ -257,32 +353,52 @@ function resolveTicketTree(ticket, horde, cwd) {
 // touches — an untracked file survives it untouched) and, when that count is not zero, says so on
 // stderr in one line before proceeding. The reset still happens either way: trunk stays read-only,
 // this only stops it from being silent about the cost.
+//
+// Both halves of that — the one-time provision and every resync after it — run under
+// `withTreeLock` (see above), so two processes asking for one horde's trunk at the same moment
+// take turns instead of colliding: the first makes or resyncs the tree, the second waits and then
+// reads the finished one. The branch-tip read above it stays outside the lock; it is a pure read
+// of a ref, and holding the tree for it would serialize callers over nothing.
 function resolveHordeTrunk(horde, cwd) {
   const branch = `${horde}/trunk`;
   const tip = git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], cwd);
   if (tip === null) fail(`no such horde branch: ${branch} — has horde.mjs init run for "${horde}"?`);
   const path = join(hordeRoot(), 'worktrees', horde, 'trunk');
   const cfg = readConfig() || {};
-  if (!existsSync(path)) {
-    // Detached at trunk's current tip, never attached to the branch itself: an attached worktree
-    // would hold the branch name exclusively, and nothing else on the repository — not the main
-    // checkout, not a test, not the landing script — could then check `<horde>/trunk` out
-    // anywhere else. Detached, this tree is free to exist alongside any of that.
-    try {
-      provisionTree(path, tip, cfg);
-    } catch (e) {
-      fail(e.message);
-    }
-  } else {
-    const status = git(['status', '--porcelain'], path);
-    const discarded = status ? status.split('\n').filter((line) => line.length && !line.startsWith('??')).length : 0;
-    if (discarded > 0) {
-      process.stderr.write(`trunk resync discarded ${discarded} uncommitted change${discarded === 1 ? '' : 's'} at ${path} — trunk (${branch}) is written only by the landing script, so every read resets it to the branch's tip\n`);
-    }
-    if (git(['reset', '--hard', branch], path) === null) {
-      const detail = gitError();
-      fail(`could not sync the trunk tree at ${path} to ${branch}${detail ? ` — ${detail}` : ''}`);
-    }
+  try {
+    withTreeLock(path, () => {
+      if (!existsSync(path)) {
+        // Detached at trunk's current tip, never attached to the branch itself: an attached
+        // worktree would hold the branch name exclusively, and nothing else on the repository —
+        // not the main checkout, not a test, not the landing script — could then check
+        // `<horde>/trunk` out anywhere else. Detached, this tree is free to exist alongside any
+        // of that.
+        try {
+          // The unlocked body, since this call already holds this path's lock — going through the
+          // exported provisionTree() would be this process waiting on itself.
+          makeTree(path, tip, cfg);
+        } catch (e) {
+          fail(e.message);
+        }
+      } else {
+        const status = git(['status', '--porcelain'], path);
+        const discarded = status ? status.split('\n').filter((line) => line.length && !line.startsWith('??')).length : 0;
+        if (discarded > 0) {
+          process.stderr.write(`trunk resync discarded ${discarded} uncommitted change${discarded === 1 ? '' : 's'} at ${path} — trunk (${branch}) is written only by the landing script, so every read resets it to the branch's tip\n`);
+        }
+        if (git(['reset', '--hard', branch], path) === null) {
+          const detail = gitError();
+          fail(`could not sync the trunk tree at ${path} to ${branch}${detail ? ` — ${detail}` : ''}`);
+        }
+      }
+    });
+  } catch (e) {
+    // A refusal raised inside is already one line with its own exit code, and is rethrown as it
+    // stands. Only the lock's own timeout arrives here as a plain throw, and that is a refusal
+    // too — another process holding this tree for two minutes is something to read, not a stack
+    // trace to decipher.
+    if (e instanceof HordeError) throw e;
+    fail(e.message);
   }
   return {
     path, branch, sha: git(['rev-parse', branch], cwd), kind: 'trunk', cleanup: NOOP,
@@ -376,7 +492,17 @@ export function assertGraphWritable(info, { horde, cfg } = {}) {
 // refuse without ever having touched git worktree state at all, which is exactly the case
 // resolveScratchTree's own cleanup path exists to handle, and untested here would leave it dead
 // code.
+//
+// The whole of it — the "is it already there" check, the `git worktree add` and the copying —
+// runs under `withTreeLock` (see above), because the check and the act are two steps and a second
+// process arriving between them would be refused by git rather than handed the tree the first one
+// is making. `makeTree` below is the same body without the lock, for the one caller
+// (resolveHordeTrunk) that is already holding this path's lock when it gets here.
 export function provisionTree(path, ref, cfg) {
+  return withTreeLock(path, () => makeTree(path, ref, cfg));
+}
+
+function makeTree(path, ref, cfg) {
   if (existsSync(path)) return { created: false, copied: [] };
   const root = repoRoot();
   const copyList = cfg && cfg.worktree && Array.isArray(cfg.worktree.copy) ? cfg.worktree.copy : [];
