@@ -1,6 +1,6 @@
 # 091 · pathInBoundary is a prefix check, not a path-boundary check
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard

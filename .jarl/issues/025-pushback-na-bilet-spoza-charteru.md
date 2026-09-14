@@ -1,6 +1,6 @@
 # 025 · pushback na bilet spoza charteru
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong

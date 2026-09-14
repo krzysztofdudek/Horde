@@ -1,6 +1,6 @@
 # 068 · status mjs branchcategory tests queue item state for values
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** standard

@@ -1,6 +1,6 @@
 # 013 · stale maja pochodzenie
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 2
 **Tier:** standard

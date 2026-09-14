@@ -1,6 +1,6 @@
 # 090 · acquireRetroLock race: worker reproduced it once, reviewer could not in 220 runs and code reading says it should be safe
 
-**Status:** open
+**Status:** in-progress
 **Kind:** research
 **Priority:** 3
 **Tier:** standard

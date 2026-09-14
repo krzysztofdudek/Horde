@@ -1,6 +1,6 @@
 # 088 · CHANGELOG chmod/root skip wording will say 'two' when three tests now carry the guard
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard

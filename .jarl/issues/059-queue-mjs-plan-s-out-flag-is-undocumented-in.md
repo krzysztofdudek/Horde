@@ -1,6 +1,6 @@
 # 059 · queue mjs plan s out flag is undocumented in
 
-**Status:** open
+**Status:** in-progress
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard

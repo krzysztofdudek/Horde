@@ -1,6 +1,6 @@
 # 040 · tk new waliduje granice wobec cwd
 
-**Status:** open
+**Status:** in-progress
 **Kind:** research
 **Priority:** 3
 **Tier:** standard

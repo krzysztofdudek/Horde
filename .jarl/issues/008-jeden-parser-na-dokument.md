@@ -1,6 +1,6 @@
 # 008 · jeden parser na dokument
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 2
 **Tier:** strong
