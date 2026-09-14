@@ -1114,6 +1114,7 @@ others — where a number has that kind of backing and where it does not.
 
 | Constant | Value | Set in | Where it comes from |
 | --- | --- | --- | --- |
+| `keyContext` | 3 (lines) | `horde.mjs` `defaultConfig()` | Not recorded. The comment explains the mechanism — more context makes a key more sensitive to a nearby landing, and zero is refused outright as unusable — never why three lines rather than two or five. |
 | `parallelism` | 6 | `horde.mjs` `defaultConfig()` | Not recorded. No comment or history explains this count; it has carried the same value since the plugin's first release. |
 | `fixRounds.resume` | 3 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | Not recorded. The comment explains the two-phase mechanism — resume the same worker, then a fresh one a class up — never why three rounds of the first phase. |
 | `fixRounds.fresh` | 2 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | Not recorded, same comment as the resume count above — the fresh-worker round count is equally unexplained. |

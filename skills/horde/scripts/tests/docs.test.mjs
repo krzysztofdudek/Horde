@@ -850,7 +850,8 @@ test('scripts/README.md\'s wave.mjs command list names only commands wave.mjs\'s
 // already has one and is the pattern the rest follow. Every value below is read live off the
 // source that actually defines it — never retyped as a literal here — so a row goes stale the
 // moment the code and the table disagree, exactly like `landCheckOrder()`/`readmeGateItems()`
-// above hold land.mjs's own gate list to its docs.
+// above hold land.mjs's own gate list to its docs. Issue 096 later found one more number 013's
+// own sweep had missed — `keyContext` — and added it here the same way.
 
 function defaultConfigSlice() {
   const text = readText(join(SCRIPTS_DIR, 'horde.mjs'));
@@ -895,6 +896,7 @@ function liveConstants() {
   };
 
   return [
+    ['keyContext', need(/keyContext:\s*(\d+)/, cfg, 'keyContext')],
     ['parallelism', need(/parallelism:\s*(\d+)/, cfg, 'parallelism')],
     ['fixRounds.resume', need(/fixRounds:\s*\{\s*resume:\s*(\d+)/, cfg, 'fixRounds.resume')],
     ['fixRounds.fresh', need(/fixRounds:\s*\{\s*resume:\s*\d+,\s*fresh:\s*(\d+)/, cfg, 'fixRounds.fresh')],
@@ -910,7 +912,7 @@ function liveConstants() {
 
 test('every constant issue 013 found has a row in scripts/README.md\'s constants table, with its current value', () => {
   const rows = tableRows();
-  assert.ok(rows.length >= 10, `expected at least 10 data rows in the constants table, found ${rows.length}`);
+  assert.ok(rows.length >= 11, `expected at least 11 data rows in the constants table, found ${rows.length}`);
 
   const constants = liveConstants();
   assert.equal(new Set(constants.map(([k]) => k)).size, constants.length, 'two constants share the same lookup key');
