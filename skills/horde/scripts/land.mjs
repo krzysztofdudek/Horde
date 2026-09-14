@@ -536,7 +536,21 @@ function runMutateVariant(root, cfg, branch, mutate, newTestFiles) {
 // The result is derived here, by running the tests: nothing anywhere declares to this gate
 // whether either variant failed, passed, or was not run, and no flag offers to say so. A
 // declaration about a test is not evidence about a test.
-function checkRevertTest(root, cfg, branch, parentBranch, files, issueText) {
+//
+// Unless the charter has already ruled that this mission has no evidence layer at all — then none
+// of that runs, and this item is exempted outright. See the check at the top of the function.
+function checkRevertTest(horde, root, cfg, branch, parentBranch, files, issueText) {
+  // A mission whose charter has already judged "no evidence layer" answers this item with that
+  // judgment, not with the test-file question it doesn't apply to. config.testGlobs is empty on
+  // exactly this kind of repository BY CONSTRUCTION — the same emptiness the charter's reading is
+  // made from — so refusing on it, or asking for a per-ticket "**No new tests:**" excuse, would be
+  // asking a question this mission has already answered "there is nothing here to point at" to.
+  // Checked first, before anything else below, so a mission that has made this judgement never
+  // reaches any of it — not the testGlobs guard, not the declaration, not even the --mutate /
+  // --revert-base conflict guard immediately below.
+  const noEvidenceLayer = noEvidenceLayerNote(horde);
+  if (noEvidenceLayer) return { ok: true, note: noEvidenceLayer };
+
   const mutate = mutateCommand(issueText);
   const explicitBase = revertBaseRef(issueText);
   // A ticket naming both answers two different questions with one field each — "where were these
@@ -1618,7 +1632,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
 
     results['base freshness'] = checkBaseFreshness(branch, parentBranch);
     results.scope = checkScope(root, cfg, nodes, changedFiles, declaredFiles);
-    results['revert test'] = checkRevertTest(root, cfg, branch, parentBranch, changedFiles, issueText);
+    results['revert test'] = checkRevertTest(horde, root, cfg, branch, parentBranch, changedFiles, issueText);
     results.journal = checkJournal(logText, branch);
     results['graph text'] = checkGraphText(root, branch, parentBranch, changedFiles);
 
