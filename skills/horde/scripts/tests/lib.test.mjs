@@ -7,6 +7,7 @@ import {
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeRepo, rmRepo } from './helpers.mjs';
+import { raceTrunk, overlaps, describeRace } from './tree-race/harness.mjs';
 
 test('_lib.mjs: hordeRoot, parseArgs, renderTemplate, appendText', async (t) => {
   const dir = makeRepo();
@@ -213,6 +214,89 @@ test('_lib.mjs resolveTree: narrowest scope wins, cwd and trunk defaults, scratc
   } finally {
     process.chdir(origCwd);
   }
+});
+
+// 110: resolving a horde's trunk was a check-then-act with nothing serializing it. Two processes
+// asking for one horde's trunk at the same moment — a director's watch loop and a hand-run
+// command, or two sessions on one mission — both got the same answer to "is the tree there" and
+// both acted on it, and git refused whichever arrived second: `fatal: '<path>' already exists` on
+// a trunk neither knew the other was making, or `Unable to create '<gitdir>/index.lock'` on a
+// trunk both were resyncing. Either way one caller got a raw git error where the honest answer was
+// the tree the other had just finished with.
+//
+// Two real processes, both running the shipped resolve, both held open inside it on purpose (see
+// tree-race/) so the second arrives inside the window every run rather than once in a thousand.
+// The question is the same in both halves: were the two ever inside the resolve at the same time.
+//
+// That question, and not "did either one fail", is what these assert on, because it is the one
+// with a deterministic answer. Which of the two failures a real collision produces — the raw git
+// refusal, or the quieter one where the second caller is handed a tree the first has only started
+// filling — turns on where in the first caller's git commands the second one lands, and no
+// injection pins that down. Two callers inside at once is the fault behind both, and it is
+// answered the same way every run. What each caller came back with is asserted beside it.
+test('_lib.mjs resolveTree: two processes resolving one horde\'s trunk at once take turns, and both get the tree', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const g = (args, cwd = dir) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  g(['branch', 'h1/trunk']);
+  mkdirSync(join(dir, '.horde'), { recursive: true });
+  writeFileSync(join(dir, '.horde', '.gitignore'), '*\n');
+
+  const bothTookTurns = (race) => {
+    assert.ok(race.marked, `nothing was ever paused, so this run proves nothing:\n${describeRace(race)}`);
+    const a = race.first.answer;
+    const b = race.second.answer;
+    assert.ok(a && b, `both processes must print an answer:\n${describeRace(race)}`);
+    assert.ok(
+      a.pause && b.pause,
+      `both processes must have been held inside the resolve, or the race was never run:\n${describeRace(race)}`,
+    );
+    assert.equal(
+      overlaps(a.pause, b.pause),
+      false,
+      'both processes were inside the trunk resolve at the same moment — one of them is making or '
+      + `resyncing a tree the other is already making or resyncing.\n${describeRace(race)}`,
+    );
+  };
+
+  await t.test('a trunk no command has ever read: both processes come back with the same tree, neither is refused', async () => {
+    const race = await raceTrunk(dir, 'h1');
+    assert.equal(race.first.code, 0, describeRace(race));
+    assert.equal(race.second.code, 0, describeRace(race));
+    const a = race.first.answer;
+    const b = race.second.answer;
+    assert.ok(a.ok && b.ok, describeRace(race));
+    assert.equal(a.path, b.path, `one tree, asked for twice:\n${describeRace(race)}`);
+    assert.equal(a.sha, b.sha, `one tip, read twice:\n${describeRace(race)}`);
+    assert.equal(a.branch, 'h1/trunk');
+    assert.equal(b.branch, 'h1/trunk');
+    assert.equal(a.kind, 'trunk');
+    assert.equal(existsSync(a.path), true);
+    // taking turns is only worth anything if the turn is given back
+    assert.equal(existsSync(`${a.path}.lock`), false, 'nothing is left holding the tree afterwards');
+    bothTookTurns(race);
+  });
+
+  // The second window, one step further on: the tree is there now, so both processes take the
+  // other branch and resync it with `git reset --hard`, which git will not run twice at once on
+  // one worktree. A dirty tree so the reset has real work to do.
+  await t.test('a trunk that already exists: the two resyncs take turns too', async () => {
+    const trunkPath = join(dir, '.horde', 'worktrees', 'h1', 'trunk');
+    assert.equal(existsSync(trunkPath), true, 'the first half of this test provisions the tree');
+    writeFileSync(join(trunkPath, 'README.md'), 'edited by hand, never committed\n');
+
+    const race = await raceTrunk(dir, 'h1');
+    assert.equal(race.first.code, 0, describeRace(race));
+    assert.equal(race.second.code, 0, describeRace(race));
+    const a = race.first.answer;
+    const b = race.second.answer;
+    assert.ok(a.ok && b.ok, describeRace(race));
+    assert.equal(a.path, b.path, `one tree, asked for twice:\n${describeRace(race)}`);
+    assert.equal(a.sha, b.sha, `one tip, read twice:\n${describeRace(race)}`);
+    // the resync really happened: the hand edit is gone, back to what the branch committed
+    assert.equal(readFileSync(join(trunkPath, 'README.md'), 'utf8'), 'hi\n');
+    bothTookTurns(race);
+  });
 });
 
 // git() swallows every git failure into null — a real error (git could not answer at all) and a

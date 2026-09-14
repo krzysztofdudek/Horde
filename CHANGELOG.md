@@ -106,6 +106,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - A promise whose status a repository's own settings say means nothing runs it yet is now accepted throughout the evidence package, instead of being refused before that setting could take effect.
 - A ticket that needed a fresh worker after enough rounds of changes now actually gets a heavier one, as already documented — not just a repeat of the same class as before.
 - Under `--runner external`, a worker started automatically after a ticket has gone through enough rounds of changes is now briefed the same way a worker you start yourself would be — told a prior worker already tried this ticket, and given its own fresh identity — instead of being started as if it were a first attempt.
+- Two commands reading one mission's trunk at the same moment — a running loop and one you type yourself, or two sessions side by side — no longer fail one of them with a raw git error. They take turns, and both get the trunk.
 
 ### Migrating a mission already in flight
 
