@@ -1,6 +1,6 @@
 # 013 · stale maja pochodzenie
 
-**Status:** in-progress
+**Status:** done
 **Kind:** docs
 **Priority:** 2
 **Tier:** standard
@@ -21,4 +21,6 @@ Tabela „constants and where they come from” w README skryptów; każda stał
 Dowód, którego oczekuję: README skryptów; test docs sprawdza, że każda stała z config ma wiersz w tabeli.
 
 ## Evidence
+
+- **ran:** node --test tests/docs.test.mjs · **saw:** 32/32 pass; merged
 
