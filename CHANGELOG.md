@@ -105,6 +105,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - A check meant to catch a ticket touching a path it must not is no longer fooled by a similarly named neighbour — a path you protect from `src/a` no longer lets `src/ab` through.
 - A promise whose status a repository's own settings say means nothing runs it yet is now accepted throughout the evidence package, instead of being refused before that setting could take effect.
 - A ticket that needed a fresh worker after enough rounds of changes now actually gets a heavier one, as already documented — not just a repeat of the same class as before.
+- Under `--runner external`, a worker started automatically after a ticket has gone through enough rounds of changes is now briefed the same way a worker you start yourself would be — told a prior worker already tried this ticket, and given its own fresh identity — instead of being started as if it were a first attempt.
 
 ### Migrating a mission already in flight
 

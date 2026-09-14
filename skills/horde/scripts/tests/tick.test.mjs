@@ -640,6 +640,103 @@ test('tick.mjs dispatch: past config.fixRounds.resume, the redispatched model is
   });
 });
 
+// The test above proves dispatch() renders the right brief command once a ticket is past
+// config.fixRounds.resume. Under --runner external, nobody reads that dispatch list — externalStart()
+// runs the brief itself, and it used to reconstruct its own call to brief.mjs from scratch, one that
+// carried neither --takeover nor the round-aware --name. Same four-red-gates drive as above; this
+// time the proof is the brief file externalStart() actually wrote, read back off disk — the only
+// artifact of which command rendered it.
+test('tick.mjs --runner external: the round-4 (takeover) worker is briefed with --takeover and its round-aware name, not the flat one', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+
+  const marker = join(dir, 'the-cli-ran-external.txt');
+  run('horde.mjs', ['config', 'set', 'runner.spawn', `touch ${marker}`], dir);
+
+  const id = mkTicket(dir, 'earns-a-heavier-worker-external', { files: 'src/hwx.ts', class: 'standard' });
+  run('queue.mjs', ['add', id], dir);
+  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'w'], dir);
+  git(['-C', running.json.worktree, 'commit', '--allow-empty', '-qm', 'work'], dir);
+  const sha = git(['-C', running.json.worktree, 'rev-parse', 'HEAD'], dir);
+
+  let lastRun;
+  for (let round = 1; round <= 4; round += 1) {
+    assert.equal(run('queue.mjs', ['set', id, 'landed'], dir).code, 0);
+    writeLandResult(dir, id, {
+      ticket: id,
+      branch: running.json.branch,
+      sha,
+      ok: false,
+      checks: [{ name: 'tests', ok: false, note: `round ${round} still red` }],
+      pairs: [],
+      brief: null,
+      landed: null,
+    });
+    const r = tick(dir, ['--runner', 'external']);
+    assert.equal(r.code, 0, r.stderr);
+    lastRun = r;
+    // Same reasoning as the dispatch-only test above: the ticket has to leave "changes" before the
+    // next red gate counts as a new round.
+    if (round < 4) {
+      assert.equal(run('tk.mjs', ['status', id, 'running', `resuming for round ${round + 1}`], dir).code, 0);
+    }
+  }
+
+  // Round 4 is past the default resume band (3), so dispatch() redispatches this ticket with a
+  // --takeover brief command under a round-aware name — this is the setup the rest of the test needs,
+  // already covered by the test above, checked here only to read the name it used back out.
+  const spawned = lastRun.json.spawn.find((s) => s.ticket === id);
+  assert.ok(spawned, `round 4 redispatched (${JSON.stringify(lastRun.json.spawn)})`);
+  assert.match(spawned.brief, /--takeover/);
+  const roundName = (spawned.brief.match(/--name (\S+)/) || [])[1];
+  assert.ok(roundName && roundName !== `w-${id}` && roundName.startsWith(`w-${id}-r`), `dispatch named a round-aware worker (${roundName})`);
+
+  // This is the part that was broken: externalStart() rendering its own brief, under its own name,
+  // with no takeover section, no matter what dispatch() had already worked out.
+  const started = lastRun.json.external.find((e) => e.ticket === id);
+  assert.ok(started, `the external runner started round 4 (${JSON.stringify(lastRun.json.external)})`);
+  assert.ok(started.started, `brief render did not fail (${JSON.stringify(started)})`);
+
+  const briefText = readFileSync(started.brief, 'utf8');
+  assert.match(briefText, /## Takeover/, 'the brief externalStart() rendered carries the takeover section');
+  assert.ok(briefText.includes(`You are **${roundName}**,`), 'and opens under the round-numbered name dispatch() chose');
+  assert.ok(!briefText.includes(`You are **w-${id}**,`), 'never the flat name once the ticket is in the takeover band');
+});
+
+// externalStart() used to run entry.brief as one string through a shell (execSync). Nothing
+// validates a horde's name against a safe character set at creation — horde.mjs init takes
+// whatever it is given — so a horde named with a shell metacharacter sequence that is still a
+// valid git ref (branch names forbid spaces and a handful of others, but not ';', '|', '&', '`',
+// '$(' ) would have let that name break out of its own --horde argument and run an arbitrary
+// second command. Fixed by running the brief through the same argv array dispatch() already built
+// (briefParts), never a shell. This proves the fix holds against the exact class of name that
+// would have triggered it, not just that the happy path still works.
+test('tick.mjs --runner external: a horde name is never handed to a shell, even one shaped like an injection', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  const horde = 'mission1;>INJECTED_MARKER';
+  initHorde(dir, horde);
+
+  const marker = join(dir, 'INJECTED_MARKER');
+  run('horde.mjs', ['config', 'set', 'runner.spawn', 'true'], dir);
+  const id = mkTicket(dir, 'runner-injection-check', { files: 'src/inj.ts' });
+  run('queue.mjs', ['add', id], dir);
+  run('queue.mjs', ['set', id, 'running', '--agent', 'w'], dir);
+
+  const r = tick(dir, ['--runner', 'external']);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.external.length, 1, `one worker started (${JSON.stringify(r.json.external)})`);
+  const started = r.json.external[0];
+  assert.ok(started.started, `brief render did not fail on the weird name (${JSON.stringify(started)})`);
+  assert.ok(!existsSync(marker), 'the ";>INJECTED_MARKER" tail of the horde name was never handed to a shell');
+
+  // Not just "nothing bad happened" — the weird name reached brief.mjs as one literal argument, the
+  // same as any other horde name would.
+  const briefText = readFileSync(started.brief, 'utf8');
+  assert.ok(briefText.includes(horde), 'the horde name reached the brief intact, as one literal value');
+});
+
 test('tick.mjs: asks.json that does not exist is an empty in-tray, not a refusal', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
