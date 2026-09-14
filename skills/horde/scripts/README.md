@@ -226,15 +226,17 @@ Same take-over rule as the gate lock below: the file names the pid that holds it
 longer running — including one that just refused via `fail()`, which exits before its own `finally`
 can release the lock — is taken over immediately rather than waited on.
 
-`add` is the door a ticket is held at. Two things are checked there and nowhere else: a ticket with
-no acceptance line has nothing a verifier could reproduce, and a ticket that is not what the mission
-promised — one naming a node outside every territory the cut holds (`territories.json`), or earning
-an `**Evidence:**` row the charter's evidence catalogue does not carry — is not this mission's to
-do. The client may dictate a ticket; the mission card is what says it belongs, so the second refusal
-names what does not fit and prints the `charter` question that would change it, and `--ask <id>`
-naming an answered ask of that kind is the one way in. The queue item then records which ask took it.
-A mission nobody has cut yet has no territory to be outside of, and a ticket earning no row at all
-claims nothing — neither is a mismatch.
+`add` is the door a ticket is held at. Three things are checked there and nowhere else: a ticket with
+no acceptance line has nothing anybody could reproduce; one earning an `**Evidence:**` row a
+prototype is still waiting an answer on is built against the guess the prototype exists to replace,
+until that answer is recorded (`tk.mjs accept <prototype> --sha256 <hex> --by "<who>"`); and a
+ticket that is not what the mission promised — one naming a node outside every territory the cut
+holds (`territories.json`), or earning a row the charter's evidence catalogue does not carry — is
+not this mission's to do. The client may dictate a ticket; the mission card is what says it belongs,
+so the third refusal names what does not fit and prints the `charter` question that would change it,
+and `--ask <id>` naming an answered ask of that kind is the one way in. The queue item then records
+which ask took it. A mission nobody has cut yet has no territory to be outside of, and a ticket
+earning no row at all claims nothing — neither is a mismatch.
 - `list [--state s]`, `add NNN [--depends dep,…] [--proposed] [--ask <id>]`, `set NNN <state> [--sha x] [--agent name] [--note "…"]`,
   `next [--class c] [--why] [--stack]` — ready = queued, every dependency merged, and clear of every
   `running` ticket's own lock: a ticket declaring `**Files:**` collides only on an overlapping

@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- A promise nobody can yet describe can be built as a prototype first: something that looks like the real thing, so the client can see it and say what they meant. It is worked ahead of everything else, it never reaches the main line of work, and its only proof is the client's own acceptance — what they were shown, who accepted it, and when. Until that answer is recorded, nothing else is planned against that promise. Once it is, the promise reads as answered on its own, both in what the client is shown and in the wave report, and it is never counted as something delivered.
-
 ## [6.0.0] - 2026-09-12
 
 Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to install.
@@ -38,6 +34,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - One channel reaches you: a stalled worker, work sent back too many times, a request to weaken a rule, or a change to the mission card. Each answer is recorded in the mission's decision log.
 - The evidence package refuses a promise whose proof has been switched off: a promise counts as kept only while the case that keeps it actually runs. A case that is skipped, crossed out, or left behind another one marked as the only case to run is refused — unless the promise says nothing runs it yet. It knows the markers JavaScript, Python, Go and .NET suites use, and a repository can narrow that list to the ones its own suite uses.
 - A ticket that does not match what the mission agreed to no longer joins the work. One that touches an area outside the mission's scope, or that claims a proof the mission never promised, is turned back with the mismatch named and the question to put to you. Answer it and the ticket goes in.
+- A promise nobody can yet describe can be built as a prototype first: something that looks like the real thing, so the client can see it and say what they meant. It is worked ahead of everything else, it never reaches the main line of work, and its only proof is the client's own acceptance — what they were shown, who accepted it, and when. Until that answer is recorded, nothing else is planned against that promise. Once it is, the promise reads as answered on its own, both in what the client is shown and in the wave report, and it is never counted as something delivered.
 
 ### Changed
 
@@ -89,13 +86,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - Two states a ticket could still be moved to — one for a separate verification step, one for an escalation — belonged to the roles that are gone. Setting either is now refused, and the refusal says what replaced it. Old work already sitting in either state still reads and still shows up everywhere it used to.
 - Narrowing the status screen to a team other than the mission's own used to print a mission with nothing in it, reading as "nothing is happening here". It now says plainly that there is no such team.
 - An unanswered question now holds back exactly what depends on the answer and nothing else: a stalled ticket holds itself; a question about the mission card holds the tickets earning the proofs it names; a request to weaken a rule holds that one change at the door. A worker who ran out of spec holds everything — nothing starts, nothing merges even when it is finished and passing, and the mission does not close — until you answer. An open question used to hold nothing at all, and a change waiting on your word could be sent back to a worker round after round for failing a rule only you could lift.
-
-### Fixed
-
 - The status screen now flags a ticket the gate has sent back for changes as unverified, instead of still showing it as landed or unmerged.
-
-### Fixed
-
 - Refusals that trace back to a git problem — a missing branch, a worktree that could not be made — now show what git itself reported, not just that something went wrong.
 
 ### Migrating a mission already in flight

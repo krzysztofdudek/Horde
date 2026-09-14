@@ -844,7 +844,7 @@ test('queue.mjs add: a second writer waits out a held queue lock rather than wri
 // ---- the charter pushback: a ticket the mission never promised ---------------------------------
 //
 // The client may dictate a ticket; the mission card is what says it belongs. `add` is the door,
-// the same place a ticket with nothing a verifier could reproduce is already turned away: a ticket
+// the same place a ticket with nothing anybody could reproduce is already turned away: a ticket
 // whose nodes lie outside every territory the mission was cut into, or whose **Evidence:** earns a
 // row the charter's catalogue does not carry, does not get into the queue. The one way past it is
 // the client's own answer, recorded — an answered ask of kind "charter", named with --ask.
