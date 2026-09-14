@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import {
+  existsSync, readFileSync, writeFileSync, mkdirSync, rmSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import {
   makeRepo, rmRepo, run, initHorde, requireYg,
@@ -556,4 +558,46 @@ test('wave.mjs close: a charter whose evidence judgement has not been made yet c
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.json.noEvidenceLayer, null);
   assert.doesNotMatch(readFileSync(planPath(dir), 'utf8'), /No evidence layer in this repository/);
+});
+
+// ---- the tree "start" builds its plan bullet from, with and without --horde written out
+// (issue 114) -------------------------------------------------------------------------------------
+//
+// The same shared contract every other tool here reads (node.mjs main()'s own comment above its
+// resolveTree call, tree.test.mjs, and tick.test.mjs/land.test.mjs/horde.test.mjs's own versions of
+// this test): an ordinary run with neither --tree nor --horde stays on cwd, whatever tree that
+// happens to be — a resolvable horde is not by itself a second signal for "read trunk instead"
+// (ask a-002, decisions.md: always cwd, full stop). --horde WRITTEN OUT is the one thing that does
+// mean this horde's own trunk, exactly as queue.mjs plan/quality, tick.mjs, land.mjs and horde.mjs
+// done already read it. Before this fix, "start" always built its plan bullet from this horde's own
+// trunk — the one buildPlan (queue.mjs) caller that named no tree of its own, so buildPlan's
+// internal resolveTree call fell through to its `horde` branch on the ALWAYS-resolved horde, unlike
+// buildPlan's other two callers (queue.mjs plan, land.mjs's own merge-size measurement), which each
+// resolve their own tree first.
+//
+// What is left to differ, and what this test actually proves, is whether "start" ever provisions
+// this horde's own trunk WORKTREE — a resource only --horde written out reaches — while running
+// from a shell sitting on "develop" (the mission's own base branch, checked out but never itself
+// mission1/trunk).
+test('wave.mjs start: no --horde stays on cwd; --horde written out resolves to that horde\'s own trunk instead', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const trunkWorktree = join(dir, '.horde', 'worktrees', 'mission1', 'trunk');
+  git(['checkout', 'develop'], dir);
+
+  await t.test('no --horde at all: cwd — trunk\'s own separate worktree is never touched', () => {
+    const r = run('wave.mjs', ['start'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(existsSync(trunkWorktree), false, 'trunk\'s own separate worktree was never provisioned');
+    assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], dir), 'develop');
+  });
+
+  await t.test('--horde mission1 written out: this horde\'s own trunk worktree gets provisioned, a different tree entirely', () => {
+    const r = run('wave.mjs', ['start', '--horde', 'mission1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(existsSync(trunkWorktree), true, '--horde written out: trunk\'s own separate worktree was provisioned');
+    // Shared state, not part of either tree: the main checkout is left exactly where it was.
+    assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], dir), 'develop');
+  });
 });

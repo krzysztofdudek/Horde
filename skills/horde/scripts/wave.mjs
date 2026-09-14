@@ -44,10 +44,14 @@ const CLOSE_RE = /^# Wave (\S+) — close \d{4}-\d{2}-\d{2}$/;
 const USAGE = `usage: wave.mjs <command> [options]
 
 commands:
-  start [n] [--team t] [--horde h]
+  start [n] [--team t] [--tree p] [--horde h]
       appends "# Wave <n> — start <date>"; n auto-increments from the last wave number in the
       journal when omitted. Records the plan's own layers and the parallelism they allow, so the
-      close can report what the wave planned against what it achieved.
+      close can report what the wave planned against what it achieved. The plan itself is built
+      from the tree --tree names; without it, cwd, same as an ordinary read anywhere else in this
+      tool set, not this horde's trunk just because a horde was resolvable. --horde h WRITTEN OUT
+      (no --tree) is what changes that, exactly as queue.mjs plan/quality, tick.mjs, land.mjs and
+      horde.mjs done already read it.
   note "<text>" [--team t] [--horde h]
       appends a dated bullet.
   merged <ticket> <sha> [--team t] [--horde h]
@@ -137,12 +141,26 @@ function append(path, text) {
 // in (an escalation carries a timestamp; a journal heading carries only a date).
 const PLAN_RE = /^- \S+ plan: layers (\S+) · planned parallelism (\d+) · opened (\S+)$/;
 
-function planAtStart(horde, team) {
+function planAtStart(horde, team, flags) {
   const cfg = readConfig() || {};
   const cap = Number(cfg.parallelism) > 0 ? Math.trunc(Number(cfg.parallelism)) : 6;
   let sizes = [];
   try {
-    sizes = buildPlan(horde, team || 'trunk', cfg).layers.map((l) => l.length);
+    // buildPlan's own internal resolveTree call (queue.mjs) falls through to its `horde` branch
+    // whenever no `tree` is handed to it — this is the one buildPlan caller that used to pass
+    // neither, so it always read the ALWAYS-resolved `horde` above (main()'s own resolveHorde
+    // (flags), which defaults to the sole horde in a single-horde repository even with nothing
+    // typed at all) instead of the raw flag — unlike buildPlan's other two callers (queue.mjs
+    // cmdPlan, land.mjs missionSize), which each resolve their own tree first, the same
+    // `flags.tree`/`flags.horde` pattern tick.mjs (041), land.mjs (109) and horde.mjs done (113)
+    // already draw, and hand buildPlan the resolved path so its internal horde branch is never
+    // actually reached. Resolving the same way here, and handing buildPlan the resolved path,
+    // means a bare `wave.mjs start` stays on cwd (ask a-002: no --horde never means trunk) and
+    // only --horde WRITTEN OUT reads this horde's own trunk instead — kept inside this same try so
+    // a resolution failure degrades to "layers: none" exactly as a plan that cannot be built
+    // already did before this fix (issue 114).
+    const info = resolveTree({ tree: flags.tree, horde: flags.horde }, { cwd: process.cwd() });
+    sizes = buildPlan(horde, team || 'trunk', cfg, { tree: info.path }).layers.map((l) => l.length);
   } catch {
     // A plan that cannot be built (a ticket in an unreadable shape, a circle of dependencies)
     // must not stop a wave from opening; the close then reports a planned parallelism of 0,
@@ -162,7 +180,7 @@ function cmdStart(horde, positional, flags) {
   const text = readText(path);
   const n = positional[0] || String(lastWaveNumber(text) + 1);
   append(path, `\n# Wave ${n} — start ${today()}\n`);
-  const plan = planAtStart(horde, flags.team);
+  const plan = planAtStart(horde, flags.team, flags);
   append(path, `- ${today()} plan: layers ${plan.layers} · planned parallelism ${plan.parallelism} · opened ${plan.opened}\n`);
   emit({ n, layers: plan.sizes, plannedParallelism: plan.parallelism, opened: plan.opened }, flags,
     () => `wave started: ${n} — layers ${plan.layers}, planned parallelism ${plan.parallelism}`);

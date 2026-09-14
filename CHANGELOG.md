@@ -59,6 +59,9 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - `tick --horde` now points the run at that horde's own trunk when no `--tree` is given, instead of whatever the current checkout happened to be on.
 - `land --horde` does the same when run directly with no `--tree`: it now points at that horde's own trunk instead of whatever the current checkout happened to be on.
 - `horde done` no longer switches to the mission's own trunk on its own just because only one mission is running — like `tick` and `land`, a bare run stays on whatever checkout you are already in; name `--horde <mission>` to point it at that mission's trunk instead.
+- The architect, legislate and retro briefs no longer switch to the mission's own trunk on their own just because only one mission is running — a bare run now stays on whatever checkout you are already in; name `--horde <mission>` to point it at that mission's trunk instead.
+- `wave start` no longer reads the mission's own trunk on its own, just because only one mission is running, when it records the wave's planned parallelism — a bare run now reads whatever checkout you are already in; name `--horde <mission>` to point it at that mission's trunk instead.
+- `retro` no longer switches to the mission's own trunk on its own just because only one mission is running, for its taste-item logging and its judge measurement — a bare run now stays on whatever checkout you are already in; name `--horde <mission>` to point it at that mission's trunk instead.
 
 ### Removed
 

@@ -1071,6 +1071,14 @@ function manualDeps(ticketText, item) {
 // Exported so `wave.mjs start` can record the plan's own layers in the journal at the moment a
 // wave opens — the planned parallelism a wave close is later measured against has to be the
 // number this DAG actually produced, not a second derivation of it.
+//
+// `horde` here doubles as this call's own resolveTree fallback below when `tree` is left unset —
+// audited under issue 114: every current caller (cmdPlan and land.mjs missionSize inline above,
+// wave.mjs planAtStart since that same fix) resolves its own tree first, the `flags.tree`/
+// `flags.horde` pattern tick.mjs/land.mjs/horde.mjs done draw, and hands the resolved path in as
+// `tree` — so this fallback is never actually exercised by anything that ships. A future caller
+// that leaves `tree` unset would reach it and get this horde's trunk unconditionally, the same gap
+// wave.mjs's own call used to have; pass a pre-resolved `tree` instead of relying on this.
 export function buildPlan(horde, team, cfg, { tree } = {}) {
   const root = resolveTree({ tree, horde }).path;
   const queue = load(horde, team);

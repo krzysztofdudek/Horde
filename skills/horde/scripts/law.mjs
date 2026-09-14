@@ -269,6 +269,14 @@ export function writeLawDiff(horde, cfg, wave) {
   let doc;
   let trunk = null;
   try {
+    // Audited under issue 114, against ask a-002, and left as-is: this always reads `horde`'s own
+    // trunk, unconditionally, never gated on whether --horde was typed — no `tree` is ever passed
+    // in, and there is no `--tree` escape hatch on this command at all (see cmdDiff/USAGE above).
+    // That is by design, not the ordinary-read gap 114 fixed elsewhere: a law diff IS a comparison
+    // against trunk, always — `trunkBranch` two lines above is already hard-coded to `${horde}/
+    // trunk`, so resolving anywhere else here would compare the base branch against a tree that is
+    // not even the branch this function just read the tip of. Same shape as tk-boundary-cwd-is-
+    // intentional's own docs-only outcome (decisions.md): checked, not a bug, nothing to fix.
     const trunkInfo = resolveTree({ horde });
     const read = lawDiff(horde, cfg, {
       baseTree: baseInfo.path, trunkTree: trunkInfo.path, base: baseSha, trunk: trunkSha,
