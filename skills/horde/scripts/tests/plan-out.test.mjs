@@ -1,21 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import {
   existsSync, mkdirSync, readFileSync, writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, yg,
+  makeRepo, rmRepo, run, initHorde, addNode, yg, git,
 } from './helpers.mjs';
 import { sizeRanks } from '../_lib.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
-
-function git(args, cwd) {
-  execFileSync('git', args, { cwd, stdio: 'ignore' });
-}
 
 // The architect reads the plan whole, from a file: relayed through a message it gets summarised
 // on the way, and a steward cannot message the architect directly in any case.
