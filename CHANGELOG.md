@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A promise nobody can yet describe can be built as a prototype first: something that looks like the real thing, so the client can see it and say what they meant. It is worked ahead of everything else, it never reaches the main line of work, and its only proof is the client's own acceptance — what they were shown, who accepted it, and when. Until that answer is recorded, nothing else is planned against that promise. Once it is, the promise reads as answered on its own, both in what the client is shown and in the wave report, and it is never counted as something delivered.
+
 ## [6.0.0] - 2026-09-12
 
 Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to install.

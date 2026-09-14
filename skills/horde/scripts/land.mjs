@@ -15,9 +15,11 @@
 //
 // A branch is found by locating the queue item that names it, in trunk's own queue.json: an
 // ordinary ticket branch `<horde>/t-NNN`. The branch it must be rooted on, and will merge into, is
-// normally `<horde>/trunk` — and, for a ticket started from an unmerged dependency's tip, that
-// dependency's branch until it merges. `parentBranchOf` answers that once, and every item below is
-// measured against its answer: the base, the diff, the tree a new test is reverted onto.
+// normally `<horde>/trunk` — for a ticket started from an unmerged dependency's tip, that
+// dependency's branch until it merges, and for a prototype ticket `<horde>/prototype`, which the
+// trunk never takes. `parentBranchOf` and the prototype guard answer that once between them, and
+// every item below is measured against their answer: the base, the diff, the tree a new test is
+// reverted onto.
 
 import {
   existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync,
@@ -35,7 +37,10 @@ import {
   ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, verdictCommandsFor,
   globToRegExp, pathInBoundary, ticketBoundary, ygFileContext, ygAvailable, ygJson,
 } from './node.mjs';
-import { ticketFiles, ticketEvidence, findTicket, changesRoundInfo, transitionStatus } from './tk.mjs';
+import {
+  ticketFiles, ticketEvidence, ticketKind, prototypeBranchOf, findTicket, changesRoundInfo,
+  transitionStatus,
+} from './tk.mjs';
 import { recordMerged } from './queue.mjs';
 
 const USAGE = `usage: land.mjs <ticket|branch> [--level trunk] [--no-gate] [--background] [--horde h]
@@ -64,9 +69,13 @@ for either way.
   9. graph text     — charters, logs and "graph:" commits touched by the branch carry no mission
                       language (wave, ticket NNN, mission, horde, E<n>, .temp/)
 
-Two guards run before the items and refuse outright rather than reporting an item, because
-neither is a thing a worker can fix by trying again:
+Three guards run before the items and refuse outright rather than reporting an item, because
+none of them is a thing a worker can fix by trying again:
 
+  the prototype guard    — a prototype ticket's branch must be cut from "<horde>/prototype", and
+                           merges back only there. A prototype never reaches the trunk: nothing
+                           verified it, which is what it is for, and its only evidence is the
+                           client's acceptance recorded with "tk.mjs accept".
   the law guard          — a branch may not weaken the rules it is judged by. A deleted aspect, a
                            demoted status, a moved review_by, a narrowed reach, an added
                            yg-suppress marker or an aspect detached from a node all refuse, unless
@@ -1147,6 +1156,37 @@ function conflictGuard(cfg, baseTree, headTree, changedFiles, headReach) {
   return { ok: refusals.length === 0, refusals };
 }
 
+// ---- the prototype guard ---------------------------------------------------------------
+//
+// A prototype is built to be looked at and answered, never kept: nothing verified it, which is
+// exactly what it is for, and its only evidence is the client saying "yes, that is what I meant"
+// — recorded against the charter row it describes, not earned through anything here. The trunk is
+// the line every later ticket is cut from, so it is the one place such a branch may not reach: a
+// prototype merged there would put unverified code under work nobody chose to build on it.
+//
+// It lives on `<horde>/prototype` instead, cut from it by queue.mjs and merged back into it by
+// this gate — and nothing merges that branch onward. This refuses rather than reporting a red
+// item, for the same reason the law guard does: a worker cannot fix it by trying again, and the
+// answer is to re-cut the branch, not to change the diff.
+function prototypeGuard(horde, kind, ticketId, branch, parent) {
+  if (kind !== 'prototype') return parent.branch;
+  const proto = prototypeBranchOf(horde);
+  // A prototype stacked on another ticket is already off the trunk and on that ticket's branch;
+  // the stack decided the base when the branch was cut, and this has nothing to correct.
+  if (parent.stacked) return parent.branch;
+  const rooted = git(['rev-parse', '--verify', proto]) !== null
+    && git(['merge-base', '--is-ancestor', proto, branch]) !== null;
+  if (!rooted) {
+    fail(
+      `${ticketId} is a prototype, and ${branch} is not cut from ${proto} — a prototype never merges into `
+      + `${parent.teamBranch}. What it is for is to be shown and answered: nothing verified it, and the trunk is `
+      + `what every later ticket is cut from. Cut ${proto} off ${parent.teamBranch} if it does not exist yet, `
+      + `re-cut ${branch} from it, and land again. Its answer is recorded with "tk.mjs accept ${ticketId}", not here`,
+    );
+  }
+  return proto;
+}
+
 // ---- landing ---------------------------------------------------------------------------
 //
 // The merge itself, which no script in this tool used to do. It happens in a throwaway detached
@@ -1331,16 +1371,6 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
   const branchSha = git(['rev-parse', '--verify', branch]);
   if (!branchSha) fail(`no such branch: ${branch}`);
 
-  const parent = parentBranchOf(horde, team, item, { cwd: root });
-  const parentBranch = parent.branch;
-  const parentTip = git(['rev-parse', '--verify', parentBranch]);
-  // Both guards read two trees and compare them. Without a base there is no comparison to make,
-  // and a landing that skipped the comparison because the base was missing would be the one
-  // landing where the law could be rewritten freely.
-  if (!parentTip) {
-    fail(`no such branch: ${parentBranch} — the guards that keep a landing from weakening the rules read the base tree and this branch's tree and compare them, and with no base there is nothing to compare against. Restore ${parentBranch}, or fix config.base`);
-  }
-
   const ticketId = String(item.ticket);
   const issueDirName = findIssueDir(teamDir, ticketId);
   if (!issueDirName) fail(`no ticket found for ${ticketId} in team ${team}`);
@@ -1349,6 +1379,23 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
   const logText = readText(join(issueDirPath, 'log.md'));
   const nodes = ticketNodes(issueText);
   const declaredFiles = ticketFiles(issueText);
+  // Read before the parent is resolved, because for one kind of ticket it decides what the parent
+  // IS. Every other item below is measured against whatever that answer turns out to be.
+  const kind = ticketKind(issueText);
+
+  const parentResolved = parentBranchOf(horde, team, item, { cwd: root });
+  const parentBranch = prototypeGuard(horde, kind, ticketId, branch, parentResolved);
+  // What every reader of this run's result is told it landed on — the branch actually measured
+  // against and merged into, not the one the queue's own shape would have implied.
+  const parent = { ...parentResolved, branch: parentBranch };
+  const parentTip = git(['rev-parse', '--verify', parentBranch]);
+  // The law guard and the conflict guard read two trees and compare them. Without a base there is
+  // no comparison to make,
+  // and a landing that skipped the comparison because the base was missing would be the one
+  // landing where the law could be rewritten freely.
+  if (!parentTip) {
+    fail(`no such branch: ${parentBranch} — the guards that keep a landing from weakening the rules read the base tree and this branch's tree and compare them, and with no base there is nothing to compare against. Restore ${parentBranch}, or fix config.base`);
+  }
 
   const changedFiles = diffPaths(['diff', '--name-only', `${parentBranch}...${branch}`]);
   const addedFiles = diffPaths(['diff', '--name-only', '--diff-filter=A', `${parentBranch}...${branch}`]);

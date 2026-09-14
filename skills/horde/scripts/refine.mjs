@@ -37,10 +37,11 @@ import {
 } from './node.mjs';
 import { buildPlan, renderPlan, titleOf } from './queue.mjs';
 import {
-  findTicket, allTickets, nodesOf, ticketEvidence,
+  findTicket, allTickets, nodesOf, ticketEvidence, ticketKind,
 } from './tk.mjs';
 import {
   parseEvidenceRows, EVIDENCE_SECTION, catalogueCut, upsertCharterSection,
+  parsePrototypeArtifacts,
 } from './wave.mjs';
 import { detectEvidenceLayer, renderEvidenceJudgement, PROMISES_OFFER } from './horde.mjs';
 import { disciplineSection, demoteHeadings } from './brief.mjs';
@@ -81,6 +82,10 @@ steps (default: cut):
       with --json, the data a session renders to the client: what will change and where, what it
       will prove, and what the law gains. Three sections, no tool names, nothing about how any of
       it is run. The client's "go" is the only approval in the whole mission.
+      A promise the client has already been shown a prototype for and accepted says so on its own
+      line, with who accepted it and when — it is the one line on the page they wrote themselves.
+      A promise nobody has taken and nobody is showing anything for is where a prototype is
+      offered instead: something they can look at, so they can say what they meant.
 
 The size a territory is held to is config.territory.maxBytes (default 400000): the bytes of the
 code its components map, plus the text of every rule that reaches those files, plus those
@@ -902,6 +907,14 @@ function applyRuling(horde, team, { ticket, verdict, why }) {
 // not ask for any of this would want them: what changes, what that proves, and what the place is
 // left holding afterwards. No tool is named here, no file is named here, and nothing about how any
 // of it runs — the client asked for an outcome, and the machinery is not theirs to carry.
+// What one promise reads as, after its own line. A promise the client has already been shown
+// something for says so first: it is the one line on this page they wrote themselves, and it is
+// why the work under it says what it says.
+function proofSuffix(row) {
+  if (row.shown) return `  — you have already seen this and said yes, on ${String(row.shown.at).slice(0, 10)}`;
+  return row.taken ? '' : '  — nobody is building this yet';
+}
+
 function stepFrame(horde, flags) {
   const team = flags.team || 'trunk';
   const cfg = readConfig() || {};
@@ -913,8 +926,19 @@ function stepFrame(horde, flags) {
   const tickets = allTickets(horde)
     .filter((t) => leaf(t.team) === leaf(team) && t.status !== 'dropped')
     .map((t) => ({
-      id: t.id, title: titleOf(t.text), nodes: nodesOf(t.text), evidence: ticketEvidence(t.text), status: t.status,
+      id: t.id,
+      title: titleOf(t.text),
+      nodes: nodesOf(t.text),
+      evidence: ticketEvidence(t.text),
+      status: t.status,
+      kind: ticketKind(t.text),
     }));
+
+  // What the client has already been shown and answered, by the promise it answers. It is read
+  // off the charter rather than derived, because the answer is theirs and belongs where a person
+  // can read and correct it.
+  const answered = new Map(parsePrototypeArtifacts(charter).map((a) => [a.id, a]));
+  const beingShown = new Set(tickets.filter((t) => t.kind === 'prototype').flatMap((t) => t.evidence));
 
   const areas = territories.map((t) => ({
     area: t.territory,
@@ -927,14 +951,24 @@ function stepFrame(horde, flags) {
 
   const rows = parseEvidenceRows(charter).map((r) => {
     const takenBy = tickets.filter((tk) => tk.evidence.includes(r.id)).map((tk) => tk.id);
+    const seen = answered.get(r.id) || null;
     return {
       id: r.id,
       proves: r.evidence,
       where: r.node || null,
       takenBy,
       taken: takenBy.length > 0,
+      // Only what the client themselves put there: who said yes, and when. Not the fingerprint —
+      // that settles an argument, and this page is not one.
+      shown: seen ? { acceptedBy: seen.acceptedBy, at: seen.at } : null,
     };
   });
+  // A promise nobody has picked up and nobody has shown anything for is usually a promise nobody
+  // can yet put into words. That is not a gap to be chased — it is the one thing worth building
+  // something to look at for, and this is where it is offered.
+  const proposePrototype = rows
+    .filter((r) => !r.taken && !r.shown && !beingShown.has(r.id))
+    .map((r) => r.id);
 
   const proposals = loadGraph(horde).proposals
     .filter((p) => p.kind === 'rule' && p.status !== 'vetoed')
@@ -959,6 +993,13 @@ function stepFrame(horde, flags) {
         : 'Everything below is something you can watch happen, and each one has somebody building it.',
       proofs: rows,
       untaken: rows.filter((r) => !r.taken).map((r) => r.id),
+      accepted: rows.filter((r) => r.shown).map((r) => r.id),
+      proposePrototype,
+      prototypeOffer: proposePrototype.length
+        ? 'For anything below you cannot yet put into words, we build something you can look at first '
+          + '— it works enough to try, and nothing else. You tell us what you meant by looking at it, and '
+          + 'what gets built after that is written from your answer. It is thrown away either way.'
+        : null,
       // Said once, in the one place the client reads, and only when the charter's own judgement
       // says this repository has nothing to point at. Read off the charter rather than detected
       // again here, so a judgement a person corrected by hand is the one that stands.
@@ -992,7 +1033,8 @@ function stepFrame(horde, flags) {
         ...a.work.map((w) => `    · ${w.what}`),
         '',
       ]) : []),
-      ...(s.proofs ? s.proofs.map((r) => `- ${r.id}: ${r.proves}${r.taken ? '' : '  — nobody is building this yet'}`) : []),
+      ...(s.proofs ? s.proofs.map((r) => `- ${r.id}: ${r.proves}${proofSuffix(r)}`) : []),
+      ...(s.prototypeOffer ? ['', s.prototypeOffer] : []),
       ...(s.offer ? ['', s.offer] : []),
       ...(s.rules ? s.rules.map((r) => `- ${r.says}`) : []),
       '',

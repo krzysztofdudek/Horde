@@ -64,6 +64,10 @@ commands:
       every rule the horde raised this wave with the evidence that earned it, every improvement
       of its own it finished, and the sentence telling the chairman that undoing any of it is
       theirs to ask for. Under a charter set to only-the-work the block says none of it ran.
+      It names, on its own and outside every figure it reports, each catalogue row the client has
+      been shown a prototype for and accepted — what they saw, who accepted it and when. A row
+      described by a prototype is a row somebody can now put into words, never a row somebody
+      has delivered, so none of it counts toward the catalogue.
       And it audits the law, because nobody here does that from a seat of their own: a ticket per
       rule whose review date has passed ("renew or retire", ending in a proposal and never in an
       edit to the date), a ticket per item in "yg advise" nobody has queued or decided on, what
@@ -401,6 +405,69 @@ function setReproducedBy(charterText, id, name) {
   return charterText;
 }
 
+// ---- the prototype artifact -------------------------------------------------------------------
+//
+// A prototype earns no verdict and never fills a "reproduced by" cell: what it is for is to be
+// looked at, and the only thing that can say it worked is the person who asked for the thing.
+// Their answer is written here instead, against the catalogue row the prototype was built to
+// describe — the sha256 of what they were shown, who accepted it, and when — and it is what lets
+// that row be turned into the tickets that build the real thing. Deliberately not the row's own
+// cell: accepting a prototype says "yes, that is what I meant", never "and it is built", and a
+// mission whose catalogue went green on prototypes would be reporting drawings as delivery.
+//
+// It lives in a section of its own at the end of the charter, and its table carries five columns
+// rather than four — which is also what keeps it invisible to every reader of the catalogue:
+// catalogueRowsAnywhere counts four-cell rows and skips these, so an accepted prototype can never
+// be mistaken for a row somebody agreed to.
+
+export const PROTOTYPE_SECTION = 'Prototypes accepted';
+
+const PROTOTYPE_HEADER = ['id', 'prototype', 'sha256', 'accepted by', 'at'];
+
+// Every accepted prototype on the charter, in the order they stand — {id, ticket, sha256,
+// acceptedBy, at}. A charter with no such section has accepted none, which is an ordinary answer.
+export function parsePrototypeArtifacts(charterText) {
+  const text = String(charterText || '');
+  const at = text.search(new RegExp(`^##\\s+${PROTOTYPE_SECTION}\\s*$`, 'm'));
+  if (at === -1) return [];
+  const rest = text.slice(at);
+  const next = rest.indexOf('\n## ', 1);
+  const section = next === -1 ? rest : rest.slice(0, next);
+  return section.split('\n')
+    .filter((l) => l.trim().startsWith('|'))
+    .map((l) => l.split('|').slice(1, -1).map((c) => c.trim()))
+    .filter((cells) => cells.length === PROTOTYPE_HEADER.length)
+    .filter((cells) => !cells.every((c, i) => c.toLowerCase() === PROTOTYPE_HEADER[i]))
+    .filter((cells) => !cells.every((c) => c === '' || /^-+$/.test(c)))
+    .map(([id, ticket, sha256, acceptedBy, when]) => ({
+      id, ticket, sha256, acceptedBy, at: when,
+    }));
+}
+
+// The client's answer to one prototype, written onto the charter. Keyed by the catalogue row, so
+// a second showing of the same row replaces the first rather than standing beside it: what the
+// row is described by is whatever they last looked at and said yes to, never a pile of drafts.
+export function recordPrototypeAcceptance(charterText, artifact) {
+  const rows = parsePrototypeArtifacts(charterText).filter((r) => r.id !== artifact.id);
+  rows.push({
+    id: artifact.id,
+    ticket: artifact.ticket,
+    sha256: artifact.sha256,
+    acceptedBy: artifact.acceptedBy,
+    at: artifact.at,
+  });
+  rows.sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+  const body = [
+    'Rows described by something the client was shown and answered, rather than by a sentence. An',
+    'accepted prototype is not the thing built — it is what the work on that row was written from.',
+    '',
+    `| ${PROTOTYPE_HEADER.join(' | ')} |`,
+    `|${PROTOTYPE_HEADER.map(() => '---').join('|')}|`,
+    ...rows.map((r) => `| ${r.id} | ${r.ticket} | ${r.sha256} | ${r.acceptedBy} | ${r.at} |`),
+  ].join('\n');
+  return upsertCharterSection(charterText, PROTOTYPE_SECTION, body);
+}
+
 // A row is green when the charter already names who reproduced it, or — when it doesn't yet —
 // when a ticket merged this wave both claims the row's id in its own acceptance checklist and
 // carries a verifier's "reproduced" verdict; that verifier's name is then written into the
@@ -714,6 +781,24 @@ function qualityMergesIn(horde, mergedTickets) {
   return out;
 }
 
+// What the client has already been shown and answered, stated on its own. It stands apart from
+// every figure above it on purpose: an accepted prototype is a row somebody can now describe, not
+// a row somebody has delivered, and the two counted together would read as progress that nobody
+// built.
+function prototypeBlock(artifacts) {
+  if (artifacts.length === 0) {
+    return 'Nothing was built to be looked at this mission, so there is nothing here for you to have answered.';
+  }
+  return [
+    'Promises you have already been shown something for, and said yes to. Each one is now described by',
+    'what you looked at rather than by a sentence, and that is what the work on it was written from:',
+    '',
+    ...artifacts.map((a) => `- **${a.id}** — shown as ${a.ticket}, accepted by ${a.acceptedBy} on ${a.at}. What you saw: ${a.sha256}.`),
+    '',
+    'None of this counts toward the figures above. Being shown a thing is not having built it.',
+  ].join('\n');
+}
+
 function qualityBlock({
   policy, promotions, qualityMerges, indexLine, observed, declined = [],
 }) {
@@ -841,6 +926,10 @@ function cmdClose(horde, positional, flags) {
   const qualityMerges = qualityMergesIn(horde, mergedTickets);
   const indexLine = qualityLine(quality, prevQuality);
 
+  // Read back after computeEvidence has had its say, so the two readings of the charter never
+  // disagree about what the same document holds.
+  const prototypes = parsePrototypeArtifacts(readText(hordePath(horde, 'charter.md')) || '');
+
   // What this mission has done to the law, as a document: the graph on the branch the mission was
   // cut from against the graph on the trunk it has built. Written every close, at the wave's own
   // path, so a second close of the same wave replaces it rather than writing a second one. Whoever
@@ -872,6 +961,7 @@ function cmdClose(horde, positional, flags) {
     qualityBlock: qualityBlock({
       policy, promotions, qualityMerges, indexLine, observed, declined,
     }),
+    prototypeBlock: prototypeBlock(prototypes),
     auditBlock: auditBlock(audit),
   };
 
@@ -905,6 +995,7 @@ function cmdClose(horde, positional, flags) {
       aspect: p.aspect, from: p.from, to: p.to, at: p.at, evidence: p.evidence,
     })),
     qualityMerged: qualityMerges,
+    prototypes,
     aspectsObserved: observed,
     law: { path: law.path, added: law.doc.added.length, raised: law.doc.raised.length, attached: law.doc.attached.length },
     audit,

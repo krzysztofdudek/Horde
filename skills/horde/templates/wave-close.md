@@ -7,6 +7,10 @@
 **Decisions per merged ticket:** {{decisionsLine}}
 **Quality index:** {{qualityLine}}
 
+## Prototypes accepted
+
+{{prototypeBlock}}
+
 ## Quality — what the horde raised on its own
 
 {{qualityBlock}}

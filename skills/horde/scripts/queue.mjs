@@ -21,9 +21,9 @@ import {
   runMain,
 } from './_lib.mjs';
 import {
-  findTicket, parseField, padId, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, createTicket, setTicketBody, acceptanceLines,
+  findTicket, parseField, padId, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, prototypeBranchOf, createTicket, setTicketBody, acceptanceLines,
 } from './tk.mjs';
-import { noteMerged, parseEvidenceRows } from './wave.mjs';
+import { noteMerged, parseEvidenceRows, parsePrototypeArtifacts } from './wave.mjs';
 import {
   consumersOf, portExists, globToRegExp, nodeExists, advisoryKey, readAdvisoryLedger,
   recordAdvisory,
@@ -46,6 +46,10 @@ const RETIRED_STATES = new Set(['escalated']);
 // Derived rather than written out twice, so the two lists cannot drift apart.
 const SETTABLE_STATES = STATES.filter((s) => !RETIRED_STATES.has(s));
 const SEVERITY_RANK = { high: 0, medium: 1, low: 2 };
+// What a ticket's Kind is worth against every other ticket's, before severity is looked at at all.
+// A prototype is the question the work behind it is waiting on; quality is what is done with the
+// parallelism left over once the mission's own work has all it needs.
+const KIND_RANK = { prototype: 0, work: 1, quality: 2 };
 
 const USAGE = `usage: queue.mjs <command> [options]
 
@@ -53,6 +57,9 @@ commands:
   list [--state s] [--team t] [--horde h]
   add <ticket> [--depends dep,…] [--proposed] [--team t] [--horde h]
       each dep is NNN, a ticket number in this same team.
+      refused while an evidence row the ticket earns has a prototype filed against it and no
+      accepted answer to that prototype yet: a row nobody could describe gets the tickets that
+      build it only once the client has looked at something and said what they meant.
       --proposed files it as a proposal rather than as work: listed and counted in the queue,
       never offered by "next", until the architect's plan review passes it. That is how a
       consultant's own tickets enter — nothing it writes is dispatchable before somebody has
@@ -64,6 +71,9 @@ commands:
       branch. The item records "stackedOn"; everything measured against a parent — base
       freshness, the diff, the revert test — then names MMM's branch, until MMM merges and this
       item's "merged" write clears it back to the team branch.
+      A prototype ticket (tk.mjs new --kind prototype) is cut from "<horde>/prototype" instead —
+      made off the team's tip the first time one starts — and merges back only there: the trunk
+      never takes a prototype, and land.mjs refuses a prototype branch cut anywhere else.
       "running" creates the branch "<horde>/t-NNN" off the team's tip and a worktree at
       "<hordeRoot>/worktrees/<horde>/t-NNN" (per horde, so two hordes never collide on a ticket
       number), and prints the path. "merged" removes the worktree first, then deletes the branch
@@ -81,8 +91,9 @@ commands:
   next [--class c] [--why] [--stack] [--team t] [--horde h]
       the first ready queued item — every dependency merged, and its declared Files (a ticket with
       none locks every file of every node it names) clear of every "running" ticket's own Files in
-      this team. Ranked: quality-kind tickets (tk.mjs new --kind quality) always last, whatever
-      their severity; then severity (read live from the ticket); then the longer remaining
+      this team. Ranked: prototype-kind tickets (tk.mjs new --kind prototype) always first and
+      quality-kind ones always last, whatever either's severity — a prototype is the question the
+      work behind it is waiting on; then severity (read live from the ticket); then the longer remaining
       critical path through the ticket wins (queue.mjs plan's own DAG, read in-process, never
       shelled out); then a ticket whose nodes hold no running ticket; then FIFO by queue order.
       A "waiting" item is never a candidate. --why prints every queued item with its rank or
@@ -188,6 +199,31 @@ function resolveDepRef(horde, raw, defaultTeam) {
   };
 }
 
+// A row somebody filed a prototype against is a row nobody could put into words yet — that is the
+// whole reason the prototype exists. Building against it before the client has looked at the
+// prototype and said what they meant is building against the guess the prototype was raised to
+// replace, so it waits. Only that row waits, and only while the answer is missing: a row with no
+// prototype behind it is unaffected, and so is the prototype's own ticket.
+function checkPrototypeAnswered(horde, ticket) {
+  if (ticketKind(ticket.text) === 'prototype') return;
+  const rows = ticketEvidence(ticket.text);
+  if (rows.length === 0) return;
+  const prototypes = allTickets(horde).filter((t) => ticketKind(t.text) === 'prototype');
+  if (prototypes.length === 0) return;
+  const answered = new Set(parsePrototypeArtifacts(readText(hordePath(horde, 'charter.md')) || '').map((a) => a.id));
+  for (const row of rows) {
+    if (answered.has(row)) continue;
+    const waiting = prototypes.find((t) => ticketEvidence(t.text).includes(row));
+    if (!waiting) continue;
+    fail(
+      `ticket ${ticket.id} earns ${row}, and ${row} has no accepted prototype yet — ${waiting.id} is being built for `
+      + `the client to look at, because nobody could yet say what ${row} means. Show them that, record their answer `
+      + `("tk.mjs accept ${waiting.id} --sha256 <what they saw> --by \\"<who>\\""), and queue this then. Anything `
+      + 'written before it is written against the guess the prototype exists to replace',
+    );
+  }
+}
+
 function cmdAdd(horde, positional, flags) {
   const idRaw = positional[0];
   if (!idRaw) fail('add requires <ticket>');
@@ -197,6 +233,7 @@ function cmdAdd(horde, positional, flags) {
   if (acceptanceLines(ticket.text).length === 0) {
     fail(`ticket ${ticket.id} has no acceptance line — nothing anybody could reproduce, so nothing could ever prove it done. Add at least one "- [ ] …" line under "## Acceptance" (tk.mjs new --evidence "<what someone reproduces>", or edit the issue), then add it to the queue.`);
   }
+  checkPrototypeAnswered(horde, ticket);
   const item = withQueueLock(horde, team, () => {
     const doc = load(horde, team);
     if (doc.items.some((i) => i.ticket === ticket.id)) fail(`ticket ${ticket.id} is already queued in team ${team}`);
@@ -553,6 +590,23 @@ export function recordMerged(horde, team, key, sha, { tree } = {}) {
   return { item, journal: noteMerged(horde, team, key, String(sha)) };
 }
 
+// Where a ticket's branch is cut from. Every ticket but one is cut from the team's own tip; a
+// prototype is cut from `<horde>/prototype`, which is made off that tip the first time one is
+// started and which the trunk never takes back. That is the whole of how a prototype stays off
+// the trunk in the ordinary flow — land.mjs refuses anything else, so a branch cut here is a
+// branch that can actually land.
+function prototypeAwareBase(horde, key, teamBranch, root) {
+  const ticket = findTicket(horde, key);
+  if (!ticket || ticketKind(ticket.text) !== 'prototype') return teamBranch;
+  const proto = prototypeBranchOf(horde);
+  if (git(['rev-parse', '--verify', proto], root) === null) {
+    if (git(['branch', proto, teamBranch], root) === null) {
+      fail(`could not create branch ${proto} off ${teamBranch} — a prototype is worked there and never on the trunk, so there is nowhere to start ${key}`);
+    }
+  }
+  return proto;
+}
+
 // The branch a ticket is worked on and the worktree it is worked in, cut where `set <ticket>
 // running` cuts them. Its own function because it has two callers now: that command, and tick
 // building a dispatch list, which has to cut several in a row against one queue document.
@@ -563,7 +617,7 @@ function provisionRunning(horde, team, key, item, { tree, on } = {}) {
   const stack = on !== undefined ? resolveStackParent(horde, team, key, item, on) : null;
   let branchName = item.branch;
   if (!branchName) {
-    const from = stack ? stack.branch : teamBranch;
+    const from = stack ? stack.branch : prototypeAwareBase(horde, key, teamBranch, root);
     branchName = `${horde}/t-${key}`;
     if (git(['rev-parse', '--verify', branchName], root) !== null) fail(`branch already exists: ${branchName}`);
     const created = git(['branch', branchName, from], root);
@@ -869,11 +923,13 @@ export function rankedCandidates(horde, team, {
     const astack = a.stackOn.length ? 1 : 0;
     const bstack = b.stackOn.length ? 1 : 0;
     if (astack !== bstack) return astack - bstack;
-    // Quality work always sorts after every non-quality ticket, whatever its severity — the
-    // quality-always-authorised ruling: quality is raised in free parallelism, never ahead of
-    // the mission's own work.
-    const ak = a.kind === 'quality' ? 1 : 0;
-    const bk = b.kind === 'quality' ? 1 : 0;
+    // Kind outranks severity in both directions. A prototype comes first, whatever it is ranked
+    // at: the row it describes cannot be worked at all until the client has answered it, so every
+    // hour it waits is an hour the work behind it waits too. Quality comes last, whatever ITS
+    // severity — the quality-always-authorised ruling: quality is raised in free parallelism,
+    // never ahead of the mission's own work.
+    const ak = KIND_RANK[a.kind] ?? KIND_RANK.work;
+    const bk = KIND_RANK[b.kind] ?? KIND_RANK.work;
     if (ak !== bk) return ak - bk;
     const ra = SEVERITY_RANK[a.severity] ?? 1;
     const rb = SEVERITY_RANK[b.severity] ?? 1;
