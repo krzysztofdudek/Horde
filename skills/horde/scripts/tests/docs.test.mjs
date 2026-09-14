@@ -612,8 +612,10 @@ function briefRequiredFlags() {
 }
 
 // Extracts every text run that shows brief.mjs invoked with a real role name (not a placeholder
-// like "<role>") — both inline `code spans` (which may wrap across a markdown line break) and
-// lines inside fenced ``` code blocks — as the unit a reader would copy verbatim.
+// like "<role>") — inline `code spans` (which may wrap across a markdown line break), lines
+// inside fenced ``` code blocks, and "double-quoted" runs (how a .mjs source comment writes a
+// worked example, e.g. tk.mjs's own fix-round comments) — as the unit a reader would copy
+// verbatim.
 function briefInvocationSnippets(text) {
   const rolePattern = '(?:architect|worker|legislate|retro)';
   const snippets = [];
@@ -625,16 +627,20 @@ function briefInvocationSnippets(text) {
       if (new RegExp(`brief\\.mjs\\s+${rolePattern}\\b`).test(line)) snippets.push(line);
     }
   }
+  for (const m of text.matchAll(/"([^"]+)"/g)) {
+    if (new RegExp(`brief\\.mjs\\s+${rolePattern}\\b`).test(m[1])) snippets.push(m[1]);
+  }
   return snippets;
 }
 
-test('brief.mjs invocation examples in SKILL.md and scripts/README.md carry every flag USAGE requires', () => {
+test('brief.mjs invocation examples in SKILL.md, scripts/README.md and tk.mjs carry every flag USAGE requires', () => {
   const required = briefRequiredFlags();
   assert.ok(required.includes('name'), 'USAGE no longer requires --name — this test\'s premise moved');
 
   const files = [
     join(SKILL_DIR, 'SKILL.md'),
     join(SCRIPTS_DIR, 'README.md'),
+    join(SCRIPTS_DIR, 'tk.mjs'),
   ];
   const failures = [];
   for (const path of files) {

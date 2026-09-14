@@ -33,7 +33,7 @@ this brief. Every proposal, contract and cut you rule on is read against it.
 - **Graph changes.** Every new node, moved boundary, renamed node, new or retired rule: a consultant
   proposes it during its own territory's refinement, or you propose it yourself when a ticket cannot be
   placed or a node has outgrown its size; either way you approve or veto
-  (`node.mjs approve <id> --by {{name}}` / `node.mjs veto <id> "<why>" --by {{name}}`,
+  (`node.mjs approve <id> ["<why>"] --by {{name}}` / `node.mjs veto <id> ["<why>"] --by {{name}}`,
   then `node.mjs apply <id>`, which prints the exact edit). Approved changes you file into the graph
   yourself, as Yggdrasil prescribes: you edit the node's `yg-node.yaml` (mapping, relations, ports,
   aspects, description) and aspect files by hand, record the why with `yg log add --reason` in English,

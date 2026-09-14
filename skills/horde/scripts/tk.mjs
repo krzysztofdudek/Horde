@@ -129,8 +129,8 @@ commands:
   status <ticket> <${STATUSES.join('|')}> ["note"] [--horde h]
       "changes" counts the round and prints it: rounds 1..config.fixRounds.resume (default 3) —
       resume the same worker; the next config.fixRounds.fresh (default 2) rounds — "fresh worker,
-      class up", one class heavier, briefed with "brief.mjs worker NNN --takeover"; beyond that it
-      refuses.
+      class up", one class heavier, briefed with "brief.mjs worker NNN --name <n> --takeover";
+      beyond that it refuses.
   log <ticket> "<text>" [--horde h]
   grep <regex> [--horde h]
   accept <ticket> --sha256 <hex> --by "<who>" [--horde h]
@@ -260,7 +260,7 @@ export function setStatus(text, status) {
 
 // What this round of "changes" means: rounds 1..resume ask the director to resume the same
 // worker with the findings; the next "fresh" rounds ask for a new one, one class heavier, briefed
-// with "brief.mjs worker NNN --takeover"; beyond resume+fresh this refuses outright — another
+// with "brief.mjs worker NNN --name <n> --takeover"; beyond resume+fresh this refuses outright — another
 // round would be a stall dressed up as progress, not a fix. What happens then is tick's: the queue
 // item and the ticket both go to "blocked" and the client is asked, once, with the gate's own last
 // words and the path of the ticket's log.

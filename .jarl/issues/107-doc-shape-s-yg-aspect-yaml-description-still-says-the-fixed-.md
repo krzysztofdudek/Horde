@@ -1,6 +1,6 @@
 # 107 · doc-shape's yg-aspect.yaml description still says 'the fixed three' statuses
 
-**Status:** open
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -19,4 +19,6 @@ An aspect's description is what a reader (or a tool listing aspects) is told the
 `yg-aspect.yaml`'s `description:` accurately reflects doc-shape's real status-acceptance rule after issue 089: `implemented`, plus a repository's own configured `parked_markers` (default `planned, disabled`) — not "a fixed three."
 
 ## Evidence
+
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/promises-package.test.mjs · **saw:** 64/64 pass — description-only change
 

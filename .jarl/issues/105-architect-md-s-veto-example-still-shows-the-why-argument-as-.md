@@ -1,6 +1,6 @@
 # 105 · architect.md's veto example still shows the why argument as required, not optional
 
-**Status:** open
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -27,4 +27,6 @@ Line 36 reads `node.mjs approve <id> ["why"] --by {{name}}` / `node.mjs veto <id
 {{name}}` — both showing the reason as optional, consistent with node.mjs's own USAGE text.
 
 ## Evidence
+
+- **ran:** grep -n 'approve.*veto\|<why>' skills/horde/reference/roles/architect.md · **saw:** line 36 now reads node.mjs approve <id> ["<why>"] --by {{name}} / node.mjs veto <id> ["<why>"] --by {{name}} — both optional, matching node.mjs's own USAGE and README (fixed under issue 061)
 
