@@ -94,6 +94,10 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 
 - The status screen now flags a ticket the gate has sent back for changes as unverified, instead of still showing it as landed or unmerged.
 
+### Fixed
+
+- Refusals that trace back to a git problem — a missing branch, a worktree that could not be made — now show what git itself reported, not just that something went wrong.
+
 ### Migrating a mission already in flight
 
 Finish a mission started on an earlier release the old way — it still reads its own state and files itself away. Start fresh from the same mission card afterward; the new run rebuilds its work from the evidence the old one left, at the cost of one conversation per component touched.
