@@ -1,6 +1,6 @@
 # 022 · dowod wykonany na czubku
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 1
 **Tier:** strong
