@@ -1037,6 +1037,14 @@ test('land.mjs: a format this cannot read is refused by name, and so is a report
   const wrong = run('land.mjs', [branch], dir);
   assert.equal(wrong.code, 1);
   assert.match(byName(wrong).gate.note, /does not read as tap/);
+
+  // And a path that would reach out of the tree the gate ran in is refused before anything is read:
+  // the only report that proves anything about this branch is the one that run left behind.
+  run('horde.mjs', ['config', 'set', 'gates.report.format', 'junit'], dir);
+  run('horde.mjs', ['config', 'set', 'gates.report.path', '../elsewhere/junit.xml'], dir);
+  const outside = run('land.mjs', [branch], dir);
+  assert.equal(outside.code, 1);
+  assert.match(byName(outside).gate.note, /has to stay inside the tree the gate ran in/);
 });
 
 test('land.mjs: a TAP report matches a file-level pairing by name, which is all TAP can say — and a skipped line still refuses', async (t) => {

@@ -987,10 +987,14 @@ horde.mjs config set gates.report.format junit|tap|playwright-json
 ```
 
 The path is where the gate command's own runner leaves its report — resolved inside the fresh tree
-the gate was just run in, because that is where the run that counts actually happened. Horde runs no
-runner and configures none: the environment and the runner are the repository's, and all this does is
-read the file that run left behind. A format outside those three is refused by name, and so is a file
-that does not read as the format it claims.
+the gate was just run in, because that is where the run that counts actually happened, and it has to
+stay inside it: an absolute path, or one climbing out with `..`, would read a file some other run
+wrote and is refused rather than read. Horde runs no runner and configures none: the environment and
+the runner are the repository's, and all this does is read the file that run left behind. A format
+outside those three is refused by name, and so is a file that does not read as the format it claims.
+
+Reading it costs one look at the tree's own promises and one read of the report file, paid only where
+a report is configured at all.
 
 **What it requires.** Every **live** promise (`status: implemented`) whose pairing is something a
 runner runs has to be in the report, passing. Missing, `skipped` or `failed` is a red gate that names
@@ -1029,8 +1033,8 @@ attributed to the other when either segment list **ends with** the other. So
 `promises.adds-two-numbers.test` and a bare `adds-two-numbers` are all the same file — while
 `tests/adds-two-numbers.test.mjs` is a different one, because neither list ends with the other.
 A case **name** matches when it is the declared name exactly, or ends with it after a separator a
-runner uses to join a suite path to a case (`>`, `›`, `»`, `::`, or plain whitespace) — anchored at
-the end, never a substring found in the middle.
+runner uses to join a suite path to a case (`>`, `›`, `»`, `:`, `|`, `·`, or plain whitespace) —
+anchored at the end, never a substring found in the middle.
 
 **The three formats, and what each can actually tell you.**
 

@@ -1762,6 +1762,11 @@ function protectionGuards(cfg, horde, baseTree, headTree, changedFiles) {
 //   horde.mjs config set gates.report.format junit|tap|playwright-json
 //
 // Nothing in horde.mjs needed changing for that: `config set` already writes any dotted path.
+//
+// What this costs, and only where a report is configured at all: one reading of the tree's own
+// promises — the same `yg aspects --json --reach` the law guard already takes per tree, plus one
+// `git ls-files` — and one read of the report file. A repository that names no report reads none
+// of that and runs nothing extra.
 const REPORT_FORMATS = ['junit', 'tap', 'playwright-json'];
 
 // Three fixed strings and one path, validated here by reading them — not through a schema system,
@@ -1778,6 +1783,13 @@ function gateReportConfig(cfg) {
   const path = typeof raw.path === 'string' ? raw.path.trim() : '';
   const format = typeof raw.format === 'string' ? raw.format.trim().toLowerCase() : '';
   if (!path) return { configured: true, error: `config.gates.report names no path, so there is nothing to read. ${how}` };
+  // Inside the tree the gate command just ran in, and nowhere else. The whole claim this item makes
+  // is that the report is the one THAT run left behind; an absolute path, or one climbing out with
+  // `..`, reads a file some other run wrote — very possibly a stale one from a tree nobody measured
+  // — and would report it as proof that this branch's cases ran.
+  if (path.startsWith('/') || /^[A-Za-z]:[\\/]/.test(path) || path.split(/[\\/]/).includes('..')) {
+    return { configured: true, error: `config.gates.report.path is "${path}" — it has to stay inside the tree the gate ran in, because the only report that proves anything about this branch is the one that run left behind; an absolute path or one climbing out with ".." reads some other run's file. ${how}` };
+  }
   if (!REPORT_FORMATS.includes(format)) {
     return { configured: true, error: `config.gates.report.format is ${format ? `"${format}"` : 'not set'} — the formats this reads are ${REPORT_FORMATS.join(', ')}, and a format it cannot read is not a report it can check. ${how}` };
   }
@@ -2110,6 +2122,9 @@ function promiseReportMiss(entries, reportNamesFiles, promise) {
   }
 
   const stem = fileStemWords(file);
+  if (!stem) {
+    return `this report carries no file attribution at all, and ${file} leaves no name to look one up by either. Pair the promise as "<file>#<case name>", or have the gate write junit or playwright-json — both carry the file`;
+  }
   const byName = entries.filter((e) => flattenWords(e.name) === stem);
   if (!byName.length) {
     return `this report carries no file attribution at all, so ${file} could only be looked for by name, and no case in it is named "${stem}". Pair the promise as "<file>#<case name>", or have the gate write junit or playwright-json — both carry the file`;
