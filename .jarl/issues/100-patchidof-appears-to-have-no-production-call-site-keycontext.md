@@ -1,6 +1,6 @@
 # 100 · patchIdOf appears to have no production call site — keyContext may configure dead code
 
-**Status:** open
+**Status:** done
 **Kind:** cleanup
 **Priority:** 3
 **Tier:** standard
@@ -31,4 +31,7 @@ remove `patchIdOf()` and the `keyContext` config knob together (and its README p
 If it turns out to have a live caller this search missed, say so and close as not-a-bug.
 
 ## Evidence
+
+- **ran:** grep -rn 'keyContext\|patchIdOf' --include=*.mjs --include=*.md . · **saw:** zero hits repo-wide after removal (was 5 files: _lib.mjs function, its test, horde.mjs config key + USAGE, README row + doc mention including a broken cross-reference to a nonexistent section, docs.test.mjs scan entry)
+- **ran:** node --test skills/horde/scripts/tests/lib.test.mjs skills/horde/scripts/tests/docs.test.mjs skills/horde/scripts/tests/horde.test.mjs · **saw:** all green after removal: lib.test.mjs and docs.test.mjs pass with the patchIdOf test and keyContext scan/row entry gone, docs.test.mjs's row-count floor correctly lowered 11→10, horde.test.mjs 68 pass / 1 skipped (unrelated) / 0 fail
 

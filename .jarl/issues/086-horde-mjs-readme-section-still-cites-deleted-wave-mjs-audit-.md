@@ -1,6 +1,6 @@
 # 086 · horde.mjs README section still cites deleted wave.mjs audit-plan
 
-**Status:** open
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -21,4 +21,6 @@ The `done` bullet no longer names `wave.mjs audit` or `audit-plan`; it describes
 Dowód, którego oczekuję: `node --test tests/docs.test.mjs` green; `grep -n "audit" skills/horde/scripts/horde.mjs` shows why the README's old wording no longer matches (or returns nothing).
 
 ## Evidence
+
+- **ran:** grep -n 'no retrospective\|audit-plan' skills/horde/scripts/README.md skills/horde/scripts/horde.mjs · **saw:** README's done bullet no longer mentions the removed audit-plan refusal reason; horde.mjs has no audit-plan concept left to document
 

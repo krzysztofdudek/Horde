@@ -1,6 +1,6 @@
 # 064 · changelog names a nonexistent config key worker copy
 
-**Status:** open
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: grep -rn "worker\.copy" across the repository: the o
 Refuterzy: Confirmed. CHANGELOG.md:17 reads "worker.copy`/`worktree.copy` copies files into every new worktree", implying two equivalent keys. A repo-wide grep (excluding worktrees/scratch copies) shows worker.c | Verified: CHANGELOG.md line 17 literally reads "`worker.copy`/`worktree.copy` copies files into every new worktree." A grep across skills/horde/scripts/ (_lib.mjs, horde.mjs, tests/) shows only `workt
 
 ## Evidence
+
+- **ran:** grep -rn 'worker\.copy' . --include=*.md --include=*.mjs · **saw:** no hits anywhere after the fix; CHANGELOG.md:17 now reads only worktree.copy, matching _lib.mjs:291 and horde.mjs:64
 

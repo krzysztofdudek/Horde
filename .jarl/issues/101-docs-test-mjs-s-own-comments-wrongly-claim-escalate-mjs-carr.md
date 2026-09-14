@@ -1,6 +1,6 @@
 # 101 · docs.test.mjs's own comments wrongly claim escalate.mjs carries a NUL byte composite-key separator
 
-**Status:** open
+**Status:** done
 **Kind:** cleanup
 **Priority:** 3
 **Tier:** standard
@@ -31,4 +31,6 @@ that's the real intent) without inventing a specific claim about escalate.mjs. N
 beyond the diff — pure comment correction, no behavior change.
 
 ## Evidence
+
+- **ran:** git log --all --oneline -S 'NUL byte' -- skills/horde/scripts/tests/docs.test.mjs; node -e "const fs=require('fs'); const b=fs.readFileSync('skills/horde/scripts/escalate.mjs'); console.log('NUL byte index:', b.indexOf(0))" · **saw:** the false NUL-byte claim was wrong from its very first commit (056d95f), never a later drift; NUL byte index: -1, confirming escalate.mjs carries no NUL byte — its real composite key is JSON.stringify([it.kind, territory, normalized])
 

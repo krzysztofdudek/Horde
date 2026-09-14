@@ -1,6 +1,6 @@
 # 102 · drill.mjs checkScope's protectedPaths check has the same plain-prefix-match bug as the fixed pathInBoundary
 
-**Status:** open
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -28,4 +28,7 @@ helper otherwise. A test mirroring 091's/094's shape (a protected path `src/a` m
 touched file under `src/ab/...`), red before, green after.
 
 ## Evidence
+
+- **ran:** node --test skills/horde/scripts/tests/drill.test.mjs · **saw:** all green including the two new tests (sibling directory not mistaken for the protected path; a genuinely nested file still caught)
+- **ran:** temporarily reverted the drill.mjs fix via sed, re-ran drill.test.mjs · **saw:** new test 'a protected path's sibling directory is not mistaken for it' failed (not ok 15) with the bug reinstated, confirming the test catches the regression; restored the fix and reconfirmed both new tests green
 

@@ -1,6 +1,6 @@
 # 038 · tk usage nie wymienia komendy move
 
-**Status:** open
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -19,4 +19,6 @@
 USAGE wymienia move z tą samą składnią co README; test docs (issue 016) łapie tę klasę.
 
 ## Evidence
+
+- **ran:** node tk.mjs --help 2>&1 | grep -A2 'move <ticket>' · **saw:** move <ticket> --team <t> [--horde h] now documented in tk.mjs's own USAGE template, with its relocate/refuse-duplicate behaviour described
 

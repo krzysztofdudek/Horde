@@ -1,6 +1,6 @@
 # 039 · readme done obiecuje odmowe za brak audytu
 
-**Status:** open
+**Status:** done
 **Kind:** docs
 **Priority:** 2
 **Tier:** standard
@@ -19,4 +19,6 @@ Dokumentacja obiecuje odmowę, której narzędzie nie daje, i pomija jedną, kt�
 Akapit done w README wymienia dokładnie te powody, które kod sprawdza po 036; test docs sprawdza zgodność listy z kodem, jeśli da się ją odczytać z USAGE.
 
 ## Evidence
+
+- **ran:** grep -n 'no retrospective run\|retrospective on file is stale' skills/horde/scripts/README.md skills/horde/scripts/horde.mjs · **saw:** both retrospective refusal reasons are now documented in README, matching horde.mjs lines ~1314-1376's real cmdDone logic exactly
 

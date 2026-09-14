@@ -1,6 +1,6 @@
 # 074 · readme rozdzial revert test nieaktualny po 014
 
-**Status:** open
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -19,4 +19,6 @@ Dokumentacja i kod znów mówią różne rzeczy — dokładnie ten sam rodzaj ro
 README.md opisuje aktualne zachowanie: nowy LUB zmieniony plik testowy wymagany, chyba że bilet niesie `**No new tests:** <powód>`.
 
 ## Evidence
+
+- **ran:** grep -n 'new OR changed\|No new tests' skills/horde/scripts/README.md · **saw:** the revert-test section now says 'new OR changed test file' throughout, matching checkRevertTest's (e.status === 'A' || e.status === 'M') logic, and documents the 'No new tests: <reason>' escape hatch that was previously undocumented
 

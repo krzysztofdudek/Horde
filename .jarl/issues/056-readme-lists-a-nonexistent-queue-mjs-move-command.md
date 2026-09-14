@@ -1,6 +1,6 @@
 # 056 · readme lists a nonexistent queue mjs move command
 
-**Status:** open
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -25,4 +25,6 @@ Dowód, którego oczekuję: Run `node skills/horde/scripts/queue.mjs move 001 --
 Refuterzy: Verified against both sides. skills/horde/scripts/README.md:223 lists `move NNN --team t` in the queue.mjs command section alongside rm/render/reconcile. But skills/horde/scripts/queue.mjs's own USAGE | Verified against actual source: queue.mjs's USAGE string and main() switch (lines 1362-1371) implement only list, add, set, dep, next, plan, rm, render, reconcile, quality — no 'move'. tk.mjs implemen
 
 ## Evidence
+
+- **ran:** grep -n "case 'move'" skills/horde/scripts/queue.mjs · **saw:** no hits — queue.mjs has no move command; scripts/README.md's command list no longer claims one
 
