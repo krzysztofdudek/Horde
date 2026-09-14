@@ -1,6 +1,6 @@
 # 097 · land.mjs diffPaths turns a git failure into an empty diff, which can pass gates that should refuse
 
-**Status:** open
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** strong
@@ -32,4 +32,6 @@ be an intentional, documented fallback — leave that one alone, this issue is d
 
 
 ## Evidence
+
+- **ran:** node --test tests/land.test.mjs (rebased tip, then merged main) · **saw:** 56/56 pass both times
 
