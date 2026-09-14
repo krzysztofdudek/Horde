@@ -860,6 +860,29 @@ test('land.mjs: a Yggdrasil CLI answering an unknown document names the release 
 
 // ---- broken states and races ------------------------------------------------------------
 
+// A land.mjs run reaching the gate is a fact these races can read off disk — the gate lock file
+// names the pid holding it — rather than a guess about how long everything before the gate
+// (worktree setup, the cheap pre-gate checks, the law and conflict guards) takes on this machine
+// under this load. Every race below that needs a land.mjs child to have gotten there and be
+// mid-gate waits on this instead of a fixed sleep: guessed too low under load and whatever the
+// test does next (spawn a second landing, mutate the tree the first is measuring) lands before
+// the child ever reaches the point the test meant to catch it at — sometimes racing straight past
+// it and landing cleanly, sometimes tripping a different, earlier check instead — either way not
+// the collision or conflict the test exists to prove.
+async function waitGateLockHeldBy(dir, pid, timeoutMs = 30000) {
+  const lockFile = join(dir, '.horde', 'gate.lock');
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (existsSync(lockFile)) {
+      try {
+        if (JSON.parse(readFileSync(lockFile, 'utf8')).pid === pid) return;
+      } catch { /* the write is still in flight; keep polling instead of calling it absent */ }
+    }
+    if (Date.now() >= deadline) throw new Error(`${lockFile} never showed pid ${pid} holding it`);
+    await new Promise((r) => { setTimeout(r, 10); });
+  }
+}
+
 test('land.mjs: the gate lock serializes two landings on one repository', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -869,20 +892,29 @@ test('land.mjs: the gate lock serializes two landings on one repository', async 
   run('horde.mjs', ['config', 'set', 'gates.team', 'sleep 6'], dir);
   run('horde.mjs', ['config', 'set', 'gateLockWaitMs', '1000'], dir);
 
-  const spawnLand = () => new Promise((resolve) => {
+  function spawnLand() {
     const child = spawn('node', [join(SCRIPTS_DIR, 'land.mjs'), branch, '--json'], {
       cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
     });
     let out = ''; let err = '';
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err += d; });
-    child.on('close', (code) => resolve({ code, out, err }));
-  });
+    const done = new Promise((resolve) => { child.on('close', (code) => resolve({ code, out, err })); });
+    return { pid: child.pid, done };
+  }
 
-  const [a, b] = await Promise.all([spawnLand(), (async () => { await new Promise((r) => { setTimeout(r, 1200); }); return spawnLand(); })()]);
-  const both = [a, b];
+  // The second run only proves anything if it meets the lock actually held — starting it after a
+  // fixed wait was a guess about how long the first spawnLand takes to reach the lock on this
+  // machine, and guessing low under load let the second start before the first ever got there,
+  // leaving both free to land in turn with no collision for either to report. Wait for the fact
+  // instead: the lock file naming the first run's own pid.
+  const first = spawnLand();
+  await waitGateLockHeldBy(dir, first.pid);
+  const second = spawnLand();
+
+  const both = await Promise.all([first.done, second.done]);
   const refused = both.filter((x) => /holds the gate lock/.test(x.out + x.err));
-  assert.equal(refused.length, 1, `exactly one run met the lock:\n${a.out}${a.err}\n---\n${b.out}${b.err}`);
+  assert.equal(refused.length, 1, `exactly one run met the lock:\n${both[0].out}${both[0].err}\n---\n${both[1].out}${both[1].err}`);
   assert.match(refused[0].out + refused[0].err, /Landings on one repository run one at a time/);
   assert.match(refused[0].out + refused[0].err, /pid \d+/);
 });
@@ -1069,7 +1101,11 @@ test('land.mjs: a merge conflict is aborted, the parent is untouched, and the co
   let out = ''; let err = '';
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { err += d; });
-  await new Promise((r) => { setTimeout(r, 1500); });
+  // Wait for the fact that the run is mid-gate (the lock file naming this child's own pid), not a
+  // guess about how long its own pre-gate work takes on this machine — base freshness among it,
+  // which reads trunk's live tip: mutate trunk before that runs instead of after and this becomes
+  // an ordinary stale-base refusal, never reaching a merge attempt at all.
+  await waitGateLockHeldBy(dir, child.pid);
 
   // Trunk gains a commit touching the very line the ticket touched, while the gate is measuring.
   writeFileSync(join(dir, 'feature-029.mjs'), 'export function add(a, b) { return a * b; } // trunk moved\n');
@@ -1111,7 +1147,12 @@ test('land.mjs: a branch tip that moved during the run refuses, naming both shas
   let out = ''; let err = '';
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { err += d; });
-  await new Promise((r) => { setTimeout(r, 1500); });
+  // Wait for the fact that the run is mid-gate (the lock file naming this child's own pid), not a
+  // guess about how long its own pre-gate work takes on this machine — the journal check among
+  // it, which reads the branch's own live last-commit time: push the extra commit before that
+  // runs instead of after and it reads as the ticket's log predating its own last commit, a
+  // different refusal than the one this test means to prove.
+  await waitGateLockHeldBy(dir, child.pid);
   // The worker pushes one more commit while the gate is still measuring the old tip.
   const wt = join(dir, 'late-tree');
   git(['worktree', 'add', wt, branch], dir);
