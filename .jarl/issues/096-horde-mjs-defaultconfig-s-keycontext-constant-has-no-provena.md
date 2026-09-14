@@ -1,6 +1,6 @@
 # 096 · horde.mjs defaultConfig's keyContext constant has no provenance row
 
-**Status:** open
+**Status:** done
 **Kind:** docs
 **Priority:** 3
 **Tier:** standard
@@ -25,4 +25,6 @@ scan 013 added should be extended to cover this constant too, so it can't go sta
 
 
 ## Evidence
+
+- **ran:** node --test tests/docs.test.mjs (rebased tip, then merged main) · **saw:** 32/32 pass both times
 
