@@ -1,6 +1,6 @@
 # 117 · retro.test.mjs's stand-in yg CLI never refuses package/record on a pass still in force, unlike the real CLI
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 3
 **Tier:** standard

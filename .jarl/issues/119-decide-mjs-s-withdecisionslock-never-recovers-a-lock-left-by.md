@@ -1,6 +1,6 @@
 # 119 · decide.mjs's withDecisionsLock never recovers a lock left by a dead holder
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard

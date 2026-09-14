@@ -1,6 +1,6 @@
 # 108 · a repository with no evidence layer can never land anything: the revert-test item refuses outright when testGlobs is unset
 
-**Status:** open
+**Status:** in-progress
 **Kind:** gap
 **Priority:** 3
 **Tier:** standard

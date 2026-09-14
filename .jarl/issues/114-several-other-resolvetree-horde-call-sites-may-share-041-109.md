@@ -1,6 +1,6 @@
 # 114 · several other resolveTree(..., horde) call sites may share 041/109's resolved-horde-not-flags.horde gap
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
