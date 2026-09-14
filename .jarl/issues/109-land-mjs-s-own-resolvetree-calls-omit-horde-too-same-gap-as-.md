@@ -1,6 +1,6 @@
 # 109 · land.mjs's own resolveTree calls omit horde too, same gap as 041's
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard

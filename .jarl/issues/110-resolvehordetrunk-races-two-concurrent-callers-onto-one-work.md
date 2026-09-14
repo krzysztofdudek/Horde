@@ -1,6 +1,6 @@
 # 110 · resolveHordeTrunk races two concurrent callers onto one worktree path
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard

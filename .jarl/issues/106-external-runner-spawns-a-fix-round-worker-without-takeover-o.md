@@ -1,6 +1,6 @@
 # 106 · external runner spawns a fix-round worker without --takeover or its round-aware name
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard

@@ -1,6 +1,6 @@
 # 093 · land.test.mjs has timing-dependent tests unstable under machine load (two spots)
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
