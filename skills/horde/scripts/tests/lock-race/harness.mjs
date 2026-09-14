@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const CONTENDER = join(dirname(fileURLToPath(import.meta.url)), 'contender.mjs');
 
-const LOCK_NAMES = { gate: 'gate.lock', retro: 'retro.lock' };
+const LOCK_NAMES = { gate: 'gate.lock', retro: 'retro.lock', queue: 'queue.json.lock' };
 
 function safeJSON(s) {
   try { return JSON.parse(s); } catch { return null; }

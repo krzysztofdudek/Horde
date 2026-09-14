@@ -1,6 +1,6 @@
 // Test-only: one of the two processes that race a single lock file.
 //
-//   usage: contender.mjs <gate|retro> --hold <ms> [--after <file>] [--wait <ms>]
+//   usage: contender.mjs <gate|retro|queue> --hold <ms> [--after <file>] [--wait <ms>]
 //
 // It takes the real lock — the shipped function, imported from the shipped script, never a copy
 // of it — holds it for `--hold`, releases it, and prints the one line the test reads:
@@ -45,6 +45,11 @@ if (Number(process.env.HORDE_LOCK_RACE_DELAY_MS || 0) > 0) {
   register('./hooks.mjs', import.meta.url);
 }
 
+// The gate and retro locks hand back a {release} handle: acquire now, release whenever told to.
+// withQueueLock holds its lock only for the span of one synchronous callback, so the "queue" case
+// below runs the whole acquire/hold/release cycle inside that callback instead — `held: true`
+// tells the code beneath this function the hold already happened, so it does not sleep or release
+// a second time; the two shapes are otherwise read identically.
 async function takeTheLock() {
   if (kind === 'gate') {
     const { acquireGateLock } = await import('../../land.mjs');
@@ -53,6 +58,15 @@ async function takeTheLock() {
   if (kind === 'retro') {
     const { acquireRetroLock } = await import('../../retro.mjs');
     return acquireRetroLock('mission1', waitMs);
+  }
+  if (kind === 'queue') {
+    const { withQueueLock } = await import('../../_lib.mjs');
+    let acquired;
+    withQueueLock('mission1', 'trunk', () => {
+      acquired = Date.now();
+      sleepSync(hold);
+    }, { waitMs });
+    return { ok: true, held: true, acquired, release: () => {} };
   }
   throw new Error(`no such lock: ${kind}`);
 }
@@ -67,9 +81,9 @@ if (after) {
 
 try {
   const lock = await takeTheLock();
-  const acquired = Date.now();
   if (lock.ok === false) say({ ok: false, error: lock.note }, 1);
-  sleepSync(hold);
+  const acquired = lock.held ? lock.acquired : Date.now();
+  if (!lock.held) sleepSync(hold);
   lock.release();
   say({ ok: true, pid: process.pid, acquired, released: Date.now() }, 0);
 } catch (e) {

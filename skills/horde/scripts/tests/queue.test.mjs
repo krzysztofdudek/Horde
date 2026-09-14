@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode,
 } from './helpers.mjs';
+import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -839,6 +840,34 @@ test('queue.mjs add: a second writer waits out a held queue lock rather than wri
 
   const tickets = run('queue.mjs', ['list'], dir).json.map((i) => i.ticket);
   assert.deepEqual(tickets, [waiting], 'the writer that waited out the lock still got its item recorded');
+});
+
+// The two cases above show the lock keeps two writers apart and that a genuinely abandoned lock
+// (its holder gone) is taken over. Neither reaches the exact fault issue 112 found: a holder still
+// writing its own lock file, caught in the instant that file exists but is not yet readable. This
+// proves that case directly, the same way land.mjs's gate lock and retro.mjs's own lock are
+// already proven against it — two real processes take the shipped queue lock (_lib.mjs's
+// withQueueLock, unedited), one paused mid-creation and the other held at the door until that
+// pause begins, putting the second process inside the window every run instead of once in
+// thousands. What comes back is the window each one held the queue lock for, and a lock that
+// holds keeps those apart.
+test('queue.mjs: a queue lock caught half-made is waited for, never taken for an abandoned one', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const race = await raceOneLock(dir, 'queue');
+  assert.ok(race.paused, `nothing was ever paused, so this run proves nothing:\n${describeRace(race)}`);
+  assert.equal(race.slow.code, 0, describeRace(race));
+  assert.equal(race.other.code, 0, describeRace(race));
+
+  const paused = race.slow.window;
+  const other = race.other.window;
+  assert.ok(paused && paused.ok && other && other.ok, describeRace(race));
+  assert.notEqual(paused.pid, other.pid, 'two processes, not one');
+  assert.equal(overlaps(paused, other), false,
+    'both processes held the queue lock at the same time: the one paused mid-creation had its '
+    + `lock file read as an abandoned one and taken.\n${describeRace(race)}`);
 });
 
 // ---- the charter pushback: a ticket the mission never promised ---------------------------------
