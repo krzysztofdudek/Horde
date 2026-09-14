@@ -285,6 +285,53 @@ test('_lib.mjs resolveTree: narrowest scope wins, cwd and trunk defaults, scratc
   }
 });
 
+// git() swallows every git failure into null — a real error (git could not answer at all) and a
+// clean "no" (a ref that simply does not exist, an existence check run with --quiet) come back
+// identically. gitError() is how a caller tells them apart, so a refusal built on a null can carry
+// git's own words instead of the wrapper's guess. Proven directly against git()/gitError(), then
+// against a real caller (provisionTree) that puts the distinction to use.
+test('_lib.mjs git()/gitError(): a real git failure is not swallowed silently', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { git, gitError, provisionTree } = await import('../_lib.mjs');
+
+  await t.test('gitError() is null after success, holds git\'s stderr after a real failure, and is empty (not null) after a clean --quiet "no"', () => {
+    assert.equal(git(['rev-parse', 'HEAD'], dir) !== null, true);
+    assert.equal(gitError(), null);
+
+    assert.equal(git(['not-a-real-git-command'], dir), null);
+    assert.match(gitError(), /not a git command/);
+
+    assert.equal(git(['show-ref', '--verify', '--quiet', 'refs/heads/no-such-branch'], dir), null);
+    assert.equal(gitError(), '');
+
+    // the next successful call clears it again
+    assert.equal(git(['rev-parse', 'HEAD'], dir) !== null, true);
+    assert.equal(gitError(), null);
+  });
+
+  await t.test('provisionTree: a worktree git could not create throws with git\'s own reason, not just the wrapper\'s guess', () => {
+    const origCwd = process.cwd();
+    process.chdir(dir);
+    try {
+      const path = join(dir, 'nope');
+      assert.throws(
+        () => provisionTree(path, 'no-such-ref-at-all', {}),
+        (err) => {
+          assert.match(err.message, /could not create worktree/);
+          // The point of the fix: the message carries git's OWN explanation. Before the fix this
+          // is where the test goes red — the thrown message stopped at "for no-such-ref-at-all".
+          assert.match(err.message, /invalid reference/i);
+          return true;
+        },
+      );
+      assert.equal(existsSync(path), false);
+    } finally {
+      process.chdir(origCwd);
+    }
+  });
+});
+
 // The lease file is keyed by a SUBJECT, not by a node: a node when `node.mjs bind` claims one, a
 // territory when a refinement's cut does. Only the claiming paths are exercised in-process here —
 // every refusal goes through fail() -> process.exit(), which would take this whole run with it, so

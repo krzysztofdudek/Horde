@@ -28,10 +28,9 @@ import { dirname, join } from 'node:path';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, git, fail, parseArgs,
-  asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine, withProvenance,
-  nowIso,
-  runMain,
+  hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, git, gitError, fail,
+  parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine,
+  withProvenance, nowIso, runMain,
 } from './_lib.mjs';
 import {
   ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, verdictCommandsFor,
@@ -264,7 +263,10 @@ export function acquireGateLock(ticket, branch, { waitMs = LOCK_WAIT_MS } = {}) 
 
 function checkBaseFreshness(branch, parentBranch) {
   const parentTip = git(['rev-parse', parentBranch]);
-  if (!parentTip) return { ok: false, note: `parent branch not found: ${parentBranch}` };
+  if (!parentTip) {
+    const detail = gitError();
+    return { ok: false, note: `parent branch not found: ${parentBranch}${detail ? ` — ${detail}` : ''}` };
+  }
   const mergeBase = git(['merge-base', branch, parentBranch]);
   const ok = mergeBase === parentTip;
   return {
