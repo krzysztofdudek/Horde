@@ -1,6 +1,6 @@
 # 027 · ksiega misji czytelna dla nastepnej
 
-**Status:** open
+**Status:** done
 **Kind:** gap
 **Priority:** 2
 **Tier:** strong
@@ -21,4 +21,6 @@ Test na fixture z dwiema misjami w _archive; brief konsultanta zawiera wpisy z a
 Dowód, którego oczekuję: skills/horde/scripts/tests/horde.test.mjs, skills/horde/scripts/tests/refine.test.mjs.
 
 ## Evidence
+
+- **ran:** node --test tests/horde.test.mjs tests/refine.test.mjs (rebased tip, then merged main) · **saw:** 145/145 pass, 1 known skip, both runs
 
