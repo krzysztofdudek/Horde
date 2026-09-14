@@ -85,6 +85,10 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - Narrowing the status screen to a team other than the mission's own used to print a mission with nothing in it, reading as "nothing is happening here". It now says plainly that there is no such team.
 - An unanswered question now holds back exactly what depends on the answer and nothing else: a stalled ticket holds itself; a question about the mission card holds the tickets earning the proofs it names; a request to weaken a rule holds that one change at the door. A worker who ran out of spec holds everything — nothing starts, nothing merges even when it is finished and passing, and the mission does not close — until you answer. An open question used to hold nothing at all, and a change waiting on your word could be sent back to a worker round after round for failing a rule only you could lift.
 
+### Fixed
+
+- The status screen now flags a ticket the gate has sent back for changes as unverified, instead of still showing it as landed or unmerged.
+
 ### Migrating a mission already in flight
 
 Finish a mission started on an earlier release the old way — it still reads its own state and files itself away. Start fresh from the same mission card afterward; the new run rebuilds its work from the evidence the old one left, at the cost of one conversation per component touched.
