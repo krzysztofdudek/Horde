@@ -660,3 +660,4 @@
 - 2026-09-14 10:44 · decided 122-consolidate-shared-git-helper
 - 2026-09-14 10:44 · decided 120-fifth-catalogue-column
 - 2026-09-14 10:44 · 120 evidence · Krzysztof approved: a fifth column on the catalogue naming the evidence class outright (see .jarl/decisions.md, 120-fifth-catalogue-column). Ready for implementation dispatch. Held out of dispatch until the current wave lands — issue 124 (in progress) touches _lib.mjs, where parseEvidenceRows lives.
+- 2026-09-14 10:53 · 121 evidence row · cd /tmp/horde-worktrees/121-retro-test-inforce-hardcoded/skills/horde/scripts && HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" timeout 300 node --test tests/retro.test.mjs

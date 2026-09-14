@@ -23,3 +23,5 @@ The stub's `verdict record` handler computes `inForce` the same way it already c
 
 ## Evidence
 
+- **ran:** cd /tmp/horde-worktrees/121-retro-test-inforce-hardcoded/skills/horde/scripts && HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" timeout 300 node --test tests/retro.test.mjs · **saw:** exit 0; # tests 61, # pass 61, # fail 0, # cancelled 0, # skipped 0, # todo 0 (all 33 top-level tests green, including the 2 new ones added: 'the stand-in CLI recomputes inForce live on every verdict read, not a flag frozen at record time' and 'retro.mjs: a pass whose code has since moved is stale, not in force, and reaches a real verdict-package call rather than the passInForce shortcut')
+
