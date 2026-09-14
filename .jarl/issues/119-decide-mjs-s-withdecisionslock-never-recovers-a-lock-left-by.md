@@ -1,6 +1,6 @@
 # 119 · decide.mjs's withDecisionsLock never recovers a lock left by a dead holder
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -74,4 +74,5 @@ No read of the lock's own content, no pid-liveness check, no takeover — contra
 each of which reads `{pid, ...}` back out of a contended lock file and deletes+retakes it the
 moment that pid is no longer alive.
 - **ran:** cd /tmp/horde-worktrees/119-decide-mjs-withdecisionslock-stale-recovery/skills/horde/scripts && HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" timeout 300 node --test tests/decide.test.mjs (also re-run together with tests/queue.test.mjs to check the shared lock-race/ harness for regressions) · **saw:** decide.test.mjs alone: tests 11, pass 11, fail 0 (7 top-level: existing add/list/show/refusals + --node redirect, unchanged; plus 5 new: dead-pid lock taken over in <5s not waited 10s; half-written lock file taken over; live holder waited out (>=70% of a 500ms hold) then succeeds; live holder past its own short deadline is refused with "locked by another process", not silently taken over; a lock caught half-made via the slow-fs fault-injection harness (new "decide" kind) is never read as abandoned). Combined with queue.test.mjs: tests 72, pass 72, fail 0 -- no regression to the existing queue-lock race test after adding "decide" to the shared lock-race/ harness. Sanity check: reverted decide.mjs only (git stash) and reran the dead-pid and half-written-lock tests against the old code -- both failed as expected, each waiting the old fixed 10s deadline and then throwing the pre-fix message "decisions.md is locked by another process -- timed out waiting for ...", confirming the new tests actually catch the bug.
+- **ran:** HORDE_TEST_YG='node /home/user/Yggdrasil/source/cli/dist/bin.js' node --test skills/horde/scripts/tests/decide.test.mjs skills/horde/scripts/tests/queue.test.mjs · **saw:** 72/72 pass, 0 fail, on the merged tip
 
