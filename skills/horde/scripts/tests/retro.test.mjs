@@ -114,6 +114,14 @@ function writeClasses(dir, horde, items) {
 //     the same code gives one hash for a pass and a different one for a refusal, which is exactly
 //     why the recorded entry's own hash cannot be used to ask whether the code moved. `verdict
 //     package` prints both, from one content token per pair that `codeMoves` below bumps.
+//   * A pair whose CURRENT slot holds a pass still bound to the current content refuses both
+//     `verdict package` and `verdict record` outright — the one refusal Yggdrasil's real
+//     `resolvePair` raises unconditionally, on a pair whose stored entry is a `kind === 'verified'`
+//     pass. The guard is derived fresh from the same content tracking `hashes` above already uses
+//     (never a static "in force" flag frozen at record time), so a pass that has since gone stale —
+//     `codeMoves` moved the content out from under it — is not "still holding" here either, exactly
+//     as the real graph would see it. A REFUSED entry never triggers this, in force or not: the
+//     real CLI's `kind === 'refused'` branch is one `resolvePair` lets straight through.
 function stubSource({ calls, lock, content, packageFails }) {
   return `import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -136,6 +144,21 @@ const hashes = (k) => {
   const content = readJson(CONTENT, {})[k] || 'c1';
   return { pass: content + '-pass', refused: content + '-refused' };
 };
+// The refusal both verdict package and verdict record run through before anything else — the
+// stand-in's own resolvePair. Re-derived from LOCK and the current content every call, never from
+// a stored flag: only a pass whose recorded hash still equals hashes(k).pass right now is "in
+// force"; a refused entry, or a pass the content has since moved past, falls through untouched.
+const refuseIfPassInForce = (aspect, unit) => {
+  const k = key(aspect, unit);
+  const entry = readJson(LOCK, {})[k];
+  if (!entry || entry.verdict !== 'pass' || entry.hash !== hashes(k).pass) return;
+  console.error(
+    aspect + ' on ' + unit.kind + ':' + unit.path + ' already holds a verdict for exactly these inputs. '
+    + 'A verdict in force is re-proved by hashing, and recording a second one over it would replace a '
+    + 'judgement that still applies with no evidence that anything changed.',
+  );
+  process.exit(1);
+};
 
 if (args[0] === '--version') { console.log('6.0.0'); process.exit(0); }
 
@@ -151,13 +174,16 @@ if (args[0] === 'verdict' && args[1] === 'read') {
 if (args[0] === 'verdict' && args[1] === 'package') {
   if (PACKAGE_FAILS) { console.error('no pending pair for that rule and unit'); process.exit(1); }
   const unit = target();
-  console.log(JSON.stringify({ schema: 'yg-review/1', unit, hashes: hashes(key(flag('--aspect'), unit)) }));
+  const aspect = flag('--aspect');
+  refuseIfPassInForce(aspect, unit);
+  console.log(JSON.stringify({ schema: 'yg-review/1', unit, hashes: hashes(key(aspect, unit)) }));
   process.exit(0);
 }
 
 if (args[0] === 'verdict' && args[1] === 'record') {
   const aspect = flag('--aspect');
   const unit = target();
+  refuseIfPassInForce(aspect, unit);
   const k = key(aspect, unit);
   const verdict = flag('--verdict');
   const want = hashes(k)[verdict];
@@ -869,12 +895,103 @@ test('the stand-in CLI cannot be made to hold two verdicts for one pair, because
   );
 
   // And the slot really is last-write-wins: two judges in turn leave one entry, the second's.
+  // tier-a refuses first, never passes — a pass still in force can never be packaged or recorded
+  // over (the stand-in's own refusal, proved directly below), so the only sequence that can ever
+  // put a second judgement in the slot at all starts from a refusal, exactly like every other
+  // two-judge fixture in this file.
+  recordingYg(dir);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'refused' });
+  assert.deepEqual(ygVerdicts(dir).map((v) => `${v.judge} ${v.verdict}`), ['tier-a refused']);
+  judgeRecords(dir, { ...THE_PAIR, by: 'tier-b', verdict: 'pass' });
+  assert.deepEqual(ygVerdicts(dir).map((v) => `${v.judge} ${v.verdict}`), ['tier-b pass'],
+    'recording the second judgement is what destroys the first');
+});
+
+// The real Yggdrasil CLI refuses `verdict package` and `verdict record` outright on a pair whose
+// currently recorded verdict is a pass still bound to the current content — `resolvePair`'s own
+// `kind === 'verified'` branch (source/cli/src/cli/verdict.ts). Nothing above ever needed the
+// stand-in to enforce that: every fixture that reaches a real second `verdict package`/`record`
+// call starts its held first judgement from a refusal, precisely because a pass in force can never
+// get there. These two tests are what closes the gap that leaves open either way: the stand-in's
+// own refusal, proved directly; and retro.mjs meeting that exact refusal for real, not merely its
+// own prediction of it.
+test('the stand-in CLI refuses verdict package and verdict record on a pair whose pass is still in force, the one refusal the real CLI always raises there', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
   recordingYg(dir);
   judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'pass' });
   assert.deepEqual(ygVerdicts(dir).map((v) => `${v.judge} ${v.verdict}`), ['tier-a pass']);
-  judgeRecords(dir, { ...THE_PAIR, by: 'tier-b', verdict: 'refused' });
-  assert.deepEqual(ygVerdicts(dir).map((v) => `${v.judge} ${v.verdict}`), ['tier-b refused'],
-    'recording the second judgement is what destroys the first');
+
+  const unitFlag = THE_PAIR.unit.kind === 'node' ? '--node' : '--file';
+  const packageArgs = ['verdict', 'package', '--aspect', THE_PAIR.aspect, unitFlag, THE_PAIR.unit.path];
+  const recordArgs = [
+    'verdict', 'record', '--aspect', THE_PAIR.aspect, unitFlag, THE_PAIR.unit.path,
+    '--by', 'tier-b', '--verdict', 'refused', '--hash', 'whatever-a-second-judge-would-have-been-told',
+  ];
+
+  await t.test('verdict package refuses outright — exit 1, naming the pair as already holding a verdict', () => {
+    assert.throws(() => stub(dir, packageArgs), (err) => {
+      assert.equal(err.status, 1);
+      assert.match(err.stderr.toString(), /already holds a verdict for exactly these inputs/);
+      return true;
+    });
+  });
+
+  await t.test('verdict record refuses the same way, before it ever looks at what --hash was given', () => {
+    assert.throws(() => stub(dir, recordArgs), (err) => {
+      assert.equal(err.status, 1);
+      assert.match(err.stderr.toString(), /already holds a verdict for exactly these inputs/);
+      return true;
+    });
+  });
+
+  await t.test('a REFUSED entry never triggers this, in force or not — only a pass does', () => {
+    recordingYg(dir);
+    judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'refused' });
+    stub(dir, packageArgs); // throws if wrongly refused — it must not
+    judgeRecords(dir, { ...THE_PAIR, by: 'tier-b', verdict: 'pass' });
+    assert.deepEqual(ygVerdicts(dir).map((v) => `${v.judge} ${v.verdict}`), ['tier-b pass']);
+  });
+
+  await t.test('a pass the content has since moved past is not "in force" either — content-keyed, not a static flag', () => {
+    codeMoves(dir, THE_PAIR);
+    stub(dir, packageArgs); // throws if wrongly refused — it must not: the recorded hash is now stale
+    judgeRecords(dir, { ...THE_PAIR, by: 'tier-a', verdict: 'refused' });
+    assert.deepEqual(ygVerdicts(dir).map((v) => `${v.judge} ${v.verdict}`), ['tier-a refused']);
+  });
+});
+
+test('retro.mjs: a real verdict-package refusal on a still-in-force pass is skipped cleanly even when the inventory did not flag it as in force first', async (t) => {
+  const dir = judgeFixture(t);
+  // Seeded straight into the slot rather than reached through judgeRecords: a pass whose hash is
+  // bound to the CURRENT content — so the stand-in's own content-keyed guard sees it as genuinely
+  // still holding — but with inForce explicitly false, the one field measureJudge's own prediction
+  // reads to decide whether to call `verdict package` at all (see the `!held` branch in retro.mjs).
+  // This is the shape a bug in that prediction would produce: retro.mjs believes there is nothing
+  // to skip in advance and calls package for real, and what it meets there is the stand-in's own
+  // refusal — not the predicted shortcut, the actual command a caller gets back.
+  recordingYg(dir, {
+    verdicts: [{
+      ...THE_PAIR, verdict: 'pass', judge: 'tier-a', hash: 'c1-pass', inForce: false,
+    }],
+  });
+
+  const r = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(r.code, 0, `a measurement never refuses: ${r.stderr}`);
+  assert.equal(r.json.judge.sampled, 1);
+  assert.equal(r.json.judge.pairs.length, 0);
+  assert.equal(r.json.judge.disagreements, 0);
+  assert.equal(r.json.judge.pending.length, 0);
+  assert.equal(r.json.judge.skipped.length, 1);
+  assert.equal(r.json.judge.skipped[0].ticket, '001');
+  assert.equal(r.json.judge.skipped[0].unit, 'file:src/auth/login.mjs');
+  assert.match(r.json.judge.skipped[0].why, /refused/);
+  assert.match(r.json.judge.skipped[0].why, /already holds a verdict for exactly these inputs/);
+  assert.equal(
+    r.json.judge.passInForce.length, 0,
+    'the inventory said inForce: false, so this never took the predicted shortcut — it is a real refusal landing in the ordinary skip pile',
+  );
+  assert.ok(!existsSync(samplesFile(dir)), 'nothing was written down — the refusal was met before there was a first judgement to keep');
 });
 
 test('ticketDeclares: a verdict\'s unit belongs to a ticket by its declared Files, never by substring', (t) => {

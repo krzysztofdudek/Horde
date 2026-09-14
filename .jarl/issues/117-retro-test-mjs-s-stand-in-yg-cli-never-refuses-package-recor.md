@@ -20,3 +20,5 @@ retro.mjs's fix for issue 115 works around this by predicting the refusal from t
 
 ## Evidence
 
+- **ran:** cd /tmp/horde-worktrees/117-retro-test-stand-in-yg-cli-pass-in-force/skills/horde/scripts && HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" timeout 300 node --test tests/retro.test.mjs · **saw:** tests 56, pass 56, fail 0, cancelled 0, skipped 0, exit code 0 — includes 2 new tests (one with 4 sub-tests) proving the stand-in CLI's verdict package/record refuse a pair whose pass is still in force, and that retro.mjs's measureJudge() handles a real (unpredicted) refusal correctly; the pre-existing 'cannot be made to hold two verdicts for one pair' test was updated to start its two-judge sequence from a refusal since the old pass-then-overwrite sequence is now correctly refused
+
