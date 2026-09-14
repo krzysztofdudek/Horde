@@ -376,3 +376,4 @@
 - 2026-09-14 01:56 · 059 evidence row · node --test tests/docs.test.mjs
 - 2026-09-14 01:56 · 059 → done · merged
 - 2026-09-14 02:00 · filed 095 · resolveHordeTrunk's doc comment still says land.mjs is a future script
+- 2026-09-14 02:01 · filed 096 · horde.mjs defaultConfig's keyContext constant has no provenance row
