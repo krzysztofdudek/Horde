@@ -1,6 +1,6 @@
 # 098 · acquireRetroLock/acquireGateLock: a lock file that exists but is not yet fully written is treated as dead and stolen
 
-**Status:** open
+**Status:** done
 **Kind:** bug
 **Priority:** 2
 **Tier:** strong
@@ -68,4 +68,5 @@ fault injection, so the fix is provable red-before/green-after on demand. Cover 
 - **ran:** strace -f -e trace=openat,write,close node wxtest.mjs (wxtest.mjs: writeFileSync(path,'{}',{flag:'wx'})) · **saw:** openat(...O_CREAT|O_EXCL|O_WRONLY...)=20 then write(20,"{}",2)=2 then close(20)=0 -- three separate syscalls, confirming writeFileSync(...,{flag:'wx'}) has a create-then-populate gap, not one atomic step
 - **ran:** node orchestrator.mjs 400 60 500, six times in a row (byte-for-byte port of acquireRetroLock's decision/write logic; one contender's write delayed 400ms after create, the other 100% unmodified, both racing the same lock path) · **saw:** 6/6 runs: DOUBLE-ACQUISITION CONFIRMED -- the unmodified contender read the still-empty file left by the delayed one, treated it as stale, deleted and retook it, and both contenders' logged [acquired,released] windows overlapped in wall-clock time (e.g. real 24.244-24.744Z fully containing slow 24.561-24.682Z)
 - **ran:** same harness with 0 injected delay (control): two 100%-unmodified contenders racing normally, repeated · **saw:** lock serialized correctly every time -- one acquires and fully releases before the other's writeFileSync(wx) is even attempted; no overlap. Matches 090's reviewer's clean 220+161 runs: the natural window is real but far too narrow to hit without widening it
+- **ran:** node --test tests/retro.test.mjs tests/land.test.mjs (rebased tip, then merged main) · **saw:** 36/36 and 57/57 pass, both runs
 
