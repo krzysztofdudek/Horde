@@ -135,7 +135,7 @@ Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (cou
 "Identifiers" below). A ticket reads as `t-NNN`; NNN alone is the same ticket, and stays the name of
 its folder and of the `id:` its issue.md carries.
 - `new <slug> --title "…" --node n --class light|standard|heavy|max [--severity high|medium|low]
-  [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
+  [--kind work|quality|prototype] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
   [--produces <node>/<port>,…] [--evidence "…"]… [--revert-base <ref>] [--mutate "<command>"]` —
   from `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries
   a contract between them; three or more is refused — nothing in the graph answers for the whole of
@@ -231,8 +231,9 @@ can release the lock — is taken over immediately rather than waited on.
   `running` ticket's own lock: a ticket declaring `**Files:**` collides only on an overlapping
   path or glob; a ticket with none (or a `running` item whose ticket can no longer be read) locks
   every file of every node it names instead — the safe degradation for a ticket that never said
-  which files it touches. Ranked: a `quality`-kind ticket (`tk.mjs new --kind quality`) always
-  last, whatever its severity; then severity (read live from the ticket on every call, high
+  which files it touches. Ranked: a `prototype`-kind ticket (`tk.mjs new --kind prototype`) always
+  first and a `quality`-kind one (`tk.mjs new --kind quality`) always
+  last, whatever either's severity; then severity (read live from the ticket on every call, high
   first); then the longer remaining critical path through the ticket wins — `queue.mjs plan`'s own
   DAG, read straight off one in-process `buildPlan()` call, never a second, shelled-out `plan`;
   then a ticket whose nodes hold no `running` ticket; then FIFO by queue order. `--why` prints

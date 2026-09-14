@@ -308,10 +308,11 @@ test('tk.mjs: new --mutate sets the header; omitted, it renders empty (default: 
   });
 });
 
-test('tk.mjs: new --kind defaults to "work"; "quality" is the only other value accepted', async (t) => {
+test('tk.mjs: new --kind defaults to "work"; "quality" and "prototype" are the other two values accepted', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
+  seedCharterEvidence(dir, 'mission1', [['E1', 'the shift board shows a week', 'core']]);
 
   await t.test('omitted, the ticket is "work"', () => {
     const r = run('tk.mjs', ['new', 'default-kind', '--title', 'Default kind', '--node', 'core', '--class', 'standard'], dir);
@@ -329,10 +330,112 @@ test('tk.mjs: new --kind defaults to "work"; "quality" is the only other value a
     assert.match(shown.json.text, /\*\*Kind:\*\* quality/);
   });
 
+  await t.test('--kind prototype marks something built to be looked at', () => {
+    const r = run('tk.mjs', ['new', 'shift-board', '--title', 'Something to look at', '--node', 'core', '--class', 'standard', '--kind', 'prototype', '--evidence', 'E1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.kind, 'prototype');
+    const shown = run('tk.mjs', ['show', r.json.id], dir);
+    assert.match(shown.json.text, /\*\*Kind:\*\* prototype/);
+  });
+
   await t.test('any other value is refused', () => {
     const r = run('tk.mjs', ['new', 'bad-kind', '--title', 'Bad kind', '--node', 'core', '--class', 'standard', '--kind', 'bogus'], dir);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /--kind must be one of: work, quality/);
+    assert.match(r.stderr, /--kind must be one of: work, quality, prototype/);
+  });
+});
+
+// A prototype earns no verdict: the only thing that can say it worked is the person who asked for
+// the thing, and their answer is written against the catalogue row the prototype was built to
+// describe. Everything below is that answer's contract — it names one row, it carries a real
+// fingerprint of what was shown, and it never turns the row itself green.
+test('tk.mjs: a prototype frames one catalogue row, and only a recorded acceptance answers it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedCharterEvidence(dir, 'mission1', [
+    ['E1', 'the shift board shows a week', 'core'],
+    ['E2', 'a swap is confirmed in one tap', 'core'],
+  ]);
+  const charterPath = join(dir, '.horde', 'hordes', 'mission1', 'charter.md');
+  const newPrototype = (slug, evidence) => run('tk.mjs', [
+    'new', slug, '--title', 'Something to look at', '--node', 'core', '--class', 'standard',
+    '--kind', 'prototype', ...evidence.flatMap((e) => ['--evidence', e]),
+  ], dir);
+
+  await t.test('a prototype naming no row is refused — there is nothing for the answer to stand on', () => {
+    const r = newPrototype('no-row', []);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /prototype names exactly one evidence row/);
+  });
+
+  await t.test('a prototype naming two rows is refused the same way', () => {
+    const r = newPrototype('two-rows', ['E1, E2']);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /prototype names exactly one evidence row/);
+  });
+
+  const proto = newPrototype('shift-board', ['E1']);
+  await t.test('naming one row, it is filed, and its only acceptance line is the client\'s own answer', () => {
+    assert.equal(proto.code, 0, proto.stderr);
+    const shown = run('tk.mjs', ['show', proto.json.id], dir);
+    assert.match(shown.json.text, /\*\*Evidence:\*\* E1/);
+    assert.match(shown.json.text, /- \[ \] E1 — the client is shown this and their acceptance is recorded/);
+  });
+
+  await t.test('accept without a fingerprint of what was shown is refused', () => {
+    const r = run('tk.mjs', ['accept', proto.json.id, '--by', 'Anna Kowalska'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /accept requires --sha256/);
+  });
+
+  await t.test('accept with something that is not a sha256 is refused, saying what one looks like', () => {
+    const r = run('tk.mjs', ['accept', proto.json.id, '--by', 'Anna Kowalska', '--sha256', 'looked-fine-to-me'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /64 hex characters/);
+  });
+
+  await t.test('accept with nobody accepting it is refused', () => {
+    const r = run('tk.mjs', ['accept', proto.json.id, '--sha256', 'a'.repeat(64)], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /accept requires --by/);
+  });
+
+  const sha = 'b'.repeat(64);
+  await t.test('accepted, the answer stands on the charter against the row it frames', () => {
+    const r = run('tk.mjs', ['accept', proto.json.id, '--by', 'Anna Kowalska', '--sha256', sha], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.evidence, 'E1');
+    assert.equal(r.json.acceptedBy, 'Anna Kowalska');
+    assert.equal(r.json.sha256, sha);
+
+    const charter = readFileSync(charterPath, 'utf8');
+    assert.match(charter, /^## Prototypes accepted$/m);
+    assert.match(charter, new RegExp(`\\| E1 \\| ${proto.json.id} \\| ${sha} \\| Anna Kowalska \\| \\S+ \\|`));
+    assert.match(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${proto.json.id}-shift-board`, 'log.md'), 'utf8'), /accepted by Anna Kowalska/);
+  });
+
+  await t.test('and the row itself is not green — seeing a thing is not having built it', () => {
+    const charter = readFileSync(charterPath, 'utf8');
+    assert.match(charter, /\| E1 \| the shift board shows a week \| core \|\s+\|/);
+  });
+
+  await t.test('accepted twice, the answer is replaced rather than repeated', () => {
+    const again = 'c'.repeat(64);
+    const r = run('tk.mjs', ['accept', proto.json.id, '--by', 'Bartek Nowak', '--sha256', again], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const charter = readFileSync(charterPath, 'utf8');
+    assert.equal([...charter.matchAll(/^## Prototypes accepted$/gm)].length, 1);
+    assert.equal([...charter.matchAll(/^\| E1 \| \d/gm)].length, 1);
+    assert.match(charter, new RegExp(`\\| E1 \\| ${proto.json.id} \\| ${again} \\| Bartek Nowak \\|`));
+  });
+
+  await t.test('a ticket that is not a prototype has nothing to accept', () => {
+    const work = run('tk.mjs', ['new', 'build-it', '--title', 'Build it', '--node', 'core', '--class', 'standard', '--evidence', 'E2'], dir);
+    assert.equal(work.code, 0, work.stderr);
+    const r = run('tk.mjs', ['accept', work.json.id, '--by', 'Anna Kowalska', '--sha256', 'd'.repeat(64)], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /is not a prototype/);
   });
 });
 

@@ -25,7 +25,9 @@ checklist refuses a diff that reaches past it, and widening it is `tk.mjs edit N
 
 ## Acceptance — evidence
 
-Each line is something a verifier reproduces without talking to the author:
+Each line is something a verifier reproduces without talking to the author. A prototype ticket is
+the one exception: its single line is the client's own acceptance of what they were shown, recorded
+with `tk.mjs accept`, and nothing else counts for it.
 
 - [ ] …
 

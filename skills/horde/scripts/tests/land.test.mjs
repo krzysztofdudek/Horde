@@ -37,14 +37,14 @@ function issueDir(dir, team, id) {
 }
 
 function writeIssue(dir, team, id, {
-  node = 'feature', files = null, produces = null, evidence = null,
+  node = 'feature', files = null, produces = null, evidence = null, kind = null,
 } = {}) {
   const dst = issueDir(dir, team, id);
   mkdirSync(dst, { recursive: true });
   writeFileSync(join(dst, 'issue.md'), [
     `# ${id} · Sample ticket`, '',
     '**Status:** landed',
-    `**Node:** ${node} · **Class:** standard · **Severity:** medium · **Team:** ${team}`,
+    `**Node:** ${node} · **Class:** standard · **Severity:** medium · **Team:** ${team}${kind ? ` · **Kind:** ${kind}` : ''}`,
     `**Depends on:** none · **Branch:** mission1/t-${id}`,
     ...(files ? [`**Files:** ${files.join(', ')}`] : []),
     ...(produces ? [`**Consumes:** none · **Produces:** ${produces}`] : []),
@@ -108,7 +108,7 @@ function makeTicketBranch(dir, id, { fromRef = 'mission1/trunk', extraFiles = {}
 // test, and a queue item naming it.
 function setupLandable(dir, id, {
   marker = false, prose = false, reviewer = false, judge = 'one-shot', files = null, extraFiles = {}, mapping = null,
-  evidence = null,
+  evidence = null, kind = null, cutPrototypeBranch = false, fromRef = 'mission1/trunk',
 } = {}) {
   initHorde(dir);
   if (reviewer) assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
@@ -129,13 +129,15 @@ function setupLandable(dir, id, {
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
   run('horde.mjs', ['config', 'set', 'judge', judge], dir);
   commitGraph(dir);
+  if (cutPrototypeBranch) git(['branch', 'mission1/prototype', 'mission1/trunk'], dir);
 
   const branch = makeTicketBranch(dir, id, {
+    fromRef,
     extraFiles: marker
       ? { [`feature-${id}.mjs`]: 'export function add(a, b) { return a + b; } // UNFINISHED\n', ...extraFiles }
       : extraFiles,
   });
-  const dst = writeIssue(dir, 'trunk', id, { ...(files ? { files } : {}), ...(evidence ? { evidence } : {}) });
+  const dst = writeIssue(dir, 'trunk', id, { ...(files ? { files } : {}), ...(evidence ? { evidence } : {}), ...(kind ? { kind } : {}) });
   writeTicketLog(dst);
   seedQueueItem(dir, 'trunk', id, branch);
   return { branch, issueDir: dst };
@@ -213,6 +215,50 @@ test('land.mjs: --no-gate reports the cheap items and never merges', async (t) =
   assert.equal(r.json.landed, null);
   assert.equal(git(['rev-parse', 'mission1/trunk'], dir), before, 'trunk is untouched');
   assert.notEqual(git(['branch', '--list', branch], dir), '', 'the branch is still there');
+});
+
+// ---- the prototype ---------------------------------------------------------------------
+//
+// A prototype is built to be looked at and answered, never kept. Nothing verified it — that is
+// what it is for — so the trunk, the line every later ticket is cut from, is the one place it may
+// not reach. It is cut from the mission's prototype branch and merges back there, and nothing
+// merges that onward.
+
+test('land.mjs: a prototype rooted on the trunk is refused outright, and the trunk does not move', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '070', { kind: 'prototype' });
+  const before = git(['rev-parse', 'mission1/trunk'], dir);
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /is a prototype/);
+  assert.match(r.stderr, /mission1\/prototype/);
+  assert.match(r.stderr, /never merges into mission1\/trunk/);
+  assert.equal(git(['rev-parse', 'mission1/trunk'], dir), before, 'the trunk is untouched');
+  assert.notEqual(git(['branch', '--list', branch], dir), '', 'and the branch is still there');
+});
+
+test('land.mjs: a prototype cut from the prototype branch lands there, and only there', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '071', {
+    kind: 'prototype', cutPrototypeBranch: true, fromRef: 'mission1/prototype',
+  });
+  const trunkBefore = git(['rev-parse', 'mission1/trunk'], dir);
+  const protoBefore = git(['rev-parse', 'mission1/prototype'], dir);
+  const tip = git(['rev-parse', branch], dir);
+
+  const r = run('land.mjs', [branch], dir);
+  if (r.code !== 0) console.error(r.stdout, r.stderr);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.ok, true);
+
+  assert.equal(git(['rev-parse', 'mission1/trunk'], dir), trunkBefore, 'the trunk never sees it');
+  const protoAfter = git(['rev-parse', 'mission1/prototype'], dir);
+  assert.notEqual(protoAfter, protoBefore);
+  assert.equal(r.json.landed.sha, protoAfter);
+  assert.deepEqual(git(['rev-list', '--parents', '-n', '1', protoAfter], dir).split(' ').slice(1), [protoBefore, tip]);
 });
 
 // ---- the judge ------------------------------------------------------------------------

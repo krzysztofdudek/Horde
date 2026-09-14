@@ -41,6 +41,13 @@ import {
 // dependencies here — is exactly the thing worth avoiding, because a cycle is only caught once the
 // whole DAG is built, and that lives there.
 import { addDependency } from './queue.mjs';
+// The charter is wave.mjs's document: setReproducedBy's own note calls itself the one edit any
+// tool here makes to it, and a prototype's acceptance is the second. Both writers therefore live
+// there, beside the readers that have to agree with them — the alternative, a second private
+// derivation of "what an accepted prototype looks like on the charter", is exactly the drift the
+// catalogue's own reader exists to prevent. The cycle this closes is one tk.mjs already stands in
+// (queue.mjs imports both), and every binding on both sides is a hoisted function declaration.
+import { recordPrototypeAcceptance } from './wave.mjs';
 
 // "blocked" is where a ticket stops rather than pretends: its fix rounds are spent, so another
 // round would be a state dressed up as progress. Nothing in this tool set moves it out again —
@@ -62,7 +69,12 @@ const SEVERITIES = ['high', 'medium', 'low'];
 // improvement outside a wave's assigned scope (better graph, normalization, tidy-up) that
 // `queue.mjs next` always ranks after every work ticket, whatever its severity, per the
 // quality-always-authorised ruling: quality is raised in free parallelism, never ahead of the work.
-const KINDS = ['work', 'quality'];
+// "prototype" is the third: something that looks like the thing so the client can see it and say
+// what they meant. It earns no verdict and never merges into the trunk (land.mjs refuses that
+// outright) — its only evidence is the client's own acceptance, recorded against the one charter
+// row it was built to describe, and only once that answer exists does the row get the tickets
+// that build the real thing.
+const KINDS = ['work', 'quality', 'prototype'];
 // A ticket's own answer to the charter's quality policy (ruling quality-always-authorised). The
 // mission's policy is the default; `tk.mjs new --no-quality` sets this one ticket to
 // "only-the-work" — the work it names, nothing beside it — which is how a single delicate change
@@ -83,7 +95,11 @@ commands:
       three or more is refused, since nobody holds the whole of such a diff.
       --kind defaults to "work"; "quality" marks a self-filed improvement outside a wave's
       assigned scope (better graph, normalization, tidy-up) — queue.mjs next always ranks it
-      after every work ticket, whatever its severity.
+      after every work ticket, whatever its severity. "prototype" marks something built to be
+      looked at so the client can say what they meant: it names exactly one evidence row with
+      --evidence, its only acceptance line is the client's own answer, it is worked before every
+      work ticket, it lands on "<horde>/prototype" and never on the trunk, and the row it names
+      gets no other ticket until "accept" below has recorded that answer.
       --no-quality walls this one ticket off from the mission's quality policy: the work it names
       and nothing beside it, whatever the charter says. It never permits the opposite — nothing
       here can make a rule weaker at any setting.
@@ -114,6 +130,13 @@ commands:
       refuses.
   log <ticket> "<text>" [--horde h]
   grep <regex> [--horde h]
+  accept <ticket> --sha256 <hex> --by "<who>" [--horde h]
+      records the client's acceptance of a prototype against the one evidence row it names: what
+      they were shown (a sha256, 64 hex characters — refused otherwise, and refused when missing),
+      who accepted it, and when. Written into the charter's "Prototypes accepted" section, never
+      into the row's own "reproduced by" cell: saying "yes, that is what I meant" is not saying it
+      is built. Refuses a ticket that is not a prototype. Until it has run, queue.mjs refuses every
+      other ticket against that row.
   review-request <ticket> [--delta <path>] [--horde h]
       appends a timestamped log entry. --delta names a diff file you write yourself (e.g.
       \`git diff <approved-sha>..HEAD -- <files> > path/to/diff\`), holding the difference between
@@ -154,7 +177,22 @@ export function nodesOf(text) {
 // A ticket written before the Kind field existed (or written by hand) reads as "work" — the
 // field degrades to the mission-scope default rather than to an unrecognized value.
 export function ticketKind(text) {
-  return parseField(text, 'Kind') === 'quality' ? 'quality' : 'work';
+  const kind = parseField(text, 'Kind');
+  return KINDS.includes(kind) ? kind : 'work';
+}
+
+// The branch every prototype of a horde is worked and landed on, and the one branch nothing merges
+// onward. Named here, beside the kind it belongs to, because two tools need it for opposite
+// reasons — queue.mjs cuts a prototype's branch from it, land.mjs refuses a prototype cut from
+// anywhere else — and a prototype that can never land is exactly what two spellings of it would
+// produce.
+export function prototypeBranchOf(horde) { return `${horde}/prototype`; }
+
+// The one catalogue row a prototype was built to describe. Null for every other kind of ticket:
+// only a prototype has a row it answers rather than rows it earns.
+export function prototypeRow(text) {
+  if (ticketKind(text) !== 'prototype') return null;
+  return ticketEvidence(text)[0] || null;
 }
 
 // A ticket written before the Quality field existed reads as "autonomous" — the mission's own
@@ -522,6 +560,21 @@ export function createTicket(horde, spec) {
   if (!TICKET_QUALITY.includes(quality)) fail(`ticket quality must be one of: ${TICKET_QUALITY.join(', ')}`);
   checkEvidenceIds(horde, evidence);
   const { ids: evidenceIds, acceptance } = splitEvidenceValues(evidence);
+  // A prototype answers one promise, and it answers it by being looked at. Without a row it has
+  // nothing to be an answer to, and with two it would be asking the client one question about two
+  // things — which is the question nobody can answer with "yes, that is what I meant". The row is
+  // named the same way every other ticket names one, so the plan reads a prototype without
+  // knowing it is one.
+  if (kind === 'prototype') {
+    if (evidenceIds.length !== 1) {
+      fail(`a prototype names exactly one evidence row — the promise it is built to describe — and this one names ${evidenceIds.length === 0 ? 'none' : evidenceIds.join(', ')}. File it with --evidence <id> naming a row of the charter's catalogue`);
+    }
+    // Its only acceptance line, written here rather than left to whoever files it: a prototype has
+    // no other evidence, and one that shipped with an ordinary checklist would be measured against
+    // a standard it was never meant to meet.
+    acceptance.length = 0;
+    acceptance.push(`${evidenceIds[0]} — the client is shown this and their acceptance is recorded: what they saw, who accepted it, when (\`tk.mjs accept\`)`);
+  }
 
   const files = listFlag(fileList);
   const consumes = parsePortList(consumesRaw, 'Consumes');
@@ -727,6 +780,51 @@ function cmdReviewRequest(horde, positional, flags) {
 }
 
 
+// --- the client's answer to a prototype -------------------------------------------------------
+
+// A sha256 and nothing else: the whole worth of this record is that it names WHAT was accepted, so
+// a later argument about what the client agreed to is settled by a hash rather than by memory. Any
+// other string would make the record a note, and a note proves nothing.
+const SHA256_RE = /^[0-9a-f]{64}$/i;
+
+// The one thing that can close a prototype. It is not a verdict and not a gate: the person who
+// asked for the thing looked at it and said yes, and that answer is written against the catalogue
+// row the prototype was built to describe. Only then does that row get the tickets that build the
+// real thing — queue.mjs refuses them until it exists.
+function cmdAccept(horde, positional, flags) {
+  const ticket = requireTicket(horde, positional[0]);
+  const kind = ticketKind(ticket.text);
+  if (kind !== 'prototype') {
+    fail(`${ticket.id} is not a prototype (it is "${kind}") — an acceptance records that the client looked at something and said it is what they meant, and only a prototype is built to be looked at. Work is answered by the gate it lands through, not by this`);
+  }
+  const row = prototypeRow(ticket.text);
+  if (!row) fail(`${ticket.id} is a prototype but names no evidence row, so there is nothing for the acceptance to stand against. Give it one with "tk.mjs edit ${ticket.id} --evidence <id> --by <name>"`);
+  if (typeof flags.sha256 !== 'string' || !flags.sha256.trim()) {
+    fail(`accept requires --sha256 <hex> — the fingerprint of exactly what the client was shown. Without it the record says somebody approved something, which settles nothing the day it is questioned`);
+  }
+  const sha256 = flags.sha256.trim().toLowerCase();
+  if (!SHA256_RE.test(sha256)) fail(`--sha256 takes a sha256: 64 hex characters. Got "${flags.sha256}"`);
+  if (typeof flags.by !== 'string' || !flags.by.trim()) fail('accept requires --by "<who accepted it>" — an acceptance nobody signed is nobody\'s');
+  const acceptedBy = flags.by.trim();
+
+  const charterPath = hordePath(horde, 'charter.md');
+  const charterText = readText(charterPath);
+  if (charterText === null) fail(`no charter at ${charterPath} — the acceptance is recorded against a row of its evidence catalogue, and there is none to record it on`);
+  if (!charterEvidenceIds(horde).has(row)) {
+    fail(`${ticket.id} names evidence row ${row}, which the charter's catalogue does not carry — the row it describes was dropped or renamed after this prototype was filed`);
+  }
+
+  const at = nowIso();
+  writeText(charterPath, recordPrototypeAcceptance(charterText, {
+    id: row, ticket: ticket.id, sha256, acceptedBy, at,
+  }));
+  appendLog(ticket, `prototype accepted by ${acceptedBy} — ${row}, sha256 ${sha256}`);
+
+  emit({
+    id: ticket.id, evidence: row, sha256, acceptedBy, at,
+  }, flags, () => `${ticket.id}: ${row} accepted by ${acceptedBy} — ${sha256}`);
+}
+
 function cmdMove(horde, positional, flags) {
   const ticket = requireTicket(horde, positional[0]);
   if (!flags.team) fail('move requires --team <t>');
@@ -875,6 +973,7 @@ function main() {
     case 'log': return cmdLog(horde, positional, flags);
     case 'grep': return cmdGrep(horde, positional, flags);
     case 'review-request': return cmdReviewRequest(horde, positional, flags);
+    case 'accept': return cmdAccept(horde, positional, flags);
     case 'move': return cmdMove(horde, positional, flags);
     case 'edit': return cmdEdit(horde, positional, flags);
     default: fail(`unknown command: ${cmd} (see --help)`);
