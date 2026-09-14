@@ -11,17 +11,12 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import {
   mkdirSync, rmSync, realpathSync, existsSync, readFileSync, writeFileSync,
 } from 'node:fs';
 import {
-  makeRepo, rmRepo, run, initHorde,
+  makeRepo, rmRepo, run, initHorde, git,
 } from './helpers.mjs';
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
 
 function newTicket(dir, slug) {
   const r = run('tk.mjs', ['new', slug, '--title', slug, '--node', 'core', '--class', 'standard', '--evidence', 'it works'], dir);

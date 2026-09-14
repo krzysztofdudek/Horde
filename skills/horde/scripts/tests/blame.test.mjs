@@ -13,18 +13,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import {
   mkdirSync, writeFileSync, readFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, requireYg, MARKER_CHECK,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, requireYg, MARKER_CHECK, git,
 } from './helpers.mjs';
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
 
 // One real component with one real rule attached to it. Which component owns a file, and which
 // rules reach it, is the graph's own answer (`yg context --file … --json`); what verdict stands

@@ -11,12 +11,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, requireYg, MARKER_CHECK,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, requireYg, MARKER_CHECK, git,
 } from './helpers.mjs';
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
 
 // Merges `sourceBranch` into `targetBranch` from a scratch worktree — nothing checks out another
 // branch in the same worktree a ticket branch lives in, per model.md's rule (lifecycle.test.mjs

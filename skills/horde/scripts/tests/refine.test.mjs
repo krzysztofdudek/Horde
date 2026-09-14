@@ -1,19 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import {
   existsSync, mkdirSync, readFileSync, writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, initHorde, addNode, addAspect, run, yg, MARKER_CHECK,
+  makeRepo, rmRepo, initHorde, addNode, addAspect, run, yg, MARKER_CHECK, git,
 } from './helpers.mjs';
 
 // Every refusal below is exercised through run() — a child process — and never by importing
 // refine.mjs here: fail() calls process.exit(), which would take this whole test run with it (the
 // same reason lib.test.mjs keeps teamPath's refusals at the CLI level).
-
-function git(args, dir) { execFileSync('git', args, { cwd: dir, stdio: 'ignore' }); }
 
 function writeFile(dir, rel, text) {
   const full = join(dir, rel);
@@ -378,9 +375,9 @@ test('refine.mjs --step consult: the brief\'s --consumes/--produces syntax is ex
   addAspect(dir, 'no-marker', { check: MARKER_CHECK });
   writeFile(dir, 'src/auth/login.mjs', 'export const login = 1;\n');
   writeFile(dir, 'src/api/routes.mjs', 'export const routes = 1;\n');
-  execFileSync('git', ['add', '-A'], { cwd: dir, stdio: 'ignore' });
-  execFileSync('git', ['commit', '-qm', 'the graph and the code it governs'], { cwd: dir, stdio: 'ignore' });
-  execFileSync('git', ['branch', '-f', 'develop', 'HEAD'], { cwd: dir, stdio: 'ignore' });
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'the graph and the code it governs'], dir);
+  git(['branch', '-f', 'develop', 'HEAD'], dir);
   initHorde(dir, 'm1');
   seedCharter(dir, 'm1', [
     { id: 'E1', evidence: 'a signed-in user reaches /me', node: 'auth' },

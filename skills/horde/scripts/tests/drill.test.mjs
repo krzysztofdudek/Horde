@@ -8,15 +8,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, requireYg,
+  makeRepo, rmRepo, run, initHorde, addNode, requireYg, git,
   writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE,
 } from './helpers.mjs';
 
 const COMMITTED_CORPUS = join(dirname(fileURLToPath(import.meta.url)), 'drills');
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
 
 const TEST_FILE = `import test from 'node:test';
 import assert from 'node:assert/strict';

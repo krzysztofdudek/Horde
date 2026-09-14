@@ -7,7 +7,7 @@ import {
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode,
+  makeRepo, rmRepo, run, initHorde, addNode, git,
 } from './helpers.mjs';
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 
@@ -27,10 +27,6 @@ function spawnAdd(dir, ticket) {
     child.stderr.on('data', (d) => { stderr += d; });
     child.on('close', (code) => resolve({ code, stdout, stderr }));
   });
-}
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 }
 
 function readyTicket(dir, slug, { severity, node = 'core' } = {}) {

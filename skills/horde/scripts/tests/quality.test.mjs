@@ -13,14 +13,10 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, requireYg,
+  makeRepo, rmRepo, run, initHorde, requireYg, git,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
 
 const planPath = (dir, horde = 'mission1') => join(dir, '.horde', 'hordes', horde, 'plan.md');
 const charterPath = (dir, horde = 'mission1') => join(dir, '.horde', 'hordes', horde, 'charter.md');

@@ -15,17 +15,23 @@ const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 // A commit made through this helper is signed by the sandbox's own commit-signing service
 // (global git config: commit.gpgsign=true, gpg.ssh.program) — nothing to do with the code under
 // test. Under heavy concurrent load that service intermittently answers 503, and git surfaces the
-// failure as the signing program's own stderr followed by "failed to write commit object" (full
-// trace and reproduction: land.test.mjs's own git(), fixed for the same signal). Retry ONLY that
-// one signal, a small bounded number of times with a short backoff; anything else — a real
-// conflict, a rejected commit-msg hook, a bad ref — throws on the first attempt, same as before.
+// failure as the signing program's own stderr followed by "failed to write commit object" (traced
+// and reproduced locally by pointing gpg.ssh.program at a script that fails the same way: the
+// phrase is git's own commit-object-writing step talking, the same for `commit`, `merge` and
+// `revert` alike, whichever one asked for it). Retry ONLY that one signal, a small bounded number
+// of times with a short backoff; anything else — a real conflict, a rejected commit-msg hook, a
+// bad ref — throws on the first attempt, exactly as before this fix.
 //
-// makeRepo() is the only caller of this git(), and its calls are 'init', 'config' (x2), 'add',
-// 'commit' and 'branch' — only 'commit' writes a signed commit object, so only 'commit' is retried
-// here. If a future caller ever needs 'merge' or 'revert' through this helper, port
-// land.test.mjs's commit-vs-merge/revert distinction too: a failed merge/revert has already
-// updated the index and written git's own prepared commit message, so it is finished with a plain
-// `git commit --no-edit`, never by re-issuing the original subcommand verbatim.
+// The one shared, exported git() every test file in this suite imports — originally two separate,
+// narrower copies (this file's own, scoped to what makeRepo() calls, and land.test.mjs's own,
+// which already handled the full commit/merge/revert distinction) before both, and every other
+// test file's uncoordinated local copy, were consolidated here. A caller can lead with a global
+// option that takes a following value (`-C <dir>`, `-c <name>=<value>`) before the actual
+// subcommand — tick.test.mjs, queue.test.mjs and ask.test.mjs all commit through a ticket's own
+// worktree this way, e.g. `git(['-C', worktree, 'commit', '--allow-empty', '-qm', 'work'], repoDir)`
+// — so the retry/recovery logic below locates the real subcommand past any such prefix rather than
+// assuming args[0] names it, and reissues the same prefix on recovery.
+const COMMIT_WRITING_SUBCOMMANDS = new Set(['commit', 'merge', 'revert']);
 const TRANSIENT_SIGNING_SIGNAL = /\b50[234]\b|service unavailable|bad gateway|gateway timeout/i;
 const SIGNING_RETRY_ATTEMPTS = 3;
 const SIGNING_RETRY_BACKOFF_SECONDS = 0.3;
@@ -34,15 +40,39 @@ function isTransientSigningFailure(stderr) {
   return /failed to write commit object/i.test(stderr) && TRANSIENT_SIGNING_SIGNAL.test(stderr);
 }
 
-function git(args, cwd) {
-  if (args[0] !== 'commit') {
-    execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-    return;
+// Splits a git() args array into the leading global-option prefix (`-C <dir>`, `-c <name>=<value>`
+// — the only two forms any caller in this suite uses ahead of a subcommand) and the subcommand
+// that follows it, so retry/recovery can identify the real subcommand, and reissue the same
+// prefix, regardless of what precedes it.
+function splitSubcommand(args) {
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i];
+    if (a === '-C' || a === '-c') { i += 1; continue; }
+    if (typeof a === 'string' && a.startsWith('-')) continue;
+    return { prefix: args.slice(0, i), subcommand: a };
+  }
+  return { prefix: args.slice(), subcommand: undefined };
+}
+
+export function git(args, cwd) {
+  const { prefix, subcommand } = splitSubcommand(args);
+  if (!COMMIT_WRITING_SUBCOMMANDS.has(subcommand)) {
+    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   }
   for (let attempt = 1; attempt <= SIGNING_RETRY_ATTEMPTS; attempt += 1) {
+    // Attempt 1 always runs the caller's own command. A `merge` or `revert` that failed at the
+    // signing step has already updated the index and written git's own prepared commit message —
+    // re-issuing the same subcommand fails outright ("already in progress" / "local changes would
+    // be overwritten"); the correct way to finish it is a plain `git commit --no-edit` (behind the
+    // same prefix, if any, so it still targets the right worktree), which reuses that prepared
+    // message (verified locally: it reproduces the exact commit `merge` or `revert` would have
+    // made). A plain `commit` that failed at signing leaves the index untouched, so re-issuing the
+    // exact same command is both correct and simpler — `--no-edit` does NOT recover a `-m` message
+    // here (verified locally: it aborts on an empty commit message), so it is only used to finish
+    // an already-staged `merge`/`revert`.
+    const thisAttempt = (attempt === 1 || subcommand === 'commit') ? args : [...prefix, 'commit', '--no-edit'];
     try {
-      execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-      return;
+      return execFileSync('git', thisAttempt, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
     } catch (e) {
       const stderr = e.stderr ? e.stderr.toString() : '';
       const transient = isTransientSigningFailure(stderr);
@@ -57,6 +87,8 @@ function git(args, cwd) {
       execFileSync('sleep', [String(SIGNING_RETRY_BACKOFF_SECONDS * attempt)]);
     }
   }
+  // Unreachable: SIGNING_RETRY_ATTEMPTS >= 1, and every iteration above either returns or throws.
+  return undefined;
 }
 
 // makeRepo() — a temp git repo with one commit on the default branch and a "develop" branch,

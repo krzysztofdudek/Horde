@@ -7,7 +7,7 @@ import {
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, initHorde, addNode, run, yg,
+  makeRepo, rmRepo, initHorde, addNode, run, yg, git,
   writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE,
 } from './helpers.mjs';
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
@@ -18,8 +18,6 @@ const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 // Every refusal below goes through run() — a child process — and never by importing retro.mjs
 // here: fail() calls process.exit(), which would take this whole test run with it. `wilson` is
 // the one exception, because it is arithmetic and refuses nothing.
-
-function git(args, dir) { execFileSync('git', args, { cwd: dir, stdio: 'ignore' }); }
 
 function hordeFile(dir, horde, ...parts) {
   return join(dir, '.horde', 'hordes', horde, ...parts);
@@ -1485,7 +1483,7 @@ test('retro.mjs: no --horde stays on cwd; --horde written out resolves to that h
     const r = run('retro.mjs', [], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.equal(existsSync(trunkWorktree), false, 'trunk\'s own separate worktree was never provisioned');
-    assert.equal(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim(), 'develop');
+    assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], dir), 'develop');
   });
 
   await t.test('--horde mission1 written out: this horde\'s own trunk worktree gets provisioned, a different tree entirely', () => {
@@ -1493,6 +1491,6 @@ test('retro.mjs: no --horde stays on cwd; --horde written out resolves to that h
     assert.equal(r.code, 0, r.stderr);
     assert.equal(existsSync(trunkWorktree), true, '--horde written out: trunk\'s own separate worktree was provisioned');
     // Shared state, not part of either tree: the main checkout is left exactly where it was.
-    assert.equal(execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: dir, encoding: 'utf8' }).trim(), 'develop');
+    assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], dir), 'develop');
   });
 });
