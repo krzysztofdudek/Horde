@@ -1,0 +1,10 @@
+name: EvidenceIsLive
+description: The thing that keeps a live promise actually runs — nothing in it is marked to be skipped, and nothing in it is marked as the only case that runs.
+reviewer:
+  type: deterministic
+status: enforced
+errs: exact
+# No scope block, on purpose, and for the same reason has-evidence carries none:
+# this rule reads a promise AND the file that keeps it, so it has to be handed
+# both. Narrowing it to markdown would leave it looking at promises alone, which
+# is the half that never carries the marker.

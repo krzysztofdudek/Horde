@@ -1,7 +1,7 @@
 # The `promises` package — an evidence layer for a repository that has none.
 #
 # A promise is one file saying, in the product's own words, one thing the software
-# does. Something that runs keeps it honest. These four rules ask for that shape
+# does. Something that runs keeps it honest. These five rules ask for that shape
 # and nothing else: they never name a directory, a runner, a framework or a
 # fixture, because the repository that installs them decides all four by what it
 # maps the rules onto.
@@ -18,6 +18,7 @@ aspects:
   - doc-shape
   - product-language
   - has-evidence
+  - evidence-is-live
   - evidence-matches-promise
 config:
   doc-shape:
@@ -56,6 +57,32 @@ config:
     named_case_patterns:
       type: string
       default: "test(, it(, Scenario:, def test_, func Test"
+  evidence-is-live:
+    # The same four pairings, read the same way: `auto` reads the pairing off each
+    # promise, or pin one of `mirror`, `named`, `self`, `artefact` for the whole
+    # repository. Set it here to whatever has-evidence is set to, or the two rules
+    # would be reading different files.
+    evidence:
+      type: string
+      default: "auto"
+    # Under `mirror`: what the paired file's name adds to the promise's own.
+    spec_suffix:
+      type: string
+      default: ".test"
+    # Statuses that mean "nothing runs this yet, and that is fine", comma separated.
+    # A promise parked this way may be paired with something switched off.
+    parked_markers:
+      type: string
+      default: "planned, disabled"
+    # The markers that mean a case does not run — one that switches a case off, or
+    # one that names a case as the only one that runs and so switches off every
+    # other case in the same file. A closed set, comma separated, one entry per
+    # convention this rule knows how to look for: a repository narrows the list to
+    # what its own suite uses, and cannot add one, because a marker nobody wrote a
+    # matcher for would be accepted in silence.
+    markers:
+      type: string
+      default: "test.skip, test.fixme, test.only, xit, xdescribe, @pytest.mark.skip, pytest.skip(, t.Skip(, [Ignore], Skip ="
   evidence-matches-promise:
     evidence:
       type: string

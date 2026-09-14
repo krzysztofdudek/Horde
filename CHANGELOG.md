@@ -27,11 +27,12 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - Work sent back past a set number of rounds stops and asks you one question instead of looping.
 - `legislate` writes a component's own rules from what its work has been refused for.
 - `retro` closes a piece of work with three lists: what belongs in a standing rule, what's worth saying once, and what no rule will ever capture.
-- Evidence detection: the mission works out what counts as proof in your repository (test suites, a promises directory, a scenario runner) at the start and uses it; a repository with nothing at all is offered a ready-made `promises` package (four rules, three self-proving for free, the fourth advisory).
+- Evidence detection: the mission works out what counts as proof in your repository (test suites, a promises directory, a scenario runner) at the start and uses it; a repository with nothing at all is offered a ready-made `promises` package (five rules, four self-proving for free, the fifth advisory).
 - Every merge commit records what it landed, what it proved, and what it did to the rules.
 - A finished mission archives its own working directory automatically.
 - `wave close` audits the rules: overdue `review_by` rules become renew-or-retire tickets, unhandled `yg advise`/`grain advise` items are picked up, and rules nothing has hit in two waves are named.
 - One channel reaches you: a stalled worker, work sent back too many times, a request to weaken a rule, or a change to the mission card. Each answer is recorded in the mission's decision log.
+- The evidence package refuses a promise whose proof has been switched off: a promise counts as kept only while the case that keeps it actually runs. A case that is skipped, crossed out, or left behind another one marked as the only case to run is refused — unless the promise says nothing runs it yet. It knows the markers JavaScript, Python, Go and .NET suites use, and a repository can narrow that list to the ones its own suite uses.
 
 ### Changed
 
