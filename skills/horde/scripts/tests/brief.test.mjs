@@ -1,6 +1,5 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import {
   existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, cpSync, mkdtempSync,
 } from 'node:fs';
@@ -8,15 +7,11 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode,
+  makeRepo, rmRepo, run, initHorde, addNode, git,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const REAL_ROLES_DIR = join(SCRIPTS_DIR, '..', 'reference', 'roles');
-
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
 
 // A scratch copy of reference/roles/, so a test that deletes or corrupts a role template never
 // touches the real file on disk — brief.mjs is pointed at the copy via HORDE_TEST_ROLES_DIR, kept
@@ -253,7 +248,7 @@ test('brief.mjs: a stacked ticket\'s brief names the branch it was started from,
   run('queue.mjs', ['add', first], dir);
   run('queue.mjs', ['add', second, '--depends', first], dir);
   const parent = run('queue.mjs', ['set', first, 'running', '--agent', 'worker1'], dir).json;
-  execFileSync('git', ['-C', parent.worktree, 'commit', '--allow-empty', '-qm', 'the first link'], { encoding: 'utf8' });
+  git(['-C', parent.worktree, 'commit', '--allow-empty', '-qm', 'the first link']);
   const stacked = run('queue.mjs', ['set', second, 'running', '--agent', 'worker2', '--on', first], dir);
   assert.equal(stacked.code, 0, stacked.stderr);
 

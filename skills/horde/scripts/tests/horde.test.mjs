@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, requireYg, addNode, addAspect, MARKER_CHECK,
+  makeRepo, rmRepo, run, initHorde, requireYg, addNode, addAspect, MARKER_CHECK, git,
 } from './helpers.mjs';
 
 // Horde requires Yggdrasil: `init` creates the graph when a repository has none, so every direct
@@ -684,10 +684,6 @@ function hordeFile(dir, horde, ...parts) {
   return join(dir, '.horde', 'hordes', horde, ...parts);
 }
 
-function gitIn(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
-
 function ygIn(dir, args) {
   const parts = requireYg().split(/\s+/);
   return execFileSync(parts[0], [...parts.slice(1), ...args], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -704,9 +700,9 @@ function graphOnDevelop(dir) {
   writeFileSync(join(dir, 'src', 'figures', 'month.mjs'), 'export const month = 1;\n');
   addNode(dir, 'entry', { description: 'Letting a request in.', mapping: ['src/entry/**'] });
   addNode(dir, 'figures', { description: 'The month-end numbers.', mapping: ['src/figures/**'] });
-  gitIn(['add', '-A'], dir);
-  gitIn(['commit', '-qm', 'the graph the missions start from'], dir);
-  gitIn(['branch', '-f', 'develop', 'HEAD'], dir);
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'the graph the missions start from'], dir);
+  git(['branch', '-f', 'develop', 'HEAD'], dir);
 }
 
 // One rule, committed onto this mission's own trunk in a worktree of its own, so what the mission
@@ -714,12 +710,12 @@ function graphOnDevelop(dir) {
 // that branch — git checks a branch out in one place at a time.
 function addRuleOnTrunk(dir, horde, aspect, description) {
   const tree = join(dir, `.trunk-${horde}`);
-  gitIn(['worktree', 'add', '-q', tree, `${horde}/trunk`], dir);
+  git(['worktree', 'add', '-q', tree, `${horde}/trunk`], dir);
   addAspect(tree, aspect, { status: 'advisory', check: MARKER_CHECK, description });
   ygIn(tree, ['aspects', 'log', 'add', '--aspect', aspect, '--reason', `Written down because ${horde} kept explaining it by hand.`]);
-  gitIn(['add', '-A'], tree);
-  gitIn(['commit', '-qm', `the rule ${horde} added`], tree);
-  gitIn(['worktree', 'remove', tree, '--force'], dir);
+  git(['add', '-A'], tree);
+  git(['commit', '-qm', `the rule ${horde} added`], tree);
+  git(['worktree', 'remove', tree, '--force'], dir);
 }
 
 function closeMission(dir, horde, {
@@ -808,7 +804,7 @@ test('horde.mjs history: every closed mission, with its charter, evidence, retro
     for (const m of r.json) {
       assert.match(m.id, /^_archive\/(first|second)-mission-\d{4}-\d{2}-\d{2}$/);
       assert.match(m.date, /^\d{4}-\d{2}-\d{2}$/);
-      assert.equal(m.sha, gitIn(['rev-parse', `${m.mission}/trunk`], dir));
+      assert.equal(m.sha, git(['rev-parse', `${m.mission}/trunk`], dir));
     }
   });
 
@@ -846,8 +842,8 @@ test('horde.mjs history: every closed mission, with its charter, evidence, retro
   await t.test('and what it did to the law, read off the diff it handed over', () => {
     const { law } = byMission['first-mission'];
     assert.equal(law.wave, 1);
-    assert.equal(law.base, gitIn(['rev-parse', 'develop'], dir));
-    assert.equal(law.trunk, gitIn(['rev-parse', 'first-mission/trunk'], dir));
+    assert.equal(law.base, git(['rev-parse', 'develop'], dir));
+    assert.equal(law.trunk, git(['rev-parse', 'first-mission/trunk'], dir));
     assert.deepEqual(law.added.map((i) => i.aspect), ['entry-guard']);
     assert.deepEqual(byMission['second-mission'].law.added.map((i) => i.aspect), ['ledger-named']);
   });
@@ -991,7 +987,7 @@ test('E10 — init refuses without Yggdrasil, creates the graph with it, and min
     mkdirSync(join(dir, 'src'), { recursive: true });
     writeFileSync(join(dir, 'src', 'lib.mjs'), 'export const lib = 1; // UNFINISHED\n');
     execFileSync('git', ['add', 'src/lib.mjs'], { cwd: dir });
-    execFileSync('git', ['commit', '-qm', 'the code the graph will describe'], { cwd: dir });
+    git(['commit', '-qm', 'the code the graph will describe'], dir);
 
     const stub = join(dir, 'grain-stub.mjs');
     writeFileSync(stub, GRAIN_STUB);
