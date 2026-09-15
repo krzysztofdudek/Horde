@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  run, findRealYg, git,
+  run, findRealYg, git, initHorde, addNode, addAspect, MARKER_CHECK, makeRepo, rmRepo,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -719,4 +719,348 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     assert.equal(blame.json.rules.available, true);
     assert.equal(blame.json.rules.node, 'src/orders');
   });
+});
+
+// ---- E19-E21 — the 021/022 contract, proven through the real pipeline (issue 033) ---------------
+//
+// land.test.mjs and law-guard.test.mjs already prove these three refusals against land.mjs
+// directly, over a hand-authored ticket and a hand-seeded queue.json — the fixture skips straight
+// to "here is a landable ticket" without ever going through refine.mjs's own cut/consult/review/
+// frame passes or tick.mjs's own dispatch. What follows drives the same three refusals through
+// those real passes instead: `horde.mjs init` on a hand-built graph (addNode/addAspect, the same
+// machinery land.test.mjs and law-guard.test.mjs already use — no `grain propose` here, because
+// this issue's own "What" names init → refine → tick → land with no mining step, and the mining
+// seam is what E18 above already exists to prove), a charter, a real cut and consult, a ticket
+// filed as a proposal and ruled on by review, a real tick dispatch onto a worker's own branch and
+// worktree, and only then land.mjs. This file's own header already carries the heavier
+// Grain+Yggdrasil dual-probe for the one test that needs Grain; none of E19-E21 do, so they use
+// `initHorde()`'s own HORDE_TEST_YG convention (the same one land.test.mjs and law-guard.test.mjs
+// read Yggdrasil through) and fail outright, like every other test in this suite, rather than
+// skip, when there is no real Yggdrasil build to run against.
+//
+// A repository this small still has to keep `mission1/trunk` free for refine.mjs's and tick.mjs's
+// own dedicated worktree at `.horde/worktrees/mission1/trunk` (git refuses to check the same
+// branch out in two places at once) — so unlike land.test.mjs's own commitGraph(), which leaves
+// `dir` sitting on the mission's trunk for the rest of that file's tests (none of which ever call
+// refine.mjs or tick.mjs), the graph below is committed onto `mission1/trunk` and `dir` is moved
+// off it again immediately, before either tool is asked for anything.
+//
+// 020's own graph-reach reading of where a repository keeps its promises (`horde.mjs init` finding
+// the directory off the graph's doc-shape aspect rather than a guessed path) already has its own
+// direct proof in horde.test.mjs, against a stubbed CLI. Nothing below installs the real `promises`
+// package or a `doc-shape` aspect to force that specific reading a second time here: every fixture
+// still puts its promise at the conventional `promises/` path, which is the FIRST path
+// detectPromises guesses once graph reach comes back empty (as it does here, since no fixture
+// declares a doc-shape aspect) — so the same detectPromises/promisesIn code this issue's own three
+// cases stand on still runs for real, end to end, on every one of them; it simply takes that
+// function's other, equally real branch to get there.
+
+function contractPromiseDoc(status) {
+  return [
+    '---',
+    'id: adds-two-numbers',
+    `status: ${status}`,
+    '---',
+    '',
+    '## What it checks',
+    '',
+    'Adding the two numbers gives their sum.',
+    '',
+  ].join('\n');
+}
+
+const CONTRACT_PROMISE_TEST = [
+  "import test from 'node:test';",
+  "import assert from 'node:assert/strict';",
+  '',
+  "test('adds two numbers', () => { assert.equal(1 + 2, 3); });",
+  "test('leaves them alone', () => { assert.equal(1, 1); });",
+  '',
+].join('\n');
+
+function contractCharter(title) {
+  return [
+    `# Mission · ${title}`,
+    '',
+    '**Horde:** `mission1` · **Trunk:** `mission1/trunk` off `develop`',
+    '',
+    '## Goal',
+    '',
+    'A small change lands in a repository that already keeps one promise.',
+    '',
+    '## Acceptance — the evidence catalogue',
+    '',
+    '| id | evidence | node | reproduced by |',
+    '|---|---|---|---|',
+    "| E1 | the repository's own gate is green on the merged tree | feature | |",
+    '',
+  ].join('\n');
+}
+
+// The gate's own report-writing half, copied in SHAPE (not imported — every test file in this
+// suite owns its own fixtures) from land.test.mjs's own gateWriting/junitReport, which this file's
+// header points at for exactly this reason: they are the reference for what a real, report-writing
+// gate command looks like. Base64 so nothing in the report's own punctuation is eaten by the shell
+// on its way through the command.
+function contractGateWriting(path, content) {
+  const payload = Buffer.from(content, 'utf8').toString('base64');
+  return `node -e "const fs=require('fs');const p='${path}';fs.mkdirSync(require('path').dirname(p),{recursive:true});fs.writeFileSync(p,Buffer.from('${payload}','base64'))" && exit 0`;
+}
+
+function contractJunitReport(suites) {
+  const cases = (list) => list.map(({ name, status }) => (status === 'passed'
+    ? `    <testcase name="${name}" classname="contract" time="0.01"/>`
+    : `    <testcase name="${name}" classname="contract" time="0.01"><failure message="boom">stack</failure></testcase>`)).join('\n');
+  return ['<?xml version="1.0" encoding="UTF-8"?>', '<testsuites name="gate" tests="0" failures="0">',
+    ...suites.map((s) => [
+      `  <testsuite name="${s.file}" file="${s.file}" tests="${s.cases.length}" failures="0" errors="0" skipped="0">`,
+      cases(s.cases),
+      '  </testsuite>',
+    ].join('\n')),
+    '</testsuites>', ''].join('\n');
+}
+
+// tk.mjs has no flag for a ticket's own "**No new tests:**" exemption (rare enough that no flag
+// was worth inventing) — every fixture in this suite that needs one hand-edits it onto the
+// issue.md tk.mjs new already wrote, and this is that same hand-edit.
+function declareNoNewTests(issuePath, reason) {
+  const text = readFileSync(issuePath, 'utf8');
+  writeFileSync(issuePath, `${text.trimEnd()}\n**No new tests:** ${reason}\n`);
+}
+
+// The common climb E19, E20 and E21 each make before doing their own one thing: a bare repository,
+// a hand-built graph carrying one script rule and one promise this repository already keeps, and
+// one ticket walked all the way from a filed proposal to a dispatched worker branch through the
+// real refine.mjs and tick.mjs — never a hand-authored queue.json entry. `gate` becomes
+// config.gates.team; `files` and `noNewTests` are the one ticket's own declared Files and its "No
+// new tests" reason — the one thing that differs between the three cases below.
+function buildContractTicket(t, {
+  slug, title, files, noNewTests, gate = 'true',
+}) {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+
+  const init = initHorde(dir);
+  assert.equal(init.graph.created, true, 'a blank graph, made fresh by the real yg init — nothing mined');
+
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  write(dir, 'promises/adds-two-numbers.md', contractPromiseDoc('implemented'));
+  write(dir, 'promises/adds-two-numbers.test.mjs', CONTRACT_PROMISE_TEST);
+  // A placeholder so the node's own `feature/**` mapping glob matches at least one file on every
+  // one of E19-E21's own trees — E19 and E21 never add anything else under `feature/`, and a glob
+  // that matches nothing on disk is a real `yg check` error (mapping-path-missing), not a warning.
+  write(dir, 'feature/README.md', 'What this territory owns.\n');
+  addAspect(dir, 'no-marker', {
+    description: 'Source files must not carry an unfinished-work marker.',
+    check: MARKER_CHECK,
+  });
+  addNode(dir, 'feature', { mapping: ['promises/**', 'feature/**'], aspects: ['no-marker'] });
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'graph: the rule, and the promise this mission starts from'], dir);
+  // Off mission1/trunk again immediately: refine.mjs and tick.mjs each provision their own
+  // dedicated worktree at that exact branch the first time either is asked for it, and git will
+  // not check the same branch out twice at once. `-B develop` both moves and checks out the
+  // mission's own base branch onto the commit just made — dir's own working tree still reads
+  // everything just written (develop and mission1/trunk are identical at this point), and
+  // mission1/trunk stands free for the tools that need it exclusively.
+  git(['checkout', '-q', '-B', 'develop', 'mission1/trunk'], dir);
+
+  assert.equal(run('horde.mjs', ['config', 'set', 'gates.team', gate], dir).code, 0);
+  assert.equal(run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir).code, 0);
+
+  const charter = stdinRun('horde.mjs', ['charter', 'edit'], dir, contractCharter(title));
+  assert.equal(charter.code, 0, charter.stderr);
+
+  const askedCut = run('refine.mjs', ['--step', 'cut', '--horde', 'mission1'], dir);
+  assert.equal(askedCut.code, 0, askedCut.stderr);
+  assert.equal(askedCut.json.state, 'awaiting', 'the first run asks; it does not decide');
+  writeFileSync(askedCut.json.file, `${JSON.stringify({
+    'the feature': { nodes: ['feature'], class: 'standard', why: 'One node, one promise, the whole of this territory.' },
+  }, null, 2)}\n`);
+  const cut = run('refine.mjs', ['--step', 'cut', '--horde', 'mission1'], dir);
+  assert.equal(cut.code, 0, cut.stderr);
+  assert.equal(cut.json.state, 'accepted');
+  assert.deepEqual(cut.json.territories.map((x) => x.territory), ['the feature']);
+  // 020, in passing: the promise directory this mission's own evidence judgement carries is read
+  // off the real repository through the real detection this cut step calls — not asserted by a
+  // stub anywhere in this test, the way horde.test.mjs's own dedicated proof of 020 is.
+  assert.equal(cut.json.evidenceLayer.kind, 'promises');
+  assert.equal(cut.json.evidenceLayer.promises.dir, 'promises');
+
+  const consult = run('refine.mjs', ['--step', 'consult', '--horde', 'mission1'], dir);
+  assert.equal(consult.code, 0, consult.stderr);
+  assert.equal(consult.json.spawns.length, 1);
+
+  const ticket = run('tk.mjs', [
+    'new', slug, '--title', title, '--node', 'feature', '--class', 'standard',
+    '--files', files.join(','), '--evidence', "E1 — the repository's own gate is green on the merged tree",
+  ], dir);
+  assert.equal(ticket.code, 0, ticket.stderr);
+  const issuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', ticket.json.dirName, 'issue.md');
+  declareNoNewTests(issuePath, noNewTests);
+  assert.equal(run('queue.mjs', ['add', ticket.json.id, '--proposed'], dir).code, 0);
+
+  const askedReview = run('refine.mjs', ['--step', 'review', '--horde', 'mission1'], dir);
+  assert.equal(askedReview.code, 0, askedReview.stderr);
+  assert.equal(askedReview.json.state, 'awaiting');
+  writeFileSync(askedReview.json.file, `${JSON.stringify({ [ticket.json.id]: { verdict: 'pass' } }, null, 2)}\n`);
+  const review = run('refine.mjs', ['--step', 'review', '--horde', 'mission1'], dir);
+  assert.equal(review.code, 0, review.stderr);
+  assert.equal(review.json.state, 'applied');
+  assert.equal(review.json.rulings[0].status, 'queued');
+  assert.equal(run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === ticket.json.id).state, 'queued');
+
+  const frame = run('refine.mjs', ['--step', 'frame', '--horde', 'mission1'], dir);
+  assert.equal(frame.code, 0, frame.stderr);
+
+  assert.equal(run('wave.mjs', ['start'], dir).code, 0);
+  const tick = run('tick.mjs', ['--horde', 'mission1'], dir);
+  assert.equal(tick.code, 0, tick.stderr);
+  const entry = tick.json.spawn.find((s) => s.ticket === ticket.json.id);
+  assert.ok(entry, `ticket ${ticket.json.id} was not dispatched: ${JSON.stringify(tick.json.spawn)}`);
+  assert.equal(entry.branch, `mission1/t-${ticket.json.id}`);
+  assert.equal(existsSync(entry.worktree), true);
+  assert.equal(run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === ticket.json.id).state, 'running');
+
+  return {
+    dir, ticketId: ticket.json.id, branch: entry.branch, worktree: entry.worktree,
+  };
+}
+
+// The worker's own half: commit the branch's real change into the worktree tick.mjs already cut,
+// then the two log lines every landable ticket in this suite carries (checkJournal needs a log
+// entry newer than the branch's last commit; review-request is what a real worker writes and
+// nothing downstream gates on).
+function landWorkerBranch(dir, ticketId, worktree, rel, content, message) {
+  write(worktree, rel, content);
+  git(['add', '--', rel], worktree);
+  git(['commit', '-qm', message], worktree);
+  assert.equal(run('tk.mjs', ['log', ticketId, 'ready to land'], dir).code, 0);
+  assert.equal(run('tk.mjs', ['review-request', ticketId], dir).code, 0);
+}
+
+test('E19 — family contract: a skip added to the "adds-two-numbers" promise\'s own test refuses through the real pipeline (021)', async (t) => {
+  const {
+    dir, ticketId, branch, worktree,
+  } = buildContractTicket(t, {
+    slug: 'skip-guard',
+    title: 'Skip a flaky case while nobody is looking',
+    files: ['promises/adds-two-numbers.test.mjs'],
+    noNewTests: 'this ticket edits an existing test file; the suite it starts from already covers the code',
+  });
+
+  landWorkerBranch(
+    dir,
+    ticketId,
+    worktree,
+    'promises/adds-two-numbers.test.mjs',
+    CONTRACT_PROMISE_TEST.replace("test('adds two numbers'", "test.skip('adds two numbers'"),
+    'promises: skip the flaky one for now',
+  );
+
+  const r = run('land.mjs', [branch], dir);
+  const out = `${r.stdout}${r.stderr}`;
+  assert.equal(r.code, 1, out);
+  assert.match(out, /may not land as it stands/);
+  assert.match(out, /evidence:promises\/adds-two-numbers\.test\.mjs \(skip added\)/);
+  assert.match(out, /decisions\.md/, 'and names the way out');
+  assert.match(out, /ask\.mjs add/);
+  assert.match(out, /--kind lower/);
+  assert.equal(git(['rev-list', '--count', '--merges', 'mission1/trunk'], dir), '0', 'nothing landed');
+});
+
+test('E20 — family contract: no case for the "adds-two-numbers" promise in the gate\'s own report refuses through the real pipeline, naming the promise (022)', async (t) => {
+  const REPORT = contractJunitReport([{
+    file: 'feature/helper.test.mjs',
+    cases: [{ name: 'an unrelated case', status: 'passed' }],
+  }]);
+  const {
+    dir, ticketId, branch, worktree,
+  } = buildContractTicket(t, {
+    slug: 'report-guard',
+    title: 'A small, unrelated addition',
+    files: ['feature/helper.mjs'],
+    noNewTests: 'this ticket adds no test file of its own',
+    gate: contractGateWriting('reports/junit.xml', REPORT),
+  });
+  assert.equal(run('horde.mjs', ['config', 'set', 'gates.report.path', 'reports/junit.xml'], dir).code, 0);
+  assert.equal(run('horde.mjs', ['config', 'set', 'gates.report.format', 'junit'], dir).code, 0);
+
+  landWorkerBranch(
+    dir,
+    ticketId,
+    worktree,
+    'feature/helper.mjs',
+    'export function helper() {\n  return true;\n}\n',
+    'feature: a small helper',
+  );
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, `${r.stdout}${r.stderr}`);
+  const gateItem = (r.json && r.json.checks ? r.json.checks : []).find((c) => c.name === 'gate');
+  assert.ok(gateItem, `no "gate" item in the checks — an earlier guard refused instead of the report check: ${r.stdout}${r.stderr}`);
+  assert.equal(gateItem.ok, false, gateItem.note);
+  assert.match(gateItem.note, /^green \(/, 'the command itself was green — the report is what refuses');
+  assert.match(gateItem.note, /no clean run for 1 of 1 live promise\(s\)/);
+  assert.match(gateItem.note, /adds-two-numbers:/, 'the refusal names the promise');
+  assert.match(gateItem.note, /nothing in the report is attributed to promises\/adds-two-numbers\.test\.mjs/);
+  assert.equal(r.json.landed, null, 'and nothing landed');
+  assert.equal(git(['rev-list', '--count', '--merges', 'mission1/trunk'], dir), '0');
+});
+
+test('E21 — family contract: the "adds-two-numbers" promise reverted to planned refuses through the real pipeline without a lower answer, and passes once one is recorded (021)', async (t) => {
+  const {
+    dir, ticketId, branch, worktree,
+  } = buildContractTicket(t, {
+    slug: 'park-guard',
+    title: 'Park a promise while the design is rethought',
+    files: ['promises/adds-two-numbers.md'],
+    noNewTests: 'this ticket edits an existing promise document; nothing here is a test file',
+  });
+
+  landWorkerBranch(
+    dir,
+    ticketId,
+    worktree,
+    'promises/adds-two-numbers.md',
+    contractPromiseDoc('planned'),
+    'promises: park the promise while the design is rethought',
+  );
+
+  const refused = run('land.mjs', [branch], dir);
+  const refusedOut = `${refused.stdout}${refused.stderr}`;
+  assert.equal(refused.code, 1, refusedOut);
+  assert.match(refusedOut, /may not land as it stands/);
+  assert.match(refusedOut, /evidence:adds-two-numbers \(promise parked\)/);
+  assert.match(refusedOut, /decisions\.md/, 'and names the way out');
+  assert.match(refusedOut, /ask\.mjs add/);
+  assert.match(refusedOut, /--kind lower/);
+  assert.equal(git(['rev-list', '--count', '--merges', 'mission1/trunk'], dir), '0', 'nothing landed yet');
+
+  // The client's own answered word, through the real ask.mjs channel — the exact path land.mjs's
+  // evidence guard points to, driven for real rather than asserted against a hand-written
+  // decisions.md.
+  const opened = run('ask.mjs', [
+    'add', 'the discount design is being rethought; the promise is deliberately parked for now.',
+    '--kind', 'lower', '--aspect', 'evidence:adds-two-numbers',
+  ], dir);
+  assert.equal(opened.code, 0, opened.stderr);
+  const answered = run('ask.mjs', [
+    'answer', opened.json.id, 'approved — park it; a fresh promise lands once the new design is ready.',
+    '--scope', 'mission',
+  ], dir);
+  assert.equal(answered.code, 0, answered.stderr);
+
+  const landed = run('land.mjs', [branch], dir);
+  assert.equal(landed.code, 0, `${landed.stdout}${landed.stderr}`);
+  assert.ok(landed.json.landed, 'and it landed, on the client\'s own recorded word');
+  assert.equal(git(['rev-list', '--count', '--merges', 'mission1/trunk'], dir), '1');
+  // The client's own answer, on file, is what let this through — the same decisions.md the guard's
+  // own refusal named the way to. `--scope mission` (rather than `once`) is what this test asked
+  // for, so the answer stands rather than being marked spent; that once/mission distinction has its
+  // own dedicated proof in law-guard.test.mjs and is not what this case exists to re-prove.
+  const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'decisions.md'), 'utf8');
+  assert.match(decisions, /\*\*Kind:\*\* lower · \*\*Aspect:\*\* evidence:adds-two-numbers/);
+  assert.match(decisions, /\*\*Answer:\*\* approved — park it/);
+  assert.doesNotMatch(decisions, /\*\*Consumed:\*\*/, 'a mission-scope answer stands until the mission closes');
 });
