@@ -1,10 +1,10 @@
 # 050 · stress testy hordy po poprawkach
 
-**Status:** open
+**Status:** dropped
 **Kind:** research
 **Priority:** 2
 **Tier:** standard
-**Tags:** zaplecze, proces
+**Tags:** odroczone, proces, zaplecze
 **Files:** skills/horde/scripts/tests/
 **Found by:** klient, w trakcie fali pierwszej
 **Where:** skills/horde/scripts/tests/family.e2e.test.mjs jako wzór fixture misji
@@ -19,4 +19,6 @@ Poprawki dotykają pętli w wielu miejscach naraz; tylko pełne przebiegi pokaż
 Każdy scenariusz kończy się wpisem: przebieg, co odbiegło od dokumentacji, nowe sprawy założone przez jarla. Scenariusze, które da się utrwalić, wchodzą do family.e2e jako testy. Uruchamiane dopiero, gdy sprawy P1 i P2 z kontraktu i zaplecza są done.
 
 ## Evidence
+
+Dropped: Odroczone na wyraźne polecenie Krzysztofa (2026-09-14: 'Nie robisz stress testów jak coś.', 2026-09-15: 'Oznacz stresstesty jako odroczone') — NIE odrzucone jako niepotrzebne, tylko odłożone na później. jarl nie ma osobnego statusu 'deferred', więc status 'dropped' służy tu wyłącznie do zdjęcia z domyślnej listy open/in-progress; łatwo odwrócić przez 'jarl set 050 open "..."', gdy przyjdzie czas.
 
