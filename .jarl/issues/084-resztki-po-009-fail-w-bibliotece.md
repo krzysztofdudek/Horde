@@ -1,6 +1,6 @@
 # 084 · resztki po 009 fail w bibliotece
 
-**Status:** open
+**Status:** in-progress
 **Kind:** cleanup
 **Priority:** 3
 **Tier:** standard
