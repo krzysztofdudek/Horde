@@ -1678,7 +1678,7 @@ const PUSH_HOOKS = ['.git/hooks/pre-push', '.husky/pre-push'];
 // and the shell's own separators, unquoted, with a leading `./` taken off — every token is then
 // offered to the tracked set, which is what decides whether it names a real file.
 function commandTokens(command) {
-  return String(command || '')
+  return String(command ?? '')
     .split(/[\s;&|()<>]+/)
     .map((t) => t.replace(/^['"]|['"]$/g, '').replace(/^\.\//, ''))
     .filter(Boolean);
