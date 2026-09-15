@@ -1121,7 +1121,9 @@ the four pairings the `promises` package knows, read the same way it reads them 
 artefact); a **test file removed**; a test file carrying **fewer assertions** than it had; and a
 test file carrying **more skip or exclusivity markers** than it had. The files it watches are
 whatever `config.testGlobs` recognise, plus whatever keeps a live promise, whether or not the globs
-would have recognised that.
+would have recognised that. A repository whose `has-evidence` aspect **pins** one pairing for every
+promise, instead of leaving it `auto`, is read the same way: the pin decides the pairing, not each
+promise's own frontmatter.
 
 Assertions and markers are each counted off a **closed list per language**, combined into one
 pattern so nothing is counted twice, and compared **per file** — never in total, since assertions
