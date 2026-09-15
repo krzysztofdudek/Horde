@@ -1655,11 +1655,11 @@ export function printTable(rows, columns) {
 
 // renderTemplate(name, vars) — loads templates/<name>.md and replaces every `{{key}}` or
 // `{{key | default}}` token. `key` is whatever sits before the first `|` (spaces, hyphens and
-// all — the templates use it loosely, e.g. `{{n-1}}`, `{{ of limit}}`, `{{clean | findings}}`,
-// not only identifier-shaped names), trimmed. A token with a value in `vars` (anything but
-// undefined/null) is replaced by that value; one without a value but with a default is replaced
-// by the default text; one with neither throws — the whole template is rendered first so the
-// thrown message can list every unfilled key at once, not just the first.
+// all — the templates use it loosely, e.g. `{{n-1}}`, `{{quality | autonomous}}`,
+// `{{revertBase | }}`, not only identifier-shaped names), trimmed. A token with a value in
+// `vars` (anything but undefined/null) is replaced by that value; one without a value but with
+// a default is replaced by the default text; one with neither throws — the whole template is
+// rendered first so the thrown message can list every unfilled key at once, not just the first.
 export function renderTemplate(name, vars = {}) {
   const file = join(TEMPLATES_DIR, `${name}.md`);
   const text = readFileSync(file, 'utf8');
