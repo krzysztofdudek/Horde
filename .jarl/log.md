@@ -741,3 +741,9 @@
 - 2026-09-15 11:57 · 033 → in-progress · dispatched to a worker (Sonnet) in its own worktree/branch — 021 and 022 are now landed, so the family e2e can exercise the full contract
 - 2026-09-15 11:57 · 073 → in-progress · dispatched to a worker (Sonnet) in its own worktree/branch — held for 084 (both touch tick.mjs/README.md); 084 itself is held until this or 126 lands
 - 2026-09-15 11:57 · 126 → in-progress · dispatched to a worker (Sonnet) in its own worktree/branch — no file overlap with 033/073
+- 2026-09-15 12:27 · 073 evidence row · grep -n readJSON, writeJSON and readText in tick.mjs before editing
+- 2026-09-15 12:27 · 073 evidence row · grep -rn 'of limit' and 'clean | findings' across the whole repository; git log -S on both strings against skills/horde
+- 2026-09-15 12:27 · 073 evidence row · diffed commit b97ef8a against HEAD for horde.mjs, audit.mjs, status.mjs and scripts/README.md to find every comment that commit shortened without rewrapping the paragraph
+- 2026-09-15 12:27 · 073 evidence row · grep -n parallelism across scripts/*.mjs to see how the real CLI output labels this number, then grep -n config.parallelism in README.md
+- 2026-09-15 12:27 · 073 evidence row · grep -rn horde-plan, horde-retro and RETRO_SCHEMA across scripts/*.mjs and tests/*.mjs; grep -rn the same across reference/*.md and SKILL.md; read queue.mjs buildPlan, retro.mjs cmdRetro, horde.mjs cmdDone and readArchivedMission
+- 2026-09-15 12:27 · 073 evidence row · cd skills/horde/scripts; HORDE_TEST_YG set to the local Yggdrasil build; node --test tests/tick.test.mjs tests/lib.test.mjs tests/horde.test.mjs tests/status.test.mjs tests/docs.test.mjs tests/law-audit.test.mjs (the six suites covering the touched files)
