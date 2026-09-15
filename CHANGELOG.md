@@ -92,6 +92,7 @@ Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to inst
 - Asking a ticket owner for a scoped re-review no longer points at a place that never had the file it asked for; it now says how to produce that file yourself.
 - The evidence package's named pairing now requires the name to land on a real test case's title, not just appear anywhere in the file — a comment or a piece of prose mentioning the same words no longer counts as proof.
 - A test suite that used to occasionally fail for no reason, when its tests ran alongside others touching the same files, now runs clean every time.
+- A `tick --watch` loop that hit a genuine internal problem used to write it down as a refusal and keep going forever. It now stops and exits with an error instead, so the problem is noticed rather than retried silently.
 - The documentation on who starts a worker under each runner now says the same thing as the mission loop actually does.
 - The sample drawn for the two-judges measurement is now reproducible: run the retrospective twice over the same landed work and it draws the same tickets both times, and the retrospective document records what drew it.
 - The two-judges measurement no longer credits a ticket with verdicts that actually belong to a different ticket, just because one ticket's declared files or component happened to be a text fragment of the other's name.

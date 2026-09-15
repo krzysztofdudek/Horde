@@ -33,7 +33,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync, spawn as spawnProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  hordePath, teamPath, readText, readConfig, nowIso, fail, parseArgs, emit,
+  hordePath, teamPath, readText, readConfig, nowIso, fail, HordeError, parseArgs, emit,
   isMain, resolveHorde, git, resolveTree, withProvenance, provenanceLine, withQueueLock,
   runMain, appendText, parseEvidenceRows, classUp,
 } from './_lib.mjs';
@@ -715,7 +715,11 @@ async function watch(horde, cfg, flags, runner) {
       // by the next one — a lock another run is holding, a file being written as this read it —
       // and a steward that died on it would leave the queue to nobody. So it goes in the mission
       // journal, where the next reader finds it, and the loop waits out the interval and asks
-      // again.
+      // again. But only a HordeError is a refusal in that sense — the deliberate, named kind
+      // every `fail()` call raises. Anything else is a bug in the loop itself (a TypeError, a
+      // null read, anything runOnce never meant to throw), and catching that here would retry it
+      // forever instead of crashing loudly where whoever is watching can see it.
+      if (!(e instanceof HordeError)) throw e;
       recordRefusal(horde, e, flags);
     }
     if (out) {

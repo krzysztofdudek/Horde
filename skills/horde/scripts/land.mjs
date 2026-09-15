@@ -2993,7 +2993,9 @@ function finishMany(tickets, outcomes, flags) {
     `land batch: ${tickets.length} ticket(s) — ${landedCount} landed, ${tickets.length - landedCount} not`,
     ...ordered.map((o) => `${o.ok ? '✓' : '✗'} ${o.ticket}${o.landed ? ` LANDED ${short(o.landed.sha)}` : ''}${!o.ok && o.refused ? ` — ${o.refused}` : ''}`),
   ].join('\n'));
-  if (!allOk) process.exit(1);
+  // Never exits the process — runMany()'s own `finally` (cleaner.runAll()) still has cleanup to
+  // do on the way out, so the exit code is main()'s own call to make once runMany() has actually
+  // returned, not this frame's, mid-stack.
   return summary;
 }
 
@@ -3349,7 +3351,9 @@ function finish(horde, ticketId, result, head, flags, parent, level) {
     result.landed ? `LANDED ${short(result.landed.sha)}` : 'NOT LANDED',
     provenanceLine(head),
   ].join('\n'));
-  if (!result.ok) process.exit(1);
+  // Never exits the process — same discipline as finishBatchMember's own note above: run()'s
+  // `finally` still has cleanup to do on the way out, so the exit code is main()'s own call to
+  // make once run() has actually returned, not this frame's, mid-stack.
   return full;
 }
 
@@ -3461,10 +3465,12 @@ function main() {
   }
 
   if (tickets.length <= 1) {
-    run(horde, root, cfg, arg, level, !!flags['no-gate'], flags);
+    const result = run(horde, root, cfg, arg, level, !!flags['no-gate'], flags);
+    if (!result.ok) process.exit(1);
     return;
   }
-  runMany(horde, root, cfg, tickets, level, !!flags['no-gate'], flags);
+  const summary = runMany(horde, root, cfg, tickets, level, !!flags['no-gate'], flags);
+  if (!summary.ok) process.exit(1);
 }
 
 if (isMain(import.meta.url)) runMain(main);

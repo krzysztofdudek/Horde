@@ -60,9 +60,11 @@ test('_lib.mjs: hordeRoot, parseArgs, renderTemplate, appendText', async (t) => 
   });
 
   // teamPath()'s refusal paths (unknown team, a literal "teams" segment, a mismatched full path)
-  // all go through fail() -> process.exit(), which would kill this whole in-process test run if
-  // called directly here — those are covered instead as CLI-level (child-process) tests in
-  // queue.test.mjs. This one sticks to the resolving paths, which are safe to call directly.
+  // all go through fail(), which throws rather than exits and would be simple enough to catch
+  // in-process — but what is actually under test there is the CLI's own contract on a refusal:
+  // exit code 1 and a clean `error: ...` line with no stack trace, which only the real entrypoint
+  // (main() via runMain) produces. Those stay CLI-level (child-process) tests in queue.test.mjs
+  // for that reason. This one sticks to the resolving paths, which are safe to call directly.
   await t.test('teamPath resolves a leaf name through roster.json\'s steward parent chain, and accepts a matching full path', async () => {
     const { teamPath, hordeRoot: hordeRootFn } = await import('../_lib.mjs');
     const origCwd = process.cwd();
@@ -110,8 +112,9 @@ test('_lib.mjs: hordeRoot, parseArgs, renderTemplate, appendText', async (t) => 
 });
 
 // resolveTree's resolving paths only — every refusal is a CLI-level test in tree.test.mjs, for the
-// same reason teamPath's refusals are above: fail() calls process.exit() and would kill this whole
-// in-process run.
+// same reason teamPath's refusals are above: fail() throws rather than exits, but the refusal path
+// is tested for the CLI's own contract (exit code, a clean stack-trace-free line), which only the
+// real entrypoint produces.
 test('_lib.mjs resolveTree: narrowest scope wins, cwd and trunk defaults, scratch cleanup', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -348,8 +351,10 @@ test('_lib.mjs git()/gitError(): a real git failure is not swallowed silently', 
 
 // The lease file is keyed by a SUBJECT, not by a node: a node when `node.mjs bind` claims one, a
 // territory when a refinement's cut does. Only the claiming paths are exercised in-process here —
-// every refusal goes through fail() -> process.exit(), which would take this whole run with it, so
-// those are CLI-level tests in refine.test.mjs (same reason as teamPath's above).
+// every refusal goes through fail(), which throws rather than exits, but what those paths are
+// tested for is the CLI's own contract on a refusal (exit code, a clean stderr line), which only
+// the real entrypoint produces — so those are CLI-level tests in refine.test.mjs (same reason as
+// teamPath's above).
 test('_lib.mjs leases: one mechanism, keyed by whatever is being held — a node or a territory', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -842,9 +847,11 @@ test('no tool but _lib.mjs spells out the shape of a document it reads', async (
 });
 
 // qualityPolicy()'s resolving paths (no charter, no Quality section, or a recognized value) are
-// safe to call in-process; its refusal is not — fail() calls process.exit() and would take this
-// whole run with it, same reason resolveTree's, teamPath's and the lease claims' refusals above
-// are child-process tests rather than direct calls.
+// safe to call in-process; its refusal is tested differently — not because fail() would take this
+// run with it (it throws, not exits) but because the refusal path is tested for the CLI's own
+// contract (exit code, a clean stderr line), which only the real entrypoint produces — same
+// reason resolveTree's, teamPath's and the lease claims' refusals above are child-process tests
+// rather than direct calls.
 test('_lib.mjs qualityPolicy: reads a recognized value or the ruling\'s own default, refuses anything else', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

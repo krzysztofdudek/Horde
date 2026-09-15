@@ -1487,8 +1487,15 @@ tick.mjs spawns each worker itself, through `config.runner.spawn` (`<class>` and
 in). Under `session` it starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds until the
 queue empties or a signal arrives — an open `stop` holds the close, so it keeps waiting rather than
 exiting on an emptied queue the client still has a question about; a signal exits cleanly, holding no lock. A refused pass does not
-end the loop: the refusal goes to stderr and to the mission journal (`plan.md`) as one
-`tick refused:` line, and the next interval asks again.
+end the loop, but only when the refusal is a `HordeError` — the deliberate, named kind every `fail()`
+call raises, for something a later pass might well find gone (a lock another run holds, a file being
+written as this one read it): stderr gets `error: <message>`, the mission journal (`plan.md`) gets one
+`tick refused:` line, and under `--json` stdout also gets `{horde, refused, at}` — `refused` the
+refusal's full message (not cut to the journal line's first line of text the way that line is), `at`
+its own ISO timestamp — and then the next interval asks again. Anything thrown that is not a `HordeError`
+is a bug in the loop itself, not a refusal one later pass could find resolved, and is left to
+propagate uncaught: that pass, the loop and the process all end on it, rather than a real bug being
+retried forever under a refusal it never was.
 
 It holds the landing gate's own lock — `.horde/gate.lock`, not a second one — so two ticks on one
 repository cannot hand the same ticket to two workers or cut one ticket's branch twice. A
