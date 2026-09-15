@@ -2,16 +2,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import {
-  existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode, addAspect, yg, requireYg, MARKER_CHECK, git,
   writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE,
 } from './helpers.mjs';
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
-import { parseReport, sameFile, sameCase } from '../land.mjs';
+import {
+  parseReport, sameFile, sameCase, promiseFrontmatter, pairingAdapter, pairingOf, pairingKind,
+  evidencePinAt, promisesIn,
+} from '../land.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -1296,6 +1300,250 @@ test('land.mjs sameCase: a case name matches itself and its own suite-prefixed s
   }
   for (const other of ['adds two numbers slowly', 'readds two numbers', 'adds two', '', null]) {
     assert.equal(sameCase(other, 'adds two numbers'), false, String(other));
+  }
+});
+
+// ---- the has-evidence aspect's own pin, and the pairing it decides --------------------------
+//
+// `packages/promises/has-evidence/check.mjs`'s own `check(ctx)` reads `ctx.config?.evidence`
+// (`auto` by default) and, whenever it names one of the four pairings instead, uses THAT pairing
+// for every promise — regardless of what a promise's own frontmatter says. These prove
+// `pairingAdapter`/`pairingOf`/`pairingKind`/`evidencePinAt` take exactly that branching, that
+// `pairingOf` and `pairingKind` can never disagree about which pairing a promise has, and — the
+// single most important thing here — that every one of these behaves BYTE FOR BYTE as before for
+// the unpinned (`auto`) case this file's other promise-guard tests already exercise.
+
+function frontOf(extra = []) {
+  const text = ['---', 'id: p', 'status: implemented', ...extra, '---', '', '## What it checks', '', 'x', ''].join('\n');
+  return promiseFrontmatter(text);
+}
+
+const BARE_FRONT = frontOf();
+const SELF_FRONT = frontOf(['evidence: self']);
+const NAMED_FRONT = frontOf(['evidence: src/real.mjs#a real case']);
+const MALFORMED_NAMED_FRONT = frontOf(['evidence: no-hash-here']);
+const ARTEFACT_FRONT = frontOf(['artefact:', '  path: dist/build.tar', '  sha256: ' + 'a'.repeat(64), '  accepted_by: client', '  at: 2026-01-01T00:00:00Z']);
+const INCOMPLETE_ARTEFACT_FRONT = frontOf(['artefact:', '  path: dist/build.tar']);
+// Both markers on the same promise: `adapterOf` (and so `pairingAdapter`) checks the artefact
+// block first, unconditionally, so this is a `self` field that never wins even in auto mode.
+const ARTEFACT_AND_SELF_FRONT = frontOf(['evidence: self', 'artefact:', '  path: dist/build.tar', '  sha256: ' + 'b'.repeat(64), '  accepted_by: client', '  at: 2026-01-01T00:00:00Z']);
+
+test('land.mjs pairingAdapter: auto mode (no pin) takes exactly adapterOf\'s own branching', () => {
+  assert.equal(pairingAdapter(BARE_FRONT, null), 'mirror');
+  assert.equal(pairingAdapter(SELF_FRONT, null), 'self');
+  assert.equal(pairingAdapter(NAMED_FRONT, null), 'named');
+  assert.equal(pairingAdapter(MALFORMED_NAMED_FRONT, null), 'named'); // shape, not validity, decides the adapter
+  assert.equal(pairingAdapter(ARTEFACT_FRONT, null), 'artefact');
+  // An artefact block wins over `evidence: self` on the same promise — checked first, unconditionally.
+  assert.equal(pairingAdapter(ARTEFACT_AND_SELF_FRONT, null), 'artefact');
+  // `undefined` (the shape `promisesIn` passes when `evidencePinAt` found nothing) reads identically to `null`.
+  assert.equal(pairingAdapter(BARE_FRONT, undefined), 'mirror');
+});
+
+test('land.mjs pairingAdapter: a tree\'s pin overrides every promise\'s own frontmatter, whatever it says', () => {
+  for (const pin of ['self', 'mirror', 'named', 'artefact']) {
+    for (const front of [BARE_FRONT, SELF_FRONT, NAMED_FRONT, ARTEFACT_FRONT, ARTEFACT_AND_SELF_FRONT]) {
+      assert.equal(pairingAdapter(front, pin), pin, `pin ${pin} over ${JSON.stringify(front.fields)}`);
+    }
+  }
+});
+
+test('land.mjs pairingOf/pairingKind: can never disagree about which pairing a promise has, auto or pinned', () => {
+  for (const pin of [null, undefined, 'self', 'mirror', 'named', 'artefact']) {
+    for (const front of [BARE_FRONT, SELF_FRONT, NAMED_FRONT, MALFORMED_NAMED_FRONT, ARTEFACT_FRONT, INCOMPLETE_ARTEFACT_FRONT, ARTEFACT_AND_SELF_FRONT]) {
+      const wantKind = pairingAdapter(front, pin);
+      assert.equal(pairingKind(front, pin).kind, wantKind, `pin=${pin} front=${JSON.stringify(front.fields)}`);
+      // pairingOf never throws for any of these shapes, whatever it resolves to.
+      assert.doesNotThrow(() => pairingOf('/nonexistent', new Set(), new Map(), 'promises/p.md', front, pin));
+    }
+  }
+});
+
+test('land.mjs pairingOf: a self pin keeps a promise by its own file, ignoring whatever its own frontmatter says', () => {
+  const tracked = new Set(['promises/p.md']);
+  const byStem = new Map();
+  for (const front of [BARE_FRONT, NAMED_FRONT, ARTEFACT_FRONT]) {
+    assert.equal(pairingOf('/nonexistent', tracked, byStem, 'promises/p.md', front, 'self'), 'promises/p.md');
+  }
+});
+
+test('land.mjs pairingOf: a mirror pin looks for the <stem>.test file by name alone, ignoring an evidence: field or artefact: block', () => {
+  const trackedWithMirror = new Set(['promises/p.md', 'promises/p.test.mjs']);
+  const byStemWithMirror = new Map([['p.test', ['promises/p.test.mjs']]]);
+  for (const front of [BARE_FRONT, SELF_FRONT, ARTEFACT_FRONT]) {
+    assert.equal(pairingOf('/nonexistent', trackedWithMirror, byStemWithMirror, 'promises/p.md', front, 'mirror'), 'promises/p.test.mjs');
+  }
+  // No mirror file on this tree: nothing keeps it, whatever the promise's own frontmatter says.
+  const trackedNoMirror = new Set(['promises/p.md']);
+  assert.equal(pairingOf('/nonexistent', trackedNoMirror, new Map(), 'promises/p.md', SELF_FRONT, 'mirror'), null);
+});
+
+test('land.mjs pairingOf: a named pin still needs the promise\'s own <file>#<name> locator — the pin cannot supply one', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'land-named-pin-'));
+  try {
+    writeFileSync(join(dir, 'real.mjs'), "test('a real case', () => {});\n");
+    const tracked = new Set(['promises/p.md', 'real.mjs']);
+    // No evidence: field at all — "relying on the pin" cannot mean "the pin invents a target".
+    assert.equal(pairingOf(dir, tracked, new Map(), 'promises/p.md', BARE_FRONT, 'named'), null);
+    // A promise that DOES carry its own locator is still resolved normally under the pin.
+    const named = frontOf(['evidence: real.mjs#a real case']);
+    assert.equal(pairingOf(dir, tracked, new Map(), 'promises/p.md', named, 'named'), 'real.mjs');
+    // Even a stale `artefact:` block never substitutes for the promise's own required locator.
+    assert.equal(pairingOf(dir, tracked, new Map(), 'promises/p.md', ARTEFACT_FRONT, 'named'), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('land.mjs pairingOf: an artefact pin still needs the promise\'s own complete artefact: block — the pin cannot supply the facts', () => {
+  const tracked = new Set(['promises/p.md']);
+  assert.equal(pairingOf('/nonexistent', tracked, new Map(), 'promises/p.md', BARE_FRONT, 'artefact'), null);
+  assert.equal(pairingOf('/nonexistent', tracked, new Map(), 'promises/p.md', SELF_FRONT, 'artefact'), null, 'a stale evidence: self field is not an artefact');
+  assert.equal(pairingOf('/nonexistent', tracked, new Map(), 'promises/p.md', INCOMPLETE_ARTEFACT_FRONT, 'artefact'), null);
+  assert.equal(pairingOf('/nonexistent', tracked, new Map(), 'promises/p.md', ARTEFACT_FRONT, 'artefact'), 'the accepted artefact dist/build.tar');
+});
+
+// ---- evidencePinAt: reading the has-evidence aspect's own pin off a tree ---------------------
+
+function pinFixture(name) {
+  const dir = mkdtempSync(join(tmpdir(), `land-pin-${name}-`));
+  return dir;
+}
+
+function writeAspectYaml(dir, lines) {
+  const path = join(dir, '.yggdrasil', 'aspects', 'has-evidence', 'yg-aspect.yaml');
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${lines.join('\n')}\n`);
+}
+
+test('land.mjs evidencePinAt: absent — no .yggdrasil at all, and the common unaffected case of no has-evidence aspect', () => {
+  const noYg = pinFixture('no-yggdrasil');
+  const noAspect = pinFixture('no-aspect');
+  try {
+    assert.equal(evidencePinAt(noYg), null);
+    mkdirSync(join(noAspect, '.yggdrasil', 'aspects', 'other-rule'), { recursive: true });
+    assert.equal(evidencePinAt(noAspect), null);
+  } finally {
+    rmSync(noYg, { recursive: true, force: true });
+    rmSync(noAspect, { recursive: true, force: true });
+  }
+});
+
+test('land.mjs evidencePinAt: absent — installed with no config: block, an empty one, or evidence: auto explicitly', () => {
+  const dir = pinFixture('auto-shapes');
+  try {
+    writeAspectYaml(dir, ['name: has-evidence', 'status: enforced', 'scope:', '  per: node']);
+    assert.equal(evidencePinAt(dir), null, 'no config: block');
+    writeAspectYaml(dir, ['name: has-evidence', 'status: enforced', 'config:', '  spec_suffix: .test']);
+    assert.equal(evidencePinAt(dir), null, 'config: block with no evidence: key');
+    writeAspectYaml(dir, ['name: has-evidence', 'status: enforced', 'config:', '  evidence: auto']);
+    assert.equal(evidencePinAt(dir), null, 'evidence: auto written out explicitly');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('land.mjs evidencePinAt: each of the four real pins, read back as itself', () => {
+  const dir = pinFixture('four-pins');
+  try {
+    for (const pin of ['self', 'mirror', 'named', 'artefact']) {
+      writeAspectYaml(dir, ['name: has-evidence', 'status: enforced', 'config:', `  evidence: ${pin}`]);
+      assert.equal(evidencePinAt(dir), pin);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('land.mjs evidencePinAt: a setting outside the five the real rule recognises reads as absent, not guessed at', () => {
+  const dir = pinFixture('garbage');
+  try {
+    writeAspectYaml(dir, ['name: has-evidence', 'status: enforced', 'config:', '  evidence: bogus']);
+    assert.equal(evidencePinAt(dir), null);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('land.mjs evidencePinAt: a quoted value, and comments/blocks around config: the way the shipped default is written', () => {
+  const dir = pinFixture('quoted-and-commented');
+  try {
+    writeAspectYaml(dir, [
+      'name: PromiseHasSomethingKeepingIt',
+      'description: Every promise that claims to be kept is paired with exactly one thing that keeps it.',
+      'reviewer:',
+      '  type: deterministic',
+      'status: enforced',
+      'errs: exact',
+      '# a comment, exactly like the shipped default carries above its own scope: block',
+      'scope:',
+      '  per: node',
+      '',
+      'config:',
+      '  evidence: "self"',
+      '  spec_suffix: .test',
+    ]);
+    assert.equal(evidencePinAt(dir), 'self');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- promisesIn: the pin threaded end to end, on a real tracked tree -------------------------
+
+test('land.mjs promisesIn: auto mode (no has-evidence aspect installed) is unaffected — the common, unpinned case', () => {
+  const dir = makeRepo();
+  try {
+    const path = join(dir, 'promises', 'p.md');
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, ['---', 'id: p', 'status: implemented', '---', '', '## What it checks', '', 'x', ''].join('\n'));
+    git(['add', '-A'], dir);
+    git(['commit', '-qm', 'a promise with no mirror file and no has-evidence aspect at all'], dir);
+    const out = promisesIn(dir, {});
+    assert.equal(out.length, 1);
+    assert.equal(out[0].keptBy, null, 'no mirror file exists, so nothing keeps it — exactly as before this fix');
+    assert.deepEqual(out[0].pairing, { kind: 'mirror', caseName: null });
+  } finally {
+    rmRepo(dir);
+  }
+});
+
+test('land.mjs promisesIn: a self pin protects a promise that relies on it — no evidence: field of its own', () => {
+  const dir = makeRepo();
+  try {
+    const path = join(dir, 'promises', 'p.md');
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, ['---', 'id: p', 'status: implemented', '---', '', '## What it checks', '', 'x', ''].join('\n'));
+    mkdirSync(join(dir, '.yggdrasil', 'aspects', 'has-evidence'), { recursive: true });
+    writeFileSync(join(dir, '.yggdrasil', 'aspects', 'has-evidence', 'yg-aspect.yaml'), ['name: has-evidence', 'status: enforced', 'config:', '  evidence: self', ''].join('\n'));
+    git(['add', '-A'], dir);
+    git(['commit', '-qm', 'a promise relying on the self pin, plus the pin itself'], dir);
+    const out = promisesIn(dir, {});
+    assert.equal(out.length, 1);
+    assert.equal(out[0].keptBy, 'promises/p.md', 'the pin says self — kept by its own file, not read as unpaired mirror fallout');
+    assert.deepEqual(out[0].pairing, { kind: 'self', caseName: null });
+  } finally {
+    rmRepo(dir);
+  }
+});
+
+test('land.mjs promisesIn: a mirror pin overrides a promise\'s own stale evidence: self field', () => {
+  const dir = makeRepo();
+  try {
+    const promisePath = join(dir, 'promises', 'p.md');
+    mkdirSync(dirname(promisePath), { recursive: true });
+    writeFileSync(promisePath, ['---', 'id: p', 'status: implemented', 'evidence: self', '---', '', '## What it checks', '', 'x', ''].join('\n'));
+    writeFileSync(join(dir, 'promises', 'p.test.mjs'), "test('x', () => {});\n");
+    mkdirSync(join(dir, '.yggdrasil', 'aspects', 'has-evidence'), { recursive: true });
+    writeFileSync(join(dir, '.yggdrasil', 'aspects', 'has-evidence', 'yg-aspect.yaml'), ['name: has-evidence', 'status: enforced', 'config:', '  evidence: mirror', ''].join('\n'));
+    git(['add', '-A'], dir);
+    git(['commit', '-qm', 'a promise whose own field disagrees with the repository-wide mirror pin'], dir);
+    const out = promisesIn(dir, {});
+    assert.equal(out.length, 1);
+    assert.equal(out[0].keptBy, 'promises/p.test.mjs', 'the pin says mirror — the real mirror file, not the promise\'s own stale self field');
+    assert.deepEqual(out[0].pairing, { kind: 'mirror', caseName: null });
+  } finally {
+    rmRepo(dir);
   }
 });
 
