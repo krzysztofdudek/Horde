@@ -1,7 +1,9 @@
-// resolveTree's CLI-visible contract: every refusal (fail() calls process.exit(), so none of these
-// can be tested in-process — see lib.test.mjs's own note by teamPath()), and the provenance line
-// every command that resolves a tree carries. The resolving paths themselves (precedence, cwd and
-// trunk defaults, scratch's cleanup) are in lib.test.mjs, in-process.
+// resolveTree's CLI-visible contract: every refusal (fail() throws rather than exits, but what's
+// under test here is the CLI's own contract on a refusal — exit code, a clean stderr line with no
+// stack trace — which only the real entrypoint produces; see lib.test.mjs's own note by
+// teamPath()), and the provenance line every command that resolves a tree carries. The resolving
+// paths themselves (precedence, cwd and trunk defaults, scratch's cleanup) are in lib.test.mjs,
+// in-process.
 //
 // node.mjs's read commands take `--tree`/`--ticket`/`--scratch` (see node.mjs main()); `bind` with
 // no positional is used as the plain vehicle below since it needs nothing else to exist first.

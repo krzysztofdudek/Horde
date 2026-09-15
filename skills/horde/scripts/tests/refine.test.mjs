@@ -9,8 +9,10 @@ import {
 } from './helpers.mjs';
 
 // Every refusal below is exercised through run() — a child process — and never by importing
-// refine.mjs here: fail() calls process.exit(), which would take this whole test run with it (the
-// same reason lib.test.mjs keeps teamPath's refusals at the CLI level).
+// refine.mjs here: fail() throws rather than exits, but what a refusal is tested for is the CLI's
+// own contract (exit code, a clean stderr line with no stack trace), which only the real
+// entrypoint (main() via runMain) produces (the same reason lib.test.mjs keeps teamPath's
+// refusals at the CLI level).
 
 function writeFile(dir, rel, text) {
   const full = join(dir, rel);

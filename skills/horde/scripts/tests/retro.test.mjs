@@ -16,8 +16,10 @@ import { wilson, ticketDeclares } from '../retro.mjs';
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
 // Every refusal below goes through run() — a child process — and never by importing retro.mjs
-// here: fail() calls process.exit(), which would take this whole test run with it. `wilson` is
-// the one exception, because it is arithmetic and refuses nothing.
+// here: fail() throws rather than exits, but what a refusal is tested for is the CLI's own
+// contract (exit code, a clean stderr line with no stack trace), which only the real entrypoint
+// (main() via runMain) produces. `wilson` is the one exception, because it is arithmetic and
+// refuses nothing.
 
 function hordeFile(dir, horde, ...parts) {
   return join(dir, '.horde', 'hordes', horde, ...parts);
