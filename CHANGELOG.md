@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A `tick --watch` loop that hit a genuine internal problem used to write it down as a refusal and keep going forever. It now stops and exits with an error instead, so the problem is noticed rather than retried silently.
+
 ## [6.0.0] - 2026-09-12
 
 Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to install.
