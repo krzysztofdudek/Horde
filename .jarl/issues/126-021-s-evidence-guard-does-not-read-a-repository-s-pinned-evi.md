@@ -1,6 +1,6 @@
 # 126 · 021's evidence guard does not read a repository's pinned evidence-pairing setting
 
-**Status:** in-progress
+**Status:** done
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard
@@ -59,4 +59,5 @@ a Minor finding on its review, the branch merged, and this filed as the separate
 - **ran:** Ran the same discriminating scenario against the FIXED land.mjs (git stash verified: fails the same way on the pre-fix commit, passes on the fix) · **saw:** correctly refused early: 'evidence:named-target (pairing gone)' plus 'evidence:promises/checked-in-note.txt (test removed)' — both from the SAME real evidence file's deletion, now watched because keptBy resolves correctly under the pin
 - **ran:** cd skills/horde/scripts && HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" timeout 2400 node --test tests/law-guard.test.mjs tests/land.test.mjs (full suite, BEFORE adding new tests, i.e. only the pre-existing 139 top-level tests, run against the now-fixed land.mjs) · **saw:** tests 165, pass 165, fail 0, cancelled 0, skipped 0, todo 0 — zero change from before the fix, auto-mode behaviour byte-for-byte unchanged
 - **ran:** cd skills/horde/scripts && HORDE_TEST_YG="node /home/user/Yggdrasil/source/cli/dist/bin.js" timeout 2400 node --test tests/law-guard.test.mjs tests/land.test.mjs (final run, AFTER adding 16 new tests: 15 unit tests in land.test.mjs covering pairingAdapter/pairingOf/pairingKind/evidencePinAt/promisesIn across all four pins, 1 end-to-end CLI test in law-guard.test.mjs) · **saw:** tests 181, pass 181, fail 0, cancelled 0, skipped 0, todo 0 (181 = 165 pre-existing + 16 new, all green)
+- **ran:** HORDE_TEST_YG=... node --test tests/law-guard.test.mjs tests/land.test.mjs, merger's own run on the merged tip · **saw:** 181 tests, 181 pass, 0 fail, 0 skip
 
