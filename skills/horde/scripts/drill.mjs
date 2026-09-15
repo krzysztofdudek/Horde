@@ -631,7 +631,10 @@ function cmdRun(drill, flags) {
     ...results.map((r) => `${r.asExpected ? '✓' : '✗'} ${r.case} — ${r.actual === 'violates' ? 'red' : 'green'}, expected ${r.expect === 'violates' ? 'red' : 'green'}: ${r.why}`),
     `${results.filter((r) => r.asExpected).length}/${results.length} as expected`,
   ].join('\n'));
-  if (!ok) process.exit(1);
+  // process.exit stays out of here — a non-main() frame calling it would step over whatever
+  // finally sits above it on the stack. main() is the one place this tool exits, so the verdict
+  // travels back as a plain return and main() is the one that acts on it.
+  return ok;
 }
 
 // ---- list --------------------------------------------------------------------------------
@@ -757,7 +760,7 @@ function main() {
       if (!result.ok) process.exit(1);
       return undefined;
     }
-    case 'run': return cmdRun(resolveDrill(rest[0]), flags);
+    case 'run': { const ok = cmdRun(resolveDrill(rest[0]), flags); if (!ok) process.exit(1); return undefined; }
     case 'record': return cmdRecord(rest[0], flags);
     default: return fail(`unknown command: ${cmd} (see --help)`);
   }
