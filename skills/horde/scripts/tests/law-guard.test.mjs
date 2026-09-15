@@ -936,3 +936,107 @@ test('protection guards: "scope: once" is spent by the landing that used it', as
   assert.equal(second.code, 1, said(second));
   assert.match(said(second), asRegExp('gate:gate.sh (gate changed)'));
 });
+
+// ---- the has-evidence aspect's own pin (issue 126) -----------------------------------------
+//
+// A repository may PIN one pairing for every promise, via the has-evidence aspect's own
+// `config.evidence` setting, instead of each promise's own frontmatter saying which of the four
+// it uses. The unit-level proofs of this live beside `pairingOf`/`pairingKind`/`evidencePinAt` in
+// land.test.mjs; this is the one end-to-end proof that the pin actually changes what a real
+// landing refuses.
+//
+// A promise whose own frontmatter would auto-derive a DIFFERENT pairing than the one pinned is
+// the case that matters: a reader who only watched what auto mode watches would miss exactly what
+// broke. So the fixture below pins `named`, on a promise carrying a stale, COMPLETE `artefact:`
+// block — the shape auto mode reads FIRST, unconditionally, before ever considering the pin — and
+// its real evidence, per the pin, is a named case inside a plain tracked file that matches none of
+// `config.testGlobs`. That isolation is deliberate: it is the only way to tell "the pin decided
+// this" from "the glob-based test-file guard would have caught it anyway".
+const HAS_EVIDENCE_DECLARED = [
+  'src/a.mjs', 'src/b.mjs', 'tests/feature.test.mjs',
+  'promises/named-target.md', 'promises/checked-in-note.txt',
+  '.yggdrasil/aspects/has-evidence/yg-aspect.yaml', '.yggdrasil/aspects/has-evidence/check.mjs',
+  '.yggdrasil/model/feature/yg-node.yaml',
+];
+
+function hasEvidenceAspectYaml(pin) {
+  return [
+    'name: has-evidence',
+    'description: Fixture has-evidence rule, pinned for this test.',
+    'errs: under',
+    'status: enforced',
+    'review_by: 2099-01-01',
+    'config:',
+    `  evidence: ${pin}`,
+    '',
+  ].join('\n');
+}
+
+function pinnedEvidenceFixture(dir, id, pin) {
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
+
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  write(dir, 'src/a.mjs', 'export const a = 1;\n');
+  write(dir, 'src/b.mjs', 'export const b = 2;\n');
+  write(dir, 'tests/feature.test.mjs', [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    "import { a } from '../src/a.mjs';",
+    "test('a', () => { assert.equal(a, 1); });",
+    '',
+  ].join('\n'));
+  write(dir, 'promises/named-target.md', [
+    '---',
+    'id: named-target',
+    'status: implemented',
+    'evidence: promises/checked-in-note.txt#the target runs',
+    'artefact:',
+    '  path: promises/checked-in-note.txt',
+    `  sha256: ${'0'.repeat(64)}`,
+    '  accepted_by: client',
+    '  at: 2026-09-01T00:00:00Z',
+    '---',
+    '',
+    '## What it checks',
+    '',
+    'Something the product does.',
+    '',
+  ].join('\n'));
+  write(dir, 'promises/checked-in-note.txt', 'Scenario: the target runs\n');
+  write(dir, '.yggdrasil/aspects/has-evidence/yg-aspect.yaml', hasEvidenceAspectYaml(pin));
+  write(dir, '.yggdrasil/aspects/has-evidence/check.mjs', MARKER_CHECK);
+  git(['add', '--', 'src', 'tests', 'promises'], dir);
+  git(['commit', '-qm', 'the code and the pinned promise both trees start from'], dir);
+
+  baseGraph(dir);
+  git(['add', '.yggdrasil'], dir);
+  git(['commit', '-qm', 'graph: the rule and the component it reaches, plus the has-evidence pin'], dir);
+
+  const branch = `mission1/t-${id}`;
+  git(['checkout', '-q', '-b', branch], dir);
+  // Delete ONLY the real named evidence. The promise's own file — carrying the stale artefact
+  // block auto mode would have read instead — is left completely untouched.
+  rmSync(join(dir, 'promises', 'checked-in-note.txt'), { force: true });
+  git(['add', '-A', '--', 'promises'], dir);
+  git(['commit', '-qm', `ticket ${id}: delete the real named evidence, leave the promise doc alone`], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+
+  seedProtectionTicket(dir, id, branch, HAS_EVIDENCE_DECLARED);
+  return { branch };
+}
+
+test('protection guards: a `named` pin overrides a promise\'s own stale `artefact:` block — deleting the real evidence refuses as "pairing gone"', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = pinnedEvidenceFixture(dir, '241', 'named');
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, said(r));
+  const out = said(r);
+  assert.match(out, /may not land as it stands/);
+  assert.match(out, asRegExp('evidence:named-target (pairing gone)'), 'the pin decided the pairing, and its real evidence going missing is what refuses');
+  // Nothing landed.
+  assert.equal(git(['rev-list', '--count', '--merges', 'mission1/trunk'], dir), '0');
+});

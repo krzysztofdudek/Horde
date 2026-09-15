@@ -1408,7 +1408,7 @@ function stemOf(path) {
   return dot > 0 ? base.slice(0, dot) : base;
 }
 
-function promiseFrontmatter(text) {
+export function promiseFrontmatter(text) {
   const lines = String(text || '').split('\n');
   if ((lines[0] || '').trim() !== '---') return null;
   let end = -1;
@@ -1435,20 +1435,97 @@ function promiseFrontmatter(text) {
   return { fields, blocks };
 }
 
+// ---- the has-evidence aspect's own pin ------------------------------------------------------
+//
+// A repository may pin one pairing for every promise, instead of each promise saying which it
+// uses: the SAME `evidence` setting `packages/promises/has-evidence/check.mjs`'s own `check(ctx)`
+// reads off `ctx.config?.evidence` (`DEFAULT_EVIDENCE = 'auto'`), installed on a tree's own
+// `.yggdrasil/aspects/has-evidence/yg-aspect.yaml` under a `config:` block. Duplicated here rather
+// than imported — this skill's own self-containment rule keeps the (separately installed)
+// `promises` package out of reach from `land.mjs`, the same reason `SKIP_MARKERS` above is a
+// hand-mirrored copy rather than an import.
+const EVIDENCE_ADAPTERS = ['mirror', 'named', 'self', 'artefact'];
+
+// A YAML file's own flat scalars plus one level of nesting — the same shape `promiseFrontmatter`
+// above reads, minus the `---` fence: a plain `yg-aspect.yaml` opens straight into its own keys,
+// never inside a frontmatter block, so the whole text is the body rather than a slice between two
+// markers. Everything else about the read — comments and blank lines skipped, a key with nothing
+// after its colon opens a one-level-deep nested block, quotes stripped off a scalar — is the exact
+// same algorithm, so the two readers can never drift into reading the same shape two different
+// ways.
+function flatYamlBlock(text) {
+  const fields = Object.create(null);
+  const blocks = Object.create(null);
+  let open = null;
+  for (const raw of String(text || '').split('\n')) {
+    if (raw.trim() === '' || raw.trim().startsWith('#')) continue;
+    if (/^\s+\S/.test(raw) && open !== null) {
+      const at = raw.indexOf(':');
+      if (at !== -1) blocks[open][raw.slice(0, at).trim()] = raw.slice(at + 1).trim().replace(/^["'](.*)["']$/, '$1');
+      continue;
+    }
+    if (/^\s/.test(raw)) continue;
+    const at = raw.indexOf(':');
+    if (at === -1) continue;
+    const key = raw.slice(0, at).trim();
+    const value = raw.slice(at + 1).trim().replace(/^["'](.*)["']$/, '$1');
+    if (value === '') { open = key; blocks[key] = Object.create(null); } else { open = null; fields[key] = value; }
+  }
+  return { fields, blocks };
+}
+
+// The has-evidence aspect's own pin on one tree — one of the four pairings, or null. Null covers
+// every shape of "auto" at once, on purpose, so a caller never has to branch on which: the aspect
+// is not installed on this tree at all (a repository that has not adopted the has-evidence rule —
+// the common, unaffected case); the file carries no `config:` block; the block carries no
+// `evidence:` key; the key is written out as `auto` explicitly; or the key names something that is
+// none of the four pairings and not `auto` either, which is a graph problem for `yg check` to
+// catch (the real rule refuses a setting outside its five recognised words) and never a promise
+// this guard would otherwise have to guess a pairing for. Read off the same tree-relative path
+// `aspectReachText` above reads aspect content from.
+export function evidencePinAt(tree) {
+  const text = contentAt(tree, '.yggdrasil/aspects/has-evidence/yg-aspect.yaml');
+  if (text === null) return null;
+  const raw = flatYamlBlock(text).blocks.config?.evidence;
+  if (raw === undefined) return null;
+  const setting = String(raw).trim();
+  return EVIDENCE_ADAPTERS.includes(setting) ? setting : null;
+}
+
+// Which of the four pairings applies to a promise: the tree's own pin when it names one, or — same
+// as the real rule's `auto` default — derived from the promise's own frontmatter, exactly the
+// branching `adapterOf` in `packages/promises/has-evidence/check.mjs` takes. Shared by `pairingOf`
+// and `pairingKind` below so the two can never resolve a different kind for the same promise.
+export function pairingAdapter(front, pin) {
+  if (pin) return pin;
+  if (front.blocks.artefact !== undefined) return 'artefact';
+  if (front.fields.evidence === 'self') return 'self';
+  if (front.fields.evidence !== undefined) return 'named';
+  return 'mirror';
+}
+
 // What keeps this promise, as the path of the file that keeps it — or a sentence, for the one
 // pairing that is not a file that runs. Null means nothing here keeps it. The four pairings are
 // the package's own four, read the same way it reads them. `byStem` is the tree's own tracked
 // files indexed by base name, built once by the caller: a mirror pairing asks for one, and asking
 // by walking every tracked file per promise is the shape that turns a big repository's landing
-// into a scan of the whole tree per promise it holds.
-function pairingOf(tree, tracked, byStem, promiseRel, front) {
-  if (front.blocks.artefact !== undefined) {
+// into a scan of the whole tree per promise it holds. `pin` is this tree's own has-evidence
+// setting (null under `auto`) — when it names one of the four, it decides the pairing outright,
+// the same way the real rule's `check(ctx)` does, regardless of what this promise's own
+// frontmatter says. The `artefact`/`named` branches below still read this promise's OWN block or
+// field even when pinned: the pin decides WHICH check runs, never the locator or the artefact
+// facts themselves — those are never something a repository-wide setting could supply.
+export function pairingOf(tree, tracked, byStem, promiseRel, front, pin) {
+  const adapter = pairingAdapter(front, pin);
+  if (adapter === 'artefact') {
     const block = front.blocks.artefact;
+    if (block === undefined) return null;
     const complete = ['path', 'sha256', 'accepted_by', 'at'].every((f) => block[f]);
     return complete ? `the accepted artefact ${block.path}` : null;
   }
-  if (front.fields.evidence === 'self') return promiseRel;
-  if (front.fields.evidence !== undefined) {
+  if (adapter === 'self') return promiseRel;
+  if (adapter === 'named') {
+    if (front.fields.evidence === undefined) return null;
     const raw = String(front.fields.evidence);
     const hash = raw.indexOf('#');
     if (hash <= 0 || hash === raw.length - 1) return null;
@@ -1464,19 +1541,22 @@ function pairingOf(tree, tracked, byStem, promiseRel, front) {
 }
 
 // Which of the four pairings a promise declares, and — for the one that names a case — what that
-// case is called. Read off the frontmatter alone, taking exactly the branching `pairingOf` above
-// takes, so the two can never disagree about which pairing a promise has. `pairingOf` answers
-// "what keeps this promise"; this answers "how", which is what item 5's report reading needs and
-// what `pairingOf`'s own answer cannot carry: a `<file>#<case name>` pairing collapses to the file
-// there, and the name is the half a runner's report is searched by.
+// case is called. Takes exactly the branching `pairingOf` above takes (the same `pin`, the same
+// `pairingAdapter`), so the two can never disagree about which pairing a promise has. `pairingOf`
+// answers "what keeps this promise"; this answers "how", which is what item 5's report reading
+// needs and what `pairingOf`'s own answer cannot carry: a `<file>#<case name>` pairing collapses
+// to the file there, and the name is the half a runner's report is searched by.
 //
-// A `named` pairing whose `evidence:` field is malformed (no `#`, or nothing either side of it)
-// comes back with a null case name — the same field shape `pairingOf` reads as "nothing keeps
-// this", so such a promise carries no `keptBy` either and nothing below looks for it in a report.
-function pairingKind(front) {
-  if (front.blocks.artefact !== undefined) return { kind: 'artefact', caseName: null };
-  if (front.fields.evidence === 'self') return { kind: 'self', caseName: null };
-  if (front.fields.evidence !== undefined) {
+// A `named` pairing whose `evidence:` field is malformed (no `#`, or nothing either side of it) —
+// or, under a `named` pin, simply absent — comes back with a null case name — the same field shape
+// `pairingOf` reads as "nothing keeps this", so such a promise carries no `keptBy` either and
+// nothing below looks for it in a report.
+export function pairingKind(front, pin) {
+  const adapter = pairingAdapter(front, pin);
+  if (adapter === 'artefact') return { kind: 'artefact', caseName: null };
+  if (adapter === 'self') return { kind: 'self', caseName: null };
+  if (adapter === 'named') {
+    if (front.fields.evidence === undefined) return { kind: 'named', caseName: null };
     const raw = String(front.fields.evidence);
     const hash = raw.indexOf('#');
     if (hash <= 0 || hash === raw.length - 1) return { kind: 'named', caseName: null };
@@ -1485,7 +1565,7 @@ function pairingKind(front) {
   return { kind: 'mirror', caseName: null };
 }
 
-function promisesIn(tree, cfg) {
+export function promisesIn(tree, cfg) {
   const layer = detectEvidenceLayer(tree, cfg);
   const dir = layer.promises && layer.promises.dir;
   if (!dir) return [];
@@ -1495,6 +1575,9 @@ function promisesIn(tree, cfg) {
     const stem = stemOf(f);
     if (byStem.has(stem)) byStem.get(stem).push(f); else byStem.set(stem, [f]);
   }
+  // Read once per tree, not once per promise: every promise on this tree is judged against the
+  // SAME pin, which is the whole point of one — a repository does not pin per file.
+  const pin = evidencePinAt(tree);
   const out = [];
   for (const rel of [...tracked].sort()) {
     if (!rel.startsWith(`${dir}/`) || !rel.endsWith('.md') || rel.slice(dir.length + 1).includes('/')) continue;
@@ -1509,10 +1592,10 @@ function promisesIn(tree, cfg) {
       // So that, and only that, is what these two trees are compared on — no parked list to
       // configure, and a repository that renamed its parked words is read exactly the same.
       live: front.fields.status === 'implemented',
-      keptBy: pairingOf(tree, tracked, byStem, rel, front),
+      keptBy: pairingOf(tree, tracked, byStem, rel, front, pin),
       // Which pairing it is, and the case name when the pairing names one. Nothing in the guards
       // reads this; item 5's report reading does — see "the gate's own report" below.
-      pairing: pairingKind(front),
+      pairing: pairingKind(front, pin),
     });
   }
   return out;
