@@ -2,9 +2,9 @@
 // horde skill — status.mjs
 //
 // The session-start digest: every horde on this repository, one screen each. Reads across every
-// other tool's state files directly (queue.json, asks.json,
-// cache/last-gate.json) rather than importing their tools, since it only ever reads — nothing
-// here mutates state, so there's no journal-format contract to share.
+// other tool's state files directly (queue.json, asks.json, cache/last-gate.json) rather than
+// importing their tools, since it only ever reads — nothing here mutates state, so there's no
+// journal-format contract to share.
 
 import {
   hordePath, teamPath, listHordes, readConfig, readJSON, readText, git, fail, parseArgs, emit, isMain,
@@ -18,9 +18,9 @@ import { findTicket, parseField } from './tk.mjs';
 const USAGE = `usage: status.mjs [--horde h] [--team t] [--json]
 
 One screen: hordes on this repository, and for each: trunk sha and distance from base, its branch
-tip, ticket branches beyond it (landed / unverified / unmerged), queue counts by state, open
-asks, the last recorded gate result, and any
-lease another live horde holds on a node this one touches (node-lease-across-hordes).
+tip, ticket branches beyond it (landed / unverified / unmerged), queue counts by state, open asks,
+the last recorded gate result, and any lease another live horde holds on a node this one touches
+(node-lease-across-hordes).
 
 --horde narrows to one horde. --team takes "trunk" and nothing else — every ticket is filed there
 — and any other name is refused rather than answered with an empty horde.
