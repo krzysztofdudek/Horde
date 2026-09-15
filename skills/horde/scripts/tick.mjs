@@ -33,7 +33,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync, spawn as spawnProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  hordePath, teamPath, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit,
+  hordePath, teamPath, readText, readConfig, nowIso, fail, parseArgs, emit,
   isMain, resolveHorde, git, resolveTree, withProvenance, provenanceLine, withQueueLock,
   runMain, appendText, parseEvidenceRows, classUp,
 } from './_lib.mjs';
