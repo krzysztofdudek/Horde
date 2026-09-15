@@ -1,6 +1,6 @@
 # 126 · 021's evidence guard does not read a repository's pinned evidence-pairing setting
 
-**Status:** open
+**Status:** in-progress
 **Kind:** bug
 **Priority:** 3
 **Tier:** standard

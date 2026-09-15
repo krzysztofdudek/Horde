@@ -1,6 +1,6 @@
 # 033 · e2e rodziny dla kontraktu
 
-**Status:** open
+**Status:** in-progress
 **Kind:** test
 **Priority:** 2
 **Tier:** standard

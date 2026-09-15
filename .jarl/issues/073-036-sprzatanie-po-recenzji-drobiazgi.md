@@ -1,6 +1,6 @@
 # 073 · 036 sprzatanie po recenzji drobiazgi
 
-**Status:** open
+**Status:** in-progress
 **Kind:** cleanup
 **Priority:** 3
 **Tier:** standard
