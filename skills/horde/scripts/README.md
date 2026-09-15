@@ -93,14 +93,14 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   unless `--ask <id>` names an answered ask of kind `charter` (`ask.mjs`) whose own text (its `why`
   and the client's answer together) names every row being dropped — the reason then lives in the
   ask's own answer (`decisions.md`'s `ask-<id>` entry), not only in this command's own output.
-  The charter's `## Quality` section carries the one field of it a tool acts on rather than a person
-  reads: `**Policy:** autonomous` (the default, and what a charter with no such section reads as) or
-  `**Policy:** only-the-work`. Anything else is refused here rather than read as the default, since a
-  word nothing recognises would quietly mean the opposite of what an operator writing it meant. Both
-  `show` and `edit` report the resolved policy in their `--json`. `_lib.mjs`'s `qualityPolicy(horde)`
-  is the one reader of it, scoped to that section so a loose search never mistakes another
-  section's own line for it, and every tool that acts on the policy asks it rather than parsing
-  the charter again.
+  The charter's `## Quality` section carries the one field of it a tool acts on rather than a
+  person reads: `**Policy:** autonomous` (the default, and what a charter with no such section
+  reads as) or `**Policy:** only-the-work`. Anything else is refused here rather than read as the
+  default, since a word nothing recognises would quietly mean the opposite of what an operator
+  writing it meant. Both `show` and `edit` report the resolved policy in their `--json`.
+  `_lib.mjs`'s `qualityPolicy(horde)` is the one reader of it, scoped to that section so a loose
+  search never mistakes another section's own line for it, and every tool that acts on the policy
+  asks it rather than parsing the charter again.
 - `archive <name>` — moves `hordes/<name>` to `hordes/_archive/<name>-<date>`; branches untouched.
   Also releases every node lease the horde held (`.horde/leases.json`) — the moment it is no longer
   live, another horde can bind its nodes with no `--take` needed.
@@ -136,8 +136,7 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
 
 One screen: hordes, for each: trunk sha and distance from base, its branch tip, ticket branches
 beyond it (landed, unverified, unmerged, waiting), queue counts by state (including `waiting`), open
-asks, the last recorded gate result per level, any lease another *live* horde
-holds on a node this
+asks, the last recorded gate result per level, any lease another *live* horde holds on a node this
 horde's own tickets touch (node-lease-across-hordes — `.horde/leases.json`, shared by every horde
 on the repository), and an **evidence** block: every row of the charter's evidence catalogue in one
 of six states — `no-ticket` (nothing claims it), `prototyping` (every ticket naming it is a
@@ -790,8 +789,8 @@ Appends to `hordes/<horde>/plan.md` (team waves to `teams/<team>/plan.md`): `sta
 [--tree p] [--horde h]`,
 `note "…"`, `merged NNN <sha>`,
 `close [--gate green|red] [--sha <tip>]
-[--evidence E5,…] [--team t]` (renders `templates/wave-close.md` with counts from the queue and the
-evidence catalogue; `--gate` with `--sha` records the level's gate at that tip in
+[--evidence E5,…] [--team t]` (renders `templates/wave-close.md` with counts from the queue
+and the evidence catalogue; `--gate` with `--sha` records the level's gate at that tip in
 `cache/last-gate.json`; `--evidence` fills catalogue rows the green wave gate itself proves),
 `evidence <id> --by "<who/what>"` (fills one row by hand, for rows no ticket verdict can fill),
 `current [--team t]`. Every close also writes the mission's `horde-law/1` document (see `law.mjs`) and
@@ -1442,12 +1441,12 @@ inherits whatever tree the session's shell is already in.
    branch, with nothing touched.
 3. **The dispatch list.** `queue.mjs next`'s own order (stacked last, quality last, then severity,
    then the longer remaining critical path, then a node nothing is running on, then FIFO), with its
-   file locks and its dependency rule, cut to `config.parallelism` minus what is already running.
-   Every entry has had its branch and worktree cut, so the `brief` command on it renders against a
-   tree that exists; `model` is the ticket's own class. A stacked entry carries the separate line
-   `STACKED, parent t-NNN unmerged`. `judge` carries the prose pairs the gate handed back, and only
-   under `config.judge: one-shot`. `askClient` is the open items of `asks.json` — an absent file is
-   an empty in-tray, never a refusal.
+   file locks and its dependency rule, cut to the configured parallelism cap minus what is already
+   running. Every entry has had its branch and worktree cut, so the `brief` command on it renders
+   against a tree that exists; `model` is the ticket's own class. A stacked entry carries the
+   separate line `STACKED, parent t-NNN unmerged`. `judge` carries the prose pairs the gate handed
+   back, and only under `config.judge: one-shot`. `askClient` is the open items of `asks.json` — an
+   absent file is an empty in-tray, never a refusal.
 4. **Close.** A queue holding nothing but `merged` items gives `close: true` and the command that
    closes the wave. Tick prints that command and never runs it.
 

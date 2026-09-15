@@ -1278,9 +1278,8 @@ function cmdHistory(positional, flags) {
 //
 // evidence-is-the-plan: "done" is never "the queue is empty" — it is every promised proof
 // reproduced, the trunk gate green at the trunk tip, and the mission's retrospective run over the
-// mission as it now stands. Refuses listing
-// every reason at once (never one at a time, forcing a retry
-// loop); on success it stamps the charter (via stampMissionEvidence, already called for the
+// mission as it now stands. Refuses listing every reason at once (never one at a time, forcing a
+// retry loop); on success it stamps the charter (via stampMissionEvidence, already called for the
 // evidence check itself), appends the completion block to the mission journal, and prints what
 // the chairman does next.
 

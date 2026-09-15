@@ -47,11 +47,11 @@
 //
 // Every read here is degraded to a NOTE, never to a refusal, and the note says which read failed
 // and why. The reasoning is the same for all three: a close is the wave's only record — what
-// merged, what the evidence catalogue stands at, what the mission has done to the
-// law — and a wave that cannot be closed has no record at all. Holding that whole record hostage
-// to a sweep that is a courtesy would trade something irreplaceable for something that will be
-// true again at the next close. So a sweep that could not run says so, by name, in the report and
-// in the close's own JSON, and the close goes on.
+// merged, what the evidence catalogue stands at, what the mission has done to the law — and a
+// wave that cannot be closed has no record at all. Holding that whole record hostage to a sweep
+// that is a courtesy would trade something irreplaceable for something that will be true again at
+// the next close. So a sweep that could not run says so, by name, in the report and in the
+// close's own JSON, and the close goes on.
 //
 // The one thing never softened is a document that is not the document: an answer with the wrong
 // schema, or no schema, is reported as a failed read naming what was actually seen, never parsed
