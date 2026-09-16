@@ -400,22 +400,25 @@ function checkVerification(ctx) {
 
 const SEVERITIES = ['Critical', 'Important', 'Minor'];
 
-// tk.mjs writes one log line per reviewed node: "- <iso> review: <node> approve|changes by <who>"
+// tk.mjs used to write one log line per reviewed node: "- <iso> review: <node> changes by <who>"
 // followed by whatever notes that key carries at the time — the seat it was given under, the sha
-// and the diff it is bound to — and then "— <why>". Only the node, the verdict and the reason are
-// read here, and everything between them is kept as an opaque tail, so a new note on the key never
-// makes a review invisible to the drill.
+// and the diff it is bound to — and then "— <why>". Only the node, the reason and everything
+// between them (kept as an opaque tail) are read here, so a new note on the key never makes a
+// review invisible to the drill. The old format also carried an "approve" verb, a leftover of a
+// per-node reviewer seat removed before 6.0.0; a reviewer's approval must never feed a landing
+// decision, so that verb is not read — an "approve" line is invisible to this drill, same as no
+// review line at all.
 function reviewLines(logText) {
   const out = [];
   for (const line of (logText || '').split('\n')) {
-    const m = /review:\s*(\S+)\s+(approve|changes)\s+by\s+(\S+)(.*)$/.exec(line.trim());
+    const m = /review:\s*(\S+)\s+changes\s+by\s+(\S+)(.*)$/.exec(line.trim());
     if (!m) continue;
-    const tail = m[4] || '';
+    const tail = m[3] || '';
     const dash = tail.indexOf(' — ');
     out.push({
       node: m[1],
-      verdict: m[2],
-      by: m[3],
+      verdict: 'changes',
+      by: m[2],
       notes: (dash === -1 ? tail : tail.slice(0, dash)).trim(),
       why: dash === -1 ? '' : tail.slice(dash + 3).trim(),
     });
