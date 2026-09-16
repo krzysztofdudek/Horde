@@ -184,6 +184,54 @@ test('queue.mjs plan: two tickets claiming the same file with no order between t
   });
 });
 
+test('queue.mjs plan --apply-order: a file three tickets share gets a chain, not every pair, and skips the one edge that would close a loop with a port', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'core', { mapping: ['src/core/**'] });
+
+  // c consumes core/x; p produces it — a real port edge, c depends on p (buildPlan's own "consumes"
+  // edge). p has to exist before c: tk.mjs new refuses a Consumes with no producer yet.
+  const p = tk(dir, ['producer', '--title', 'producer', '--node', 'core', '--class', 'standard',
+    '--files', 'src/core/shared.ts,src/core/extra.ts', '--produces', 'core/x']);
+  const c = tk(dir, ['consumer', '--title', 'consumer', '--node', 'core', '--class', 'standard',
+    '--files', 'src/core/shared.ts', '--consumes', 'core/x']);
+  // A third ticket on the same file, with nothing to do with the port either way.
+  const b = tk(dir, ['bystander', '--title', 'bystander', '--node', 'core', '--class', 'standard',
+    '--files', 'src/core/shared.ts,src/core/f1.ts,src/core/f2.ts']);
+  for (const id of [p, c, b]) run('queue.mjs', ['add', id], dir);
+
+  // The port edge alone is not a cycle.
+  assert.equal(run('queue.mjs', ['plan'], dir).code, 0);
+
+  const r = run('queue.mjs', ['plan', '--apply-order'], dir);
+  assert.equal(r.code, 0, r.stderr);
+
+  // --apply-order's own key is fewer declared files first: c (1 file) sorts before p (2), which
+  // sorts before b (3) — a chain, not all three pairs. The c/p seam would write "p depends on c",
+  // which together with the port edge ("c depends on p") closes a two-ticket loop, so it is
+  // skipped and named rather than written; the p/b seam has nothing standing in its way.
+  assert.deepEqual(r.json.applied.map((a) => `${a.ticket}->${a.on}`), [`${b}->${p}`]);
+  assert.equal(r.json.skipped.length, 1);
+  assert.equal(r.json.skipped[0].ticket, p);
+  assert.equal(r.json.skipped[0].on, c);
+  assert.equal(r.json.skipped[0].file, 'src/core/shared.ts');
+  assert.match(r.json.skipped[0].reason, /cycle/);
+
+  const human = run('queue.mjs', ['plan', '--apply-order'], dir, { json: false });
+  assert.match(human.stdout, /skipped, would cycle:.*cycle/);
+
+  const items = run('queue.mjs', ['list'], dir).json;
+  assert.deepEqual(items.find((i) => i.ticket === p).dependsOn, []);
+  assert.deepEqual(items.find((i) => i.ticket === c).dependsOn, []); // the port edge is never written to queue.json
+  assert.deepEqual(items.find((i) => i.ticket === b).dependsOn, [p]);
+
+  // No cycle got written: plan still passes.
+  const after = run('queue.mjs', ['plan'], dir);
+  assert.equal(after.code, 0, after.stderr);
+  assert.equal(after.json.cycles.length, 0);
+});
+
 test('queue.mjs plan: a file three tickets claim is named as a hub', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

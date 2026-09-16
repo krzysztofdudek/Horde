@@ -316,12 +316,28 @@ earning no row at all claims nothing — neither is a mismatch.
   `config.parallelism`. Merged and dropped tickets are out of the plan — it is what remains to do.
   A circle of dependencies is a refusal, with the circle printed. `--json` is a `horde-plan/1`
   document carrying all of it. `--apply-order` records the order `plan` proposed for a file clash
-  (fewer files first) as an ordinary dependency on the queue item, with a note saying why.
-  `--out <file>` writes the plan (rendered, or JSON with `--json`) to a file instead of stdout,
+  as an ordinary dependency on the queue item, with a note saying why — one edge per adjacent pair
+  in the file's own order (fewer declared files first, ticket id breaking a tie), not every pair:
+  a file N tickets share gets at most N-1 edges, never the N(N-1)/2 a full pairwise write would.
+  That key is a property of each ticket, never of the pair, so a chain through it carries exactly
+  the same order the full pairwise set did and never closes a loop by itself — only a port edge or
+  a `**Depends on:**` edge running the other way can do that, together with it. Each edge is
+  checked against the plan's own full DAG (ports and hand-written dependencies included, not just
+  what is already in `queue.json`) before it is written; where writing it would close a loop, that
+  one edge is skipped and the result names the cycle instead, and the rest of the file's chain is
+  written as usual. `--out <file>` writes the plan (rendered, or JSON with `--json`) to a file instead of stdout,
   for a reader who must see it whole — the architect — rather than a summary relayed through a
   message.
-- A dependency (`add`'s `--depends`, `dep`'s `--on`) is `NNN` (same team), `<team>:NNN` (a ticket in
-  another team's queue), or `<team>:team:<name>` (that team's own merge-up item, e.g.
+- `undep NNN --on MMM [--note "…"]` takes a dependency back off `NNN`'s queue item — a note is
+  always recorded, `--note`'s text appended to it where given. Only an edge the queue itself added
+  (`add --depends`, `dep`, `tk.mjs edit --depends`, or `plan --apply-order`) is its to remove: it
+  refuses one that also comes from `NNN`'s own `**Depends on:**` field (that field is written once,
+  at `tk.mjs new`, and nothing today edits it back out — dropping the queue's copy would leave the
+  ticket's own text still declaring it) or from a port `NNN` consumes that `MMM` produces (`plan`
+  recomputes that edge fresh from `**Consumes:**`/`**Produces:**` every time, so the queue never
+  actually held it), naming which and what to edit instead.
+- A dependency (`add`'s `--depends`, `dep`'s and `undep`'s `--on`) is `NNN` (same team), `<team>:NNN`
+  (a ticket in another team's queue), or `<team>:team:<name>` (that team's own merge-up item, e.g.
   `trunk:team:allies`) — `next` checks a cross-team one against that team's own `queue.json`, read
   fresh every call, so a dependency between teams is enforced by the DAG rather than held only in
   prose. Refuses an unknown team or item; a same-team cycle is refused, a cross-team one is not
