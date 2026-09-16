@@ -305,6 +305,12 @@ to the client. Horde runs no runner and configures none — the environment and 
 repository's, and this only reads what the run left behind. With no report configured the gate says
 so, rather than reporting a green nothing confirmed.
 
+The revert test holds the same line where it cannot run a test file by itself and has to run the
+repository's whole commit gate instead. That command's red counts as the file's only when the same
+tree without the file is green, and — with a report configured — only when the report shows a failing
+case from that file. A red already there without the file, or a green that never shows the file ran,
+is "no verdict": refused like any failure, and named for what it is.
+
 ### The gate lock
 
 `.horde/gate.lock`, one per repository — resolved through the git common directory, so every

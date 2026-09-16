@@ -65,9 +65,12 @@ for either way.
   4. revert test    — new or changed test files (named by config.testGlobs), extracted onto the
                       parent's tree, fail there; or, when the ticket names a "**Mutate:**" command
                       instead, run against a scratch copy of the branch's own tip with that command
-                      applied, fail there. Diff carries none of those: ✗, unless the ticket declares
-                      "**No new tests:**" with a reason. ✗ when this repository's test patterns are
-                      unknown
+                      applied, fail there. A file node --test cannot run goes through gates.commit,
+                      which counts only when it is green on that same tree without the file and red
+                      with it — and, with config.gates.report, when the report names a failing case
+                      from the file; anything less is "no verdict", a ✗. Diff carries none of those:
+                      ✗, unless the ticket declares "**No new tests:**" with a reason. ✗ when this
+                      repository's test patterns are unknown
   5. gate           — config.gates.<level> green on the branch's own tree, run fresh; and, when
                       config.gates.report names the report that run leaves behind ({path, format},
                       format junit|tap|playwright-json), every live promise's own paired case in
@@ -453,64 +456,183 @@ function noNewTestsReason(issueText) {
   return m ? m[1].trimEnd() : null;
 }
 
-// Runs one already-materialised test file in `tmp` and reports whether it's red. A file this
-// repo's own runner (`node --test`) can run directly is run directly; anything else falls back to
-// the whole `gates.commit` command (coarser: any red in that command counts as "a failure" for
-// this file, since isolating just its test lane out of an arbitrary configured command isn't
-// possible in general). Shared by both revert-test variants below — the only difference between
-// them is how `tmp` came to hold the file and what state its implementation is in when this runs.
-function runTestFileFor(tmp, relPath, cfg) {
-  // Both runners here execute whatever the branch or the repository configured, on a landing that
-  // may be running detached with nothing waiting on it, so both run under the same ceiling the
-  // gate command does. A run that reaches it is not a pass — it is a run that told us nothing.
-  const timeout = gateTimeout(cfg);
-  const stopped = `did not finish within ${Math.round(timeout / 1000)}s and was stopped — a test run that hangs proves nothing; raise the limit with: horde.mjs config set gateTimeoutMs <milliseconds>`;
-  if (/\.(m?js|c?js)$/.test(relPath)) {
-    const out = runCapture('node', ['--test', relPath], {
-      cwd: tmp, env: childTestEnv(), timeout, killSignal: 'SIGTERM',
-    });
-    if (out === null) return { path: relPath, ok: false, note: stopped };
-    const summary = parseNodeTestSummary(out);
-    return { path: relPath, ok: (summary.fail ?? 0) > 0, note: `${summary.fail ?? '?'} fail / ${summary.tests ?? '?'} tests` };
+// How a matched test file is run, decided in this one place so a further runner is one more answer
+// here rather than a second dispatch somewhere else. "node" is a file this repository's own runner
+// (`node --test`) can run directly; "whole-command" is anything else, run through the whole
+// `config.gates.commit` (see "the whole-command fallback" below); null is nothing to run it with.
+// Shared by both revert-test variants below — the only difference between them is how their tree
+// came to hold the file and what state its implementation is in when it runs.
+function runnerFor(relPath, cfg) {
+  if (/\.(m?js|c?js)$/.test(relPath)) return 'node';
+  if (cfg.gates && cfg.gates.commit) return 'whole-command';
+  return null;
+}
+
+const NO_RUNNER_NOTE = 'no runner available (not a node test file, and no gates.commit configured)';
+
+// Every runner here executes whatever the branch or the repository configured, on a landing that may
+// be running detached with nothing waiting on it, so each runs under the same ceiling the gate
+// command does. A run that reaches it is not a pass — it is a run that told us nothing.
+function stoppedNote(cfg) {
+  return `did not finish within ${Math.round(gateTimeout(cfg) / 1000)}s and was stopped — a test run that hangs proves nothing; raise the limit with: horde.mjs config set gateTimeoutMs <milliseconds>`;
+}
+
+// Runs one already-materialised node test file in `tmp` and reports whether it's red.
+function runNodeTestFile(tmp, relPath, cfg) {
+  const out = runCapture('node', ['--test', relPath], {
+    cwd: tmp, env: childTestEnv(), timeout: gateTimeout(cfg), killSignal: 'SIGTERM',
+  });
+  if (out === null) return { path: relPath, ok: false, note: stoppedNote(cfg) };
+  const summary = parseNodeTestSummary(out);
+  return { path: relPath, ok: (summary.fail ?? 0) > 0, note: `${summary.fail ?? '?'} fail / ${summary.tests ?? '?'} tests` };
+}
+
+// Sets one test file in a scratch tree to `content` — or takes it out, for null — and hands back
+// what the tree held there before, in the same shape, so the same call puts it back. Every file the
+// revert test puts into a tree or takes out of one goes through here, so anything a runner needs
+// done around that has one place to go.
+function setTestFile(tmp, relPath, content) {
+  const abs = join(tmp, relPath);
+  const before = existsSync(abs) ? readFileSync(abs) : null;
+  if (content === null) {
+    rmSync(abs, { force: true });
+  } else {
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, content);
   }
-  if (cfg.gates && cfg.gates.commit) {
-    let failed = false;
-    let timedOut = false;
-    try {
-      execSync(cfg.gates.commit, { cwd: tmp, stdio: 'pipe', timeout });
-    } catch (e) {
-      failed = true;
-      timedOut = e.killed === true || e.signal === 'SIGTERM';
+  return before;
+}
+
+// ---- the whole-command fallback ------------------------------------------------------------------
+//
+// A test file `node --test` cannot run is run through the repository's whole `config.gates.commit`,
+// because isolating one file's lane out of an arbitrary configured command is not possible in
+// general. But a whole command's red is not that file's red, and its green is not that file's green.
+// The command can be red before the file is anywhere near it — a test nobody touched failing, an
+// environment that is not there — and a runner can skip a file it cannot load and still exit 0.
+// Read straight off the exit code, the first is proof nobody earned and the second a "not
+// load-bearing" verdict on a test that never ran. So the exit code alone decides nothing:
+//
+// - A control run comes first: the same tree holding none of the ticket's own test files — the
+//   base exactly as it stands, for the revert-to-base variant; the mutated tree with them taken
+//   out, for the mutation one. Red or stopped there, no file gets a verdict: its red with the file
+//   in place would say nothing about the file.
+// - Then each file on its own: put in, run, taken out again, so no file's red is another file's.
+// - Red with the file in place and green without it is proof. When `config.gates.report` is set,
+//   only if the report that run left behind attributes at least one failing case to that file — a
+//   red with none of the file's own cases failing came from somewhere else.
+// - Green with the report showing every case from the file ran and passed is the one "not
+//   load-bearing" verdict there is. Green with nothing from the file in the report is a file the
+//   runner never ran, and green with no report configured cannot tell those two apart: both are
+//   "no verdict", never a verdict.
+//
+// "No verdict" refuses the item exactly as a failure does — nothing lands without proof. It is the
+// honest name for a run that showed nothing either way, so the worker fixes the run, not the test.
+//
+// The cost is one more `gates.commit` run per landing, and only for a ticket carrying a file that
+// needs this fallback at all.
+
+// One run of `gates.commit` in `tmp`. The report path is cleared first, so what is read afterwards
+// can only be what this run wrote — never a file an earlier run, or the base itself, left there.
+function runWholeCommand(tmp, cfg, report) {
+  if (report.path) rmSync(join(tmp, report.path), { force: true });
+  try {
+    execSync(cfg.gates.commit, { cwd: tmp, stdio: 'pipe', timeout: gateTimeout(cfg) });
+    return { green: true, stopped: false };
+  } catch (e) {
+    return { green: false, stopped: e.killed === true || e.signal === 'SIGTERM' };
+  }
+}
+
+// `files` are `{path, content}` — the ticket's own version of each file to run — and the tree they
+// are run in holds none of the ticket's test files when this is called; `treeName` says which tree
+// that is, in the words every note uses.
+function runWholeCommandFallback(tmp, cfg, files, treeName) {
+  const report = gateReportConfig(cfg);
+  if (report.error) return files.map(({ path }) => ({ path, ok: false, note: `no verdict — ${report.error}` }));
+  const control = runWholeCommand(tmp, cfg, report);
+  return files.map(({ path, content }) => {
+    if (control.stopped) {
+      return { path, ok: false, note: `no verdict — the control run of gates.commit on ${treeName} without ${path} ${stoppedNote(cfg)}` };
     }
-    if (timedOut) return { path: relPath, ok: false, note: `gates.commit ${stopped}` };
-    return { path: relPath, ok: failed, note: failed ? 'gates.commit red (whole command — no test-only isolation available)' : 'gates.commit green — not load-bearing' };
+    if (!control.green) {
+      return { path, ok: false, note: `no verdict — gates.commit is already red on ${treeName} without ${path}, so its red with the file in place would say nothing about the file` };
+    }
+    const before = setTestFile(tmp, path, content);
+    try {
+      return wholeCommandVerdict(tmp, cfg, path, runWholeCommand(tmp, cfg, report), report, treeName);
+    } finally {
+      setTestFile(tmp, path, before);
+    }
+  });
+}
+
+// What one run with the file in place proves, read after a green control run.
+function wholeCommandVerdict(tmp, cfg, path, run, report, treeName) {
+  const noVerdict = (why) => ({ path, ok: false, note: `no verdict — ${why}` });
+  if (run.stopped) return { path, ok: false, note: `gates.commit ${stoppedNote(cfg)}` };
+  const inPlace = run.green
+    ? 'gates.commit green with it in place'
+    : `gates.commit red with it in place, green on ${treeName} without it`;
+  if (!report.configured) {
+    if (!run.green) return { path, ok: true, note: `${inPlace} (whole command — no test-only isolation, and no config.gates.report to name the failing case)` };
+    return noVerdict(`${inPlace}, and with no config.gates.report nothing shows whether the runner ran it — a file it skipped and a test that proves nothing look the same. Name the report the command leaves behind: horde.mjs config set gates.report.path "<file>" and gates.report.format ${REPORT_FORMATS.join('|')}`);
   }
-  return { path: relPath, ok: false, note: 'no runner available (not a node test file, and no gates.commit configured)' };
+  const abs = join(tmp, report.path);
+  if (!existsSync(abs)) {
+    return noVerdict(`${inPlace}, but it left no ${report.path} behind, so nothing shows ${path} ran — config.gates.report names that file, and gates.commit has to write it too for this run to be read`);
+  }
+  const parsed = parseReport(readText(abs), report.format);
+  if (parsed.error) return noVerdict(`${inPlace}, but ${report.path} does not read as ${report.format} — ${parsed.error}`);
+  const cases = casesAttributedTo(parsed.entries, path);
+  const failed = cases.filter((e) => e.status === 'failed');
+  const skipped = cases.filter((e) => e.status === 'skipped');
+  if (!run.green) {
+    if (failed.length) return { path, ok: true, note: `${inPlace}, and ${failed.length} failing case(s) from it in ${report.path} ("${failed[0].name}")` };
+    if (!cases.length) return noVerdict(`${inPlace}, but nothing in ${report.path} is attributed to ${path}, so the red is not shown to be its own`);
+    return noVerdict(`${inPlace}, but every case from it in ${report.path} ${skipped.length ? 'passed or was skipped' : 'passed'} — the red came from somewhere else`);
+  }
+  if (!cases.length) return noVerdict(`${inPlace}, and nothing in ${report.path} is attributed to ${path} — the runner never ran it, so this says nothing about whether it is load-bearing`);
+  if (failed.length) return noVerdict(`${inPlace}, yet ${report.path} has "${failed[0].name}" from it failed — an exit code and a report that disagree prove nothing`);
+  if (skipped.length) return noVerdict(`${inPlace}, and ${skipped.length} of ${cases.length} case(s) from it in ${report.path} were skipped, not run`);
+  return { path, ok: false, note: `${inPlace}, and all ${cases.length} case(s) from it in ${report.path} ran and passed on ${treeName} — not load-bearing` };
 }
 
 // The revert-to-base variant (today's default, unchanged): new test files extracted onto the
 // revert base's tip (the parent branch, unless the ticket names another ref — see revertBaseRef)
 // in a scratch worktree, and run there; each must show at least one failure, since a new test
-// that already passes on its base proves nothing.
+// that already passes on its base proves nothing. A file only `gates.commit` can run must also show
+// that failure is its own — see "the whole-command fallback" above.
 function runRevertToBaseVariant(root, cfg, branch, parentBranch, base, newTestFiles) {
   const baseSha = git(['rev-parse', '--verify', `${base}^{commit}`]);
   if (!baseSha) return { ok: false, note: `revert base not found: ${base}` };
 
   const info = resolveTree({ scratch: baseSha }, { cwd: root });
   const tmp = info.path;
-  const results = [];
+  const byPath = new Map();
   try {
+    const extracted = [];
     for (const relPath of newTestFiles) {
       const content = git(['show', `${branch}:${relPath}`], root);
-      if (content === null) { results.push({ path: relPath, ok: false, note: 'could not extract from branch' }); continue; }
-      const abs = join(tmp, relPath);
-      mkdirSync(dirname(abs), { recursive: true });
-      writeFileSync(abs, content);
-      results.push(runTestFileFor(tmp, relPath, cfg));
+      if (content === null) byPath.set(relPath, { path: relPath, ok: false, note: 'could not extract from branch' });
+      else extracted.push({ path: relPath, content, runner: runnerFor(relPath, cfg) });
+    }
+    // The whole-command fallback first, while the base still holds none of the branch's test files
+    // — its control run is that base, and each of its files goes back out once it has run.
+    const fallback = extracted.filter((f) => f.runner === 'whole-command');
+    if (fallback.length) {
+      for (const r of runWholeCommandFallback(tmp, cfg, fallback, 'the base')) byPath.set(r.path, r);
+    }
+    for (const f of extracted) {
+      if (f.runner === 'whole-command') continue;
+      if (f.runner === null) { byPath.set(f.path, { path: f.path, ok: false, note: NO_RUNNER_NOTE }); continue; }
+      setTestFile(tmp, f.path, f.content);
+      byPath.set(f.path, runNodeTestFile(tmp, f.path, cfg));
     }
   } finally {
     cleanupTree(info, root);
   }
+  const results = newTestFiles.map((relPath) => byPath.get(relPath));
   const ok = results.every((r) => r.ok);
   const baseNote = base === parentBranch ? '' : `base ${base} — `;
   return { ok, note: baseNote + results.map((r) => `${r.path}: ${r.note}`).join(' · ') };
@@ -521,7 +643,8 @@ function runRevertToBaseVariant(root, cfg, branch, parentBranch, base, newTestFi
 // is deliberately broken. The command runs in a scratch copy of the branch's own tip — never the
 // tree any other checklist item measures, so a broken implementation here can't leak into the
 // gate or the graph item that run afterwards — and every new test file (already present in that
-// tree, since it's the branch's own tip; nothing needs extracting) must go red once it has run.
+// tree, since it's the branch's own tip; nothing needs extracting) must go red once it has run — a
+// file only `gates.commit` can run, red in a way the whole-command fallback above accepts as its own.
 //
 // A command that itself fails to run is reported as its own failure rather than silently treated
 // as "no mutation happened, so of course the tests are still green" — a mutate command naming the
@@ -543,7 +666,31 @@ function runMutateVariant(root, cfg, branch, mutate, newTestFiles) {
       const detail = ((e.stderr ? e.stderr.toString() : '') || e.message || '').split('\n')[0];
       return { ok: false, note: `mutate command failed to run: ${mutate}${detail ? ` — ${detail}` : ''}` };
     }
-    const results = newTestFiles.map((relPath) => runTestFileFor(tmp, relPath, cfg));
+    const byPath = new Map();
+    const fallback = newTestFiles.filter((relPath) => runnerFor(relPath, cfg) === 'whole-command');
+    if (fallback.length) {
+      // Every one of the ticket's own test files out of the mutated tree for the fallback's control
+      // run — a node test catching the mutation is not a fallback file's red either — then each
+      // fallback file back in on its own, and all of them back once that is done.
+      const held = newTestFiles.map((relPath) => ({ path: relPath, content: setTestFile(tmp, relPath, null) }));
+      const runnable = [];
+      for (const h of held) {
+        if (!fallback.includes(h.path)) continue;
+        if (h.content === null) byPath.set(h.path, { path: h.path, ok: false, note: 'not in the mutated tree — the mutate command removed it, so there is nothing to run' });
+        else runnable.push(h);
+      }
+      if (runnable.length) {
+        for (const r of runWholeCommandFallback(tmp, cfg, runnable, 'the mutated tree')) byPath.set(r.path, r);
+      }
+      for (const h of held) if (h.content !== null) setTestFile(tmp, h.path, h.content);
+    }
+    for (const relPath of newTestFiles) {
+      if (byPath.has(relPath)) continue;
+      byPath.set(relPath, runnerFor(relPath, cfg) === 'node'
+        ? runNodeTestFile(tmp, relPath, cfg)
+        : { path: relPath, ok: false, note: NO_RUNNER_NOTE });
+    }
+    const results = newTestFiles.map((relPath) => byPath.get(relPath));
     const ok = results.every((r) => r.ok);
     return { ok, note: `mutate \`${mutate}\` — ${results.map((r) => `${r.path}: ${r.note}`).join(' · ')}` };
   } finally {
@@ -2172,6 +2319,16 @@ function fileStemWords(file) {
   return flattenWords(stemOf(file).replace(/\.(?:test|spec|it)$/i, ''));
 }
 
+// The cases a report attributes to one file, by the two rules above: the file itself, wherever the
+// report names files at all; and only when it names none anywhere, the case named after the file's
+// stem. One rule for both readers of a report — a promise's file-level pairing below, and the revert
+// test's whole-command fallback, which asks whether a failing case came from the file it ran.
+function casesAttributedTo(entries, file) {
+  if (entries.some((e) => e.file)) return entries.filter((e) => e.file && sameFile(e.file, file));
+  const stem = fileStemWords(file);
+  return stem ? entries.filter((e) => flattenWords(e.name) === stem) : [];
+}
+
 // Why this promise has no clean run in the report, as one sentence — or null when it has one.
 // `reportNamesFiles` is a fact about the parsed report rather than about the configured format: a
 // JUnit writer that emits neither `file` nor `classname` is in exactly TAP's position and is told
@@ -2198,7 +2355,7 @@ function promiseReportMiss(entries, reportNamesFiles, promise) {
   }
 
   if (reportNamesFiles) {
-    const inFile = entries.filter((e) => e.file && sameFile(e.file, file));
+    const inFile = casesAttributedTo(entries, file);
     if (!inFile.length) return `nothing in the report is attributed to ${file}, which is what keeps it — so far as the runner's own record goes, it did not run`;
     const bad = inFile.find((e) => e.status !== 'passed');
     return bad ? `${file} is in the report with "${bad.name}" ${bad.status}, not passed` : null;
@@ -2208,7 +2365,7 @@ function promiseReportMiss(entries, reportNamesFiles, promise) {
   if (!stem) {
     return `this report carries no file attribution at all, and ${file} leaves no name to look one up by either. Pair the promise as "<file>#<case name>", or have the gate write junit or playwright-json — both carry the file`;
   }
-  const byName = entries.filter((e) => flattenWords(e.name) === stem);
+  const byName = casesAttributedTo(entries, file);
   if (!byName.length) {
     return `this report carries no file attribution at all, so ${file} could only be looked for by name, and no case in it is named "${stem}". Pair the promise as "<file>#<case name>", or have the gate write junit or playwright-json — both carry the file`;
   }

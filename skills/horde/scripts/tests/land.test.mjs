@@ -688,6 +688,204 @@ test('land.mjs: a ticket naming both "**Mutate:**" and "**Revert base:**" is ref
   assert.match(item.note, /names both --mutate and a revert base \(develop\)/);
 });
 
+// ---- the revert test's whole-command fallback --------------------------------------------------
+//
+// A test file `node --test` cannot run by itself is run through the repository's whole
+// `gates.commit` instead. These fixtures give that command a runner the gate knows nothing about: a
+// script on the trunk that reads every `*.test.json` spec at the tree's root, checks what the spec
+// says, and — when handed a path — writes a JUnit report with one case per spec it actually ran. A
+// spec that "needs" a file the tree does not hold is skipped silently: no case in the report and no
+// red, which is what a real runner does with a test whose import does not resolve on the base.
+const SPEC_RUNNER = [
+  "import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';",
+  "import { dirname } from 'node:path';",
+  'const report = process.argv[2];',
+  'let red = false;',
+  'const cases = [];',
+  "for (const name of readdirSync('.').filter((n) => n.endsWith('.test.json')).sort()) {",
+  "  const spec = JSON.parse(readFileSync(name, 'utf8'));",
+  '  if (spec.needs && !existsSync(spec.needs)) continue;',
+  "  const ok = spec.pass === true || (existsSync(spec.file || '') && readFileSync(spec.file, 'utf8').includes(spec.contains));",
+  '  if (!ok) red = true;',
+  "  cases.push('<testcase name=\"' + name + '\" file=\"' + name + '\">' + (ok ? '' : '<failure message=\"red\"/>') + '</testcase>');",
+  '}',
+  'if (report) {',
+  '  mkdirSync(dirname(report), { recursive: true });',
+  "  writeFileSync(report, '<testsuites><testsuite name=\"specs\">' + cases.join('') + '</testsuite></testsuites>\\n');",
+  '}',
+  'process.exit(red ? 1 : 0);',
+  '',
+].join('\n');
+
+// A lane beside the tests: red whenever any spec in the tree carries the word "lint-me", whatever
+// that spec's own case did.
+const LINT_LANE = [
+  "import { readdirSync, readFileSync } from 'node:fs';",
+  "const bad = readdirSync('.').filter((n) => n.endsWith('.test.json') && readFileSync(n, 'utf8').includes('lint-me'));",
+  'process.exit(bad.length ? 1 : 0);',
+  '',
+].join('\n');
+
+const SPEC_REPORT = 'reports/specs.xml';
+
+// A landable ticket whose only test file is `feature-<id>.test.json` — the node test file every
+// landable fixture carries is taken off the branch, so the one test in the diff is one the gate has
+// to hand to `gates.commit`.
+function setupSpecTicket(dir, id, {
+  spec, moreSpecs = {}, trunkFiles = {}, commit = `node run-specs.mjs ${SPEC_REPORT}`, report = false,
+} = {}) {
+  const testFile = `feature-${id}.test.json`;
+  const specs = Object.fromEntries(Object.entries({ [testFile]: spec, ...moreSpecs })
+    .map(([path, body]) => [path, `${JSON.stringify(body)}\n`]));
+  const out = setupLandable(dir, id, {
+    trunkFiles: { 'run-specs.mjs': SPEC_RUNNER, ...trunkFiles },
+    extraFiles: specs,
+  });
+  git(['checkout', '-q', out.branch], dir);
+  git(['rm', '-q', `feature-${id}.test.mjs`], dir);
+  git(['commit', '-qm', 'the spec is the only test'], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  run('horde.mjs', ['config', 'set', 'gates.commit', commit], dir);
+  if (report) setSpecReport(dir);
+  return { ...out, testFile };
+}
+
+function setSpecReport(dir) {
+  run('horde.mjs', ['config', 'set', 'gates.report.path', SPEC_REPORT], dir);
+  run('horde.mjs', ['config', 'set', 'gates.report.format', 'junit'], dir);
+}
+
+// Proves the ticket: red on the base, where feature-<id>.mjs does not exist yet.
+const loadBearingSpec = (id) => ({ file: `feature-${id}.mjs`, contains: 'a + b' });
+
+test('land.mjs revert test via gates.commit: a file the runner silently skipped is "no verdict", never a "not load-bearing" verdict', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupSpecTicket(dir, '080', {
+    spec: { needs: 'feature-080.mjs', ...loadBearingSpec('080') },
+    report: true,
+  });
+
+  // With a report: the runner's own record says the file never ran, and the item says exactly that.
+  const reported = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(reported.ok, false, reported.note);
+  assert.doesNotMatch(reported.note, /not load-bearing/);
+  assert.match(reported.note, /feature-080\.test\.json: no verdict/);
+  assert.match(reported.note, /nothing in reports\/specs\.xml is attributed to feature-080\.test\.json/);
+
+  // Without one: a green run cannot tell a skipped file from a test that proves nothing, so it
+  // claims neither, and names the setting that would tell them apart.
+  run('horde.mjs', ['config', 'set', 'gates.report', ''], dir);
+  const unreported = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(unreported.ok, false, unreported.note);
+  assert.doesNotMatch(unreported.note, /not load-bearing/);
+  assert.match(unreported.note, /feature-080\.test\.json: no verdict/);
+  assert.match(unreported.note, /gates\.report/);
+  assert.deepEqual(scratchDirs(dir), []);
+});
+
+test('land.mjs revert test via gates.commit: a red that was already red on the base without the file is "no verdict", never proof', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // The trunk already carries a spec that fails everywhere; the ticket's own spec proves nothing.
+  const { branch } = setupSpecTicket(dir, '081', {
+    spec: { pass: true },
+    trunkFiles: { 'broken.test.json': `${JSON.stringify({ file: 'nowhere', contains: 'x' })}\n` },
+  });
+
+  const r = run('land.mjs', [branch, '--no-gate'], dir);
+  const item = byName(r)['revert test'];
+  assert.equal(item.ok, false, item.note);
+  assert.match(item.note, /feature-081\.test\.json: no verdict/);
+  assert.match(item.note, /already red on the base without feature-081\.test\.json/);
+
+  // A report changes nothing about that: the control run decides first.
+  setSpecReport(dir);
+  const reported = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(reported.ok, false, reported.note);
+  assert.match(reported.note, /already red on the base without feature-081\.test\.json/);
+  assert.deepEqual(scratchDirs(dir), []);
+});
+
+test('land.mjs revert test via gates.commit: red with the file and green without it is proof — with a report, only when it names a failing case from that file', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupSpecTicket(dir, '082', { spec: loadBearingSpec('082') });
+
+  const bare = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(bare.ok, true, bare.note);
+  assert.match(bare.note, /feature-082\.test\.json: gates\.commit red with it in place, green on the base without it/);
+
+  setSpecReport(dir);
+  const reported = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(reported.ok, true, reported.note);
+  assert.match(reported.note, /1 failing case\(s\) from it in reports\/specs\.xml/);
+  assert.deepEqual(scratchDirs(dir), []);
+});
+
+test('land.mjs revert test via gates.commit: each file runs on its own, so one file\'s red is never another file\'s proof', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // "a-…" sorts first: a real proof, then a spec that proves nothing, run after it.
+  const { branch } = setupSpecTicket(dir, '085', {
+    spec: { pass: true },
+    moreSpecs: { 'a-085.test.json': loadBearingSpec('085') },
+  });
+
+  const item = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(item.ok, false, item.note);
+  assert.match(item.note, /a-085\.test\.json: gates\.commit red with it in place, green on the base without it/);
+  assert.match(item.note, /feature-085\.test\.json: no verdict — gates\.commit green with it in place/);
+  assert.deepEqual(scratchDirs(dir), []);
+});
+
+test('land.mjs revert test via gates.commit: with a report, a red that names no failing case from the file is "no verdict", never proof', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // The spec itself passes on the base; only a lane beside the tests goes red once it is there.
+  const { branch } = setupSpecTicket(dir, '083', {
+    spec: { pass: true, note: 'lint-me' },
+    trunkFiles: { 'lint-specs.mjs': LINT_LANE },
+    commit: `node run-specs.mjs ${SPEC_REPORT} && node lint-specs.mjs`,
+    report: true,
+  });
+
+  const passed = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(passed.ok, false, passed.note);
+  assert.match(passed.note, /feature-083\.test\.json: no verdict/);
+  assert.match(passed.note, /every case from it in reports\/specs\.xml passed/);
+
+  // A command that leaves no report behind proves nothing about which file its red belongs to.
+  run('horde.mjs', ['config', 'set', 'gates.commit', 'node run-specs.mjs && node lint-specs.mjs'], dir);
+  const missing = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(missing.ok, false, missing.note);
+  assert.match(missing.note, /feature-083\.test\.json: no verdict/);
+  assert.match(missing.note, /left no reports\/specs\.xml/);
+  assert.deepEqual(scratchDirs(dir), []);
+});
+
+test('land.mjs revert test via gates.commit: the mutation variant runs its control on the mutated tree without the file', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: dst } = setupSpecTicket(dir, '084', { spec: loadBearingSpec('084'), report: true });
+  addMutateField(dst, "node -e \"const fs=require('fs');const p='feature-084.mjs';fs.writeFileSync(p, fs.readFileSync(p,'utf8').replace('a + b','a - b'))\"");
+
+  const caught = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(caught.ok, true, caught.note);
+  assert.match(caught.note, /^mutate `node -e/);
+  assert.match(caught.note, /feature-084\.test\.json: gates\.commit red with it in place, green on the mutated tree without it/);
+
+  // A mutation that breaks the tree for everyone is not the file's red.
+  const path = join(dst, 'issue.md');
+  writeFileSync(path, readFileSync(path, 'utf8').replace(/\*\*Mutate:\*\* .*$/m, `**Mutate:** node -e "require('fs').writeFileSync('always.test.json', '{}')"`));
+  const everyone = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(everyone.ok, false, everyone.note);
+  assert.match(everyone.note, /feature-084\.test\.json: no verdict/);
+  assert.match(everyone.note, /already red on the mutated tree without feature-084\.test\.json/);
+  assert.deepEqual(scratchDirs(dir), []);
+  assert.match(git(['show', `${branch}:feature-084.mjs`], dir), /a \+ b/);
+});
+
 test('land.mjs: the journal item fails when no log entry is newer than the last commit', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

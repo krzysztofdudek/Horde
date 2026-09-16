@@ -919,9 +919,13 @@ the JSON, and every item below is measured against it:
 4. revert test — new test files in the diff, extracted onto the parent's tree, show at least one
    failure; or, when the ticket carries a `**Mutate:**` command, run against a scratch copy of the
    branch's own tip with that command applied, show at least one failure there instead. The variant
-   is always the ticket's own choice, never a `land.mjs` flag. The result is derived by running
-   them; nothing declares it to this gate, and no flag offers to say so, because a declaration
-   about a test is not evidence about a test;
+   is always the ticket's own choice, never a `land.mjs` flag. A file `node --test` cannot run goes
+   through the whole `config.gates.commit`, and its red counts only when that command is green on the
+   same tree without the file — and, when `config.gates.report` is set, when the report names a
+   failing case from the file; anything less is "no verdict", a ✗ (see
+   [the revert test](#landmjss-revert-test--how-a-new-test-file-is-found-and-run) below). The result
+   is derived by running them; nothing declares it to this gate, and no flag offers to say so,
+   because a declaration about a test is not evidence about a test;
 5. gate — `config.gates.<level>` run fresh on the branch's own tree, **and** the report that run
    left behind. No recorded green run is accepted from anywhere: a "green at sha …" line in a
    ticket's log is a claim about a run this gate did not see. A command that hangs is stopped at
@@ -1587,9 +1591,34 @@ files; when it is empty the item is ✗, because a ✓ reading "no new or change
 over a repository whose tests this tool cannot recognize is the strongest guarantee in the checklist
 passing without looking. A ✓ names the patterns it did look for. A matched file whose extension
 `node --test` can run directly is extracted and run that way; anything else falls back to running
-the whole `config.gates.commit` command in the scratch worktree, treating any red as "this file's a
-failure" — isolating just one file's test lane out of an arbitrary configured command isn't possible
-in general.
+the whole `config.gates.commit` command in the scratch worktree — isolating just one file's test lane
+out of an arbitrary configured command isn't possible in general.
+
+A whole command's exit code is not one file's result, in either direction. It can be red before the
+file is anywhere near it — a test nobody touched failing, an environment that isn't there — and a
+runner can skip a file it cannot load and still exit 0. So the fallback never reads the exit code
+alone:
+
+- **A control run first.** `gates.commit` runs once on the same tree holding none of the ticket's own
+  test files: the base exactly as it stands (a changed file's base version included) for the
+  revert-to-base variant, the mutated tree with them taken out for the mutation one. Red or stopped
+  there, every fallback file is "no verdict — gates.commit is already red on the base without it":
+  its red with the file in place would say nothing about the file.
+- **Each file on its own.** Each file is put in, run, and taken out again, so one file's red is never
+  another file's proof.
+- **Proof** is red with the file in place and green without it. When `config.gates.report` is set,
+  the report that run left behind must also attribute at least one failing case to the file — by the
+  same file-attribution rule the gate item reads it with — or the red came from somewhere else and is
+  "no verdict". The fallback clears the report path before every run, so `gates.commit` has to write
+  that report itself; one it leaves behind nowhere is "no verdict" too.
+- **"Not load-bearing"** is said only when the report shows every case from the file ran and passed on
+  that tree. Green with nothing from the file in the report is a file the runner never ran; green with
+  no report configured cannot tell the two apart. Both are "no verdict", never that verdict.
+
+"No verdict" is a ✗ like any other: nothing lands without proof, and no flag or declaration waives it.
+It names why the run showed nothing, so what gets fixed is the run — the runner that skipped the
+file, the base that was already red — not the test. A ticket that carries no such file pays nothing
+for this; one that does pays one extra `gates.commit` run per landing.
 
 A diff with no new or changed test file is not automatically refused: a ticket can declare
 `**No new tests:** <reason>` in its issue.md, and the item passes on that declared exemption
