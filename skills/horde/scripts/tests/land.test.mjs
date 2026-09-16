@@ -695,7 +695,8 @@ test('land.mjs: a ticket naming both "**Mutate:**" and "**Revert base:**" is ref
 // script on the trunk that reads every `*.test.json` spec at the tree's root, checks what the spec
 // says, and — when handed a path — writes a JUnit report with one case per spec it actually ran. A
 // spec that "needs" a file the tree does not hold is skipped silently: no case in the report and no
-// red, which is what a real runner does with a test whose import does not resolve on the base.
+// red, which is what a real runner does with a test whose import does not resolve on the base. A
+// spec marked "skip" is in the report as a skipped case.
 const SPEC_RUNNER = [
   "import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';",
   "import { dirname } from 'node:path';",
@@ -705,6 +706,7 @@ const SPEC_RUNNER = [
   "for (const name of readdirSync('.').filter((n) => n.endsWith('.test.json')).sort()) {",
   "  const spec = JSON.parse(readFileSync(name, 'utf8'));",
   '  if (spec.needs && !existsSync(spec.needs)) continue;',
+  "  if (spec.skip) { cases.push('<testcase name=\"' + name + '\" file=\"' + name + '\"><skipped message=\"not today\"/></testcase>'); continue; }",
   "  const ok = spec.pass === true || (existsSync(spec.file || '') && readFileSync(spec.file, 'utf8').includes(spec.contains));",
   '  if (!ok) red = true;',
   "  cases.push('<testcase name=\"' + name + '\" file=\"' + name + '\">' + (ok ? '' : '<failure message=\"red\"/>') + '</testcase>');",
@@ -758,29 +760,45 @@ function setSpecReport(dir) {
 // Proves the ticket: red on the base, where feature-<id>.mjs does not exist yet.
 const loadBearingSpec = (id) => ({ file: `feature-${id}.mjs`, contains: 'a + b' });
 
-test('land.mjs revert test via gates.commit: a file the runner silently skipped is "no verdict", never a "not load-bearing" verdict', async (t) => {
+// Every "no verdict" names the ways out of it, once per item.
+function assertWaysOut(note) {
+  assert.match(note, /ways out of "no verdict": make gates\.commit green on the base without the file; name a revert base where it is green \("\*\*Revert base:\*\* <ref>"\); give the ticket a "\*\*Mutate:\*\*" command that only this file catches; or run the file with a command for that one file/);
+}
+
+test('land.mjs revert test via gates.commit: a file the runner skipped — silently, or with its cases marked skipped — is "no verdict", never a "not load-bearing" verdict', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   const { branch } = setupSpecTicket(dir, '080', {
     spec: { needs: 'feature-080.mjs', ...loadBearingSpec('080') },
+    moreSpecs: { 'marked-080.test.json': { skip: true } },
     report: true,
   });
 
-  // With a report: the runner's own record says the file never ran, and the item says exactly that.
-  const reported = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
-  assert.equal(reported.ok, false, reported.note);
-  assert.doesNotMatch(reported.note, /not load-bearing/);
-  assert.match(reported.note, /feature-080\.test\.json: no verdict/);
-  assert.match(reported.note, /nothing in reports\/specs\.xml is attributed to feature-080\.test\.json/);
+  // A report gates.commit produced: its own record says the one file never ran and the other's
+  // case was skipped, and the item says exactly that.
+  const produced = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(produced.ok, false, produced.note);
+  assert.doesNotMatch(produced.note, /not load-bearing/);
+  assert.match(produced.note, /feature-080\.test\.json: no verdict — gates\.commit green with it in place, and nothing in reports\/specs\.xml is attributed to feature-080\.test\.json/);
+  assert.match(produced.note, /marked-080\.test\.json: no verdict — .*1 of 1 case\(s\) from it in reports\/specs\.xml were skipped, not run/);
+  assertWaysOut(produced.note);
 
-  // Without one: a green run cannot tell a skipped file from a test that proves nothing, so it
-  // claims neither, and names the setting that would tell them apart.
+  // A report configured but not produced by gates.commit: the control-run rule decides, and a green
+  // run under it cannot tell a skipped file from a test that proves nothing — the note says the
+  // report was not available.
+  run('horde.mjs', ['config', 'set', 'gates.commit', 'node run-specs.mjs'], dir);
+  const notProduced = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(notProduced.ok, false, notProduced.note);
+  assert.doesNotMatch(notProduced.note, /not load-bearing/);
+  assert.match(notProduced.note, /feature-080\.test\.json: no verdict — gates\.commit green with it in place, and no report was available — config\.gates\.report names reports\/specs\.xml, and gates\.commit did not write it in this run/);
+  assertWaysOut(notProduced.note);
+
+  // No report configured at all: the same, said as that.
   run('horde.mjs', ['config', 'set', 'gates.report', ''], dir);
-  const unreported = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
-  assert.equal(unreported.ok, false, unreported.note);
-  assert.doesNotMatch(unreported.note, /not load-bearing/);
-  assert.match(unreported.note, /feature-080\.test\.json: no verdict/);
-  assert.match(unreported.note, /gates\.report/);
+  const unconfigured = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(unconfigured.ok, false, unconfigured.note);
+  assert.match(unconfigured.note, /feature-080\.test\.json: no verdict — .*no report was available — no config\.gates\.report is set/);
+  assertWaysOut(unconfigured.note);
   assert.deepEqual(scratchDirs(dir), []);
 });
 
@@ -796,30 +814,85 @@ test('land.mjs revert test via gates.commit: a red that was already red on the b
   const r = run('land.mjs', [branch, '--no-gate'], dir);
   const item = byName(r)['revert test'];
   assert.equal(item.ok, false, item.note);
-  assert.match(item.note, /feature-081\.test\.json: no verdict/);
-  assert.match(item.note, /already red on the base without feature-081\.test\.json/);
+  assert.match(item.note, /feature-081\.test\.json: no verdict — gates\.commit is already red on the base without feature-081\.test\.json/);
+  assertWaysOut(item.note);
 
   // A report changes nothing about that: the control run decides first.
   setSpecReport(dir);
   const reported = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
   assert.equal(reported.ok, false, reported.note);
   assert.match(reported.note, /already red on the base without feature-081\.test\.json/);
+  assertWaysOut(reported.note);
   assert.deepEqual(scratchDirs(dir), []);
 });
 
-test('land.mjs revert test via gates.commit: red with the file and green without it is proof — with a report, only when it names a failing case from that file', async (t) => {
+test('land.mjs revert test via gates.commit: a control run that is stopped is "no verdict", and the limit is named', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupSpecTicket(dir, '087', { spec: loadBearingSpec('087'), commit: 'sleep 30' });
+  run('horde.mjs', ['config', 'set', 'gateTimeoutMs', '1500'], dir);
+
+  const started = Date.now();
+  const item = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  const elapsed = Date.now() - started;
+  assert.equal(item.ok, false, item.note);
+  assert.match(item.note, /feature-087\.test\.json: no verdict — the control run of gates\.commit on the base without feature-087\.test\.json did not finish within 2s and was stopped/);
+  assert.match(item.note, /gateTimeoutMs/);
+  assertWaysOut(item.note);
+  // Stopped once, at the control run: the file's own run is never started on top of it.
+  assert.ok(elapsed < 25000, `the control run was not waited on to the end (${elapsed}ms)`);
+  assert.deepEqual(scratchDirs(dir), []);
+});
+
+test('land.mjs revert test via gates.commit: red with the file and green without it is proof — a report gates.commit produced must also name a failing case from the file, one it did not produce changes nothing', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   const { branch } = setupSpecTicket(dir, '082', { spec: loadBearingSpec('082') });
 
+  // No report configured: the control-run rule alone.
   const bare = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
   assert.equal(bare.ok, true, bare.note);
-  assert.match(bare.note, /feature-082\.test\.json: gates\.commit red with it in place, green on the base without it/);
+  assert.match(bare.note, /feature-082\.test\.json: gates\.commit red with it in place, green on the base without it \(whole command, no test-only isolation; no report was available — no config\.gates\.report is set\)/);
+  assert.doesNotMatch(bare.note, /ways out/);
 
+  // Configured and produced: the report names the failing case from the file.
   setSpecReport(dir);
-  const reported = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
-  assert.equal(reported.ok, true, reported.note);
-  assert.match(reported.note, /1 failing case\(s\) from it in reports\/specs\.xml/);
+  const produced = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(produced.ok, true, produced.note);
+  assert.match(produced.note, /feature-082\.test\.json: gates\.commit red with it in place, green on the base without it, and 1 failing case\(s\) from it in reports\/specs\.xml \("feature-082\.test\.json"\)/);
+
+  // Configured and not produced: the same proof the unconfigured repository gets, and the note says
+  // the report was not available — a configured report never refuses what the same repository
+  // without one would pass.
+  run('horde.mjs', ['config', 'set', 'gates.commit', 'node run-specs.mjs'], dir);
+  const notProduced = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(notProduced.ok, true, notProduced.note);
+  assert.match(notProduced.note, /feature-082\.test\.json: gates\.commit red with it in place, green on the base without it \(whole command, no test-only isolation; no report was available — config\.gates\.report names reports\/specs\.xml, and gates\.commit did not write it in this run\)/);
+  assert.deepEqual(scratchDirs(dir), []);
+});
+
+test('land.mjs revert test via gates.commit: a report gates.commit produced that cannot be read is "no verdict", never proof', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // The spec is a real proof; the command writes something at the report path that is not a report.
+  const writeJunk = `node -e "require('fs').mkdirSync('reports',{recursive:true});require('fs').writeFileSync('${SPEC_REPORT}','not a report')"`;
+  const { branch } = setupSpecTicket(dir, '086', {
+    spec: loadBearingSpec('086'),
+    commit: `${writeJunk} && node run-specs.mjs`,
+    report: true,
+  });
+
+  const junk = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(junk.ok, false, junk.note);
+  assert.match(junk.note, /feature-086\.test\.json: no verdict — gates\.commit red with it in place, green on the base without it, and it wrote reports\/specs\.xml, which does not read as junit/);
+  assertWaysOut(junk.note);
+
+  // A format nothing here reads: the file produced there is still named, not silently ignored.
+  run('horde.mjs', ['config', 'set', 'gates.report.format', 'xunit'], dir);
+  const format = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(format.ok, false, format.note);
+  assert.match(format.note, /feature-086\.test\.json: no verdict — .*it wrote reports\/specs\.xml, which cannot be read: config\.gates\.report\.format is "xunit"/);
+  assertWaysOut(format.note);
   assert.deepEqual(scratchDirs(dir), []);
 });
 
@@ -836,10 +909,11 @@ test('land.mjs revert test via gates.commit: each file runs on its own, so one f
   assert.equal(item.ok, false, item.note);
   assert.match(item.note, /a-085\.test\.json: gates\.commit red with it in place, green on the base without it/);
   assert.match(item.note, /feature-085\.test\.json: no verdict — gates\.commit green with it in place/);
+  assertWaysOut(item.note);
   assert.deepEqual(scratchDirs(dir), []);
 });
 
-test('land.mjs revert test via gates.commit: with a report, a red that names no failing case from the file is "no verdict", never proof', async (t) => {
+test('land.mjs revert test via gates.commit: with a report it produced, a red that names no failing case from the file is "no verdict", never proof', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   // The spec itself passes on the base; only a lane beside the tests goes red once it is there.
@@ -852,15 +926,8 @@ test('land.mjs revert test via gates.commit: with a report, a red that names no 
 
   const passed = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
   assert.equal(passed.ok, false, passed.note);
-  assert.match(passed.note, /feature-083\.test\.json: no verdict/);
-  assert.match(passed.note, /every case from it in reports\/specs\.xml passed/);
-
-  // A command that leaves no report behind proves nothing about which file its red belongs to.
-  run('horde.mjs', ['config', 'set', 'gates.commit', 'node run-specs.mjs && node lint-specs.mjs'], dir);
-  const missing = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
-  assert.equal(missing.ok, false, missing.note);
-  assert.match(missing.note, /feature-083\.test\.json: no verdict/);
-  assert.match(missing.note, /left no reports\/specs\.xml/);
+  assert.match(passed.note, /feature-083\.test\.json: no verdict — gates\.commit red with it in place, green on the base without it, but every case from it in reports\/specs\.xml passed — the red came from somewhere else/);
+  assertWaysOut(passed.note);
   assert.deepEqual(scratchDirs(dir), []);
 });
 
@@ -873,15 +940,22 @@ test('land.mjs revert test via gates.commit: the mutation variant runs its contr
   const caught = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
   assert.equal(caught.ok, true, caught.note);
   assert.match(caught.note, /^mutate `node -e/);
-  assert.match(caught.note, /feature-084\.test\.json: gates\.commit red with it in place, green on the mutated tree without it/);
+  assert.match(caught.note, /feature-084\.test\.json: gates\.commit red with it in place, green on the mutated tree without it, and 1 failing case\(s\) from it/);
 
   // A mutation that breaks the tree for everyone is not the file's red.
   const path = join(dst, 'issue.md');
-  writeFileSync(path, readFileSync(path, 'utf8').replace(/\*\*Mutate:\*\* .*$/m, `**Mutate:** node -e "require('fs').writeFileSync('always.test.json', '{}')"`));
+  const setMutate = (command) => writeFileSync(path, readFileSync(path, 'utf8').replace(/\*\*Mutate:\*\* .*$/m, `**Mutate:** ${command}`));
+  setMutate(`node -e "require('fs').writeFileSync('always.test.json', '{}')"`);
   const everyone = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
   assert.equal(everyone.ok, false, everyone.note);
-  assert.match(everyone.note, /feature-084\.test\.json: no verdict/);
-  assert.match(everyone.note, /already red on the mutated tree without feature-084\.test\.json/);
+  assert.match(everyone.note, /feature-084\.test\.json: no verdict — gates\.commit is already red on the mutated tree without feature-084\.test\.json/);
+  assertWaysOut(everyone.note);
+
+  // A mutation that removes the file itself leaves nothing to run, and says so.
+  setMutate('rm feature-084.test.json');
+  const removed = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(removed.ok, false, removed.note);
+  assert.match(removed.note, /feature-084\.test\.json: not in the mutated tree — the mutate command removed it/);
   assert.deepEqual(scratchDirs(dir), []);
   assert.match(git(['show', `${branch}:feature-084.mjs`], dir), /a \+ b/);
 });

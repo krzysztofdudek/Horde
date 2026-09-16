@@ -67,10 +67,11 @@ for either way.
                       instead, run against a scratch copy of the branch's own tip with that command
                       applied, fail there. A file node --test cannot run goes through gates.commit,
                       which counts only when it is green on that same tree without the file and red
-                      with it — and, with config.gates.report, when the report names a failing case
-                      from the file; anything less is "no verdict", a ✗. Diff carries none of those:
-                      ✗, unless the ticket declares "**No new tests:**" with a reason. ✗ when this
-                      repository's test patterns are unknown
+                      with it — and, when that run wrote the config.gates.report file, when the report
+                      names a failing case from the file; anything less is "no verdict", a ✗ that
+                      names the ways out. Diff carries none of those: ✗, unless the ticket declares
+                      "**No new tests:**" with a reason. ✗ when this repository's test patterns are
+                      unknown
   5. gate           — config.gates.<level> green on the branch's own tree, run fresh; and, when
                       config.gates.report names the report that run leaves behind ({path, format},
                       format junit|tap|playwright-json), every live promise's own paired case in
@@ -518,45 +519,67 @@ function setTestFile(tmp, relPath, content) {
 //   out, for the mutation one. Red or stopped there, no file gets a verdict: its red with the file
 //   in place would say nothing about the file.
 // - Then each file on its own: put in, run, taken out again, so no file's red is another file's.
-// - Red with the file in place and green without it is proof. When `config.gates.report` is set,
-//   only if the report that run left behind attributes at least one failing case to that file — a
-//   red with none of the file's own cases failing came from somewhere else.
-// - Green with the report showing every case from the file ran and passed is the one "not
-//   load-bearing" verdict there is. Green with nothing from the file in the report is a file the
-//   runner never ran, and green with no report configured cannot tell those two apart: both are
-//   "no verdict", never a verdict.
+// - Red with the file in place and green without it is proof — the control-run rule.
+// - `config.gates.report` names the report of the landing gate's own command, and `gates.commit`
+//   may or may not write the same file. So it is read here only when this run produced it: the path
+//   is cleared before every run, and a file there afterwards is this run's. Produced, it must
+//   attribute at least one failing case to the file for a red to count — a red with none of the
+//   file's own cases failing came from somewhere else — and a produced report that cannot be read is
+//   "no verdict". Not produced (or not configured, or configured where no file can be looked for),
+//   the control-run rule alone decides, and the result says no report was available. A configured
+//   report therefore never refuses a run the same repository without one would pass.
+// - Green is never proof. With a produced report showing every case from the file ran and passed,
+//   it is the one "not load-bearing" verdict there is. With nothing from the file in that report it
+//   is a file the runner never ran, and with no report available it cannot tell those two apart:
+//   both are "no verdict", never a verdict.
 //
-// "No verdict" refuses the item exactly as a failure does — nothing lands without proof. It is the
-// honest name for a run that showed nothing either way, so the worker fixes the run, not the test.
+// "No verdict" refuses the item exactly as a failure does — nothing lands without proof — and the
+// item names the ways out of it (NO_VERDICT_WAYS_OUT), because what gets fixed is the run, not the
+// test.
 //
 // The cost is one more `gates.commit` run per landing, and only for a ticket carrying a file that
 // needs this fallback at all.
 
-// One run of `gates.commit` in `tmp`. The report path is cleared first, so what is read afterwards
-// can only be what this run wrote — never a file an earlier run, or the base itself, left there.
+const NO_VERDICT_WAYS_OUT = 'ways out of "no verdict": make gates.commit green on the base without the file; name a revert base where it is green ("**Revert base:** <ref>"); give the ticket a "**Mutate:**" command that only this file catches; or run the file with a command for that one file, once one can be configured';
+
+// Where the fallback looks for a report `gates.commit` may have produced, and in what format — or
+// why there is nowhere to look. A path is only ever one gateReportConfig accepted as staying inside
+// the tree; a format it refused still leaves that path to look at, so a file produced there is
+// reported as unreadable rather than silently ignored.
+function fallbackReport(cfg) {
+  const conf = gateReportConfig(cfg);
+  if (!conf.configured) return { path: null, unavailable: 'no config.gates.report is set' };
+  if (!conf.path) return { path: null, unavailable: conf.error };
+  return { path: conf.path, format: conf.error ? null : conf.format, error: conf.error || null };
+}
+
+// One run of `gates.commit` in `tmp`. The report path is cleared first, so a file there afterwards
+// can only be what this run wrote — never one an earlier run, or the base itself, left there.
 function runWholeCommand(tmp, cfg, report) {
-  if (report.path) rmSync(join(tmp, report.path), { force: true });
+  if (report.path) rmSync(join(tmp, report.path), { force: true, recursive: true });
+  let result;
   try {
     execSync(cfg.gates.commit, { cwd: tmp, stdio: 'pipe', timeout: gateTimeout(cfg) });
-    return { green: true, stopped: false };
+    result = { green: true, stopped: false };
   } catch (e) {
-    return { green: false, stopped: e.killed === true || e.signal === 'SIGTERM' };
+    result = { green: false, stopped: e.killed === true || e.signal === 'SIGTERM' };
   }
+  result.produced = Boolean(report.path) && existsSync(join(tmp, report.path));
+  return result;
 }
 
 // `files` are `{path, content}` — the ticket's own version of each file to run — and the tree they
 // are run in holds none of the ticket's test files when this is called; `treeName` says which tree
 // that is, in the words every note uses.
 function runWholeCommandFallback(tmp, cfg, files, treeName) {
-  const report = gateReportConfig(cfg);
-  if (report.error) return files.map(({ path }) => ({ path, ok: false, note: `no verdict — ${report.error}` }));
+  const report = fallbackReport(cfg);
   const control = runWholeCommand(tmp, cfg, report);
   return files.map(({ path, content }) => {
     if (control.stopped) {
-      return { path, ok: false, note: `no verdict — the control run of gates.commit on ${treeName} without ${path} ${stoppedNote(cfg)}` };
+      return { path, ok: false, noVerdict: true, note: `no verdict — the control run of gates.commit on ${treeName} without ${path} ${stoppedNote(cfg)}` };
     }
     if (!control.green) {
-      return { path, ok: false, note: `no verdict — gates.commit is already red on ${treeName} without ${path}, so its red with the file in place would say nothing about the file` };
+      return { path, ok: false, noVerdict: true, note: `no verdict — gates.commit is already red on ${treeName} without ${path}, so its red with the file in place would say nothing about the file` };
     }
     const before = setTestFile(tmp, path, content);
     try {
@@ -569,21 +592,29 @@ function runWholeCommandFallback(tmp, cfg, files, treeName) {
 
 // What one run with the file in place proves, read after a green control run.
 function wholeCommandVerdict(tmp, cfg, path, run, report, treeName) {
-  const noVerdict = (why) => ({ path, ok: false, note: `no verdict — ${why}` });
+  const noVerdict = (why) => ({ path, ok: false, noVerdict: true, note: `no verdict — ${why}` });
   if (run.stopped) return { path, ok: false, note: `gates.commit ${stoppedNote(cfg)}` };
   const inPlace = run.green
     ? 'gates.commit green with it in place'
     : `gates.commit red with it in place, green on ${treeName} without it`;
-  if (!report.configured) {
-    if (!run.green) return { path, ok: true, note: `${inPlace} (whole command — no test-only isolation, and no config.gates.report to name the failing case)` };
-    return noVerdict(`${inPlace}, and with no config.gates.report nothing shows whether the runner ran it — a file it skipped and a test that proves nothing look the same. Name the report the command leaves behind: horde.mjs config set gates.report.path "<file>" and gates.report.format ${REPORT_FORMATS.join('|')}`);
+
+  if (!run.produced) {
+    const unavailable = report.path
+      ? `no report was available — config.gates.report names ${report.path}, and gates.commit did not write it in this run`
+      : `no report was available — ${report.unavailable}`;
+    if (!run.green) return { path, ok: true, note: `${inPlace} (whole command, no test-only isolation; ${unavailable})` };
+    return noVerdict(`${inPlace}, and ${unavailable}, so nothing shows whether the runner ran it — a file it skipped and a test that proves nothing look the same`);
   }
-  const abs = join(tmp, report.path);
-  if (!existsSync(abs)) {
-    return noVerdict(`${inPlace}, but it left no ${report.path} behind, so nothing shows ${path} ran — config.gates.report names that file, and gates.commit has to write it too for this run to be read`);
+
+  if (report.error) return noVerdict(`${inPlace}, and it wrote ${report.path}, which cannot be read: ${report.error}`);
+  let text;
+  try {
+    text = readFileSync(join(tmp, report.path), 'utf8');
+  } catch (e) {
+    return noVerdict(`${inPlace}, and it wrote ${report.path}, which cannot be read: ${e.code || e.message}`);
   }
-  const parsed = parseReport(readText(abs), report.format);
-  if (parsed.error) return noVerdict(`${inPlace}, but ${report.path} does not read as ${report.format} — ${parsed.error}`);
+  const parsed = parseReport(text, report.format);
+  if (parsed.error) return noVerdict(`${inPlace}, and it wrote ${report.path}, which does not read as ${report.format} — ${parsed.error}`);
   const cases = casesAttributedTo(parsed.entries, path);
   const failed = cases.filter((e) => e.status === 'failed');
   const skipped = cases.filter((e) => e.status === 'skipped');
@@ -596,6 +627,13 @@ function wholeCommandVerdict(tmp, cfg, path, run, report, treeName) {
   if (failed.length) return noVerdict(`${inPlace}, yet ${report.path} has "${failed[0].name}" from it failed — an exit code and a report that disagree prove nothing`);
   if (skipped.length) return noVerdict(`${inPlace}, and ${skipped.length} of ${cases.length} case(s) from it in ${report.path} were skipped, not run`);
   return { path, ok: false, note: `${inPlace}, and all ${cases.length} case(s) from it in ${report.path} ran and passed on ${treeName} — not load-bearing` };
+}
+
+// The whole revert-test note for one variant: each file's own result, and — when any of them is "no
+// verdict" — the ways out of it, said once.
+function revertTestNote(prefix, results) {
+  const body = results.map((r) => `${r.path}: ${r.note}`).join(' · ');
+  return `${prefix}${body}${results.some((r) => r.noVerdict) ? ` — ${NO_VERDICT_WAYS_OUT}` : ''}`;
 }
 
 // The revert-to-base variant (today's default, unchanged): new test files extracted onto the
@@ -635,7 +673,7 @@ function runRevertToBaseVariant(root, cfg, branch, parentBranch, base, newTestFi
   const results = newTestFiles.map((relPath) => byPath.get(relPath));
   const ok = results.every((r) => r.ok);
   const baseNote = base === parentBranch ? '' : `base ${base} — `;
-  return { ok, note: baseNote + results.map((r) => `${r.path}: ${r.note}`).join(' · ') };
+  return { ok, note: revertTestNote(baseNote, results) };
 }
 
 // The mutation variant (the ticket's own "**Mutate:**" command): rather than proving the new
@@ -692,7 +730,7 @@ function runMutateVariant(root, cfg, branch, mutate, newTestFiles) {
     }
     const results = newTestFiles.map((relPath) => byPath.get(relPath));
     const ok = results.every((r) => r.ok);
-    return { ok, note: `mutate \`${mutate}\` — ${results.map((r) => `${r.path}: ${r.note}`).join(' · ')}` };
+    return { ok, note: revertTestNote(`mutate \`${mutate}\` — `, results) };
   } finally {
     cleanupTree(info, root);
   }
@@ -2021,7 +2059,10 @@ function gateReportConfig(cfg) {
     return { configured: true, error: `config.gates.report.path is "${path}" — it has to stay inside the tree the gate ran in, because the only report that proves anything about this branch is the one that run left behind; an absolute path or one climbing out with ".." reads some other run's file. ${how}` };
   }
   if (!REPORT_FORMATS.includes(format)) {
-    return { configured: true, error: `config.gates.report.format is ${format ? `"${format}"` : 'not set'} — the formats this reads are ${REPORT_FORMATS.join(', ')}, and a format it cannot read is not a report it can check. ${how}` };
+    // The path is already known to stay inside the tree, so it is handed back beside the refusal:
+    // the revert test's fallback still looks there, to report a file produced in a format nothing
+    // here reads instead of ignoring it.
+    return { configured: true, path, error: `config.gates.report.format is ${format ? `"${format}"` : 'not set'} — the formats this reads are ${REPORT_FORMATS.join(', ')}, and a format it cannot read is not a report it can check. ${how}` };
   }
   return { configured: true, path, format };
 }

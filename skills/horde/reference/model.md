@@ -307,9 +307,12 @@ so, rather than reporting a green nothing confirmed.
 
 The revert test holds the same line where it cannot run a test file by itself and has to run the
 repository's whole commit gate instead. That command's red counts as the file's only when the same
-tree without the file is green, and — with a report configured — only when the report shows a failing
-case from that file. A red already there without the file, or a green that never shows the file ran,
-is "no verdict": refused like any failure, and named for what it is.
+tree without the file is green, and — when that run itself wrote the file `gates.report` names —
+only when the report shows a failing case from that file. A commit gate that writes no such report is
+judged by the first rule alone, and the result says no report was available, so configuring a report
+never refuses what the same repository without one would pass. A red already there without the file,
+a green that never shows the file ran, or a report that run wrote and nobody can read, is "no
+verdict": refused like any failure, named for what it is, with the ways out named beside it.
 
 ### The gate lock
 

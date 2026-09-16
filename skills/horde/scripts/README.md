@@ -65,7 +65,8 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
 - `config get|set <key> [value]` — `.horde/config.json`: `base`, `gates.commit|team|trunk` (commands),
   `gates.report.path` and `gates.report.format` (`junit`, `tap` or `playwright-json` — the report the
   gate command's own runner leaves behind, which the landing reads back to confirm every live
-  promise's paired case actually ran; unset means nothing reads one),
+  promise's paired case actually ran — and which the revert test also reads, only when
+  `gates.commit` wrote that same file in its own run; unset means nothing reads one),
   `testGlobs[]` (the patterns this repository's tests are named under — the merge checklist refuses
   rather than guess when it is empty), `ygCommand` (how this
   repository invokes the Yggdrasil CLI
@@ -921,8 +922,9 @@ the JSON, and every item below is measured against it:
    branch's own tip with that command applied, show at least one failure there instead. The variant
    is always the ticket's own choice, never a `land.mjs` flag. A file `node --test` cannot run goes
    through the whole `config.gates.commit`, and its red counts only when that command is green on the
-   same tree without the file — and, when `config.gates.report` is set, when the report names a
-   failing case from the file; anything less is "no verdict", a ✗ (see
+   same tree without the file — and, when that run wrote the file `config.gates.report` names, when
+   that report names a failing case from the file; anything less is "no verdict", a ✗ that names the
+   ways out of it (see
    [the revert test](#landmjss-revert-test--how-a-new-test-file-is-found-and-run) below). The result
    is derived by running them; nothing declares it to this gate, and no flag offers to say so,
    because a declaration about a test is not evidence about a test;
@@ -982,7 +984,10 @@ or sit where the gate command's own runner never looks, and every rule in the `p
 every guard below still reads it as proof — they all read source, and source cannot say what ran.
 The only thing that can is the runner's own record of its own run.
 
-So item 5 reads it back. Configure it and nothing else changes:
+So item 5 reads it back. Configure it and nothing else changes, with one exception: when
+`gates.commit` writes that same file, the revert test reads it too, to tell whose red it saw (see
+[the revert test](#landmjss-revert-test--how-a-new-test-file-is-found-and-run)). A `gates.commit`
+that does not write it is judged exactly as if no report were configured.
 
 ```
 horde.mjs config set gates.report.path   "<path, relative to the tree the gate ran in>"
@@ -1602,23 +1607,33 @@ alone:
 - **A control run first.** `gates.commit` runs once on the same tree holding none of the ticket's own
   test files: the base exactly as it stands (a changed file's base version included) for the
   revert-to-base variant, the mutated tree with them taken out for the mutation one. Red or stopped
-  there, every fallback file is "no verdict — gates.commit is already red on the base without it":
-  its red with the file in place would say nothing about the file.
+  there, every fallback file is "no verdict", and the note says which of the two: its red with the
+  file in place would say nothing about the file.
 - **Each file on its own.** Each file is put in, run, and taken out again, so one file's red is never
   another file's proof.
-- **Proof** is red with the file in place and green without it. When `config.gates.report` is set,
-  the report that run left behind must also attribute at least one failing case to the file — by the
-  same file-attribution rule the gate item reads it with — or the red came from somewhere else and is
-  "no verdict". The fallback clears the report path before every run, so `gates.commit` has to write
-  that report itself; one it leaves behind nowhere is "no verdict" too.
-- **"Not load-bearing"** is said only when the report shows every case from the file ran and passed on
-  that tree. Green with nothing from the file in the report is a file the runner never ran; green with
-  no report configured cannot tell the two apart. Both are "no verdict", never that verdict.
+- **Proof** is red with the file in place and green without it — the control-run rule.
+- **The report, only when this run produced it.** `config.gates.report` names the report of the
+  landing gate's own command, and `gates.commit` may or may not write the same file. The fallback
+  clears that path before every run, so a file there afterwards is this run's own. When it is there,
+  a red counts only if the report attributes at least one failing case to the file — by the same
+  file-attribution rule the gate item reads it with — or the red came from somewhere else and is "no
+  verdict"; a produced report that cannot be read (not the configured format, or a format nothing
+  here reads) is "no verdict" too. When it is not there — or no report is configured, or the
+  configured path is one nothing may look at — the control-run rule alone decides, and the result
+  says "no report was available" and why. Configuring a report therefore never refuses a run that
+  the same repository without one would pass.
+- **Green is never proof.** "Not load-bearing" is said only when a produced report shows every case
+  from the file ran and passed on that tree. Green with nothing from the file in that report is a file
+  the runner never ran; any case from it skipped is a file that did not fully run; green with no
+  report available cannot tell a skipped file from a test that proves nothing. All of those are "no
+  verdict", never that verdict.
 
 "No verdict" is a ✗ like any other: nothing lands without proof, and no flag or declaration waives it.
-It names why the run showed nothing, so what gets fixed is the run — the runner that skipped the
-file, the base that was already red — not the test. A ticket that carries no such file pays nothing
-for this; one that does pays one extra `gates.commit` run per landing.
+It says why the run showed nothing, and the item names the ways out once: make `gates.commit` green
+on the base without the file; name a revert base where it is green (`**Revert base:** <ref>`); give
+the ticket a `**Mutate:**` command that only this file catches; or run the file with a command for
+that one file, once one can be configured. A ticket that carries no such file pays nothing for this;
+one that does pays one extra `gates.commit` run per landing.
 
 A diff with no new or changed test file is not automatically refused: a ticket can declare
 `**No new tests:** <reason>` in its issue.md, and the item passes on that declared exemption
