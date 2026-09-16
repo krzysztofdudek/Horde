@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -797,4 +797,77 @@ test('tk.mjs charterMismatches: a node outside every territory, and an evidence 
     });
     assert.deepEqual(out.map((m) => m.field), ['Node', 'Evidence']);
   });
+});
+
+// spawnAllocator(dir, tool, args) — one real child process asking for one id, the same CLI call a
+// ticket, an ask or a proposal is filed with. Started without waiting for it to finish, so many of
+// these are in flight over the same counter.json at once — the shape the shared counter has to
+// survive, matching spawnAdd's own pattern for queue.json in queue.test.mjs.
+function spawnAllocator(dir, tool, args) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [join(SCRIPTS_DIR, tool), ...args, '--json'], {
+      cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('close', (code) => {
+      let json = null;
+      try { json = JSON.parse(stdout); } catch { json = null; }
+      resolve({
+        code, stdout, stderr, json,
+      });
+    });
+  });
+}
+
+// The number inside an allocated id, whatever field and whatever prefix carried it: tk.mjs new
+// answers with a bare "005" in `id`, ask.mjs add and node.mjs propose both answer with the full
+// "a-005" / "g-005" in `id`. Comparing this instead of the raw field is what lets a ticket, an ask
+// and a proposal be checked against the one sequence they now share.
+function allocatedNumber(json) {
+  const m = /(\d+)\s*$/.exec(String(json && json.id));
+  return m ? parseInt(m[1], 10) : null;
+}
+
+test('allocateId: N parallel ticket/ask/proposal filings each get a distinct number', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  // A ticket writes only into its own new directory, so many can be filed at once with nothing
+  // of theirs to collide on beyond the shared counter — which is exactly what this races. An ask
+  // and a proposal each also rewrite their own kind's one shared document (asks.json,
+  // graph.json) — a read-modify-write with no lock of its own, same as the counter used to be,
+  // but that document's race is a separate bug from the one this ticket fixes. Filing exactly one
+  // of each keeps that other race out of the picture while still proving the counter is shared,
+  // and safely, across all three kinds at once.
+  const TICKETS = 48;
+  const jobs = [];
+  for (let i = 0; i < TICKETS; i += 1) {
+    jobs.push(spawnAllocator(dir, 'tk.mjs', [
+      'new', `race-ticket-${i}`, '--title', 'race', '--node', 'core', '--class', 'standard', '--evidence', 'it works',
+    ]));
+  }
+  jobs.push(spawnAllocator(dir, 'ask.mjs', ['add', 'a racing question', '--kind', 'stop']));
+  jobs.push(spawnAllocator(dir, 'node.mjs', ['propose', 'rule', 'a racing proposal', '--by', 'racer']));
+
+  const results = await Promise.all(jobs);
+  const failed = results.filter((r) => r.code !== 0);
+  assert.deepEqual(failed.map((r) => r.stderr), [], 'every ticket/ask/proposal filing should succeed');
+
+  const numbers = results.map((r) => allocatedNumber(r.json));
+  assert.ok(
+    numbers.every((n) => Number.isInteger(n)),
+    `every result should carry a numbered id: ${JSON.stringify(results.map((r) => r.json))}`,
+  );
+
+  const distinct = new Set(numbers);
+  assert.equal(
+    distinct.size,
+    numbers.length,
+    `${numbers.length - distinct.size} of ${numbers.length} parallel ticket/ask/proposal filings collided on the `
+      + `same shared-counter number: ${[...numbers].sort((a, b) => a - b).join(', ')}`,
+  );
 });
