@@ -329,9 +329,10 @@ test('drill.mjs check verification: red when a commit landed after the gate was 
 
 // tk.mjs review no longer exists — it used to append one "review: <node> approve|changes by
 // <who>[…tail…][ — <why>]" log line per reviewed node. checkReview's own reviewLines() parses
-// exactly that shape straight out of the log text, so these fixtures write
-// the line by hand with tk.mjs log (still a live command) instead of calling a tool that no
-// longer exists.
+// that shape straight out of the log text, so these fixtures write the line by hand with tk.mjs
+// log (still a live command) instead of calling a tool that no longer exists. The "approve" verb
+// belonged to a per-node reviewer seat removed before 6.0.0; reviewLines() reads only "changes"
+// now, so an "approve" line carries no weight at all — the ticket reads as having no review.
 test('drill.mjs check review: green when findings are ranked and Minor stayed in the log', async (t) => {
   const m = testFirstBranch(t);
   assert.equal(run('tk.mjs', ['review-request', '001'], m.dir).code, 0);
@@ -364,19 +365,33 @@ test('drill.mjs check review: red when a change request names no severity at all
   assert.match(r.json.checks.find((c) => c.name === 'findings carry a severity').note, /name no severity/);
 });
 
-// An approval is recorded with whatever the key is bound to at the time — the sha, the diff, the
+// A verdict is recorded with whatever the key is bound to at the time — the sha, the diff, the
 // seat. The drill reads past all of it, so a new note on the key never makes a review invisible.
 test('drill.mjs check review: a review key carrying its sha and diff notes is still read', async (t) => {
   const m = testFirstBranch(t);
   assert.equal(run('tk.mjs', ['review-request', '001'], m.dir).code, 0);
-  // tk.mjs review used to bind an approval to the sha and diff it was read at, appending a tail
+  // tk.mjs review used to bind a verdict to the sha and diff it was read at, appending a tail
   // like "at <sha> (diff <id>)" right after "by <who>" — written by hand here since that command
   // no longer exists, to prove checkReview still reads past whatever tail note rides there.
-  assert.equal(run('tk.mjs', ['log', '001', 'review: core approve by owner-core at abc1234 (diff def5678)'], m.dir).code, 0);
+  assert.equal(run('tk.mjs', ['log', '001',
+    'review: core changes by owner-core at abc1234 (diff def5678) — Important: still needs a fix'], m.dir).code, 0);
 
   const r = run('drill.mjs', ['check', 'review', '--repo', m.dir, '--ticket', '001'], m.dir);
   assert.equal(r.code, 0, r.stdout + r.stderr);
-  assert.match(r.json.checks.find((c) => c.name === 'reviews recorded').note, /core approve by owner-core/);
+  assert.match(r.json.checks.find((c) => c.name === 'reviews recorded').note, /core changes by owner-core/);
+});
+
+// The "approve" verb belonged to a per-node reviewer seat removed before 6.0.0. Nothing writes it
+// today, and reviewLines() must not treat it as meaningful either: an approve-only line reads the
+// same as no review line at all, so a reviewer's approval can never feed a landing decision.
+test('drill.mjs check review: an approve review line is not read as a review', async (t) => {
+  const m = testFirstBranch(t);
+  assert.equal(run('tk.mjs', ['review-request', '001'], m.dir).code, 0);
+  assert.equal(run('tk.mjs', ['log', '001', 'review: core approve by owner-core'], m.dir).code, 0);
+
+  const r = run('drill.mjs', ['check', 'review', '--repo', m.dir, '--ticket', '001'], m.dir);
+  assert.equal(r.code, 1);
+  assert.match(r.json.checks.find((c) => c.name === 'reviews recorded').note, /no review recorded/);
 });
 
 test('drill.mjs check scope: green inside the node, red on a file no node maps', async (t) => {

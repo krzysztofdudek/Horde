@@ -95,6 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Two commands changing one mission's queue at the same moment — a running loop and one you type yourself, or two sessions side by side — could rarely both believe they held the lock protecting it and overwrite each other's change. They now always take turns.
 - Recording a decision or answering a question, interrupted partway through — killed outright, a container recycled — used to block every one after it until someone cleared it by hand. The next one now recovers on its own.
 - A graph write refused for sitting on the mission's own base branch no longer creates the mission's trunk tree — or discards uncommitted work already sitting in it — just to name that tree in the refusal message.
+- The review drill no longer reads a reviewer's approval, a leftover reading from the per-node reviewer seat removed in 6.0.0. A hand-logged "review: <node> approve by <who>" line now counts as no review at all, the same as if the line were never written; only a change request still counts.
 
 ## [6.0.0] - 2026-09-12
 
