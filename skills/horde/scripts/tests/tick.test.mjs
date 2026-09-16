@@ -86,16 +86,30 @@ function tick(dir, args = []) {
 }
 
 // A branch that reaches the gate for the first time is reviewed first: the run that finds it raises
-// its one review and does not ask the gate, and the run after it does. A test about what the gate
-// itself does takes that first run here, and asserts it did exactly that, so what the test goes on to
-// assert is about the run that actually asks the gate.
-function throughReview(dir, ids) {
+// its one review and does not ask the gate, and the gate waits until that review logs its closing
+// line. raiseReview takes that first run and asserts it did exactly that; closeReview is the line a
+// review writes last, with whatever it found already logged above it.
+function raiseReview(dir, ids) {
   const r = tick(dir);
   assert.equal(r.code, 0, r.stderr);
   for (const id of [].concat(ids)) {
     const step = r.json.landed.find((l) => l.ticket === id);
     assert.equal(step && step.action, 'review', `${id}'s review is raised before the gate (${JSON.stringify(r.json.landed)})`);
   }
+  return r;
+}
+
+function closeReview(dir, id) {
+  const r = run('tk.mjs', ['review-close', id, '--by', `r-${id}`], dir);
+  assert.equal(r.code, 0, r.stderr);
+  return r;
+}
+
+// A test about what the gate itself does takes the review's whole turn here — raised, and closed
+// with nothing found — so everything it goes on to assert is about the run that asks the gate.
+function throughReview(dir, ids) {
+  const r = raiseReview(dir, ids);
+  for (const id of [].concat(ids)) closeReview(dir, id);
   return r;
 }
 
@@ -150,11 +164,12 @@ test('tick.mjs reconcile: a branch past the tip lands, a dirty tree is committed
     assert.equal(settled[untouched], undefined);
   });
 
-  await t.test('the item reconcile landed reaches step two in the same run: its review is raised, and the gate is asked on the next', () => {
+  await t.test('the item reconcile landed reaches step two in the same run: its review is raised, and the gate is asked once it closes', () => {
     const reviewed = r.json.landed.find((l) => l.ticket === past);
     assert.ok(reviewed, 'the landed branch reaches step two in the same run');
     assert.equal(reviewed.action, 'review');
     assert.ok(r.json.review.some((e) => e.ticket === past), 'and its review is on the list to spawn');
+    closeReview(dir, past);
     const next = tick(dir);
     assert.equal(next.code, 0, next.stderr);
     assert.equal(next.json.landed.find((l) => l.ticket === past).action, 'gate');
@@ -428,10 +443,11 @@ test('tick.mjs close: an empty queue raises the flag and names the command; one 
 // ---- 3. the one review a ticket gets -----------------------------------------------------------
 //
 // After the worker, before the landing. The run that finds a branch ready for the gate for the first
-// time raises that ticket's review instead of asking the gate; the run after it asks the gate
-// whatever the review wrote. A Critical or Important finding is the one thing that changes that, and
-// only by sending the ticket back sooner. Nothing a review writes lets a branch past the gate, or
-// lets it skip one.
+// time raises that ticket's review instead of asking the gate, and the gate waits until the review
+// logs its closing line — or the director logs, with a reason, that it is skipped. Then the gate is
+// asked whatever the review found, with one exception: a Critical or Important finding sends the
+// ticket back sooner. The closing line only says the review happened and counts what it logged;
+// nothing a review writes lets a branch past the gate, or lets it skip one.
 
 function landedTicket(dir, slug, opts = {}) {
   const id = mkTicket(dir, slug, opts);
@@ -451,7 +467,7 @@ function landResultExists(dir, id, horde = 'mission1') {
   return existsSync(join(dir, '.horde', 'hordes', horde, 'land', `${id}.json`));
 }
 
-test('tick.mjs review: a branch ready for the gate gets its one review first, on the ticket\'s own class, and the gate on the next run', async (t) => {
+test('tick.mjs review: a branch ready for the gate gets its one review first, on the ticket\'s own class, and the gate waits for its closing line', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
   initHorde(dir);
@@ -478,12 +494,85 @@ test('tick.mjs review: a branch ready for the gate gets its one review first, on
     assert.ok(!first.json.spawn.some((s) => s.ticket === id), 'a review is not a worker, and is not on the dispatch list');
   });
 
-  const second = tick(dir);
-  assert.equal(second.code, 0, second.stderr);
+  await t.test('while the review has logged no closing line, every run holds the gate and says it is waiting', () => {
+    for (let i = 0; i < 2; i += 1) {
+      const waiting = tick(dir);
+      assert.equal(waiting.code, 0, waiting.stderr);
+      const step = waiting.json.landed.find((l) => l.ticket === id);
+      assert.equal(step.action, 'review-waiting');
+      assert.match(step.note, new RegExp(`r-${id}`));
+      assert.match(step.note, /review-close/);
+      assert.match(step.note, /review-skip/);
+      assert.deepEqual(waiting.json.review, [], 'and the review is never raised a second time');
+    }
+    assert.equal(landResultExists(dir, id), false, 'no gate was started while it waited');
+    assert.equal(itemOf(dir, id).state, 'landed');
+  });
 
-  await t.test('the next run asks the gate whatever the review wrote — here, nothing at all', () => {
-    assert.equal(second.json.landed.find((l) => l.ticket === id).action, 'gate');
-    assert.deepEqual(second.json.review, [], 'and the review is never raised a second time');
+  await t.test('the closing line, with nothing found, counts zero of each severity', () => {
+    const closed = closeReview(dir, id);
+    assert.equal(closed.json.counts.Critical, 0);
+    assert.match(readFileSync(ticketLogPath(dir, id), 'utf8'), new RegExp(`review closed by r-${id} — Critical 0 · Important 0 · Minor 0`));
+  });
+
+  const after = tick(dir);
+  assert.equal(after.code, 0, after.stderr);
+
+  await t.test('the run after the closing line asks the gate', () => {
+    assert.equal(after.json.landed.find((l) => l.ticket === id).action, 'gate');
+    assert.deepEqual(after.json.review, []);
+  });
+});
+
+test('tick.mjs review: the director\'s skip releases a review that will not close, only with a reason, and a closing line after it changes nothing', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const skipped = landedTicket(dir, 'review-skipped', { files: 'src/skipped.ts' }).id;
+  const lateClose = landedTicket(dir, 'closed-after-skip', { files: 'src/late.ts' }).id;
+  const never = mkTicket(dir, 'never-reviewed', { files: 'src/never.ts' });
+
+  await t.test('neither closing nor skipping is accepted for a ticket with no review raised', () => {
+    const close = run('tk.mjs', ['review-close', never, '--by', `r-${never}`], dir);
+    assert.equal(close.code, 1);
+    assert.match(close.stderr, /no review/);
+    const skip = run('tk.mjs', ['review-skip', never, 'nothing to read', '--by', 'main'], dir);
+    assert.equal(skip.code, 1);
+    assert.match(skip.stderr, /no review/);
+  });
+
+  raiseReview(dir, [skipped, lateClose]);
+
+  await t.test('a skip with no reason is refused, and holds nothing open for it', () => {
+    const bare = run('tk.mjs', ['review-skip', skipped, '--by', 'main'], dir);
+    assert.equal(bare.code, 1);
+    assert.match(bare.stderr, /reason/);
+    const blank = run('tk.mjs', ['review-skip', skipped, '   ', '--by', 'main'], dir);
+    assert.equal(blank.code, 1);
+    assert.match(blank.stderr, /reason/);
+    const r = tick(dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.landed.find((l) => l.ticket === skipped).action, 'review-waiting');
+  });
+
+  const reason = 'the reviewer\'s session died and the change is a one-line config value';
+  assert.equal(run('tk.mjs', ['review-skip', skipped, reason, '--by', 'main'], dir).code, 0);
+  assert.equal(run('tk.mjs', ['review-skip', lateClose, 'nobody is available to read it today', '--by', 'main'], dir).code, 0);
+  // The review of the second one came back after all, found something serious, and closed.
+  logOn(dir, lateClose, `review: core changes by r-${lateClose} — Critical: src/late.ts:3 — the key is logged in clear — anyone with the logs has it`);
+  closeReview(dir, lateClose);
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+
+  await t.test('the skip is written with who skipped and why, and the gate is asked on the next run', () => {
+    assert.ok(readFileSync(ticketLogPath(dir, skipped), 'utf8').includes(`review skipped by main — ${reason}`));
+    assert.equal(r.json.landed.find((l) => l.ticket === skipped).action, 'gate');
+  });
+
+  await t.test('a finding and a closing line logged after the skip change nothing: the gate, not changes', () => {
+    assert.equal(r.json.landed.find((l) => l.ticket === lateClose).action, 'gate');
+    assert.ok(!r.json.spawn.some((s) => s.ticket === lateClose));
   });
 });
 
@@ -534,9 +623,9 @@ test('tick.mjs review: a Critical or Important finding sends the ticket back wit
 
   // Written before any review of this ticket existed: whatever it says, it is not that review.
   logOn(dir, early, 'review: core changes by somebody — Critical: src/early.ts:1 — written before the review was raised');
-  throughReview(dir, [critical, important, minor, early]);
+  raiseReview(dir, [critical, important, minor, early]);
 
-  // A review that logged its finding and stopped there.
+  // A review that logged its finding and closed without the status line.
   logOn(dir, critical, `review: core changes by r-${critical} — Critical: src/crit.ts:4 — the total is never rounded — every invoice is a cent off`);
   // A review that followed the discipline to the letter: the finding, then the status line itself.
   logOn(dir, important, `review: core changes by r-${important} — Important: src/imp.ts:9 — the retry swallows the last error — a permanent failure reads as a success`);
@@ -544,6 +633,7 @@ test('tick.mjs review: a Critical or Important finding sends the ticket back wit
   // Minor findings only — one of them written the way a change request is.
   logOn(dir, minor, `review: core changes by r-${minor} — Minor: "t" would read better as "total"`);
   logOn(dir, minor, 'Minor: the helper could sit beside its only caller');
+  const counts = Object.fromEntries([critical, important, minor, early].map((id) => [id, closeReview(dir, id).json.counts]));
 
   const r = tick(dir);
   assert.equal(r.code, 0, r.stderr);
@@ -576,6 +666,14 @@ test('tick.mjs review: a Critical or Important finding sends the ticket back wit
   await t.test('a finding logged before the review was raised is not the review\'s: that ticket goes to the gate', () => {
     assert.equal(step(early).action, 'gate');
   });
+
+  await t.test('each closing line counted what that review logged, and nothing from before it was raised', () => {
+    assert.deepEqual(counts[critical], { Critical: 1, Important: 0, Minor: 0 });
+    assert.deepEqual(counts[important], { Critical: 0, Important: 1, Minor: 0 });
+    assert.deepEqual(counts[minor], { Critical: 0, Important: 0, Minor: 2 });
+    assert.deepEqual(counts[early], { Critical: 0, Important: 0, Minor: 0 });
+    assert.match(log(minor), new RegExp(`review closed by r-${minor} — Critical 0 · Important 0 · Minor 2`));
+  });
 });
 
 test('tick.mjs review: a Critical finding on a ticket whose rounds are spent stops it and asks the client, as a red gate would', async (t) => {
@@ -584,8 +682,9 @@ test('tick.mjs review: a Critical finding on a ticket whose rounds are spent sto
   initHorde(dir);
   const { id } = landedTicket(dir, 'no-rounds-left', { files: 'src/spent.ts' });
   spendFixRounds(dir, id, 5);
-  throughReview(dir, id);
+  raiseReview(dir, id);
   logOn(dir, id, `review: core changes by r-${id} — Critical: src/spent.ts:2 — the lock is never released — the second run hangs`);
+  closeReview(dir, id);
 
   const r = tick(dir);
   assert.equal(r.code, 0, r.stderr);
@@ -598,28 +697,40 @@ test('tick.mjs review: a Critical finding on a ticket whose rounds are spent sto
   assert.equal(landResultExists(dir, id), false, 'and the gate is not asked about a ticket that has stopped');
 });
 
-test('tick.mjs review: nothing reads a review\'s approval — one that signs off and one that says nothing reach the gate the same way', async (t) => {
+test('tick.mjs review: nothing reads a review\'s approval — a closing line with nothing found and one with findings and a sign-off reach the gate the same way', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
   initHorde(dir);
-  const silent = landedTicket(dir, 'review-said-nothing', { files: 'src/silent.ts' }).id;
+  const silent = landedTicket(dir, 'review-found-nothing', { files: 'src/silent.ts' }).id;
   const signing = landedTicket(dir, 'review-signed-off', { files: 'src/signed.ts' }).id;
-  throughReview(dir, [silent, signing]);
+  const silentOpen = landedTicket(dir, 'review-still-reading', { files: 'src/open.ts' }).id;
+  const signingOpen = landedTicket(dir, 'review-signed-but-open', { files: 'src/signed-open.ts' }).id;
+  raiseReview(dir, [silent, signing, silentOpen, signingOpen]);
+  closeReview(dir, silent);
+  logOn(dir, signing, `review: core changes by r-${signing} — Minor: the constant could be named for what it counts`);
   logOn(dir, signing, `review: core approve by r-${signing} — looks good`);
   logOn(dir, signing, 'LGTM, approved — nothing to add');
+  closeReview(dir, signing);
+  logOn(dir, signingOpen, `review: core approve by r-${signingOpen} — looks good`);
+  logOn(dir, signingOpen, 'LGTM, approved — ship it');
 
   const r = tick(dir);
   assert.equal(r.code, 0, r.stderr);
+  const outcome = (id) => ({
+    action: r.json.landed.find((l) => l.ticket === id).action,
+    state: itemOf(dir, id).state,
+    spawned: r.json.spawn.some((s) => s.ticket === id),
+    reviewed: r.json.review.some((e) => e.ticket === id),
+  });
 
-  await t.test('both are asked about at the gate, and the one that signed off gets nothing the silent one did not', () => {
-    const outcome = (id) => ({
-      action: r.json.landed.find((l) => l.ticket === id).action,
-      state: itemOf(dir, id).state,
-      spawned: r.json.spawn.some((s) => s.ticket === id),
-      reviewed: r.json.review.some((e) => e.ticket === id),
-    });
+  await t.test('closed with nothing found, and closed with a Minor finding and a sign-off: the same gate, and nothing more', () => {
     assert.deepEqual(outcome(signing), outcome(silent));
     assert.equal(outcome(signing).action, 'gate');
+  });
+
+  await t.test('a sign-off with no closing line waits exactly like silence with no closing line', () => {
+    assert.deepEqual(outcome(signingOpen), outcome(silentOpen));
+    assert.equal(outcome(signingOpen).action, 'review-waiting');
   });
 
   // A review line reads "review: <node> <verb> by <who>". The one script that still parses an

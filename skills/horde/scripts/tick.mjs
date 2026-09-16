@@ -37,13 +37,13 @@ import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readText, readConfig, nowIso, fail, HordeError, parseArgs, emit,
   isMain, resolveHorde, git, resolveTree, withProvenance, provenanceLine, withQueueLock,
-  runMain, appendText, parseEvidenceRows, classUp, parseLogEntries,
+  runMain, appendText, parseEvidenceRows, classUp,
 } from './_lib.mjs';
 import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine,
 } from './queue.mjs';
 import {
-  findTicket, parseField, changesRoundInfo, transitionStatus, ticketEvidence,
+  findTicket, parseField, changesRoundInfo, transitionStatus, ticketEvidence, readReview,
 } from './tk.mjs';
 import { readLandResult, acquireGateLock, gateLockWaitMs } from './land.mjs';
 import { asksPath, loadAsks, addAsk } from './ask.mjs';
@@ -76,11 +76,13 @@ the brief command on it renders against a tree that exists; tick does not start 
 the caller is what starts agents.
 
 Every ticket gets one review, after its worker and before its landing: the run that first finds its
-branch ready for the gate puts it on "review" instead of asking the gate, on the ticket's own class,
-and the next run asks the gate whatever the review wrote. The review has nothing to approve with. A
-Critical or Important finding it logged since it was raised sends the ticket back to "changes" with
-a round counted, as a red gate does; a Minor one never does. A fix round goes to the gate with no
-second review.
+branch ready for the gate puts it on "review" instead of asking the gate, on the ticket's own class.
+The gate then waits — shown on "landed" as "review-waiting", every run, with no timer — until the
+ticket's log carries the review's closing line (tk.mjs review-close) or the director's skip with a
+reason (tk.mjs review-skip). Then the gate is asked whatever the review found, except that a
+Critical or Important finding it logged before that line sends the ticket back to "changes" with a
+round counted, as a red gate does; a Minor one never does. The closing line only counts findings,
+and nothing reads it as a pass. A fix round goes to the gate with no second review.
 
 An open ask holds only what depends on its answer, and "held" says what each one held: "stop"
 everything — the dispatch list, every landing and the close — "stuck" that one ticket, "charter"
@@ -300,16 +302,19 @@ function redWords(result) {
 // Nothing reads a gate for sense: whether a change does what its ticket asks, stays inside it and
 // proves it with tests that can fail is what no check measures. So every ticket's change is read
 // once, by a one-shot, after its worker and before its first gate — and that one-shot is given no
-// way to approve anything, on purpose. Its only outputs are findings or silence, the ticket goes to
-// the gate either way, and nothing here reads silence as a pass: a lazy review costs one spawn and
-// can never make a diff nobody read look safer than it is.
+// way to approve anything, on purpose. Its only outputs are findings, and one closing line that
+// counts them; the ticket goes to the gate either way, and nothing here reads the closing line as a
+// pass: what happens next depends on the findings alone, so a lazy review can never make a diff
+// nobody read look safer than it is.
 //
 // The queue item carries the record: `review: {name, sha, raisedAt, closedAt}`. `raisedAt` is when
-// this run handed the review out, and holds the gate back for that one run. `closedAt` is when the
-// loop moved on — to the gate, or back to a worker — and from then on nothing the review wrote is
-// acted on again, so a finding that arrives late, or one already answered by a fix round, never
-// sends the same ticket back twice. A ticket is reviewed once: a fix round goes to the gate with
-// nothing raised in front of it.
+// a run handed the review out; from then the gate waits until the log shows the review ended — its
+// closing line (`tk.mjs review-close`) or the director's skip with a reason (`tk.mjs review-skip`).
+// There is no timer: a review that never closes shows as waiting on every run until somebody closes
+// or skips it. `closedAt` is when the loop moved on — to the gate, or back to a worker — and from
+// then on nothing the review wrote is acted on again, so a finding that arrives late, or one already
+// answered by a fix round, never sends the same ticket back twice. A ticket is reviewed once: a fix
+// round goes to the gate with nothing raised in front of it.
 
 function reviewName(ticket) {
   return `r-${ticket}`;
@@ -322,42 +327,26 @@ function reviewCommandParts(horde, ticket, root) {
   return [join(SCRIPTS, 'brief.mjs'), 'review', ticket, '--name', reviewName(ticket), '--horde', horde, '--tree', root];
 }
 
-const REVIEW_CHANGE_REQUEST_RE = /^review:\s*(\S+)\s+changes\s+by\s+(\S+)/;
-const SEVERITY_RE = /\b(Critical|Important|Minor):/g;
 const SENDS_BACK = new Set(['Critical', 'Important']);
 
-// What a ticket's review wrote into its log since it was raised, in the shape the review discipline
-// gives a change request — "review: <node> changes by <who> — <Severity>: …" — plus the status line
-// the same discipline has the reviewer write after it, when it did. Nothing else a review might
-// write is read: there is no line here a review could write to wave a ticket through.
-function reviewSince(logText, since) {
-  const requests = [];
-  let status = null;
-  for (const entry of parseLogEntries(logText)) {
-    const stamp = entry.isStatus ? entry.stamp : entry.text.split(/\s/)[0];
-    if (!stamp || stamp < since) continue;
-    if (entry.isStatus) {
-      if (entry.status === 'changes' && entry.round) status = { round: entry.round, cap: entry.cap, label: entry.label };
-      continue;
-    }
-    const text = entry.text.slice(stamp.length).trim();
-    if (!REVIEW_CHANGE_REQUEST_RE.test(text)) continue;
-    const severities = [...new Set([...text.matchAll(SEVERITY_RE)].map((m) => m[1]))];
-    requests.push({ text, severities });
-  }
-  return { requests, status };
-}
-
-// The gate step a landed branch gets, once its review has had its one run. Null while it has not:
-// the caller raises it instead of asking the gate.
+// Where a landed branch stands with its review: null when none has been raised (the caller raises
+// it instead of asking the gate), `waiting` while the raised review has not ended, `sendBack` when it
+// ended with a Critical or Important finding, and a plain step to the gate otherwise.
 function reviewedGateStep(horde, item) {
   if (!item.review) return null;
-  if (item.review.closedAt) return { closeReview: false };
+  if (item.review.closedAt) return { closeReview: false, end: null };
   const ticket = findTicket(horde, item.ticket);
-  const said = reviewSince(ticket ? readText(ticket.logPath) : '', item.review.raisedAt);
-  const serious = said.requests.filter((r) => r.severities.some((s) => SENDS_BACK.has(s)));
-  if (serious.length === 0) return { closeReview: true };
-  return { sendBack: serious.map((r) => r.text).join(' · '), counted: said.status };
+  const said = readReview(ticket ? readText(ticket.logPath) : '', item.review.raisedAt);
+  if (!said.end) return { waiting: true };
+  const serious = said.findings.filter((f) => f.severities.some((s) => SENDS_BACK.has(s)));
+  if (serious.length === 0) return { closeReview: true, end: said.end };
+  return { sendBack: serious.map((f) => f.text).join(' · '), counted: said.status };
+}
+
+function reviewWaitingNote(item) {
+  const { name, raisedAt, sha } = item.review;
+  return `waiting on its review ${name}, raised ${raisedAt} on ${sha} — the gate is asked once the review logs its closing line `
+    + `(tk.mjs review-close ${item.ticket} --by ${name}), or once the director skips it with a reason (tk.mjs review-skip ${item.ticket} "<why>" --by <name>)`;
 }
 
 // A landed item's branch decides everything here, so it has to exist. A branch that vanished under
@@ -409,8 +398,12 @@ function landTheLanded(horde, cfg, root, holds) {
       const reviewed = reviewedGateStep(horde, item);
       if (!reviewed) {
         plan.push({
-          ticket: item.ticket, action: 'review', sha: tip, note: `its review is raised on ${tip} — the gate is asked on the next run`,
+          ticket: item.ticket, action: 'review', sha: tip, note: `its review is raised on ${tip} — the gate is asked once it logs its closing line`,
         });
+        continue;
+      }
+      if (reviewed.waiting) {
+        plan.push({ ticket: item.ticket, action: 'review-waiting', note: reviewWaitingNote(item) });
         continue;
       }
       if (reviewed.sendBack) {
@@ -419,11 +412,14 @@ function landTheLanded(horde, cfg, root, holds) {
         });
         continue;
       }
+      const skipped = reviewed.end && reviewed.end.kind === 'skipped'
+        ? `its review was skipped by ${reviewed.end.by} (${reviewed.end.reason}); `
+        : '';
       plan.push({
         ticket: item.ticket,
         action: 'gate',
         closeReview: reviewed.closeReview,
-        note: result ? `the recorded result is about ${result.sha}, and ${item.branch} now stands at ${tip} — running the gate again` : `no readable gate result for ${item.branch} at ${tip} — running the gate`,
+        note: `${skipped}${result ? `the recorded result is about ${result.sha}, and ${item.branch} now stands at ${tip} — running the gate again` : `no readable gate result for ${item.branch} at ${tip} — running the gate`}`,
       });
       continue;
     }
@@ -438,7 +434,9 @@ function landTheLanded(horde, cfg, root, holds) {
     });
   }
 
-  const results = [];
+  // A review still open writes nothing and starts nothing: it is only said, every run, until it ends.
+  const results = plan.filter((s) => s.action === 'review-waiting')
+    .map((s) => ({ ticket: s.ticket, action: s.action, note: s.note }));
   const reviews = [];
   // The review's own record is written before anything is started, under the queue lock like every
   // other write to it: a review raised, or one the loop is moving past to the gate. Written first so

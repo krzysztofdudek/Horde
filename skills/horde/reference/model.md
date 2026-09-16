@@ -61,10 +61,11 @@ than kept alive behind a flag.
 
 The review is not that per-node reviewer come back. The seat held a node and signed what landed in
 it; a review holds nothing, reads one ticket's change once, and has no verb that signs. Its outputs
-are findings or silence, the ticket goes to the landing gate either way, and nothing downstream reads
-its silence as a pass — so a review that skimmed costs one spawn and can never make a change nobody
-read look safer than it is. What it can do is add friction: a Critical or Important finding sends the
-ticket back to `changes` before the gate, with a round counted exactly as a red gate counts one.
+are findings and one closing line that counts them. The gate waits for that line, or for the
+director's recorded skip, and is then asked either way; nothing downstream reads the closing line as
+a pass, so a review that skimmed can never make a change nobody read look safer than it is. What it
+can do is add friction: a Critical or Important finding sends the ticket back to `changes` before
+the gate, with a round counted exactly as a red gate counts one.
 
 | role | model | kind | holds | decides | never |
 |---|---|---|---|---|---|
@@ -72,7 +73,7 @@ ticket back to `changes` before the gate, with a round counted exactly as a red 
 | architect | Opus, cross-cutting, no node | the director's subagent, one-shot, a fresh one per graph ruling | coherence of the whole graph | approves or vetoes graph changes; rules the whole plan once, before wave 1 | implementation |
 | worker | cheapest capable (Haiku with a checker, Sonnet with a spec) | the director's subagent, one per ticket | one ticket, one worktree, one branch | implementation detail | contracts, decisions, other branches |
 | consultant | the territory's own class | one-shot, one per territory, spawned by `refine.mjs` | one territory's own tickets and law proposals | what changes inside its territory | the boundary between territories |
-| review | the ticket's own class | one-shot, one per ticket, after its worker and before its first landing | one ticket's change, read once | nothing: findings or silence — a Critical or Important finding sends the ticket back to `changes` before the gate | approving; holding a landing; being resumed |
+| review | the ticket's own class | one-shot, one per ticket, after its worker and before its first landing | one ticket's change, read once | nothing: its findings and a closing line that counts them — a Critical or Important finding sends the ticket back to `changes` before the gate | approving; being resumed |
 | legislate | the territory's own class | one-shot, one per territory, after a wave closes | that territory's own rules | which pattern the code has already earned as law | lowering a rule |
 | retro | Opus, once per mission | one-shot, at the very end | the whole mission's unread gate refusals and log remarks | rule / taste / inexpressible, for every one of them | writing the sentence the client reads |
 
@@ -136,8 +137,8 @@ Agents are biased towards their own work, and no prompt fixes that. The structur
 - the merge checklist is the key: nine items, run fresh on the branch's own tip, and a change lands
   itself the moment every one is green — no second person's signature to collect;
 - a review reads every ticket's change once before that, and can only slow it down: it has no way to
-  approve, a Critical or Important finding sends the ticket back before the gate, and its silence is
-  read by nothing — the key stays the checklist's alone;
+  approve, a Critical or Important finding sends the ticket back before the gate, and its closing
+  line says only that it happened and what it counted — the key stays the checklist's alone;
 - a rule may only be raised by whoever holds the territory it reaches, and only lowered by the
   client's own answered word — the landing gate refuses a branch that tries the other direction by
   itself, and refuses it the same way for the proof and the gates: a promise put back to planned, a
@@ -156,8 +157,9 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
    per territory, all at once, writing tickets and law as proposals; review, the architect ruling
    the whole plan once; frame, what the client is shown before the one "go".
 3. **Ticking** — `tick.mjs`, one run: reconcile what came back since the last run, land what is
-   ready — raising a ticket's one review in the run before its first gate — print the next dispatch
-   list, and say when a wave is ready to close. Nothing lives between runs.
+   ready — raising a ticket's one review before its first gate, and holding that gate until the
+   review logs its closing line or the director skips it — print the next dispatch list, and say when
+   a wave is ready to close. Nothing lives between runs.
 4. **Landing** — `land.mjs`, the nine-item checklist that merges a ticket branch itself the moment
    every item is green, or refuses naming the one that is not.
 5. **Closing** — `wave.mjs close`: the evidence catalogue's coverage, the quality index and its
@@ -348,8 +350,8 @@ the whole of the difference the two make: **who starts what the loop hands out**
 mission can run at all. Under `session`, tick never spawns — the caller does; under `external`,
 tick.mjs spawns each worker itself, and each review from the same command.
 
-A review holds the gate back for exactly one run of the loop, never until it answers: nothing waits
-on a review, or a dead one would stall its ticket. Under `session` that run is yours, taken once the
-reviews you spawned have come back. Under `external` it is the next scheduled call, so a review
-still reading when that call comes finds the gate already asked, and its findings stay in the
-ticket's log for the next reader rather than sending anything back.
+A review holds its ticket's gate the same way under both: until the ticket's log carries the
+review's closing line (`tk.mjs review-close`) or the director's skip with a reason (`tk.mjs
+review-skip`). There is no timer under either runner — a review that has not closed shows as
+waiting on every run, and deciding it never will is the director's call, made out loud and recorded.
+Anything the review logs after the line that ended it is not acted on.

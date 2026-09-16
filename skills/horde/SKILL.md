@@ -178,12 +178,17 @@ through its consultants — so what is left for you to spawn is the agents that 
   replaced one class up past `config.fixRounds`.
 - Spawn a **review** as a one-shot per ticket (`brief.mjs review NNN --name <n>`) when `tick.mjs`
   lists it: once, after the ticket's worker and before its first landing, on the ticket's own class.
-  It has no way to approve anything. It logs findings or nothing, and the ticket goes to the landing
-  gate either way — the next `tick.mjs` asks the gate whatever the review wrote, so run it once the
-  review has come back. A Critical or Important finding sends the ticket back to `changes` before
-  the gate, counted as a round the way a red gate is; a Minor one never sends it back. That is the
-  whole of its power: a review that skimmed costs one spawn, and nothing downstream ever reads it as
-  a pass. It is not the per-node reviewer seat this skill removed — nothing about it recurs.
+  It has no way to approve anything. It logs its findings, if any, and always ends with one closing
+  line (`tk.mjs review-close NNN --by <n>`) that counts them. The ticket's gate waits for that line,
+  with no timer: until it is in the log, `tick.mjs` shows the ticket as `review-waiting` on every
+  run. A review that died or will not close is yours to skip, with the reason on record —
+  `tk.mjs review-skip NNN "<why>" --by main` — and nothing it logs after the skip is acted on. Once
+  the review has ended, the gate is asked whatever it found, except that a Critical or Important
+  finding sends the ticket back to `changes` first, counted as a round the way a red gate is; a
+  Minor one never sends it back. The closing line is not a pass and nothing reads it as one: a
+  closing line counting zero findings and one counting Minor findings reach the gate the same way.
+  A fix round gets no second review. It is not the per-node reviewer seat this skill removed —
+  nothing about it recurs.
 - Spawn **legislate** as a one-shot per territory (`brief.mjs legislate <territory> --name <n>`) after a wave
   closes, or whenever a worker's ticket log flags a pattern nothing enforces. It reads what its own
   territory's landings were refused for and writes the rule down, in its own branch, raising it on

@@ -226,6 +226,15 @@ its folder and of the `id:` its issue.md carries.
   to propose yet. `log NNN "text"`, `grep <re>`.
 - `review-request NNN [--delta <path>]` — appends to the log with a timestamp; `--delta` names the
   file a scoped re-review was written to, so the log records which kind of review was asked for.
+- `review-close NNN --by <name>` — the line a ticket's one review ends with, whatever it found:
+  `review closed by <name> — Critical N · Important N · Minor N`, the findings logged since
+  `tick.mjs` raised the review, counted off the log (`readReview`, the one reader `tick.mjs` uses
+  too), never typed in. `tick.mjs` holds the ticket's gate until this line or a skip exists; the
+  line carries no verdict. Refuses a ticket with no review raised on its queue item.
+- `review-skip NNN "<reason>" --by <name>` — the director's call that a raised review will not
+  close: `review skipped by <name> — <reason>`. Refused without a reason, and for a ticket with no
+  review raised. The gate is asked on the next `tick.mjs` run, and nothing logged after the skip —
+  a finding, or the review's own closing line arriving late — is acted on.
 - `--node` on `new` is repeatable; two nodes mark a contract ticket.
 - `move NNN --team t` — relocates the issue folder.
 - `edit NNN --by <name>` — rewrites the body (everything from `## What` on) from stdin, leaving the
@@ -475,8 +484,9 @@ first landing — `tick.mjs` lists it (step 2 below) and nobody else raises one.
 diff to read (`git diff <parent>...<branch>`, against the parent `parentBranchOf` names, so a stacked
 ticket's dependency is never read as its own work), the ticket's body and its nodes' `node.mjs show`
 lines, and no command that approves: the role's only outputs are findings in the ticket's log, in
-the change-request shape `reference/discipline/review.md` gives, or nothing. It refuses a ticket
-that has no branch yet, since there is no change to read.
+the change-request shape `reference/discipline/review.md` gives, and the closing line its brief ends
+with (`tk.mjs review-close NNN --by <name>`), written whatever it found. It refuses a ticket that
+has no branch yet, since there is no change to read.
 
 `legislate <territory>` is the one-shot that writes a territory's law down. Everything in its brief is
 scoped to that territory and to nothing else: the landing gate's refusals on ITS tickets (from
@@ -1453,17 +1463,23 @@ inherits whatever tree the session's shell is already in.
    **The review, once per ticket, before its first gate.** The first time an item would go on the
    gate's re-run list, it goes on `review` instead — `{ticket, model, name, brief}`, `model` the
    ticket's own class, `name` `r-NNN`, `brief` the `brief.mjs review` command — and the gate is not
-   asked about it in this run. The queue item records `review: {name, sha, raisedAt, closedAt}`. On
-   the next run the gate is asked whatever the review wrote, with one exception: a change request
-   the review logged since `raisedAt` — `review: <node> changes by <who> — …` naming `Critical:` or
-   `Important:` — puts the ticket back on `changes` the way a red gate does, round counted against
-   the same cap (not a second time when the review wrote the status line itself, as the discipline
-   has it do), and `blocked` with a `stuck` ask when the rounds are spent. `Minor:` alone never
-   does. Whichever happens sets `closedAt`, and from then on nothing the review wrote is read again:
-   a fix round goes to the gate with no second review, and a finding that arrives late stays in the
-   log. No line a review can write moves a ticket closer to landing — silence and a line claiming to
-   approve are read the same way, which is not at all. A hold on a branch's landing (`stop`,
-   `lower`) holds its review too, since the review is the first half of that landing.
+   asked about it in this run. The queue item records `review: {name, sha, raisedAt, closedAt}`.
+   From then on the gate waits until the ticket's log, after `raisedAt`, carries the line that ends
+   the review: its closing line (`tk.mjs review-close`) or the director's skip with a reason
+   (`tk.mjs review-skip`). Until then every run puts `{ticket, action: "review-waiting", note}` on
+   `landed`, naming both commands, and does nothing else about it — there is no timer, under either
+   runner. Once the review has ended, the gate is asked whatever it found, with one exception: a
+   finding it logged before that line — a change request `review: <node> changes by <who> — …`, or a
+   line opening with its severity — naming `Critical:` or `Important:` puts the ticket back on
+   `changes` the way a red gate does, round counted against the same cap (not a second time when the
+   review wrote the status line itself, as the discipline has it do), and `blocked` with a `stuck`
+   ask when the rounds are spent. `Minor:` alone never does. Whichever happens sets `closedAt`, and
+   from then on nothing the review wrote is read again: a fix round goes to the gate with no second
+   review, and a finding or closing line that arrives after the review ended stays in the log. The
+   closing line only counts findings; what tick does never depends on it beyond its being there, so
+   a closing line counting zero and one counting Minor findings reach the gate the same way, and a
+   line claiming to approve is read by nothing. A hold on a branch's landing (`stop`, `lower`) holds
+   its review too, since the review is the first half of that landing.
 3. **The dispatch list.** `queue.mjs next`'s own order (stacked last, quality last, then severity,
    then the longer remaining critical path, then a node nothing is running on, then FIFO), with its
    file locks and its dependency rule, cut to the configured parallelism cap minus what is already

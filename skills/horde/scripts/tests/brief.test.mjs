@@ -431,6 +431,11 @@ test('brief.mjs review: one ticket\'s change to read, the review law, and no com
     assert.deepEqual(signing, [], `a review brief offers a way to sign: ${signing.join(' | ')}`);
   });
 
+  await t.test('the role\'s own text ends with the exact command that closes the review', () => {
+    const own = brief.slice(0, brief.indexOf('\n## Law\n')).trim();
+    assert.match(own, /\nnode \S+\/scripts\/tk\.mjs review-close 004 --by r-004\n```$/);
+  });
+
   await t.test('a ticket with no branch yet is refused: there is no change to read', () => {
     seedTicket(dir, 'mission1', 'trunk', '005', { branch: undefined, worktree: undefined });
     const none = run('brief.mjs', ['review', '005', '--name', 'r-005'], dir);

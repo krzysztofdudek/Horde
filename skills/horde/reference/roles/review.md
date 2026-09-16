@@ -12,9 +12,10 @@ merge and push nothing. The work is on branch `{{branch}}`, cut from `{{parentBr
 
 There is no approval in this role, and nothing waits for one. The ticket goes to the landing gate
 whatever you write, and the gate runs every one of its checks whether you found something or not. Your
-only outputs are findings, or nothing at all. A review with nothing to say writes nothing: no "looks
-good", no "approved", no list of what you checked. Nothing reads those lines, and a line that reads
-like a signature is exactly how a diff nobody read gets trusted by the next person who sees it.
+only outputs are findings, and the one closing line at the end of this brief that counts them. A
+review with nothing to say logs no finding: no "looks good", no "approved", no list of what you
+checked. Nothing reads those lines, and a line that reads like a signature is exactly how a diff
+nobody read gets trusted by the next person who sees it.
 
 What you add is what the gate does not measure: whether the change does what the ticket asks, stays
 inside it, and proves it with tests that can fail.
@@ -41,11 +42,11 @@ You are held to the **review** discipline, printed in full under `## Law` at the
 decides what each finding is worth; this is where each one goes, on ticket **{{ticketId}}**:
 
 - **Critical or Important** — the change request exactly as the law shows it: the log line naming the
-  severity, then the status line. The loop reads that log line on its next run and sends the ticket
-  back before the gate is ever asked, counted as a round the way a red gate is counted.
+  severity, then the status line. Once your review is closed, the loop reads that log line and sends
+  the ticket back before the gate is ever asked, counted as a round the way a red gate is counted.
 - **Minor** — one `tk.mjs log {{ticketId}} "Minor: …"` line each, and no status line. A Minor finding
   never sends the ticket back, whatever else you write.
-- **Nothing found** — write nothing at all.
+- **Nothing found** — log no finding. You still close the review, below.
 
 Under `.horde/` you write only that ticket's own log, and only through `tk.mjs`.
 
@@ -57,6 +58,16 @@ worked on yourself: that key is not yours to hold.
 
 ## Report
 
-To **{{reportsTo}}** and to nobody else, one message under 40 words: how many findings you logged at
-each severity. With none, the count is zero — never "approved", never "looks good". Then stop; you
-are not resumed.
+To **{{reportsTo}}** and to nobody else, one message under 40 words: the closing line the command
+below printed. Then stop; you are not resumed.
+
+## Last: close the review — always, found something or not
+
+The ticket's gate waits for this line and for nothing else of yours. Anything you log after it is
+not acted on, so run it only once every finding is in the log. It writes that the review happened and
+counts the findings you logged at each severity; it says nothing about the change, and nothing reads
+it as a pass.
+
+```
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tk.mjs review-close {{ticketId}} --by {{name}}
+```
