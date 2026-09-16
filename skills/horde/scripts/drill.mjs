@@ -405,7 +405,7 @@ const SEVERITIES = ['Critical', 'Important', 'Minor'];
 // and the diff it is bound to — and then "— <why>". Only the node, the reason and everything
 // between them (kept as an opaque tail) are read here, so a new note on the key never makes a
 // review invisible to the drill. The old format also carried an "approve" verb, a leftover of a
-// per-node reviewer seat removed before 6.0.0; a reviewer's approval must never feed a landing
+// per-node reviewer seat removed in 6.0.0; a reviewer's approval must never feed a landing
 // decision, so that verb is not read — an "approve" line is invisible to this drill, same as no
 // review line at all.
 function reviewLines(logText) {
@@ -440,16 +440,14 @@ function checkReview(ctx) {
   }];
   if (reviews.length === 0) return checks;
 
-  const changes = reviews.filter((r) => r.verdict === 'changes');
+  const changes = reviews;
   const unranked = changes.filter((r) => severitiesIn(r.why).length === 0);
   checks.push({
     name: 'findings carry a severity',
     ok: unranked.length === 0,
-    note: changes.length === 0
-      ? 'no change request to rank'
-      : unranked.length === 0
-        ? `${changes.length} change request(s), each naming ${SEVERITIES.join('/')}`
-        : `${unranked.length} change request(s) name no severity: ${unranked.map((r) => `"${r.why || '(no reason given)'}"`).join(', ')}`,
+    note: unranked.length === 0
+      ? `${changes.length} change request(s), each naming ${SEVERITIES.join('/')}`
+      : `${unranked.length} change request(s) name no severity: ${unranked.map((r) => `"${r.why || '(no reason given)'}"`).join(', ')}`,
   });
 
   const minorOnly = changes.filter((r) => {
