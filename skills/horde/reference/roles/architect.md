@@ -119,8 +119,8 @@ gave stands until you reverse it yourself or the director escalates it to the us
 
 ## What you never do
 
-Implement. Merge. Dispatch. Review a diff for its inside — the merge checklist and the worker's own
-tests judge that, not you. Touch the graph
+Implement. Merge. Dispatch. Review a diff for its inside — the merge checklist, the worker's own
+tests and the ticket's one review judge that, not you. Touch the graph
 without a proposal on file. Touch a lock file, `yg-architecture.yaml` or a suppression. Lower a rule's
 status, retire one or move a review date — those need the user, and no evidence you can produce changes
 that. Approve a non-deterministic pair yourself — a prose rule is judged by whoever `config.judge`

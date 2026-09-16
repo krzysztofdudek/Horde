@@ -85,6 +85,20 @@ function tick(dir, args = []) {
   return run('tick.mjs', args, dir);
 }
 
+// A branch that reaches the gate for the first time is reviewed first: the run that finds it raises
+// its one review and does not ask the gate, and the run after it does. A test about what the gate
+// itself does takes that first run here, and asserts it did exactly that, so what the test goes on to
+// assert is about the run that actually asks the gate.
+function throughReview(dir, ids) {
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+  for (const id of [].concat(ids)) {
+    const step = r.json.landed.find((l) => l.ticket === id);
+    assert.equal(step && step.action, 'review', `${id}'s review is raised before the gate (${JSON.stringify(r.json.landed)})`);
+  }
+  return r;
+}
+
 // ---- 1. reconcile ---------------------------------------------------------------------------
 //
 // The same three cases queue.mjs reconcile has always had, asserted through tick, because tick is
@@ -136,10 +150,14 @@ test('tick.mjs reconcile: a branch past the tip lands, a dirty tree is committed
     assert.equal(settled[untouched], undefined);
   });
 
-  await t.test('the item reconcile landed is the one the gate is asked about in the same run', () => {
-    const gated = r.json.landed.find((l) => l.ticket === past);
-    assert.ok(gated, 'the landed branch reaches step two in the same run');
-    assert.equal(gated.action, 'gate');
+  await t.test('the item reconcile landed reaches step two in the same run: its review is raised, and the gate is asked on the next', () => {
+    const reviewed = r.json.landed.find((l) => l.ticket === past);
+    assert.ok(reviewed, 'the landed branch reaches step two in the same run');
+    assert.equal(reviewed.action, 'review');
+    assert.ok(r.json.review.some((e) => e.ticket === past), 'and its review is on the list to spawn');
+    const next = tick(dir);
+    assert.equal(next.code, 0, next.stderr);
+    assert.equal(next.json.landed.find((l) => l.ticket === past).action, 'gate');
   });
 });
 
@@ -407,6 +425,243 @@ test('tick.mjs close: an empty queue raises the flag and names the command; one 
   });
 });
 
+// ---- 3. the one review a ticket gets -----------------------------------------------------------
+//
+// After the worker, before the landing. The run that finds a branch ready for the gate for the first
+// time raises that ticket's review instead of asking the gate; the run after it asks the gate
+// whatever the review wrote. A Critical or Important finding is the one thing that changes that, and
+// only by sending the ticket back sooner. Nothing a review writes lets a branch past the gate, or
+// lets it skip one.
+
+function landedTicket(dir, slug, opts = {}) {
+  const id = mkTicket(dir, slug, opts);
+  run('queue.mjs', ['add', id], dir);
+  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'w'], dir);
+  git(['-C', running.json.worktree, 'commit', '--allow-empty', '-qm', 'work'], dir);
+  run('queue.mjs', ['set', id, 'landed'], dir);
+  return { id, running };
+}
+
+function logOn(dir, id, text) {
+  const r = run('tk.mjs', ['log', id, text], dir);
+  assert.equal(r.code, 0, r.stderr);
+}
+
+function landResultExists(dir, id, horde = 'mission1') {
+  return existsSync(join(dir, '.horde', 'hordes', horde, 'land', `${id}.json`));
+}
+
+test('tick.mjs review: a branch ready for the gate gets its one review first, on the ticket\'s own class, and the gate on the next run', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const { id } = landedTicket(dir, 'first-landing', { files: 'src/first.ts', class: 'heavy' });
+
+  const first = tick(dir);
+  assert.equal(first.code, 0, first.stderr);
+
+  await t.test('the run that finds it raises the review and does not ask the gate', () => {
+    assert.equal(first.json.landed.find((l) => l.ticket === id).action, 'review');
+    assert.equal(landResultExists(dir, id), false, 'no gate was started');
+    assert.equal(itemOf(dir, id).state, 'landed');
+  });
+
+  await t.test('the review is on a list of its own, on the ticket\'s class, with a brief command that renders', () => {
+    assert.equal(first.json.review.length, 1);
+    const [entry] = first.json.review;
+    assert.equal(entry.ticket, id);
+    assert.equal(entry.model, 'heavy');
+    assert.match(entry.brief, new RegExp(`brief\\.mjs review ${id} --name r-${id}\\b`));
+    const [, script, ...args] = entry.brief.split(' ');
+    const rendered = JSON.parse(execFileSync('node', [script, ...args, '--json'], { cwd: dir, encoding: 'utf8' }));
+    assert.match(rendered.brief, new RegExp(`You are \\*\\*r-${id}\\*\\*, reviewing ticket`));
+    assert.ok(!first.json.spawn.some((s) => s.ticket === id), 'a review is not a worker, and is not on the dispatch list');
+  });
+
+  const second = tick(dir);
+  assert.equal(second.code, 0, second.stderr);
+
+  await t.test('the next run asks the gate whatever the review wrote — here, nothing at all', () => {
+    assert.equal(second.json.landed.find((l) => l.ticket === id).action, 'gate');
+    assert.deepEqual(second.json.review, [], 'and the review is never raised a second time');
+  });
+});
+
+test('tick.mjs review: one per ticket — a fix round goes to the gate without a second review, and a finding logged after the loop moved on is not acted on', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const { id, running } = landedTicket(dir, 'second-landing', { files: 'src/second.ts' });
+  throughReview(dir, id);
+
+  // The gate came back red on the reviewed tip, so the fix round is the gate's, not the review's.
+  writeLandResult(dir, id, {
+    ticket: id,
+    branch: running.json.branch,
+    sha: git(['-C', running.json.worktree, 'rev-parse', 'HEAD'], dir),
+    ok: false,
+    checks: [{ name: 'tests', ok: false, note: 'one case fails' }],
+    pairs: [],
+    brief: null,
+    landed: null,
+  });
+  const red = tick(dir);
+  assert.equal(red.code, 0, red.stderr);
+  assert.equal(red.json.landed.find((l) => l.ticket === id).action, 'changes');
+  assert.equal(itemOf(dir, id).state, 'running', 'the fix round went back out');
+
+  // A review that came back late: its finding reaches the log after the loop has already moved on.
+  logOn(dir, id, `review: core changes by r-${id} — Critical: src/second.ts:1 — the total is never rounded — every invoice is a cent off`);
+  git(['-C', running.json.worktree, 'commit', '--allow-empty', '-qm', 'fix'], dir);
+
+  const again = tick(dir);
+  assert.equal(again.code, 0, again.stderr);
+
+  await t.test('the fixed branch goes to the gate: no second review, and no bounce over the late finding', () => {
+    assert.equal(again.json.landed.find((l) => l.ticket === id).action, 'gate');
+    assert.deepEqual(again.json.review, []);
+  });
+});
+
+test('tick.mjs review: a Critical or Important finding sends the ticket back with a round before the gate is asked; a Minor one never does', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const critical = landedTicket(dir, 'critical-finding', { files: 'src/crit.ts' }).id;
+  const important = landedTicket(dir, 'important-finding', { files: 'src/imp.ts' }).id;
+  const minor = landedTicket(dir, 'minor-finding', { files: 'src/minor.ts' }).id;
+  const early = landedTicket(dir, 'finding-before-review', { files: 'src/early.ts' }).id;
+
+  // Written before any review of this ticket existed: whatever it says, it is not that review.
+  logOn(dir, early, 'review: core changes by somebody — Critical: src/early.ts:1 — written before the review was raised');
+  throughReview(dir, [critical, important, minor, early]);
+
+  // A review that logged its finding and stopped there.
+  logOn(dir, critical, `review: core changes by r-${critical} — Critical: src/crit.ts:4 — the total is never rounded — every invoice is a cent off`);
+  // A review that followed the discipline to the letter: the finding, then the status line itself.
+  logOn(dir, important, `review: core changes by r-${important} — Important: src/imp.ts:9 — the retry swallows the last error — a permanent failure reads as a success`);
+  assert.equal(run('tk.mjs', ['status', important, 'changes', 'sent back for an Important finding'], dir).code, 0);
+  // Minor findings only — one of them written the way a change request is.
+  logOn(dir, minor, `review: core changes by r-${minor} — Minor: "t" would read better as "total"`);
+  logOn(dir, minor, 'Minor: the helper could sit beside its only caller');
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+  const step = (id) => r.json.landed.find((l) => l.ticket === id);
+  const log = (id) => readFileSync(ticketLogPath(dir, id), 'utf8');
+
+  await t.test('Critical: back to changes with round 1 counted, out to a worker again, and the gate never asked', () => {
+    assert.equal(step(critical).action, 'changes');
+    assert.equal(step(critical).round, 1);
+    assert.match(step(critical).note, /the total is never rounded/);
+    assert.match(log(critical), /status: changes — .*the total is never rounded.*\(round 1\/5/);
+    assert.ok(r.json.spawn.some((s) => s.ticket === critical), 'the fix round goes back out on this same run');
+    assert.equal(landResultExists(dir, critical), false);
+  });
+
+  await t.test('Important: the same, and the round the review counted itself is not counted a second time', () => {
+    assert.equal(step(important).action, 'changes');
+    assert.equal(step(important).round, 1);
+    assert.equal(log(important).split('\n').filter((l) => /status: changes/.test(l)).length, 1);
+    assert.ok(r.json.spawn.some((s) => s.ticket === important));
+    assert.equal(landResultExists(dir, important), false);
+  });
+
+  await t.test('Minor alone never sends the ticket back: it goes to the gate', () => {
+    assert.equal(step(minor).action, 'gate');
+    assert.ok(!r.json.spawn.some((s) => s.ticket === minor));
+    assert.doesNotMatch(log(minor), /status: changes/);
+  });
+
+  await t.test('a finding logged before the review was raised is not the review\'s: that ticket goes to the gate', () => {
+    assert.equal(step(early).action, 'gate');
+  });
+});
+
+test('tick.mjs review: a Critical finding on a ticket whose rounds are spent stops it and asks the client, as a red gate would', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const { id } = landedTicket(dir, 'no-rounds-left', { files: 'src/spent.ts' });
+  spendFixRounds(dir, id, 5);
+  throughReview(dir, id);
+  logOn(dir, id, `review: core changes by r-${id} — Critical: src/spent.ts:2 — the lock is never released — the second run hangs`);
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.landed.find((l) => l.ticket === id).action, 'blocked');
+  assert.equal(itemOf(dir, id).state, 'blocked');
+  const asks = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json'), 'utf8'));
+  const ask = asks.items.find((a) => a.ticket === id);
+  assert.equal(ask.kind, 'stuck');
+  assert.match(ask.why, /the lock is never released/);
+  assert.equal(landResultExists(dir, id), false, 'and the gate is not asked about a ticket that has stopped');
+});
+
+test('tick.mjs review: nothing reads a review\'s approval — one that signs off and one that says nothing reach the gate the same way', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const silent = landedTicket(dir, 'review-said-nothing', { files: 'src/silent.ts' }).id;
+  const signing = landedTicket(dir, 'review-signed-off', { files: 'src/signed.ts' }).id;
+  throughReview(dir, [silent, signing]);
+  logOn(dir, signing, `review: core approve by r-${signing} — looks good`);
+  logOn(dir, signing, 'LGTM, approved — nothing to add');
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+
+  await t.test('both are asked about at the gate, and the one that signed off gets nothing the silent one did not', () => {
+    const outcome = (id) => ({
+      action: r.json.landed.find((l) => l.ticket === id).action,
+      state: itemOf(dir, id).state,
+      spawned: r.json.spawn.some((s) => s.ticket === id),
+      reviewed: r.json.review.some((e) => e.ticket === id),
+    });
+    assert.deepEqual(outcome(signing), outcome(silent));
+    assert.equal(outcome(signing).action, 'gate');
+  });
+
+  // A review line reads "review: <node> <verb> by <who>". The one script that still parses an
+  // "approve" verb out of that shape is drill.mjs, over logs a pre-6.0.0 mission left behind, and only
+  // to count that a review was recorded at all — it moves no ticket and lands nothing. Any other
+  // script reading one is a code path that trusts a signature, which is what this role must never have.
+  await t.test('no script but the drill over old logs parses an approval out of a review line', () => {
+    const readers = [];
+    for (const file of readdirSync(SCRIPTS_DIR).filter((n) => n.endsWith('.mjs'))) {
+      readFileSync(join(SCRIPTS_DIR, file), 'utf8').split('\n').forEach((line) => {
+        const code = line.trim();
+        if (code.startsWith('//')) return;
+        if (/review:/.test(code) && /approve/.test(code)) readers.push(`${file}: ${code}`);
+      });
+    }
+    assert.deepEqual(readers.map((x) => x.split(':')[0]), ['drill.mjs'], readers.join('\n'));
+  });
+});
+
+test('tick.mjs --runner external: a review is started the way a worker is, through config.runner.spawn, from a brief file of its own', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const copied = join(dir, 'review-brief-copy.md');
+  run('horde.mjs', ['config', 'set', 'runner.spawn', `cp <brief> ${copied}`], dir);
+  const { id } = landedTicket(dir, 'reviewed-headless', { files: 'src/headless.ts', class: 'heavy' });
+
+  const r = tick(dir, ['--runner', 'external']);
+  assert.equal(r.code, 0, r.stderr);
+  const started = r.json.external.find((e) => e.ticket === id);
+  assert.ok(started && started.started, `the review was started (${JSON.stringify(r.json.external)})`);
+  assert.equal(started.role, 'review');
+  assert.match(started.brief, new RegExp(`${id}-review\\.md$`), 'its brief never overwrites the worker brief of the same ticket');
+  assert.match(readFileSync(started.brief, 'utf8'), new RegExp(`You are \\*\\*r-${id}\\*\\*, reviewing ticket`));
+
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline && !existsSync(copied)) {
+    await new Promise((resolve) => { setTimeout(resolve, 100); });
+  }
+  assert.ok(existsSync(copied), 'the configured command is what started it');
+});
+
 // ---- 4. broken states and races ---------------------------------------------------------------
 //
 // The real content of this tool: tick reads state after somebody else's crash, and every one of
@@ -423,6 +678,7 @@ test('tick.mjs gate results: unparsable is absent, stale is ignored, and a green
     git(['-C', running.json.worktree, 'commit', '--allow-empty', '-qm', 'work'], dir);
     run('queue.mjs', ['set', id, 'landed'], dir);
     writeLandResult(dir, id, '{"ticket": "001", "sha": "abc');
+    throughReview(dir, id);
 
     const r = tick(dir);
     assert.equal(r.code, 0, r.stderr);
@@ -445,6 +701,7 @@ test('tick.mjs gate results: unparsable is absent, stale is ignored, and a green
     writeLandResult(dir, id, {
       ticket: id, branch: running.json.branch, sha: old, ok: true, checks: [], pairs: [], brief: null, landed: { ticket: id, sha: old },
     });
+    throughReview(dir, id);
 
     const r = tick(dir);
     assert.equal(r.code, 0, r.stderr);
@@ -557,6 +814,7 @@ test('tick.mjs dispatch: two non-overlapping ready tickets share one gate run th
   const ids = setupTickBatchLandable(dir, 2);
   const gateLog = join(dir, 'gate-calls.log');
   run('horde.mjs', ['config', 'set', 'gates.team', `echo run >> "${gateLog}"`], dir);
+  throughReview(dir, ids);
 
   const r = tick(dir);
   assert.equal(r.code, 0, r.stderr);
@@ -1083,6 +1341,7 @@ test('tick.mjs holds: an open "lower" holds that branch at the gate and nothing 
 
   await t.test('the gate is never asked about that branch, and no round is counted against it', () => {
     assert.ok(!r.json.landed.some((l) => l.ticket === waiting), `nothing gated it (${JSON.stringify(r.json.landed)})`);
+    assert.ok(!r.json.review.some((e) => e.ticket === waiting), 'nor is its review raised: the review is the first half of the landing it holds');
     assert.equal(itemOf(dir, waiting).state, 'landed', 'the item is exactly where it was');
     const entry = heldFor(r, waiting);
     assert.ok(entry, `it says which question holds it (${JSON.stringify(r.json.held)})`);

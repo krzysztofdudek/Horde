@@ -4,7 +4,8 @@
 // The steward, entirely, as a script. One run does four things in order and exits:
 //
 //   1. settles every branch a call left behind (reconcile),
-//   2. puts every branch that is ready through the landing gate, and rules on what came back,
+//   2. puts every branch that is ready through its one review and then the landing gate, and rules
+//      on what came back,
 //   3. says what to start now — the dispatch list,
 //   4. says whether the queue has emptied.
 //
@@ -22,11 +23,12 @@
 // runners make: WHO starts what this hands out, not whether the work can happen. Everything below
 // is the same either way.
 //
-// What tick does write: the queue (reconcile's settlements, the gate's verdicts, and the state of
-// what it just handed out), the fix-round counter on a ticket that came back red, and `asks.json`
-// when a ticket's rounds are spent. It holds the landing gate's own lock while it does — the same
-// lock, not a second one, because two ticks on one repository must not hand the same ticket to two
-// workers, and a second lock would not stop them.
+// What tick does write: the queue (reconcile's settlements, the gate's verdicts, when a ticket's one
+// review was raised, and the state of what it just handed out), the fix-round counter on a ticket
+// that came back red or was sent back by its review, and `asks.json` when a ticket's rounds are
+// spent. It holds the landing gate's own lock while it does — the same lock, not a second one,
+// because two ticks on one repository must not hand the same ticket to two workers, and a second
+// lock would not stop them.
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -35,7 +37,7 @@ import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readText, readConfig, nowIso, fail, HordeError, parseArgs, emit,
   isMain, resolveHorde, git, resolveTree, withProvenance, provenanceLine, withQueueLock,
-  runMain, appendText, parseEvidenceRows, classUp,
+  runMain, appendText, parseEvidenceRows, classUp, parseLogEntries,
 } from './_lib.mjs';
 import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine,
@@ -67,10 +69,18 @@ changes that: on its own (no --tree) it resolves to that horde's own trunk workt
 as queue.mjs plan/quality already read it. A bare tick.mjs call — the boot sequence's own — carries
 neither flag, so it inherits whatever tree the session is already in.
 
---json prints {tree, branch, sha, spawn: [{ticket, model, brief}], judge: [{ticket, pairs, brief}],
-askClient: [{id, kind, why}], held: [{ticket, ask, kind, holds, note}], close: <bool>}. Everything
-on "spawn" has had its branch and worktree cut already, so the brief command on it renders against a
-tree that exists; tick does not start the agent, because the caller is what starts agents.
+--json prints {tree, branch, sha, spawn: [{ticket, model, brief}], review: [{ticket, model, name,
+brief}], judge: [{ticket, pairs, brief}], askClient: [{id, kind, why}], held: [{ticket, ask, kind,
+holds, note}], close: <bool>}. Everything on "spawn" has had its branch and worktree cut already, so
+the brief command on it renders against a tree that exists; tick does not start the agent, because
+the caller is what starts agents.
+
+Every ticket gets one review, after its worker and before its landing: the run that first finds its
+branch ready for the gate puts it on "review" instead of asking the gate, on the ticket's own class,
+and the next run asks the gate whatever the review wrote. The review has nothing to approve with. A
+Critical or Important finding it logged since it was raised sends the ticket back to "changes" with
+a round counted, as a red gate does; a Minor one never does. A fix round goes to the gate with no
+second review.
 
 An open ask holds only what depends on its answer, and "held" says what each one held: "stop"
 everything — the dispatch list, every landing and the close — "stuck" that one ticket, "charter"
@@ -82,8 +92,8 @@ started from one of those tips. Such an entry carries the line "STACKED, parent 
 nobody reads it as ready.
 
 --runner names who is spinning the loop, and only "external" changes what this script does: it
-starts each worker itself through config.runner.spawn. "session" (the default) starts nothing — the
-caller does.
+starts each worker itself through config.runner.spawn, and each review the same way. "session" (the
+default) starts nothing — the caller does.
 
 --watch repeats the run every config.tick.interval seconds until the queue empties or a signal
 arrives — an open "stop" holds the close, so it keeps waiting rather than exiting on an emptied
@@ -285,6 +295,71 @@ function redWords(result) {
   return red.join(' · ') || 'the gate came back red without naming a check';
 }
 
+// ---- the one review a ticket gets, before its gate ---------------------------------------------
+//
+// Nothing reads a gate for sense: whether a change does what its ticket asks, stays inside it and
+// proves it with tests that can fail is what no check measures. So every ticket's change is read
+// once, by a one-shot, after its worker and before its first gate — and that one-shot is given no
+// way to approve anything, on purpose. Its only outputs are findings or silence, the ticket goes to
+// the gate either way, and nothing here reads silence as a pass: a lazy review costs one spawn and
+// can never make a diff nobody read look safer than it is.
+//
+// The queue item carries the record: `review: {name, sha, raisedAt, closedAt}`. `raisedAt` is when
+// this run handed the review out, and holds the gate back for that one run. `closedAt` is when the
+// loop moved on — to the gate, or back to a worker — and from then on nothing the review wrote is
+// acted on again, so a finding that arrives late, or one already answered by a fix round, never
+// sends the same ticket back twice. A ticket is reviewed once: a fix round goes to the gate with
+// nothing raised in front of it.
+
+function reviewName(ticket) {
+  return `r-${ticket}`;
+}
+
+// The argv the review's brief is rendered with — an array for the same reason briefCommandParts is.
+// It reads the tree this run reads, so the reviewer sees the rules this run's gate would hold the
+// branch to.
+function reviewCommandParts(horde, ticket, root) {
+  return [join(SCRIPTS, 'brief.mjs'), 'review', ticket, '--name', reviewName(ticket), '--horde', horde, '--tree', root];
+}
+
+const REVIEW_CHANGE_REQUEST_RE = /^review:\s*(\S+)\s+changes\s+by\s+(\S+)/;
+const SEVERITY_RE = /\b(Critical|Important|Minor):/g;
+const SENDS_BACK = new Set(['Critical', 'Important']);
+
+// What a ticket's review wrote into its log since it was raised, in the shape the review discipline
+// gives a change request — "review: <node> changes by <who> — <Severity>: …" — plus the status line
+// the same discipline has the reviewer write after it, when it did. Nothing else a review might
+// write is read: there is no line here a review could write to wave a ticket through.
+function reviewSince(logText, since) {
+  const requests = [];
+  let status = null;
+  for (const entry of parseLogEntries(logText)) {
+    const stamp = entry.isStatus ? entry.stamp : entry.text.split(/\s/)[0];
+    if (!stamp || stamp < since) continue;
+    if (entry.isStatus) {
+      if (entry.status === 'changes' && entry.round) status = { round: entry.round, cap: entry.cap, label: entry.label };
+      continue;
+    }
+    const text = entry.text.slice(stamp.length).trim();
+    if (!REVIEW_CHANGE_REQUEST_RE.test(text)) continue;
+    const severities = [...new Set([...text.matchAll(SEVERITY_RE)].map((m) => m[1]))];
+    requests.push({ text, severities });
+  }
+  return { requests, status };
+}
+
+// The gate step a landed branch gets, once its review has had its one run. Null while it has not:
+// the caller raises it instead of asking the gate.
+function reviewedGateStep(horde, item) {
+  if (!item.review) return null;
+  if (item.review.closedAt) return { closeReview: false };
+  const ticket = findTicket(horde, item.ticket);
+  const said = reviewSince(ticket ? readText(ticket.logPath) : '', item.review.raisedAt);
+  const serious = said.requests.filter((r) => r.severities.some((s) => SENDS_BACK.has(s)));
+  if (serious.length === 0) return { closeReview: true };
+  return { sendBack: serious.map((r) => r.text).join(' · '), counted: said.status };
+}
+
 // A landed item's branch decides everything here, so it has to exist. A branch that vanished under
 // a recorded result is somebody's `git branch -D` or a checkout nobody expected, and there is no
 // safe guess: a green result for a branch that is gone would otherwise merge a sha nothing can be
@@ -328,11 +403,26 @@ function landTheLanded(horde, cfg, root, holds) {
     // Absent, truncated mid-write (readLandResult reads that as absent, on purpose), or recorded
     // against a sha the branch has since moved past: all three mean the same thing — there is no
     // answer about the branch as it stands now — and all three get the same one, which is to ask
-    // the gate again rather than to trust a record of some other commit.
+    // the gate again rather than to trust a record of some other commit. Once, before the first of
+    // those asks, the ticket's review is raised instead; see "the one review a ticket gets" above.
     if (!result || result.sha !== tip) {
+      const reviewed = reviewedGateStep(horde, item);
+      if (!reviewed) {
+        plan.push({
+          ticket: item.ticket, action: 'review', sha: tip, note: `its review is raised on ${tip} — the gate is asked on the next run`,
+        });
+        continue;
+      }
+      if (reviewed.sendBack) {
+        plan.push({
+          ticket: item.ticket, action: 'red', source: 'review', words: reviewed.sendBack, counted: reviewed.counted, note: null,
+        });
+        continue;
+      }
       plan.push({
         ticket: item.ticket,
         action: 'gate',
+        closeReview: reviewed.closeReview,
         note: result ? `the recorded result is about ${result.sha}, and ${item.branch} now stands at ${tip} — running the gate again` : `no readable gate result for ${item.branch} at ${tip} — running the gate`,
       });
       continue;
@@ -343,10 +433,54 @@ function landTheLanded(horde, cfg, root, holds) {
       });
       continue;
     }
-    plan.push({ ticket: item.ticket, action: 'red', words: redWords(result), note: null });
+    plan.push({
+      ticket: item.ticket, action: 'red', source: 'gate', words: redWords(result), note: null,
+    });
   }
 
   const results = [];
+  const reviews = [];
+  // The review's own record is written before anything is started, under the queue lock like every
+  // other write to it: a review raised, or one the loop is moving past to the gate. Written first so
+  // that a gate started below is never a gate whose review could still send the ticket back.
+  const reviewSteps = plan.filter((s) => s.action === 'review' || s.closeReview);
+  if (reviewSteps.length) {
+    withQueueLock(horde, TEAM, () => {
+      const fresh = readQueue(horde);
+      for (const step of reviewSteps) {
+        const item = fresh.items.find((i) => i.ticket === step.ticket);
+        if (!item) continue;
+        const at = nowIso();
+        if (step.action === 'review') {
+          item.review = {
+            name: reviewName(step.ticket), sha: step.sha, raisedAt: at, closedAt: null,
+          };
+          item.notes.push({ at, text: `tick: review raised on ${step.sha} (${reviewName(step.ticket)}) — the gate is asked on the next run` });
+        } else if (item.review && !item.review.closedAt) {
+          item.review.closedAt = at;
+        }
+      }
+      saveQueue(horde, TEAM, fresh);
+    });
+    for (const step of plan.filter((s) => s.action === 'review')) {
+      const ticket = findTicket(horde, step.ticket);
+      const item = doc.items.find((i) => i.ticket === step.ticket);
+      const parts = reviewCommandParts(horde, step.ticket, root);
+      reviews.push({
+        ticket: step.ticket,
+        role: 'review',
+        // The review reads on the ticket's own class: the class is a field of the ticket, chosen
+        // once for the whole of it, not a choice made in flight for this one read.
+        model: (ticket && parseField(ticket.text, 'Class')) || (item && item.class) || null,
+        name: reviewName(step.ticket),
+        brief: ['node', ...parts].join(' '),
+        briefParts: parts,
+        briefFile: `${step.ticket}-review.md`,
+      });
+      results.push({ ticket: step.ticket, action: 'review', note: step.note });
+    }
+  }
+
   // The gates first: they start a detached process and touch no state, so nothing below depends on
   // the order and a refusal further down leaves no half-started run behind. One land.mjs call for
   // the whole ready set — not one per ticket — is what lets non-overlapping tickets share a single
@@ -376,6 +510,8 @@ function landTheLanded(horde, cfg, root, holds) {
     });
   }
 
+  // A red gate and a review's Critical or Important finding send a ticket back the same way: to
+  // "changes", with a round counted against the same cap. Only who said it differs, and the words.
   const reds = plan.filter((s) => s.action === 'red');
   if (reds.length) {
     // Read, mutate every red item and write back, all under the queue lock: two ticks landing
@@ -386,8 +522,17 @@ function landTheLanded(horde, cfg, root, holds) {
       for (const step of reds) {
         const item = fresh.items.find((i) => i.ticket === step.ticket);
         if (!item) continue;
+        const byReview = step.source === 'review';
+        const said = byReview ? 'review found' : 'gate red';
+        // Whatever sends a ticket back ends its review's say: the fix round the worker gets reads
+        // every finding already in the log, so nothing written there so far sends it back again.
+        if (item.review && !item.review.closedAt) item.review.closedAt = nowIso();
         const ticket = findTicket(horde, step.ticket);
-        const roundInfo = ticket ? changesRoundInfo(horde, ticket) : { refused: false, round: 1 };
+        // A review that followed the discipline to the letter wrote the status line itself, and
+        // tk.mjs counted that round when it did — the round is that one, never a second on top.
+        const roundInfo = byReview && step.counted
+          ? { refused: false, ...step.counted }
+          : (ticket ? changesRoundInfo(horde, ticket) : { refused: false, round: 1 });
         if (roundInfo.refused) {
           // The rounds are spent, including the ones a fresh worker was given, so another round would
           // be a state pretending to be progress. The ticket stops here and the client is asked —
@@ -399,7 +544,7 @@ function landTheLanded(horde, cfg, root, holds) {
           const { ask, filed } = fileAsk(horde, {
             kind: 'stuck',
             ticket: step.ticket,
-            why: `${roundInfo.message} The gate's last words: ${step.words}`,
+            why: `${roundInfo.message} ${byReview ? 'The review\'s findings' : 'The gate\'s last words'}: ${step.words}`,
             log: ticket ? ticket.logPath : null,
           });
           results.push({
@@ -411,20 +556,22 @@ function landTheLanded(horde, cfg, root, holds) {
         // ticket's "changes" line with the round number in it the moment it comes back red, and a
         // second write would tick the counter for one red gate twice. The status is only written
         // when nothing wrote it — a result read back after a run that died before recording it.
-        if (ticket && parseField(ticket.text, 'Status') !== 'changes') {
+        // A review's finding is written by nobody but this run, unless the review wrote it itself.
+        const written = byReview ? !!step.counted : (ticket && parseField(ticket.text, 'Status') === 'changes');
+        if (ticket && !written) {
           transitionStatus(ticket, 'changes', step.words, roundInfo);
         }
         item.state = 'queued';
-        item.notes.push({ at: nowIso(), text: `tick: gate red (round ${roundInfo.round}/${roundInfo.cap} — ${roundInfo.label}) — ${step.words}` });
+        item.notes.push({ at: nowIso(), text: `tick: ${said} (round ${roundInfo.round}/${roundInfo.cap} — ${roundInfo.label}) — ${step.words}` });
         results.push({
-          ticket: step.ticket, action: 'changes', round: roundInfo.round, note: `gate red, round ${roundInfo.round}/${roundInfo.cap} (${roundInfo.label}) — ${step.words}`,
+          ticket: step.ticket, action: 'changes', round: roundInfo.round, note: `${said}, round ${roundInfo.round}/${roundInfo.cap} (${roundInfo.label}) — ${step.words}`,
         });
       }
       saveQueue(horde, TEAM, fresh);
     });
   }
 
-  return { results, held };
+  return { results, held, reviews };
 }
 
 // ---- 3. the dispatch list ------------------------------------------------------------------
@@ -559,16 +706,23 @@ function closeCommand(horde) {
 // session runner would be handed to run itself; the only thing "external" changes is who runs it,
 // never what it says (see reference/model.md's Runner section) — so this must never reconstruct a
 // narrower call of its own.
+//
+// A ticket's review is started exactly the same way, from the same template, on the ticket's own
+// class: the loop hands it out, and under this runner nobody else is there to start it. Its brief
+// is written beside the worker's under a name of its own, so neither ever overwrites the other.
 function externalStart(horde, cfg, entries, root) {
   const template = cfg.runner && cfg.runner.spawn;
   const started = [];
   for (const entry of entries) {
-    const path = hordePath(horde, 'briefs', `${entry.ticket}.md`);
+    const role = entry.role || 'worker';
+    const path = hordePath(horde, 'briefs', entry.briefFile || `${entry.ticket}.md`);
     let text;
     try {
       text = execFileSync(process.execPath, entry.briefParts, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
-      started.push({ ticket: entry.ticket, started: false, note: `could not render the brief: ${e && e.stderr ? String(e.stderr).trim() : e}` });
+      started.push({
+        ticket: entry.ticket, role, started: false, note: `could not render the brief: ${e && e.stderr ? String(e.stderr).trim() : e}`,
+      });
       continue;
     }
     mkdirSync(dirname(path), { recursive: true });
@@ -577,7 +731,7 @@ function externalStart(horde, cfg, entries, root) {
     const child = spawnProcess('sh', ['-c', command], { cwd: root, detached: true, stdio: 'ignore' });
     child.unref();
     started.push({
-      ticket: entry.ticket, started: true, brief: path, command,
+      ticket: entry.ticket, role, started: true, brief: path, command,
     });
   }
   return started;
@@ -627,7 +781,7 @@ function runOnce(horde, cfg, flags, runner) {
       ? holds.everything.map((ask) => heldEntry(ask, { holds: 'close', note: holdNote(ask, 'the wave does not close') }))
       : [];
     const close = emptied && !closeHeld.length;
-    const external = runner === 'external' ? externalStart(horde, cfg, spawn.out, root) : [];
+    const external = runner === 'external' ? externalStart(horde, cfg, [...spawn.out, ...landed.reviews], root) : [];
 
     return withProvenance({
       horde,
@@ -637,6 +791,9 @@ function runOnce(horde, cfg, flags, runner) {
       held: [...landed.held, ...spawn.held, ...closeHeld],
       spawn: spawn.out.map((s) => ({
         ticket: s.ticket, model: s.model, brief: s.brief, stacked: s.stacked, worktree: s.worktree, branch: s.branch,
+      })),
+      review: landed.reviews.map((r) => ({
+        ticket: r.ticket, model: r.model, name: r.name, brief: r.brief,
       })),
       judge,
       askClient: openAsks(horde),
@@ -665,9 +822,13 @@ function render(out) {
       ? 'spawn: (held — see above)'
       : 'spawn: (nothing ready)');
   }
+  if (out.review.length) {
+    lines.push(`review (${out.review.length}):`);
+    for (const r of out.review) lines.push(`  ${r.ticket} (${r.model}) — ${r.brief}`);
+  }
   for (const j of out.judge) lines.push(`judge ${j.ticket}: ${j.pairs.length} prose pair(s) waiting`);
   for (const a of out.askClient) lines.push(`ask client ${a.id} (${a.kind}): ${a.why}`);
-  for (const e of out.external) lines.push(`started ${e.ticket}: ${e.started ? e.command : e.note}`);
+  for (const e of out.external) lines.push(`started ${e.ticket} (${e.role}): ${e.started ? e.command : e.note}`);
   const closeHeld = out.held.find((h) => h.holds === 'close');
   if (out.close) lines.push(`close: the queue holds nothing unmerged — ${out.closeCommand}`);
   else lines.push(closeHeld ? `close: held — ${closeHeld.note}` : 'close: not yet');
