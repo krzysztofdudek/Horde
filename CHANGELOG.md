@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The architect's instructions no longer point it at a step that always failed when a disputed port needed the director's attention.
 - The example a reviewer is shown for sending work back with findings now runs, instead of naming a command that no longer exists.
 - Raising a rule now credits the person who did the review, not the area of the codebase it covers.
+- Ordering tickets that touch the same file no longer risks writing an ordering nobody could ever start — a file many tickets share now gets a short chain instead of every possible pair, and any single step that would still close a loop against another dependency is skipped and named rather than written. A dependency the queue itself added can now be taken back off; one that instead comes from the ticket's own text or from a contract between two components is refused, naming which.
 - The worker brief now states the ticket log's actual location, including the horde-scoped path segment it was missing before.
 - Copied straight from the documentation, the first commands for raising an architect, a worker or a territory's own rule-writer used to be refused. Every example in the docs now runs as shown.
 - Setting up a repository built with more than one language or build tool now runs every one of their test suites at every gate, instead of only the first one found.

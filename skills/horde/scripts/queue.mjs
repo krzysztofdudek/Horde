@@ -95,6 +95,12 @@ commands:
       adds a dependency to an existing item — --on takes the same NNN form as add's --depends. A
       "running" item that gains one goes back to "queued" (its worktree kept) until the
       dependency merges. Refuses a cycle and an unknown dependency.
+  undep <ticket> --on <dep> [--note "…"] [--team t] [--horde h]
+      takes a dependency back off an item's queue record, with a note (an automatic one, plus
+      --note's text where given). Only a queue-added edge is its to remove: it refuses one that
+      also comes from the ticket's own "Depends on" field, or from a port <ticket> consumes that
+      <dep> produces, naming which — dropping the queue.json copy while either still stands would
+      leave the dependency exactly where it was.
   next [--class c] [--why] [--stack] [--team t] [--horde h]
       the first ready queued item — every dependency merged, and its declared Files (a ticket with
       none locks every file of every node it names) clear of every "running" ticket's own Files in
@@ -123,7 +129,12 @@ commands:
       produces, the charter's evidence rows no ticket names, and what the whole thing weighs in
       runs. Refuses, naming the circle, when the
       tickets depend on each other in one. --apply-order records the order it proposes for a
-      file clash as an ordinary dependency, with a note.
+      file clash as an ordinary dependency, with a note — one edge per adjacent pair in the shared
+      file's own order (fewer declared files first, ticket id breaking a tie), not every pair, so a
+      file N tickets share gets at most N-1 edges rather than N(N-1)/2. Where that order runs into
+      a port or a Depends-on edge going the other way, it writes nothing for that one seam and
+      names the cycle instead of writing an edge that would let one exist. queue.mjs undep takes
+      an applied edge back off.
   quality [--from <path>] [--class c] [--dry-run] [--team t] [--horde h]
       the quality pass (ruling quality-always-authorised): reads a grain-advice/1 document —
       the configured Grain CLI's own "advise --json", or --from a file — and files one
@@ -788,6 +799,63 @@ function cmdDep(horde, positional, flags) {
   emit(item, flags, () => `${item.ticket} now depends on ${on}`);
 }
 
+// removeDependency(horde, team, ticket, on) — the other half of addDependency, and the only way a
+// queue edge comes back off: `set <t> running` cuts a branch, `merged` requires every dependency
+// satisfied first, so an edge nothing can remove eventually just sits there — the exact trap
+// `plan --apply-order`'s old pairwise write and a contradicting port or Depends-on edge fell into
+// together. Only a queue-level edge is this function's to take off, though: a ticket's own
+// "Depends on" field is written once, at `tk.mjs new`, and a port edge is never written anywhere at
+// all — `plan` recomputes both fresh from what the ticket declares every time it runs, so quietly
+// dropping the queue.json copy of either would leave the dependency exactly where it was, the
+// caller none the wiser and the next `plan` back to seeing it. Both are checked, and refused by
+// name, before the one edge this file actually owns is even looked at.
+export function removeDependency(horde, team, ticket, on, { note } = {}) {
+  const key = normalizeKey(ticket);
+  return withQueueLock(horde, team, () => {
+    const { doc, item } = findItem(horde, team, key);
+    if (!item) fail(`no queue item: ${key} (in team ${team})`);
+
+    const ref = resolveDepRef(horde, on, team);
+    const target = ref.canonical;
+    if (target === key) fail(`cannot depend on itself: ${key}`);
+
+    const ticketRow = findTicket(horde, key);
+    if (ticketRow) {
+      const field = parseField(ticketRow.text, 'Depends on');
+      const fromField = field && field !== 'none'
+        ? field.split(',').map((s) => s.trim()).filter(Boolean).map((d) => { try { return padId(d); } catch { return d; } })
+        : [];
+      if (fromField.includes(target)) {
+        fail(`${key} -> ${target} comes from ${key}'s own "Depends on" field, not the queue — queue.mjs undep only takes off an edge the queue itself added; change that field to drop it (edit the ticket's issue.md — no tool writes that field after "tk.mjs new" today)`);
+      }
+      const consumed = ticketPorts(ticketRow.text, 'Consumes');
+      const targetTicket = findTicket(horde, target);
+      if (targetTicket && consumed.length) {
+        const produced = ticketPorts(targetTicket.text, 'Produces');
+        const match = consumed.find((c) => produced.some((p) => p.node === c.node && p.port === c.port));
+        if (match) {
+          fail(`${key} -> ${target} comes from a port — ${key} consumes ${match.ref}, which ${target} produces — queue.mjs undep only takes off an edge the queue itself added; change what ${key} consumes (tk.mjs edit ${key} --consumes …) to drop it`);
+        }
+      }
+    }
+
+    if (!item.dependsOn.includes(target)) fail(`no queue edge ${key} -> ${target} (dependsOn: ${item.dependsOn.join(', ') || 'none'})`);
+    item.dependsOn = item.dependsOn.filter((d) => d !== target);
+    item.notes.push({ at: nowIso(), text: `undep: removed dependency on ${target}${note ? ` — ${note}` : ''}` });
+    save(horde, team, doc);
+    return { item, on: target };
+  });
+}
+
+function cmdUndep(horde, positional, flags) {
+  const idRaw = positional[0];
+  if (!idRaw) fail('undep requires <ticket>');
+  if (!flags.on) fail('undep requires --on <dep>');
+  const team = flags.team || 'trunk';
+  const { item, on } = removeDependency(horde, team, idRaw, flags.on, { note: flags.note });
+  emit(item, flags, () => `${item.ticket} no longer depends on ${on}${flags.note ? ` — ${flags.note}` : ''}`);
+}
+
 function severityOf(horde, item) {
   const ticket = findTicket(horde, item.ticket);
   return (ticket && parseField(ticket.text, 'Severity')) || 'medium';
@@ -1404,7 +1472,7 @@ function cmdPlan(horde, positional, flags) {
   const info = resolveTree({ tree: flags.tree, horde: flags.horde });
   const plan = withProvenance(buildPlan(horde, team, cfg, { tree: info.path }), info);
   if (plan.cycles.length && plan.cycles[0].length) {
-    fail(`the tickets depend on each other in a circle: ${plan.cycles[0].join(' → ')} — a plan cannot start any of them. Drop one of those dependencies (queue.mjs is not the place: the ticket that should not wait is edited with tk.mjs edit --consumes, or the manual --depends is removed) and run plan again`);
+    fail(`the tickets depend on each other in a circle: ${plan.cycles[0].join(' → ')} — a plan cannot start any of them. Drop one of those dependencies (a queue edge comes off with queue.mjs undep <t> --on <d>; a port or a ticket's own Depends on field is not queue.mjs's to remove — the ticket that should not wait is edited with tk.mjs edit --consumes, or its Depends on field is edited by hand) and run plan again`);
   }
   // --out writes the plan to a file the architect reads whole: a plan relayed through a message
   // gets summarised on the way (a real mission lost its critical path that way). JSON with
@@ -1417,8 +1485,10 @@ function cmdPlan(horde, positional, flags) {
     return;
   }
   if (flags['apply-order']) {
-    const applied = applyOrder(horde, team, plan);
-    emit({ ...plan, applied }, flags, () => `${renderPlan(plan)}\n\napplied: ${applied.length ? applied.map((a) => `${a.ticket} now depends on ${a.on}`).join(' · ') : 'nothing to apply'}\n${provenanceLine(info)}`);
+    const { applied, skipped } = applyOrder(horde, team, plan);
+    const appliedLine = applied.length ? applied.map((a) => `${a.ticket} now depends on ${a.on}`).join(' · ') : 'nothing to apply';
+    const skippedLine = skipped.length ? `\nskipped, would cycle: ${skipped.map((s) => `${s.ticket} on ${s.on} (${s.file}) — ${s.reason}`).join(' · ')}` : '';
+    emit({ ...plan, applied, skipped }, flags, () => `${renderPlan(plan)}\n\napplied: ${appliedLine}${skippedLine}\n${provenanceLine(info)}`);
     return;
   }
   emit(plan, flags, () => `${renderPlan(plan)}\n${provenanceLine(info)}`);
@@ -1428,22 +1498,90 @@ function cmdPlan(horde, positional, flags) {
 // recorded as an ordinary dependency with a note saying why it is there. Both tickets have to be
 // in the queue for that — a proposal that isn't queued yet has nothing to hang the edge on, and
 // the result says so rather than pretending it landed.
+//
+// One edge per pair sharing a file (N(N-1)/2 for N tickets on one file) used to be written outright.
+// The ordering key — fewer declared files first, ticket id breaking a tie — is a property of each
+// ticket on its own, not of the pair, so it sorts the same way for every pair a file is shared
+// across; the full pairwise set was always transitively implied by the chain through that sort, so
+// it never closed a loop by itself ("the key alone does not create a cycle"). What it could do is
+// close one together with an edge running the other way — a port, or a ticket's own Depends on
+// field — because N(N-1)/2 edges gives a contradicting edge N(N-1)/2 chances to complete a loop
+// instead of one. Writing only the chain (N-1 edges, one per adjacent pair in that sort, per file)
+// carries the exact same order and cuts that surface to the one edge per file that could actually
+// touch a contradicting one. That edge is still checked before it is written: the two directions
+// only ever meet at the seam where the file order and the contradicting edge disagree, so at most
+// one edge per file is ever skipped, and everything else in the chain still gets written. Where one
+// is skipped, `plan --apply-order` writes nothing for that seam and names the cycle it would have
+// closed, rather than write a shorter chain that still loops.
 function applyOrder(horde, team, plan) {
   return withQueueLock(horde, team, () => {
     const doc = load(horde, team);
     const applied = [];
-    for (const conflict of plan.lockConflicts) {
-      const [first, second] = conflict.order;
-      const item = doc.items.find((i) => i.ticket === second);
-      const firstItem = doc.items.find((i) => i.ticket === first);
-      if (!item || !firstItem) continue;
-      if (item.dependsOn.includes(first)) continue;
-      item.dependsOn.push(first);
-      item.notes.push({ at: nowIso(), text: `plan: ordered after ${first} — both declare ${conflict.files.join(', ')}` });
-      applied.push({ ticket: second, on: first, files: conflict.files });
+    const skipped = [];
+
+    // The graph a new file-order edge could actually close a loop against is the full one `plan`
+    // itself derives — a port, a ticket's own Depends on field, and whatever is already in the
+    // queue, added together — not queue.json's dependsOn on its own: a port edge in particular is
+    // never written there at all, it is recomputed fresh from what the tickets declare every time.
+    // `plan.tickets[*].dependsOn` already carries that merged set (see buildPlan's addEdge, above);
+    // copied here, mutable, and grown by every edge this call itself adds, so the chain for a
+    // second file sees what the first file's chain just wrote.
+    const reach = new Map(plan.tickets.map((t) => [t.id, new Set(t.dependsOn)]));
+    const dependsOnTransitively = (from, target, seen = new Set()) => {
+      if (from === target) return true;
+      if (seen.has(from)) return false;
+      seen.add(from);
+      for (const d of reach.get(from) || []) {
+        if (dependsOnTransitively(d, target, seen)) return true;
+      }
+      return false;
+    };
+
+    // Every file two or more open tickets declare, each with the tickets sharing it sorted by
+    // --apply-order's own key — the same key `lockConflicts`' pairwise `order` used, read here
+    // straight off the ticket, so a file shared by many tickets settles to one total order instead
+    // of a pairwise reading recomputed (and possibly disagreeing with itself) per pair.
+    const byFile = new Map();
+    for (const t of plan.tickets) {
+      for (const f of new Set(t.files)) {
+        if (!byFile.has(f)) byFile.set(f, []);
+        byFile.get(f).push(t);
+      }
     }
+
+    for (const file of [...byFile.keys()].sort()) {
+      const group = byFile.get(file);
+      if (group.length < 2) continue;
+      const ordered = group.slice().sort((a, b) => a.files.length - b.files.length || a.id.localeCompare(b.id));
+      for (let i = 1; i < ordered.length; i++) {
+        const first = ordered[i - 1].id;
+        const second = ordered[i].id;
+        const item = doc.items.find((it) => it.ticket === second);
+        const firstItem = doc.items.find((it) => it.ticket === first);
+        if (!item || !firstItem) continue;
+        if (item.dependsOn.includes(first)) continue;
+        // The seam this chain link could close: `first` already depends on `second` — through a
+        // port, a hand-written Depends on, an earlier dep/apply-order edge, or a previous file's
+        // own chain — so writing `second` depends on `first` here would complete the loop.
+        if (dependsOnTransitively(first, second)) {
+          skipped.push({
+            ticket: second,
+            on: first,
+            file,
+            reason: `${first} already depends on ${second} — writing "${second} depends on ${first}" would close a cycle`,
+          });
+          continue;
+        }
+        item.dependsOn.push(first);
+        item.notes.push({ at: nowIso(), text: `plan: ordered after ${first} — both declare ${file}` });
+        applied.push({ ticket: second, on: first, files: [file] });
+        if (!reach.has(second)) reach.set(second, new Set());
+        reach.get(second).add(first);
+      }
+    }
+
     if (applied.length) save(horde, team, doc);
-    return applied;
+    return { applied, skipped };
   });
 }
 
@@ -1554,6 +1692,7 @@ function main() {
     case 'add': return cmdAdd(horde, positional, flags);
     case 'set': return cmdSet(horde, positional, flags);
     case 'dep': return cmdDep(horde, positional, flags);
+    case 'undep': return cmdUndep(horde, positional, flags);
     case 'next': return cmdNext(horde, positional, flags);
     case 'plan': return cmdPlan(horde, positional, flags);
     case 'rm': return cmdRm(horde, positional, flags);
