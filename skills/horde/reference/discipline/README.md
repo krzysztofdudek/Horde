@@ -9,7 +9,7 @@ them.
 | `tdd.md` | worker | the merge checklist's revert test — new tests are run on the base and must fail there |
 | `debugging.md` | worker | three failed fixes are a report, not a fourth fix |
 | `framing.md` | architect (its checklist), the consultant (its checklist, spliced in by `refine.mjs` directly), and the director's own section of `SKILL.md` | the charter's evidence catalogue; the ticket's files are its scope |
-| `review.md` | legislate (whole), retro (whole) | a refusal that happened three times is a rule, one that happened once is an accident — the same severity call, one level up |
+| `review.md` | review (whole), legislate (whole), retro (whole) | the loop sends a ticket back only for a Critical or Important finding the review logged, never for Minor, and reads nothing else it writes; for legislate and retro, a refusal that happened three times is a rule, one that happened once is an accident — the same severity call, one level up |
 | `verification.md` | retro (whole) | a claim is not reproduced without the command that ran and what it printed — read at the end of a mission, over everything nobody checked twice |
 
 Four of them carry a drill — an assertion about real `.horde/` state and real branches, not about

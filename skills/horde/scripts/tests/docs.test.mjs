@@ -417,6 +417,90 @@ test('reference/roles/ has exactly the role files named in brief.mjs\'s own ROLE
   assert.deepEqual(files, fromCode, `reference/roles/ has {${files.join(', ')}}, brief.mjs's ROLES has {${fromCode.join(', ')}}`);
 });
 
+// ---- every place that names the closed list of roles names brief.mjs's own ROLES ------------
+//
+// The list is closed, so every document that states it states a number and the names, and each is
+// a second copy of ROLES that goes stale the day a role is added or removed. Each one is read here
+// and held to the code: SKILL.md's "Where things are", CLAUDE.md's Requirements, scripts/README.md's
+// brief.mjs section and its pre-6.0.0 history line, model.md's roles table, the repository README's
+// table, and the one-line description every plugin manifest carries.
+
+const NUMBER_WORDS = {
+  3: 'three', 4: 'four', 5: 'five', 6: 'six', 7: 'seven',
+};
+
+// The word each manifest description uses for a role: a description is a sentence for a person
+// choosing a plugin, so it says "a retrospective", not the brief's own name for it.
+const MANIFEST_WORD = {
+  worker: /\bworkers?\b/i,
+  architect: /\barchitect\b/i,
+  legislate: /\blegislate\b/i,
+  retro: /\bretrospective\b/i,
+  review: /\breview\b/i,
+};
+
+function backticked(text) {
+  return [...text.matchAll(/`([a-z]+)[^`]*`/g)].map((m) => m[1]).sort();
+}
+
+test('every place that states the closed list of roles names exactly brief.mjs\'s ROLES, and counts them right', () => {
+  const roles = briefRoles();
+  const count = NUMBER_WORDS[roles.length];
+  assert.ok(count, `no number word for ${roles.length} roles`);
+
+  const skill = readText(join(SKILL_DIR, 'SKILL.md'));
+  const skillList = /`reference\/roles\/\*\.md` —[\s\S]*?\):([\s\S]*?)\s+—\s+a closed list of (\w+)\./.exec(skill);
+  assert.ok(skillList, 'SKILL.md no longer states the closed list of roles under "Where things are"');
+  assert.deepEqual(backticked(skillList[1]), roles, 'SKILL.md\'s list of role briefs');
+  assert.equal(skillList[2], count, 'SKILL.md\'s count of role briefs');
+
+  const claude = readText(join(REPO_ROOT, 'CLAUDE.md'));
+  const claudeList = /There are (\w+) roles now, a closed list \(([^)]+)\)/.exec(claude);
+  assert.ok(claudeList, 'CLAUDE.md no longer states the closed list of roles');
+  assert.equal(claudeList[1], count, 'CLAUDE.md\'s count of roles');
+  assert.deepEqual(backticked(claudeList[2]), roles, 'CLAUDE.md\'s list of roles');
+
+  const readme = readText(join(SCRIPTS_DIR, 'README.md'));
+  const readmeList = /(\w+)\s+roles, a closed list: ([^.]+)\./i.exec(readme);
+  assert.ok(readmeList, 'scripts/README.md no longer states the closed list of roles in its brief.mjs section');
+  assert.equal(readmeList[1].toLowerCase(), count, 'scripts/README.md\'s count of roles');
+  assert.deepEqual(backticked(readmeList[2]), roles, 'scripts/README.md\'s list of roles');
+  assert.match(readme, new RegExp(`listing the ${count} that remain`), 'scripts/README.md\'s pre-6.0.0 history line counts what remains');
+
+  const model = readText(join(SKILL_DIR, 'reference', 'model.md'));
+  for (const role of roles) {
+    assert.match(model, new RegExp(`^\\| ${role} \\|`, 'm'), `model.md's roles table has no row for ${role}`);
+  }
+
+  const repoReadme = readText(join(REPO_ROOT, 'README.md'));
+  assert.match(repoReadme, /^\| Review \(one-shot\) \|/m, 'the repository README\'s table has no row for the review');
+
+  const manifests = [
+    ['.claude-plugin/plugin.json', (doc) => doc.description],
+    ['.claude-plugin/marketplace.json', (doc) => doc.plugins[0].description],
+    ['.codex-plugin/plugin.json', (doc) => doc.description],
+    ['.cursor-plugin/plugin.json', (doc) => doc.description],
+    ['.github/plugin/marketplace.json', (doc) => doc.plugins[0].description],
+  ];
+  for (const [path, pick] of manifests) {
+    const description = pick(JSON.parse(readFileSync(join(REPO_ROOT, path), 'utf8')));
+    for (const role of roles) {
+      assert.ok(MANIFEST_WORD[role], `no manifest word is known for the role "${role}" — add one here`);
+      assert.match(description, MANIFEST_WORD[role], `${path}'s description does not mention the ${role} role`);
+    }
+  }
+});
+
+test('reference/discipline/README.md says which briefs carry review.md, the review role\'s own among them', () => {
+  const text = readText(join(SKILL_DIR, 'reference', 'discipline', 'README.md'));
+  const row = text.split('\n').find((l) => l.startsWith('| `review.md` |'));
+  assert.ok(row, 'the discipline table has no row for review.md');
+  const renderedInto = row.split('|')[2];
+  for (const role of ['review', 'legislate', 'retro']) {
+    assert.match(renderedInto, new RegExp(`\\b${role}\\b`), `review.md's row does not say it is rendered into ${role}`);
+  }
+});
+
 // ---- every discipline ROLE_LAW names actually exists ---------------------------------------
 
 function roleLawDisciplines() {
@@ -431,7 +515,7 @@ function roleLawDisciplines() {
   // separately so a section name (e.g. 'Checklist') is never mistaken for a discipline of its own.
   for (const m of block.matchAll(/discipline:\s*'([^']+)'/g)) names.add(m[1]);
   const withoutObjects = block.replace(/\{[^}]*\}/g, '');
-  for (const m of withoutObjects.matchAll(/^\s*(?:worker|architect|legislate|retro):\s*\[([^\]]*)\]/gm)) {
+  for (const m of withoutObjects.matchAll(/^\s*(?:worker|architect|legislate|retro|review):\s*\[([^\]]*)\]/gm)) {
     for (const bare of m[1].matchAll(/'([^']+)'/g)) names.add(bare[1]);
   }
   return names;
@@ -617,7 +701,7 @@ function briefRequiredFlags() {
 // worked example, e.g. tk.mjs's own fix-round comments) — as the unit a reader would copy
 // verbatim.
 function briefInvocationSnippets(text) {
-  const rolePattern = '(?:architect|worker|legislate|retro)';
+  const rolePattern = '(?:architect|worker|legislate|retro|review)';
   const snippets = [];
   for (const m of text.matchAll(/`([^`]+)`/gs)) {
     if (new RegExp(`brief\\.mjs\\s+${rolePattern}\\b`).test(m[1])) snippets.push(m[1]);

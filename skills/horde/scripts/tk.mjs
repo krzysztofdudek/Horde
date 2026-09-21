@@ -29,7 +29,7 @@ import { join } from 'node:path';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
-  allocateId, latestChangesRound, parseAcceptanceLines, parseEvidenceRows,
+  allocateId, latestChangesRound, parseAcceptanceLines, parseEvidenceRows, parseLogEntries,
   runMain,
 } from './_lib.mjs';
 import {
@@ -40,7 +40,7 @@ import {
 // module calls the other while it is still being evaluated. The alternative — a second writer of
 // dependencies here — is exactly the thing worth avoiding, because a cycle is only caught once the
 // whole DAG is built, and that lives there.
-import { addDependency } from './queue.mjs';
+import { addDependency, loadQueue } from './queue.mjs';
 // The charter is wave.mjs's document: setReproducedBy's own note calls itself the one edit any
 // tool here makes to it, and a prototype's acceptance is the second. Both writers therefore live
 // there, beside the readers that have to agree with them — the alternative, a second private
@@ -145,6 +145,15 @@ commands:
       \`git diff <approved-sha>..HEAD -- <files> > path/to/diff\`), holding the difference between
       what was approved before and what is on the branch now, so a re-review reads that instead
       of the whole change again.
+  review-close <ticket> --by <name> [--horde h]
+      the last line a ticket's review writes, whatever it found: "review closed by <name> —
+      Critical N · Important N · Minor N", the findings it logged since tick.mjs raised it, counted
+      from the log. tick.mjs holds the ticket's gate until this line (or a skip) exists; it carries
+      no verdict, and nothing reads it as one. Refuses a ticket with no review raised.
+  review-skip <ticket> "<reason>" --by <name> [--horde h]
+      the director's call that a raised review will not close: "review skipped by <name> —
+      <reason>". The reason is required. The gate is asked on the next tick.mjs run, and nothing
+      the review logs after this line is acted on. Refuses a ticket with no review raised.
   edit <ticket> --by <name> [--files a,b] [--consumes …] [--produces …] [--evidence E1,…]
       [--depends NNN,MMM] [--horde h]
       rewrites the body (everything from "## What" on) from stdin, leaving the header block —
@@ -879,6 +888,119 @@ function cmdReviewRequest(horde, positional, flags) {
   );
 }
 
+// --- a ticket's one review, read back off its log -------------------------------------------------
+//
+// tick.mjs raises one review per ticket and records when on the ticket's queue item
+// (`review.raisedAt`). What the review says lives in the ticket's log, and this is the one reader of
+// it, shared by tick.mjs and the two commands below so the three never disagree about a line.
+//
+// A finding is a change request in the shape the review discipline gives it — "review: <node>
+// changes by <who> — <Severity>: …" — or a line that opens with its severity ("Minor: …"). A review
+// ends with one line: its own closing line, or the director's skip. Nothing is read after the first
+// of those, so a finding or a closing line that arrives after a skip changes nothing. Neither line
+// carries a verdict, and no reading here has a way to let a ticket through: the closing line counts
+// findings, and what tick does next depends on the findings alone.
+
+const REVIEW_CHANGE_REQUEST_RE = /^review:\s*(\S+)\s+changes\s+by\s+(\S+)/;
+const REVIEW_FINDING_LEAD_RE = /^(Critical|Important|Minor):/;
+const REVIEW_SEVERITY_RE = /\b(Critical|Important|Minor):/g;
+const REVIEW_CLOSED_RE = /^review closed by (\S+) — /;
+const REVIEW_SKIPPED_RE = /^review skipped by (\S+) — (.+)$/;
+export const REVIEW_SEVERITIES = ['Critical', 'Important', 'Minor'];
+
+// readReview(logText, since, {ignoreEnd}) — everything the review raised at `since` logged, up to
+// the line that ended it: {findings: [{text, severities}], counts, status, end}. `status` is the
+// "changes" status line the discipline has a reviewer write after a serious finding, when one was
+// written (its round is already counted). `end` is {kind: "closed"|"skipped", by, reason, stamp}, or
+// null while the review is still open. `ignoreEnd` reads past every ending line — what a closing
+// line counts is what the review logged, whoever ended it first.
+export function readReview(logText, since, { ignoreEnd = false } = {}) {
+  const findings = [];
+  const counts = Object.fromEntries(REVIEW_SEVERITIES.map((s) => [s, 0]));
+  let status = null;
+  let end = null;
+  for (const entry of parseLogEntries(logText)) {
+    const stamp = entry.isStatus ? entry.stamp : entry.text.split(/\s/)[0];
+    if (!stamp || stamp < since) continue;
+    if (entry.isStatus) {
+      if (entry.status === 'changes' && entry.round) status = { round: entry.round, cap: entry.cap, label: entry.label };
+      continue;
+    }
+    const text = entry.text.slice(stamp.length).trim();
+    const closed = REVIEW_CLOSED_RE.exec(text);
+    const skipped = REVIEW_SKIPPED_RE.exec(text);
+    if (closed || skipped) {
+      if (ignoreEnd) continue;
+      end = closed
+        ? { kind: 'closed', by: closed[1], reason: null, stamp }
+        : { kind: 'skipped', by: skipped[1], reason: skipped[2], stamp };
+      break;
+    }
+    let severities = [];
+    if (REVIEW_CHANGE_REQUEST_RE.test(text)) {
+      severities = [...new Set([...text.matchAll(REVIEW_SEVERITY_RE)].map((m) => m[1]))];
+    } else {
+      const lead = REVIEW_FINDING_LEAD_RE.exec(text);
+      if (lead) severities = [lead[1]];
+    }
+    if (severities.length === 0) continue;
+    findings.push({ text, severities });
+    for (const s of severities) counts[s] += 1;
+  }
+  return {
+    findings, counts, status, end,
+  };
+}
+
+// The review tick raised for this ticket, off its queue item, or null when none was.
+function raisedReview(horde, ticket) {
+  const item = asArray(loadQueue(horde, ticket.team).items).find((i) => String(i.ticket) === ticket.id);
+  return item && item.review && item.review.raisedAt ? item.review : null;
+}
+
+function requireBy(flags, command) {
+  if (typeof flags.by !== 'string' || !flags.by.trim()) fail(`${command} requires --by <name>`);
+  return flags.by.trim();
+}
+
+function requireRaisedReview(horde, ticket) {
+  const review = raisedReview(horde, ticket);
+  if (!review) {
+    fail(`${ticket.id} has no review raised, so there is none to end — tick.mjs raises a ticket's one review when its branch is first ready for the gate`);
+  }
+  return review;
+}
+
+// The last thing a review does, whatever it found. It says the review happened and how many findings
+// of each severity it logged, counted here off the log rather than typed in, so the line can never
+// claim more or less than was written. tick holds the ticket's gate until this line exists — nothing
+// waits on a timer — and reads nothing in it but that it is there.
+function cmdReviewClose(horde, positional, flags) {
+  const ticket = requireTicket(horde, positional[0]);
+  const by = requireBy(flags, 'review-close');
+  const review = requireRaisedReview(horde, ticket);
+  const { counts } = readReview(readText(ticket.logPath), review.raisedAt, { ignoreEnd: true });
+  const line = `review closed by ${by} — ${REVIEW_SEVERITIES.map((s) => `${s} ${counts[s]}`).join(' · ')}`;
+  appendLog(ticket, line);
+  emit({ id: ticket.id, by, counts }, flags, () => `${ticket.id}: ${line}`);
+}
+
+// The director's call that a raised review will not close — a reviewer that died, or one not worth
+// waiting for. The reason is required: a skip is a decision, and one with no reason on record is one
+// nobody can check afterwards.
+function cmdReviewSkip(horde, positional, flags) {
+  const ticket = requireTicket(horde, positional[0]);
+  const by = requireBy(flags, 'review-skip');
+  const reason = typeof positional[1] === 'string' ? positional[1].replace(/\s+/g, ' ').trim() : '';
+  if (!reason) {
+    fail(`review-skip requires a reason: tk.mjs review-skip ${ticket.id} "<why this review is skipped>" --by <name> — skipping a review is a decision, and one with no reason on record cannot be checked later`);
+  }
+  requireRaisedReview(horde, ticket);
+  const line = `review skipped by ${by} — ${reason}`;
+  appendLog(ticket, line);
+  emit({ id: ticket.id, by, reason }, flags, () => `${ticket.id}: ${line}`);
+}
+
 
 // --- the client's answer to a prototype -------------------------------------------------------
 
@@ -1073,6 +1195,8 @@ function main() {
     case 'log': return cmdLog(horde, positional, flags);
     case 'grep': return cmdGrep(horde, positional, flags);
     case 'review-request': return cmdReviewRequest(horde, positional, flags);
+    case 'review-close': return cmdReviewClose(horde, positional, flags);
+    case 'review-skip': return cmdReviewSkip(horde, positional, flags);
     case 'accept': return cmdAccept(horde, positional, flags);
     case 'move': return cmdMove(horde, positional, flags);
     case 'edit': return cmdEdit(horde, positional, flags);

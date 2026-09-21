@@ -343,7 +343,7 @@ test('brief.mjs retro: the mission-wide one-shot, its disciplines, and the role 
     const r = run('brief.mjs', ['steward', '--name', 'x'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /unknown role: steward/);
-    assert.match(r.stderr, /roles: worker, architect, legislate, retro/);
+    assert.match(r.stderr, /roles: worker, architect, legislate, retro, review\)/);
   });
 });
 

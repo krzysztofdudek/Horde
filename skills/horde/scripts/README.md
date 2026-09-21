@@ -9,7 +9,7 @@ in, the same as any other read in this tool set — a horde being resolvable, on
 second signal to read trunk instead. `--horde` WRITTEN OUT BY THE CALLER, with no `--tree`/`--ticket`/
 `--scratch`, is what changes that, and only for the handful of commands built to read it that way —
 `queue.mjs plan`/`quality`, `tick.mjs`, `land.mjs`, `horde.mjs done`, `brief.mjs` (architect,
-legislate, retro), `wave.mjs start` and `retro.mjs` — never for a horde a command merely resolved on
+legislate, retro, review), `wave.mjs start` and `retro.mjs` — never for a horde a command merely resolved on
 its own by other means (the sole horde in the repository, with nothing typed at all). On those commands,
 with the flag typed and no tree flag, it resolves to that horde's own trunk worktree — read-only for
 everything but `land.mjs`'s merge commits, and resynced to the branch's tip (`git reset --hard`) on
@@ -65,7 +65,8 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
 - `config get|set <key> [value]` — `.horde/config.json`: `base`, `gates.commit|team|trunk` (commands),
   `gates.report.path` and `gates.report.format` (`junit`, `tap` or `playwright-json` — the report the
   gate command's own runner leaves behind, which the landing reads back to confirm every live
-  promise's paired case actually ran; unset means nothing reads one),
+  promise's paired case actually ran — and which the revert test also reads, only when
+  `gates.commit` wrote that same file in its own run; unset means nothing reads one),
   `testGlobs[]` (the patterns this repository's tests are named under — the merge checklist refuses
   rather than guess when it is empty), `ygCommand` (how this
   repository invokes the Yggdrasil CLI
@@ -226,6 +227,15 @@ its folder and of the `id:` its issue.md carries.
   to propose yet. `log NNN "text"`, `grep <re>`.
 - `review-request NNN [--delta <path>]` — appends to the log with a timestamp; `--delta` names the
   file a scoped re-review was written to, so the log records which kind of review was asked for.
+- `review-close NNN --by <name>` — the line a ticket's one review ends with, whatever it found:
+  `review closed by <name> — Critical N · Important N · Minor N`, the findings logged since
+  `tick.mjs` raised the review, counted off the log (`readReview`, the one reader `tick.mjs` uses
+  too), never typed in. `tick.mjs` holds the ticket's gate until this line or a skip exists; the
+  line carries no verdict. Refuses a ticket with no review raised on its queue item.
+- `review-skip NNN "<reason>" --by <name>` — the director's call that a raised review will not
+  close: `review skipped by <name> — <reason>`. Refused without a reason, and for a ticket with no
+  review raised. The gate is asked on the next `tick.mjs` run, and nothing logged after the skip —
+  a finding, or the review's own closing line arriving late — is acted on.
 - `--node` on `new` is repeatable; two nodes mark a contract ticket.
 - `move NNN --team t` — relocates the issue folder.
 - `edit NNN --by <name>` — rewrites the body (everything from `## What` on) from stdin, leaving the
@@ -466,10 +476,10 @@ guesses at an answer.
 
 ## brief.mjs — rendered briefs
 
-`brief.mjs <role> [args]` prints the brief for a role, filled from `reference/roles/<role>.md`. Four
-roles, a closed list: `architect`, `worker NNN [--takeover]`, `legislate <territory>`, `retro`. Any
-other name is refused as unknown, naming these four and no others — including every seat the
-cassation removed, each of which is listed under **pre-6.0.0 history**.
+`brief.mjs <role> [args]` prints the brief for a role, filled from `reference/roles/<role>.md`. Five
+roles, a closed list: `architect`, `worker NNN [--takeover]`, `legislate <territory>`, `retro`,
+`review NNN`. Any other name is refused as unknown, naming these five and no others — including every
+seat the cassation removed, each of which is listed under **pre-6.0.0 history**.
 `worker --takeover` renders a
 takeover section — a prior
 worker attempted this ticket N times, the ticket is yours, here is its log — for the fresh,
@@ -485,16 +495,25 @@ agent's own parent, "main" (the director's own session name) whenever nothing mo
 file. Refuses to render with an unfilled placeholder. After the
 role's own text it appends a `## Law` section: the disciplines that role is held to, inlined from
 `reference/discipline/` — worker (tdd, debugging), architect (framing's checklist), legislate
-(review), retro (review, verification). The
+(review), retro (review, verification), review (review). The
 texts live there once, so an edit to a discipline reaches every brief that carries it. Records
 nothing. The caller copies the output into the Agent tool's prompt verbatim.
 
 Every role's own graph read runs against the tree `--tree` names; without it, cwd, the same
 ordinary default every read in this tool set takes, not this horde's trunk just because a horde was
 resolvable. `--horde h` written out (no `--tree`) is what changes that, exactly as `queue.mjs
-plan`/`quality`, `tick.mjs`, `land.mjs` and `horde.mjs done` already read it — all four roles read
+plan`/`quality`, `tick.mjs`, `land.mjs` and `horde.mjs done` already read it — all five roles read
 it the same way (issue 114 caught `architect`, `legislate` and `retro` up to `worker`'s own reading
-of it).
+of it, and `review` was written to it).
+
+`review NNN` is the one-shot that reads one ticket's change, once, after its worker and before its
+first landing — `tick.mjs` lists it (step 2 below) and nobody else raises one. Its brief carries the
+diff to read (`git diff <parent>...<branch>`, against the parent `parentBranchOf` names, so a stacked
+ticket's dependency is never read as its own work), the ticket's body and its nodes' `node.mjs show`
+lines, and no command that approves: the role's only outputs are findings in the ticket's log, in
+the change-request shape `reference/discipline/review.md` gives, and the closing line its brief ends
+with (`tk.mjs review-close NNN --by <name>`), written whatever it found. It refuses a ticket that
+has no branch yet, since there is no change to read.
 
 `legislate <territory>` is the one-shot that writes a territory's law down. Everything in its brief is
 scoped to that territory and to nothing else: the landing gate's refusals on ITS tickets (from
@@ -510,7 +529,7 @@ gather/classify/write shape it fits into. Its brief carries the whole mission's 
 ticket-log remarks inline — never a summary — because the cross-territory repetitions are the reason
 to read it in one place rather than once per area.
 
-The consultant `refine.mjs --step consult` spawns is not one of these four — it is never rendered
+The consultant `refine.mjs --step consult` spawns is not one of these five — it is never rendered
 through `brief.mjs`, has no entry in `reference/roles/` and no row in `ROLE_LAW`, and is spawned
 straight off disk by `refine.mjs` itself (see `refine.mjs` below). It is still held to framing's
 checklist, spliced into its own brief directly by that file, using `disciplineSection`/
@@ -945,9 +964,14 @@ the JSON, and every item below is measured against it:
 4. revert test — new test files in the diff, extracted onto the parent's tree, show at least one
    failure; or, when the ticket carries a `**Mutate:**` command, run against a scratch copy of the
    branch's own tip with that command applied, show at least one failure there instead. The variant
-   is always the ticket's own choice, never a `land.mjs` flag. The result is derived by running
-   them; nothing declares it to this gate, and no flag offers to say so, because a declaration
-   about a test is not evidence about a test;
+   is always the ticket's own choice, never a `land.mjs` flag. A file `node --test` cannot run goes
+   through the whole `config.gates.commit`, and its red counts only when that command is green on the
+   same tree without the file — and, when that run wrote the file `config.gates.report` names, when
+   that report names a failing case from the file; anything less is "no verdict", a ✗ that names the
+   ways out of it (see
+   [the revert test](#landmjss-revert-test--how-a-new-test-file-is-found-and-run) below). The result
+   is derived by running them; nothing declares it to this gate, and no flag offers to say so,
+   because a declaration about a test is not evidence about a test;
 5. gate — `config.gates.<level>` run fresh on the branch's own tree, **and** the report that run
    left behind. No recorded green run is accepted from anywhere: a "green at sha …" line in a
    ticket's log is a claim about a run this gate did not see. A command that hangs is stopped at
@@ -1004,7 +1028,10 @@ or sit where the gate command's own runner never looks, and every rule in the `p
 every guard below still reads it as proof — they all read source, and source cannot say what ran.
 The only thing that can is the runner's own record of its own run.
 
-So item 5 reads it back. Configure it and nothing else changes:
+So item 5 reads it back. Configure it and nothing else changes, with one exception: when
+`gates.commit` writes that same file, the revert test reads it too, to tell whose red it saw (see
+[the revert test](#landmjss-revert-test--how-a-new-test-file-is-found-and-run)). A `gates.commit`
+that does not write it is judged exactly as if no report were configured.
 
 ```
 horde.mjs config set gates.report.path   "<path, relative to the tree the gate ran in>"
@@ -1467,6 +1494,27 @@ inherits whatever tree the session's shell is already in.
    both go to `blocked` and one `stuck` ask is filed for the client, carrying those last words and
    the path of the ticket's log. A `landed` item whose branch has vanished is a refusal naming the
    branch, with nothing touched.
+
+   **The review, once per ticket, before its first gate.** The first time an item would go on the
+   gate's re-run list, it goes on `review` instead — `{ticket, model, name, brief}`, `model` the
+   ticket's own class, `name` `r-NNN`, `brief` the `brief.mjs review` command — and the gate is not
+   asked about it in this run. The queue item records `review: {name, sha, raisedAt, closedAt}`.
+   From then on the gate waits until the ticket's log, after `raisedAt`, carries the line that ends
+   the review: its closing line (`tk.mjs review-close`) or the director's skip with a reason
+   (`tk.mjs review-skip`). Until then every run puts `{ticket, action: "review-waiting", note}` on
+   `landed`, naming both commands, and does nothing else about it — there is no timer, under either
+   runner. Once the review has ended, the gate is asked whatever it found, with one exception: a
+   finding it logged before that line — a change request `review: <node> changes by <who> — …`, or a
+   line opening with its severity — naming `Critical:` or `Important:` puts the ticket back on
+   `changes` the way a red gate does, round counted against the same cap (not a second time when the
+   review wrote the status line itself, as the discipline has it do), and `blocked` with a `stuck`
+   ask when the rounds are spent. `Minor:` alone never does. Whichever happens sets `closedAt`, and
+   from then on nothing the review wrote is read again: a fix round goes to the gate with no second
+   review, and a finding or closing line that arrives after the review ended stays in the log. The
+   closing line only counts findings; what tick does never depends on it beyond its being there, so
+   a closing line counting zero and one counting Minor findings reach the gate the same way, and a
+   line claiming to approve is read by nothing. A hold on a branch's landing (`stop`, `lower`) holds
+   its review too, since the review is the first half of that landing.
 3. **The dispatch list.** `queue.mjs next`'s own order (stacked last, quality last, then severity,
    then the longer remaining critical path, then a node nothing is running on, then FIFO), with its
    file locks and its dependency rule, cut to the configured parallelism cap minus what is already
@@ -1510,7 +1558,9 @@ is one entry per thing held — `{ticket, ask, kind, holds, note}`, where `holds
 **Under `session` (the default), tick never spawns — the caller does.** `--runner` only names who
 the caller is, and only `external` changes what this script does: with nobody in front of it,
 tick.mjs spawns each worker itself, through `config.runner.spawn` (`<class>` and `<brief>` filled
-in). Under `session` it starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds until the
+in), and each review on the `review` list the same way, from its own brief file
+(`hordes/<h>/briefs/NNN-review.md`, beside the worker's `NNN.md`); every `external` entry says which
+with `role`. Under `session` it starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds until the
 queue empties or a signal arrives — an open `stop` holds the close, so it keeps waiting rather than
 exiting on an emptied queue the client still has a question about; a signal exits cleanly, holding no lock. A refused pass does not
 end the loop, but only when the refusal is a `HordeError` — the deliberate, named kind every `fail()`
@@ -1613,9 +1663,46 @@ files; when it is empty the item is ✗, because a ✓ reading "no new or change
 over a repository whose tests this tool cannot recognize is the strongest guarantee in the checklist
 passing without looking. A ✓ names the patterns it did look for. A matched file whose extension
 `node --test` can run directly is extracted and run that way; anything else falls back to running
-the whole `config.gates.commit` command in the scratch worktree, treating any red as "this file's a
-failure" — isolating just one file's test lane out of an arbitrary configured command isn't possible
-in general.
+the whole `config.gates.commit` command in the scratch worktree — isolating just one file's test lane
+out of an arbitrary configured command isn't possible in general.
+
+A whole command's exit code is not one file's result, in either direction. It can be red before the
+file is anywhere near it — a test nobody touched failing, an environment that isn't there — and a
+runner can skip a file it cannot load and still exit 0. So the fallback never reads the exit code
+alone:
+
+- **A control run first.** `gates.commit` runs once on the same tree holding none of the ticket's own
+  test files: the base exactly as it stands (a changed file's base version included) for the
+  revert-to-base variant, the mutated tree with them taken out for the mutation one. Red or stopped
+  there, every fallback file is "no verdict", and the note says which of the two: its red with the
+  file in place would say nothing about the file.
+- **Each file on its own.** Each file is put in, run, and taken out again, so one file's red is never
+  another file's proof.
+- **Proof** is red with the file in place and green without it — the control-run rule.
+- **The report, only when this run produced it.** `config.gates.report` names the report of the
+  landing gate's own command, and `gates.commit` may or may not write the same file. The fallback
+  clears that path before every run, so a file there afterwards is this run's own. When it is there,
+  a red counts only if the report attributes at least one failing case to the file — by the same
+  file-attribution rule the gate item reads it with — or the red came from somewhere else and is "no
+  verdict"; a produced report that cannot be read (not the configured format, or a format nothing
+  here reads) is "no verdict" too. When it is not there — or no report is configured, or the
+  configured path is one nothing may look at — the control-run rule alone decides, and the result
+  says "no report was available" and why. A report configured for the landing gate that `gates.commit`
+  does not write therefore never refuses a run that the same repository without one would pass; only
+  a report the run wrote can add a refusal, by showing that the red was not the file's own or by being
+  unreadable.
+- **Green is never proof.** "Not load-bearing" is said only when a produced report shows every case
+  from the file ran and passed on that tree. Green with nothing from the file in that report is a file
+  the runner never ran; any case from it skipped is a file that did not fully run; green with no
+  report available cannot tell a skipped file from a test that proves nothing. All of those are "no
+  verdict", never that verdict.
+
+"No verdict" is a ✗ like any other: nothing lands without proof, and no flag or declaration waives it.
+It says why the run showed nothing, and the item names the ways out once: make `gates.commit` green
+on the base without the file; name a revert base where it is green (`**Revert base:** <ref>`); give
+the ticket a `**Mutate:**` command that only this file catches; or run the file with a command for
+that one file, once one can be configured. A ticket that carries no such file pays nothing for this;
+one that does pays one extra `gates.commit` run per landing.
 
 A diff with no new or changed test file is not automatically refused: a ticket can declare
 `**No new tests:** <reason>` in its issue.md, and the item passes on that declared exemption
@@ -1695,7 +1782,7 @@ opens. This is the whole of it; nothing outside this section is on that path:
 - `brief.mjs` reads `roster.json` for the agent that spawned the one being briefed — its `spawnedBy`,
   its Agent-tool id, and, for a worker, the live `steward` of its team. A fresh mission writes no
   roster, so every role's `reportsTo` falls back to the director, `main`.
-- `brief.mjs` refuses each cassated seat by name as an unknown role, listing the four that remain.
+- `brief.mjs` refuses each cassated seat by name as an unknown role, listing the five that remain.
 - `node.mjs map`'s roster-derived column reads those same old `owner` entries; `-` on a fresh
   mission.
 - `blame.mjs` reads an old ticket's `**Keys:**` line (author, verifier, node approvals) and its
