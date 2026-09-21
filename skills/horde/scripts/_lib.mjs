@@ -1581,8 +1581,11 @@ export function readJSON(file, fallback) {
 // (obj) => mdText, the sibling `.md` (same path, `.json` swapped for `.md`) is written alongside,
 // never the other way around.
 export function writeJSON(file, obj, { render } = {}) {
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(obj, null, 2) + '\n');
+  // Written to a sibling and renamed over the file, never in place: an in-place write truncates the
+  // file first, so a reader with no lock (tk.mjs, tick.mjs, a test polling queue.json while a
+  // detached land.mjs writes it) could catch it empty or half-written and die on "Unexpected end of
+  // JSON input". Now it sees the whole old document or the whole new one.
+  writeJSONAtomic(file, obj);
   if (render) {
     const mdFile = file.replace(/\.json$/, '.md');
     writeFileSync(mdFile, render(obj));
