@@ -457,7 +457,7 @@ function landTheLanded(horde, cfg, root, holds) {
       continue;
     }
     plan.push({
-      ticket: item.ticket, action: 'red', source: 'gate', words: redWords(result), note: null,
+      ticket: item.ticket, action: 'red', source: 'gate', stale: !!result.stale, words: redWords(result), note: null,
     });
   }
 
@@ -561,6 +561,19 @@ function landTheLanded(horde, cfg, root, holds) {
       for (const step of reds) {
         const item = fresh.items.find((i) => i.ticket === step.ticket);
         if (!item) continue;
+        // A branch land refused as stale — the parent moved and does not merge into it — was not gated and
+        // is not wrong: it goes back to be brought up to date, with no round counted, so a fix loop is
+        // never spent on a merge somebody else's landing made necessary.
+        if (step.stale) {
+          const stale = findTicket(horde, step.ticket);
+          if (stale && parseField(stale.text, 'Status') !== 'changes') transitionStatus(stale, 'changes', step.words);
+          item.state = 'queued';
+          item.notes.push({ at: nowIso(), text: `tick: stale, no round counted — ${step.words}` });
+          results.push({
+            ticket: step.ticket, action: 'changes', round: null, note: `stale, no round counted — ${step.words}`,
+          });
+          continue;
+        }
         const byReview = step.source === 'review';
         const said = byReview ? 'review found' : 'gate red';
         // Whatever sends a ticket back ends its review's say: the fix round the worker gets reads

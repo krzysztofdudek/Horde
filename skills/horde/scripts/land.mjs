@@ -57,7 +57,9 @@ The gate a change lands through. Nine items, ✓/✗ per line; every one green m
 merged into its parent here and now, and a single ✗ means it is not — nobody's signature is asked
 for either way.
 
-  1. base freshness — branch rooted at its parent branch's tip
+  1. base freshness — branch rooted at its parent branch's tip; a branch the parent moved past is
+                      brought up to date first (the parent merged into it), or, when that conflicts,
+                      refused as stale before any gate, with no fix round
   2. judge          — every prose rule on this tree has a judgement (config.judge says who makes
                       it: "tier" is Yggdrasil's own reviewer, "one-shot" hands the pairs back)
   3. scope          — diff stays inside the files the ticket declared, or its node boundaries when
@@ -1159,7 +1161,10 @@ function checkMapping(cfg, worktree, addedFiles, noGate) {
 
 function checkJournal(text, branch) {
   const lastEntry = latestTimestamp(text);
-  const commitDate = git(['log', '-1', '--format=%cI', branch]);
+  // The last commit somebody WORKED — a merge of the parent into the branch, which this tool makes when
+  // the parent moved while the ticket waited, changes nothing the worker did and is not what the log
+  // has to have caught up with.
+  const commitDate = git(['log', '-1', '--no-merges', '--format=%cI', branch]);
   const commitTime = commitDate ? new Date(commitDate) : null;
   if (!lastEntry) return { ok: false, note: 'no log entry found' };
   if (!commitTime) return { ok: false, note: `could not read the last commit on ${branch}` };
@@ -2582,6 +2587,54 @@ function conflictingFiles(tree) {
   return diffPaths(['diff', '--name-only', '--diff-filter=U'], tree);
 }
 
+// A branch whose parent moved while it waited to land — a sibling landed first — is not wrong, only
+// behind. Landing used to run the whole gate on it anyway, come back red on base freshness alone and
+// hand the ticket a fix round for work nothing was wrong with. So the parent is merged into the
+// branch first: cleanly, the branch is brought up to date and this landing goes on with it, once;
+// with a conflict the merge is aborted, the branch is left exactly as it was, and the caller
+// refuses it as stale — before any gate, and with nobody to blame for a round.
+//
+// Done where the branch is checked out when it is (a landed ticket's worktree, refused when it holds
+// uncommitted changes to tracked files), and in a scratch tree otherwise, moving the branch only if
+// it still stands where this started.
+function pullParentIntoBranch(root, branch, parentBranch, branchSha) {
+  const message = `Merge ${parentBranch} into ${branch}\n\nThe parent moved while this ticket waited to land; it is brought in so the gate measures what will merge.`;
+  const refuse = (files, extra) => ({
+    ok: false,
+    conflict: files.length > 0,
+    files,
+    note: `merging ${parentBranch} into ${branch} ${files.length ? `conflicts in ${files.join(', ')}` : 'could not be done'}${extra ? ` — ${extra}` : ''}; ${branch} is untouched`,
+  });
+  const checkout = worktreeOn(root, branch);
+  if (checkout) {
+    const dirty = git(['status', '--porcelain', '--untracked-files=no'], checkout);
+    if (dirty === null || dirty !== '') return refuse([], `${branch} is checked out at ${checkout} with uncommitted changes to tracked files, so the parent was not brought in there`);
+    try {
+      execFileSync('git', ['merge', '--no-ff', '-m', message, parentBranch], { cwd: checkout, stdio: 'pipe' });
+    } catch {
+      let files = [];
+      try { files = conflictingFiles(checkout); } finally { git(['merge', '--abort'], checkout); }
+      return refuse(files);
+    }
+    return { ok: true, sha: git(['rev-parse', '--verify', branch], root), note: `brought ${parentBranch} into ${branch} — a conflict-free merge, made at ${checkout}` };
+  }
+  const info = resolveTree({ scratch: branchSha }, { cwd: root });
+  try {
+    try {
+      execFileSync('git', ['merge', '--no-ff', '-m', message, parentBranch], { cwd: info.path, stdio: 'pipe' });
+    } catch {
+      let files = [];
+      try { files = conflictingFiles(info.path); } finally { git(['merge', '--abort'], info.path); }
+      return refuse(files);
+    }
+    const sha = git(['rev-parse', 'HEAD'], info.path);
+    if (git(['update-ref', `refs/heads/${branch}`, sha, branchSha], root) === null) return refuse([], `${branch} moved while the parent was being brought in`);
+    return { ok: true, sha, note: `brought ${parentBranch} into ${branch} — a conflict-free merge` };
+  } finally {
+    cleanupTree(info, root);
+  }
+}
+
 // ---- trailers -----------------------------------------------------------------------------
 //
 // Who worked what, and when, belongs to git — not to `.horde/`, which is uncommitted and gone the
@@ -3384,7 +3437,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
   const { team, teamDir, item } = found;
   const branch = item.branch;
   if (!branch) fail(`ticket ${item.ticket} has no branch yet — nothing to land (queue.mjs set ${item.ticket} running cuts one)`);
-  const branchSha = git(['rev-parse', '--verify', branch]);
+  let branchSha = git(['rev-parse', '--verify', branch]);
   if (!branchSha) {
     const detail = gitError();
     fail(`no such branch: ${branch}${detail ? ` — ${detail}` : ''}`);
@@ -3415,6 +3468,19 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
   if (!parentTip) {
     const detail = gitError();
     fail(`no such branch: ${parentBranch} — the guards that keep a landing from weakening the rules read the base tree and this branch's tree and compare them, and with no base there is nothing to compare against. Restore ${parentBranch}, or fix config.base${detail ? ` (${detail})` : ''}`);
+  }
+
+  // A branch the parent has moved past is brought up to date before anything is measured, so what the
+  // gate measures is what will merge; a conflict is refused below, before any gate. --no-gate never
+  // writes to a branch, so it measures and reports the staleness as it stands.
+  let pulled = null;
+  if (!noGate && !checkBaseFreshness(branch, parentBranch).ok) {
+    pulled = pullParentIntoBranch(root, branch, parentBranch, branchSha);
+    if (pulled.ok) {
+      branchSha = pulled.sha;
+      const ticket = findTicket(horde, ticketId);
+      if (ticket) appendTicketLine(ticket, `- ${nowIso()} land ${pulled.note} (${short(branchSha)})\n`);
+    }
   }
 
   const changedFiles = diffPaths(['diff', '--name-only', `${parentBranch}...${branch}`]);
@@ -3450,6 +3516,28 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     }
 
     results['base freshness'] = checkBaseFreshness(branch, parentBranch);
+    if (pulled && pulled.ok && results['base freshness'].ok) {
+      results['base freshness'] = { ok: true, note: `${pulled.note}; ${results['base freshness'].note}` };
+    }
+    // Behind the parent and the parent does not merge into it: there is nothing to gate. Not a red
+    // gate and not a fix round — the ticket did nothing wrong — so no round is counted and nothing
+    // else is run; the result says stale so whoever reads it sends the ticket back for the merge.
+    if (!noGate && !results['base freshness'].ok) {
+      const why = pulled && !pulled.ok ? `${results['base freshness'].note}. ${pulled.note}` : results['base freshness'].note;
+      return finish(horde, ticketId, {
+        ticket: ticketId,
+        branch,
+        sha: branchSha,
+        ok: false,
+        stale: true,
+        checks: [{ name: 'base freshness', ok: false, note: why }],
+        pairs: [],
+        brief: null,
+        landed: null,
+        lock: lockNotes,
+        size,
+      }, head, flags, parent, level);
+    }
     results.scope = checkScope(root, cfg, nodes, changedFiles, declaredFiles);
     results['revert test'] = checkRevertTest(horde, root, cfg, branch, parentBranch, changedFiles, issueText);
     results.journal = checkJournal(logText, branch);

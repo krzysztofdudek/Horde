@@ -3188,7 +3188,7 @@ test('land.mjs batch: an overlapping pair excludes the overlapping ticket from t
 
   // One shared run for {111, 113}, one standalone run for 112 — landed on its own precisely
   // because it collides with 111, never because anything about it is otherwise wrong.
-  assert.equal(gateCallCount(gateLog), 2, 'the overlapping ticket ran its own gate, separate from the shared one');
+  assert.equal(gateCallCount(gateLog), 1, 'one shared run for {111, 113} — the overlapping ticket, stale once 111 landed and in conflict with it, is refused before a gate of its own');
 
   // 111 and 113 batch together and both land.
   for (const id of ['111', '113']) {
@@ -3201,11 +3201,9 @@ test('land.mjs batch: an overlapping pair excludes the overlapping ticket from t
 
   // 112 is excluded from the batch and runs alone — AFTER 111 and 113 have already landed and
   // moved the parent it was cut from, exactly as it would if a worker had spawned three separate
-  // `land.mjs` calls at once today and this one lost the race to merge: it goes stale rather than
-  // landing over content its own branch never incorporated. That is not a batching bug — it is the
-  // same base-freshness item every landing runs, correctly refusing a branch a sibling's landing
-  // has since overtaken. What this test cares about is that 112 got there on its OWN gate call
-  // (proven by the count above), and that this run reports it, honestly, for what it is.
+  // `land.mjs` calls at once today and this one lost the race to merge. The parent does not merge
+  // into it (it adds 111's own file with other content), so it is refused as stale: not gated (the
+  // count above) and reported, honestly, for what it is — behind, not wrong.
   assert.equal(r.code, 1, 'the run as a whole is not all-green while 112 has not actually landed');
   const res112 = resultFor(r, '112');
   assert.ok(res112, 'no result for 112');
@@ -3213,8 +3211,71 @@ test('land.mjs batch: an overlapping pair excludes the overlapping ticket from t
   const check112 = res112.full.checks.find((c) => c.name === 'base freshness');
   assert.equal(check112.ok, false);
   assert.match(check112.note, /STALE/);
+  assert.equal(res112.full.stale, true);
   const item112 = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === '112');
   assert.equal(item112.state, 'landed', '112 is exactly where it was — nothing landed for it, nothing else touched it');
+});
+
+// A ticket whose parent moved while it waited to land — a sibling landed first — used to run the whole gate
+// anyway, come back red on base freshness alone and be handed a fix round for a branch nothing was wrong
+// with. Now a branch the parent merges into cleanly is brought up to date and gated once, in the same run;
+// one it conflicts with is refused before any gate, with no round counted.
+const ticketLog = (dir, id) => {
+  const issues = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues');
+  const name = readdirSync(issues).find((n) => n.startsWith(id));
+  return readFileSync(join(issues, name, 'log.md'), 'utf8');
+};
+
+test('land.mjs: a branch a sibling\'s landing left behind is brought up to date when the parent merges into it cleanly, and gated once in the same run', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const branches = setupBatchLandable(dir, ['131', '132']);
+  const gateLog = join(dir, 'gate-calls.log');
+  run('horde.mjs', ['config', 'set', 'gates.team', `echo run >> "${gateLog}"`], dir);
+
+  const first = run('land.mjs', [branches['131']], dir);
+  assert.equal(first.code, 0, first.stdout + first.stderr);
+
+  const second = run('land.mjs', [branches['132']], dir);
+  assert.equal(second.code, 0, second.stdout + second.stderr);
+  assert.equal(second.json.ok, true);
+  assert.notEqual(second.json.stale, true);
+  const freshness = byName(second)['base freshness'];
+  assert.equal(freshness.ok, true, freshness.note);
+  assert.match(freshness.note, /brought mission1\/trunk into mission1\/t-132/);
+  assert.equal(gateCallCount(gateLog), 2, 'one gate run for each landing, and no more');
+  assert.match(git(['log', '--format=%s', 'mission1/trunk'], dir), /Merge mission1\/trunk into mission1\/t-132/, 'the parent was merged into the branch before the branch merged');
+  assert.match(ticketLog(dir, '132'), /land brought mission1\/trunk into mission1\/t-132/);
+  assert.equal(run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === '132').state, 'merged');
+  assert.doesNotMatch(ticketLog(dir, '132'), /round \d+\//, 'no fix round was counted');
+  assert.deepEqual(scratchDirs(dir), []);
+});
+
+test('land.mjs: a branch the parent conflicts with is refused before any gate runs, with no round counted, and left exactly as it was', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // 142 also adds 141's own file with other content: the parent merging into it conflicts.
+  const branches = setupBatchLandable(dir, ['141', '142'], {
+    perTicket: { 142: { extraFiles: { 'feature-141.mjs': 'export function add(a, b) { return a + b; } // 142 says otherwise\n' }, extraMapping: ['feature-141.mjs'] } },
+  });
+  const gateLog = join(dir, 'gate-calls.log');
+  run('horde.mjs', ['config', 'set', 'gates.team', `echo run >> "${gateLog}"`], dir);
+  assert.equal(run('land.mjs', [branches['141']], dir).code, 0);
+  assert.equal(gateCallCount(gateLog), 1);
+  const tipBefore = git(['rev-parse', branches['142']], dir);
+
+  const r = run('land.mjs', [branches['142']], dir);
+  assert.equal(r.code, 1);
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.stale, true, 'the result says the branch is stale, not that its work is wrong');
+  assert.deepEqual(r.json.checks.map((c) => c.name), ['base freshness'], 'nothing else was run');
+  assert.match(byName(r)['base freshness'].note, /STALE/);
+  assert.match(byName(r)['base freshness'].note, /feature-141\.mjs/);
+  assert.equal(gateCallCount(gateLog), 1, 'no gate was run for the stale branch');
+  assert.equal(git(['rev-parse', branches['142']], dir), tipBefore, 'the branch is untouched');
+  assert.doesNotMatch(ticketLog(dir, '142'), /round \d+\//, 'no fix round was counted');
+  assert.equal(run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === '142').state, 'landed');
+  assert.deepEqual(scratchDirs(dir), []);
 });
 
 test('land.mjs batch: a red shared gate falls back to landing every member on its own, in the same run, with correct attribution', async (t) => {
@@ -3236,13 +3297,13 @@ test('land.mjs batch: a red shared gate falls back to landing every member on it
   );
 
   // Three tickets that all shared one parent tip, none of them merged before this run started:
-  // falling back to landing them one at a time, in sequence, is exactly what three separate
-  // `land.mjs` calls racing for the same parent would do today — the first to actually merge wins,
-  // and every one behind it finds its own branch no longer rooted at the parent's new tip (the same
-  // base-freshness item every landing runs) and goes back to "changes" rather than landing over
-  // content it never incorporated. Nothing here is a batching bug: it is "no bisection" costing
-  // exactly what today's worst case already costs, and every result below is attributed to the
-  // right ticket, never confused with a sibling's.
+  // falling back to landing them one at a time, in sequence, is what three separate `land.mjs`
+  // calls racing for the same parent would do — the first to actually merge wins, and every one
+  // behind it finds its own branch no longer rooted at the parent's new tip. They touch different
+  // files, so the parent merges into each cleanly: each is brought up to date and gated once, in
+  // this same run, instead of running a whole gate to come back red on freshness alone. Nothing
+  // here is a batching bug: it is "no bisection" costing what it always cost, and every result
+  // below is attributed to the right ticket, never confused with a sibling's.
   const res121 = resultFor(r, '121');
   const res122 = resultFor(r, '122');
   const res123 = resultFor(r, '123');
@@ -3255,17 +3316,19 @@ test('land.mjs batch: a red shared gate falls back to landing every member on it
   assert.equal(item121.state, 'merged');
   assert.equal(item121.sha, res121.landed.sha, '121\'s queue item does not carry the sha its own fallback run actually landed');
 
+  const landedShas = new Set([res121.landed.sha]);
   for (const [id, res] of [['122', res122], ['123', res123]]) {
-    assert.equal(res.ok, false, `${id} unexpectedly landed: ${JSON.stringify(res)}`);
-    assert.equal(res.landed, null);
+    assert.equal(res.ok, true, `${id} was not landed after being brought up to date: ${JSON.stringify(res)}`);
+    assert.ok(res.landed && res.landed.sha, `${id} did not land`);
+    landedShas.add(res.landed.sha);
     assert.equal(res.full.branch, branches[id], `${id}'s own result names its own branch, not another ticket's`);
-    const staleness = res.full.checks.find((c) => c.name === 'base freshness');
-    assert.equal(staleness.ok, false);
-    assert.match(staleness.note, /STALE/);
-    const item = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === id);
-    assert.equal(item.state, 'landed', `${id} is exactly where it was`);
+    const freshness = res.full.checks.find((c) => c.name === 'base freshness');
+    assert.equal(freshness.ok, true, freshness.note);
+    assert.match(freshness.note, new RegExp(`brought mission1/trunk into mission1/t-${id}`));
+    assert.equal(run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === id).state, 'merged', `${id} did not land`);
   }
-  assert.equal(r.code, 1, 'the run as a whole is not all-green while two of the three have not actually landed');
+  assert.equal(landedShas.size, 3, 'three distinct merge commits');
+  assert.equal(r.code, 0, 'all three landed');
 });
 
 test('land.mjs batch: --no-gate on two or more tickets lands each on its own, never sharing a preview tree', async (t) => {

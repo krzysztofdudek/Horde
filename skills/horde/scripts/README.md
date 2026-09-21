@@ -950,7 +950,13 @@ Its **parent branch** is trunk's own (`<horde>/trunk`), or — while the ticket 
 dependency that has not merged yet — that dependency's branch; one answer, reported as `parent` in
 the JSON, and every item below is measured against it:
 
-1. base freshness — the branch is rooted at its parent branch's tip;
+1. base freshness — the branch is rooted at its parent branch's tip. A branch the parent has moved
+   past (a sibling landed first) is not wrong, only behind, so the parent is merged into it first:
+   cleanly, the branch is brought up to date, the merge noted in the ticket's log, and this landing
+   goes on with it, once; with a conflict the merge is aborted, the branch is left exactly as it
+   was, and the landing stops here — `ok: false`, `stale: true`, base freshness the only item, no
+   gate run and no fix round counted (`tick.mjs` sends the ticket back to be brought up to date).
+   `--no-gate` never writes to a branch, so it reports the staleness as it stands;
 2. judge — every prose rule on this tree carries a judgement. `config.judge` says who makes it:
    `tier` means this repository has a Yggdrasil reviewer, which fills the pairs during the graph
    item's own run, so the only thing left to check is that none came back unjudged; `one-shot` means
@@ -1000,7 +1006,8 @@ the JSON, and every item below is measured against it:
    over the CLI's own words rather than naming pairs it cannot classify;
 7. mapping — every file the branch added is owned by a node on the branch's own tree; skipped with
    `--no-gate`;
-8. journal — `tk log` has an entry newer than the last commit;
+8. journal — `tk log` has an entry newer than the last commit a worker made (a merge of the parent
+   into the branch, which the landing itself may have made, is not one);
 9. graph text — charters, logs and `graph:` commits touched by the branch carry no mission
    language.
 
@@ -1270,8 +1277,10 @@ freshness: two tickets that shared one parent tip and are landed one after anoth
 batch's own fallback, or as two ordinary solo landings racing today) will see the first one's own
 merge move the tip out from under the second, which has never incorporated it. That is not something
 batching introduces — a worker's own branch has to catch up with its parent before it can land,
-batched or not — but it is worth knowing before reading a red "base freshness" on a ticket that
-looked, moments earlier, like it was about to land clean.
+batched or not — but a branch the parent merges into cleanly is brought up to date and landed in
+that same run, and one it conflicts with is refused as stale before any gate: worth knowing before
+reading a red "base freshness" on a ticket that looked, moments earlier, like it was about to land
+clean.
 
 `--no-gate` never batches — with items 5-7 skipped outright, there is nothing expensive left to
 share, so every ticket in the list just lands on its own, exactly as `--no-gate` behaves for one.

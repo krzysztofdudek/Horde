@@ -995,6 +995,44 @@ test('tick.mjs: a gate it started is recorded with the pid running it, and the n
   assert.equal(third.json.landed.find((l) => l.ticket === id).action, 'gate');
 });
 
+// A branch land refused as stale — the parent moved and does not merge into it — never met the gate and is
+// not wrong. It goes back to be brought up to date, and no fix round is counted against it.
+test('tick.mjs: a stale result puts the ticket back with no round counted', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const { id } = landedTicket(dir, 'behind-the-parent', { files: 'src/behind.ts' });
+  throughReview(dir, id);
+  const tip = git(['rev-parse', '--verify', itemOf(dir, id).branch], dir);
+  writeLandResult(dir, id, {
+    ticket: id, branch: itemOf(dir, id).branch, sha: tip, ok: false, stale: true,
+    checks: [{ name: 'base freshness', ok: false, note: 'STALE — merge-base a1b2c3d vs mission1/trunk tip e4f5a6b. merging mission1/trunk into it conflicts in src/behind.ts' }],
+    pairs: [], brief: null, landed: null,
+  });
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+  const step = r.json.landed.find((l) => l.ticket === id);
+  assert.equal(step.action, 'changes');
+  assert.equal(step.round, null);
+  assert.match(step.note, /stale, no round counted — base freshness: STALE/);
+  assert.equal(itemOf(dir, id).state, 'running', 'sent back, and handed out again to a worker in the same run');
+  const log = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', readdirSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues')).find((n) => n.startsWith(id)), 'log.md'), 'utf8');
+  assert.match(log, /status: changes — base freshness: STALE/);
+  assert.doesNotMatch(log, /round \d+\//, 'no round was counted');
+
+  // A red gate on the same ticket still counts its round: only a stale branch is exempt.
+  const other = landedTicket(dir, 'really-red', { files: 'src/red.ts' });
+  throughReview(dir, other.id);
+  writeLandResult(dir, other.id, {
+    ticket: other.id, branch: itemOf(dir, other.id).branch, sha: git(['rev-parse', '--verify', itemOf(dir, other.id).branch], dir), ok: false,
+    checks: [{ name: 'gate', ok: false, note: 'red (make test)' }], pairs: [], brief: null, landed: null,
+  });
+  const second = tick(dir);
+  assert.equal(second.code, 0, second.stderr);
+  assert.match(second.json.landed.find((l) => l.ticket === other.id).note, /gate red, round 1\//);
+});
+
 test('tick.mjs: a queue.json caught half-written is refused by name and never written over', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
