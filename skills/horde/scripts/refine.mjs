@@ -46,7 +46,7 @@ import {
 import {
   detectEvidenceLayer, renderEvidenceJudgement, PROMISES_OFFER, archiveForTerritory, charterSection,
 } from './horde.mjs';
-import { disciplineSection, demoteHeadings } from './brief.mjs';
+import { disciplineSection, demoteHeadings, absolutizePluginRoot } from './brief.mjs';
 
 const STEPS = ['cut', 'consult', 'review', 'frame'];
 
@@ -636,8 +636,10 @@ function obligationPath(root, cfg, node) {
   return `.yggdrasil/model/${node}`;
 }
 
+// The consultant is a spawned agent, and a spawned agent is not guaranteed the plugin variable, so the
+// scripts directory goes into its brief as the absolute path the other roles' briefs get.
 function here() {
-  return '${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts';
+  return absolutizePluginRoot('${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts');
 }
 
 // ---- the plan review ---------------------------------------------------------------------------

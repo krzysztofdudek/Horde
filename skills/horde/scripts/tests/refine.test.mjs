@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   existsSync, mkdirSync, readFileSync, writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, isAbsolute } from 'node:path';
 import {
   makeRepo, rmRepo, initHorde, addNode, addAspect, run, yg, MARKER_CHECK, git,
 } from './helpers.mjs';
@@ -325,6 +325,18 @@ test('refine.mjs --step consult: one spawn per territory, each seeing only its o
     assert.match(front, /queue\.mjs add <NNN> --proposed/);
     assert.match(front, /tk\.mjs edit <NNN> --depends/);
     assert.match(front, /node\.mjs propose rule/);
+  });
+
+  await t.test('every script it names is an absolute path to a file that exists, and no plugin variable is left in it', () => {
+    for (const spawn of r.json.spawns) {
+      assert.doesNotMatch(spawn.brief, /\$\{CLAUDE_PLUGIN_ROOT/, `${spawn.territory}: a spawned agent is not guaranteed that variable`);
+      const scripts = [...spawn.brief.matchAll(/node (\S+\.mjs)/g)].map((m) => m[1]);
+      assert.ok(scripts.length >= 3, 'the brief names the commands it answers with');
+      for (const path of scripts) {
+        assert.ok(isAbsolute(path), `${path} is absolute`);
+        assert.ok(existsSync(path), `${path} exists`);
+      }
+    }
   });
 
   await t.test('every consultant brief carries the framing checklist under ## Law, headings demoted like the other roles', () => {

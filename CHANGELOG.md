@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The brief of a consultant (`refine.mjs --step consult`) names its scripts by absolute path, like every other role's brief, instead of `${CLAUDE_PLUGIN_ROOT:-…}`, which a spawned agent is not guaranteed to have. The director no longer adds the path to each consultant prompt by hand.
 - The director can see when landings are the bottleneck. `tick` and `status` print a line with the branches ready to land and what a landing has been costing (last, mean and max gate time, and how long the queue would take landed one after another); `tick --json` carries it as `landing`. Every landing records how long its gate took, and a batch records how many landings shared one gate run. It reports and holds nothing back.
 - `gates.testFile`: a command that runs one test file, with `{file}` standing for its path (`horde.mjs config set gates.testFile "npx playwright test {file}"`). A test that `node --test` cannot run and your commit gate does not run, such as an end-to-end spec under a runner of its own, could never turn red in the landing check that a new test fails without the change, because the only thing tried was the whole commit gate; the only way around it was leaving those tests out of `testGlobs`. The landing check now asks this command for such a test, in both of its variants, before it falls back to the whole commit gate.
 - `land --background` returns immediately and writes its result to a file. `worktree.copy` copies files into every new worktree.
