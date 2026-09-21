@@ -640,17 +640,21 @@ function workerName(ticket, round) {
 // own argv entry — a horde or worktree name is never validated against a safe character set at
 // creation, so joining these into one string for a shell to reparse would let either one break out
 // of its own argument.
-function briefCommandParts(horde, ticket, name, worktree, takeover) {
+//
+// No --tree: the worker's worktree comes off the ticket's queue item, and the graph the brief reads
+// its ports from has to be the horde's trunk. A ticket's own worktree has just been cut and nothing
+// has run in it — no install, no CLI of its own — so a graph read there fails for a reason that has
+// nothing to do with the graph.
+function briefCommandParts(horde, ticket, name, takeover) {
   const parts = [join(SCRIPTS, 'brief.mjs'), 'worker', ticket, '--name', name, '--horde', horde];
-  if (worktree) parts.push('--tree', worktree);
   if (takeover) parts.push('--takeover');
   return parts;
 }
 
 // The same command, as the one string a person reads and runs themselves (the session runner's own
 // dispatch list, a log line) — never fed to a shell by this tool itself.
-function briefCommand(horde, ticket, name, worktree, takeover) {
-  return ['node', ...briefCommandParts(horde, ticket, name, worktree, takeover)].join(' ');
+function briefCommand(horde, ticket, name, takeover) {
+  return ['node', ...briefCommandParts(horde, ticket, name, takeover)].join(' ');
 }
 
 // How many rounds of changes this ticket has already been through: changesRoundInfo answers with
@@ -710,8 +714,8 @@ function dispatch(horde, cfg, root, flags, holds) {
     out.push({
       ticket: id,
       model: takeover ? classUp(cfg, baseClass) : baseClass,
-      brief: briefCommand(horde, id, workerName(id, prior), started.worktree, takeover),
-      briefParts: briefCommandParts(horde, id, workerName(id, prior), started.worktree, takeover),
+      brief: briefCommand(horde, id, workerName(id, prior), takeover),
+      briefParts: briefCommandParts(horde, id, workerName(id, prior), takeover),
       stacked: stackedLine(candidate.stackOn),
       worktree: started.worktree,
       branch: started.branch,

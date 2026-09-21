@@ -242,11 +242,15 @@ test('tick.mjs dispatch: what goes on the list, in what order, and what never go
     assert.equal(entry.model, 'heavy');
   });
 
-  await t.test('the brief is a command that names the worktree the ticket was cut into', () => {
+  await t.test('the brief is a command that reads the graph from the horde, not from the worktree the ticket was just cut into', () => {
     const entry = r.json.spawn.find((s) => s.ticket === ready);
     assert.match(entry.brief, /brief\.mjs worker/);
-    assert.match(entry.brief, new RegExp(`--tree ${entry.worktree}`));
-    assert.ok(existsSync(entry.worktree), 'the worktree the brief names actually exists');
+    assert.match(entry.brief, /--horde mission1/);
+    assert.doesNotMatch(entry.brief, /--tree/, 'nothing has run in that worktree: no install, no CLI of its own');
+    assert.ok(existsSync(entry.worktree), 'the worktree was still cut');
+    const rendered = run('brief.mjs', ['worker', ready, '--name', 'w', '--horde', 'mission1'], dir);
+    assert.equal(rendered.code, 0, rendered.stderr);
+    assert.equal(rendered.json.tree, entry.worktree, 'and the brief is still for that worktree, which it reads off the queue item');
   });
 
   await t.test('a proposed ticket never reaches the list', () => {

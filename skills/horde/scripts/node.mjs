@@ -301,7 +301,22 @@ export function ygJson(root, cfg, args, schema) {
   }
   if (/does not exist in the graph/.test(err)) return { state: 'absent', command };
   if (/unknown option|unknown command/i.test(err)) return { state: 'stale', command, saw: 'it does not know that option' };
-  if (code === 0) return { state: 'stale', command, saw: 'it answered no document at all' };
+  // Exit 0 and nothing to read is not an old CLI — an old one refuses the option, which is the branch
+  // above. It is a CLI that does not work from this directory: a relative command that resolves to
+  // nothing here, or a tree with no install of its own. Told apart so the refusal names the tree and
+  // the way out, instead of sending someone to upgrade a CLI that is at the right version.
+  if (code === 0) {
+    return {
+      state: 'silent',
+      command,
+      code: null,
+      root,
+      detail: `ran in ${root}, exited 0 and printed no document. That is the CLI not working in this tree, not an old version: `
+        + 'a relative ygCommand resolves to nothing here, or to another install than the one you meant, and Horde\'s trees '
+        + 'have no tool install of their own. Point it at an absolute path to a CLI at the version the graph was written with: '
+        + 'horde.mjs config set ygCommand "node /path/to/bin.js"',
+    };
+  }
   return { state: 'error', command, code, detail: (err || body).trim() };
 }
 
@@ -361,6 +376,7 @@ export function ygFileContext(root, cfg, relFile) {
   if (res.state === 'ok') doc = res.doc;
   else if (res.state === 'no-cli') failNoCli(cfg, res.command);
   else if (res.state === 'stale') failStaleCli(cfg, res.command, res.saw);
+  else if (res.state === 'silent') fail(`\`${res.command}\` — ${res.detail}`);
   fileContextCache.set(relFile, doc);
   return doc;
 }
