@@ -762,7 +762,7 @@ const loadBearingSpec = (id) => ({ file: `feature-${id}.mjs`, contains: 'a + b' 
 
 // Every "no verdict" names the ways out of it, once per item.
 function assertWaysOut(note) {
-  assert.match(note, /ways out of "no verdict": make gates\.commit green on the base without the file; name a revert base where it is green \("\*\*Revert base:\*\* <ref>"\); give the ticket a "\*\*Mutate:\*\*" command that only this file catches; or run the file with a command for that one file/);
+  assert.match(note, /ways out of "no verdict": make gates\.commit green on the base without the file; name a revert base where it is green \("\*\*Revert base:\*\* <ref>"\); give the ticket a "\*\*Mutate:\*\*" command that only this file catches; or set gates\.testFile to a command that runs one test file/);
 }
 
 test('land.mjs revert test via gates.commit: a file the runner skipped — silently, or with its cases marked skipped — is "no verdict", never a "not load-bearing" verdict', async (t) => {
@@ -958,6 +958,65 @@ test('land.mjs revert test via gates.commit: the mutation variant runs its contr
   assert.match(removed.note, /feature-084\.test\.json: not in the mutated tree — the mutate command removed it/);
   assert.deepEqual(scratchDirs(dir), []);
   assert.match(git(['show', `${branch}:feature-084.mjs`], dir), /a \+ b/);
+});
+
+// A test file `node --test` cannot run and the commit gate does not run either — an end-to-end spec under a runner
+// of its own — never went red in the revert test, because the only thing tried was the whole commit gate. With
+// `gates.testFile`, a command with `{file}` standing for the test file's path, that runner is asked directly, in
+// both variants, before the whole-command fallback.
+const ONE_SPEC_RUNNER = [
+  "import { existsSync, readFileSync } from 'node:fs';",
+  'const spec = JSON.parse(readFileSync(process.argv[2], "utf8"));',
+  "const ok = spec.pass === true || (existsSync(spec.file || '') && readFileSync(spec.file, 'utf8').includes(spec.contains));",
+  'process.exit(ok ? 0 : 1);',
+  '',
+].join('\n');
+
+test('land.mjs revert test via gates.testFile: a runner outside the commit gate goes red on the base, and only a red proves the ticket', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // The commit gate is green whatever the ticket does — it never runs the spec.
+  const { branch } = setupSpecTicket(dir, '044', { spec: loadBearingSpec('044'), commit: 'exit 0', trunkFiles: { 'run-one.mjs': ONE_SPEC_RUNNER } });
+
+  const before = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(before.ok, false, before.note);
+  assert.match(before.note, /feature-044\.test\.json: no verdict — gates\.commit green with it in place/);
+
+  run('horde.mjs', ['config', 'set', 'gates.testFile', 'node run-one.mjs {file}'], dir);
+  const after = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(after.ok, true, after.note);
+  assert.match(after.note, /feature-044\.test\.json: gates\.testFile red \(exit 1\) with it in place/);
+  assert.deepEqual(scratchDirs(dir), []);
+});
+
+test('land.mjs revert test via gates.testFile: a test that passes on the base proves nothing, and a command that cannot run is no verdict, never proof', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupSpecTicket(dir, '044', { spec: { pass: true }, commit: 'exit 0', trunkFiles: { 'run-one.mjs': ONE_SPEC_RUNNER } });
+  run('horde.mjs', ['config', 'set', 'gates.testFile', 'node run-one.mjs {file}'], dir);
+  const green = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(green.ok, false, green.note);
+  assert.match(green.note, /feature-044\.test\.json: gates\.testFile green with it in place/);
+
+  // A runner that is not there exits 127 — red for the wrong reason, so no proof.
+  run('horde.mjs', ['config', 'set', 'gates.testFile', 'no-such-runner-044 {file}'], dir);
+  const missing = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(missing.ok, false, missing.note);
+  assert.match(missing.note, /feature-044\.test\.json: no verdict — gates\.testFile could not run \(exit 127\)/);
+  assertWaysOut(missing.note);
+});
+
+test('land.mjs revert test via gates.testFile: the mutation variant asks the same command, on the mutated tree', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: dst } = setupSpecTicket(dir, '044', { spec: loadBearingSpec('044'), commit: 'exit 0', trunkFiles: { 'run-one.mjs': ONE_SPEC_RUNNER } });
+  run('horde.mjs', ['config', 'set', 'gates.testFile', 'node run-one.mjs {file}'], dir);
+  addMutateField(dst, "node -e \"const fs=require('fs');const p='feature-044.mjs';fs.writeFileSync(p, fs.readFileSync(p,'utf8').replace('a + b','a - b'))\"");
+
+  const caught = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(caught.ok, true, caught.note);
+  assert.match(caught.note, /^mutate `node -e/);
+  assert.match(caught.note, /feature-044\.test\.json: gates\.testFile red \(exit 1\) with it in place/);
 });
 
 // A runner that works off the index — a pre-commit hook, lint-staged, anything asking `git diff --cached` — exits

@@ -63,6 +63,9 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   writes the charter's quality policy; the template's own default is `autonomous`.
 - `list` — hordes with trunk, base, wave, open tickets, leased nodes, last activity.
 - `config get|set <key> [value]` — `.horde/config.json`: `base`, `gates.commit|team|trunk` (commands),
+  `gates.testFile` (a command that runs ONE test file, `{file}` standing for its path — for a test
+  `node --test` cannot run and the commit gate does not run, such as an end-to-end spec under a runner
+  of its own; the revert test asks it directly, before falling back to the whole `gates.commit`),
   `gates.report.path` and `gates.report.format` (`junit`, `tap` or `playwright-json` — the report the
   gate command's own runner leaves behind, which the landing reads back to confirm every live
   promise's paired case actually ran — and which the revert test also reads, only when
@@ -1662,9 +1665,13 @@ already passed on the base unmodified. `horde init` fills `testGlobs` from the r
 files; when it is empty the item is ✗, because a ✓ reading "no new or changed test files in diff"
 over a repository whose tests this tool cannot recognize is the strongest guarantee in the checklist
 passing without looking. A ✓ names the patterns it did look for. A matched file whose extension
-`node --test` can run directly is extracted and run that way; anything else falls back to running
-the whole `config.gates.commit` command in the scratch worktree — isolating just one file's test lane
-out of an arbitrary configured command isn't possible in general.
+`node --test` can run directly is extracted and run that way. Anything else goes to
+`config.gates.testFile` when one is set — a command with `{file}` standing for the file's path, run in
+the scratch worktree, where red is proof and green is not; a command that never ran (the shell's 126
+and 127) is "no verdict", not proof — and otherwise falls back to running the whole
+`config.gates.commit` command in the scratch worktree, because isolating just one file's test lane
+out of an arbitrary configured command isn't possible in general. Both revert-test variants take this
+route.
 
 A whole command's exit code is not one file's result, in either direction. It can be red before the
 file is anywhere near it — a test nobody touched failing, an environment that isn't there — and a
@@ -1707,7 +1714,7 @@ alone:
 It says why the run showed nothing, and the item names the ways out once: make `gates.commit` green
 on the base without the file; name a revert base where it is green (`**Revert base:** <ref>`); give
 the ticket a `**Mutate:**` command that only this file catches; or run the file with a command for
-that one file, once one can be configured. A ticket that carries no such file pays nothing for this;
+that one file (`config.gates.testFile`, with `{file}` standing for its path). A ticket that carries no such file pays nothing for this;
 one that does pays one extra `gates.commit` run per landing.
 
 A diff with no new or changed test file is not automatically refused: a ticket can declare
