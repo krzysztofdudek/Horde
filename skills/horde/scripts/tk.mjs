@@ -113,10 +113,10 @@ commands:
       so the evidence it claimed is red again. It writes "**Reopens:** t-NNN" on the ticket, and
       refuses a number this horde has never filed.
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
-      the merge checklist refuses a diff that reaches past them). The `log.md` of every named node is
+      the merge checklist refuses a diff that reaches past them). The log.md of every named node is
       written into the list for you, visibly, because the worker brief asks for a log entry there and a
-      declared list replaces the node's boundary; `yg-node.yaml` is not, it carries the mapping and the
-      rules, and takes an explicit `edit --files`. --consumes/--produces name the
+      declared list replaces the node's boundary; yg-node.yaml is not, it carries the mapping and the
+      rules, and takes an explicit edit --files. --consumes/--produces name the
       ports the ticket needs and delivers, as <node>/<port>; a consumed port with no producing
       ticket and no such port in the graph is refused. Boundary and port existence are both read
       from the graph in the tree this command runs from (cwd) — --horde here only picks which
