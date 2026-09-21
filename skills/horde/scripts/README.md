@@ -286,8 +286,12 @@ which ask took it. A mission nobody has cut yet has no territory to be outside o
 earning no row at all claims nothing — neither is a mismatch.
 - `list [--state s]`, `add NNN [--depends dep,…] [--proposed] [--ask <id>]`, `set NNN <state> [--sha x] [--agent name] [--note "…"]`,
   `next [--class c] [--why] [--stack]` — ready = queued, every dependency merged, and clear of every
-  `running` ticket's own lock: a ticket declaring `**Files:**` collides only on an overlapping
-  path or glob; a ticket with none (or a `running` item whose ticket can no longer be read) locks
+  `running` ticket's own lock. "Every dependency" is `plan`'s own derived set, read off one
+  in-process `buildPlan()` call: a port the ticket `**Consumes:**` orders it after whoever
+  `**Produces:**` that port exactly like a hand-written `**Depends on:**` or `dep`, so a consumer of
+  a port whose producer has not merged yet is not ready even with no manual edge between the two,
+  and `--why` names the producer and the port it is still waiting on. A ticket declaring
+  `**Files:**` collides only on an overlapping path or glob; a ticket with none (or a `running` item whose ticket can no longer be read) locks
   every file of every node it names instead — the safe degradation for a ticket that never said
   which files it touches. Ranked: a `prototype`-kind ticket (`tk.mjs new --kind prototype`) always
   first and a `quality`-kind one (`tk.mjs new --kind quality`) always
@@ -295,14 +299,17 @@ earning no row at all claims nothing — neither is a mismatch.
   first); then the longer remaining critical path through the ticket wins — `queue.mjs plan`'s own
   DAG, read straight off one in-process `buildPlan()` call, never a second, shelled-out `plan`;
   then a ticket whose nodes hold no `running` ticket; then FIFO by queue order. `--why` prints
-  every `queued` item: its rank if it qualified, or the reason it didn't (an unmet dependency, the
-  file lock naming the `running` ticket and the file(s) it shares, or the `--class` filter).
+  every `queued` item: its rank if it qualified, or the reason it didn't (an unmet dependency —
+  named with the port and its producer when the edge is a consumed port rather than a
+  hand-written one — the file lock naming the `running` ticket and the file(s) it shares, or the
+  `--class` filter).
   `--stack` keeps in the ranking, below every ready ticket and in the same order among
-  themselves, each queued item whose unmerged dependencies are all in this team, `running` or
-  `landed`, and on a branch — returned as `stackReady: true` with `stackOn` naming them, since it
-  can be started now on top of one. The lock holds there too: the ticket it would start from is
-  often the one holding the file. Without `--stack`, such an item is skipped as before, and
-  `--why` says which tip it could have started from.
+  themselves, each queued item whose unmerged dependencies (port edges included) are all in this
+  team, `running` or `landed`, and on a branch — returned as `stackReady: true` with `stackOn`
+  naming them, since it can be started now on top of one (`set NNN running --on <that ticket>`,
+  the producer's own tip when the edge is a port). The lock holds there too: the ticket it would
+  start from is often the one holding the file. Without `--stack`, such an item is skipped as
+  before, and `--why` says which tip it could have started from.
   `rm NNN`, `render`, `reconcile` (every `running` item: a commit beyond its
   parent's tip → `landed`; a dirty worktree → `git add -A && git commit -m "wip: reclaimed"` on the
   ticket branch, then `queued` with a note; a clean worktree and no commit → `queued`, worktree
@@ -367,8 +374,9 @@ earning no row at all claims nothing — neither is a mismatch.
   never records one twice.
 - `set NNN running --on MMM` cuts the branch from `MMM`'s tip instead of the team's — a **stack**, so
   a chain of tickets does not cost one wave per link — and records `stackedOn: MMM` on the item.
-  `MMM` must be a dependency of `NNN` (a stack follows the merge order, never crosses it), in the
-  same team, `running` or `landed`, and on a branch that exists; each of those is a named refusal,
+  `MMM` must be a dependency of `NNN` — `plan`'s own derived set, so a port `NNN` `**Consumes:**`
+  that `MMM` `**Produces:**` counts exactly like a hand-written one (a stack follows the merge
+  order, never crosses it), in the same team, `running` or `landed`, and on a branch that exists; each of those is a named refusal,
   as is `--on` on a ticket whose branch was already cut somewhere else (moving a base under work
   already done is a rebase this tool does not do). From then on the item's **parent branch** — the
   branch it is rooted on, measured against, and merged into — is `MMM`'s, everywhere: base
@@ -378,7 +386,9 @@ earning no row at all claims nothing — neither is a mismatch.
   again — with the work now in it, the stacked ticket's own diff is unchanged, so its keys hold and
   only the gate re-runs.
 - Refuses `set NNN merged` while any dependency of the ticket is unmerged (merge order is the
-  dependency order, stack or no stack).
+  dependency order, stack or no stack) — the same derived set `plan` and `next` read, so a
+  consumer of an unmerged producer's port cannot merge ahead of it just because nobody wrote that
+  edge by hand, and the refusal names the producer and the port.
 - `quality [--from <path>] [--class c] [--dry-run]` — **the quality pass** (ruling
   quality-always-authorised). Reads a `grain-advice/1` document — `config.grainCommand`'s own
   `advise --json` (its progress goes to stderr; the document is what it prints on stdout), or
