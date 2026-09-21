@@ -14,6 +14,7 @@ import {
 import { currentWaveNumber, evidenceCoverage } from './wave.mjs';
 import { missionNodes } from './node.mjs';
 import { findTicket, parseField } from './tk.mjs';
+import { landingLoad, landingLine } from './land.mjs';
 
 const USAGE = `usage: status.mjs [--horde h] [--team t] [--json]
 
@@ -85,10 +86,14 @@ function orphanedBranches(horde, knownBranches) {
   return out.split('\n').filter(Boolean).filter((b) => !known.has(b)).sort();
 }
 
+function queueItems(horde) {
+  const q = readJSON(teamPath(horde, 'trunk', 'queue.json'), { items: [] });
+  return Array.isArray(q.items) ? q.items : [];
+}
+
 function queueTotals(horde) {
   const totals = {};
-  const q = readJSON(teamPath(horde, 'trunk', 'queue.json'), { items: [] });
-  for (const it of (Array.isArray(q.items) ? q.items : [])) totals[it.state] = (totals[it.state] || 0) + 1;
+  for (const it of queueItems(horde)) totals[it.state] = (totals[it.state] || 0) + 1;
   return totals;
 }
 
@@ -133,6 +138,7 @@ function hordeDigest(horde, cfg) {
     wave: currentWaveNumber(readText(hordePath(horde, 'plan.md'))) || null,
     teams,
     queue: { byState: queueTotals(horde), total: Object.values(queueTotals(horde)).reduce((a, b) => a + b, 0) },
+    landing: landingLoad(horde, queueItems(horde)),
     asks: { open: askItems.filter((i) => i.state !== 'answered').length, total: askItems.length },
     lastGate,
     leases: { foreign: foreignLeases },
@@ -156,6 +162,7 @@ function printHorde(h) {
   }
   const qParts = Object.entries(h.queue.byState).map(([k, v]) => `${k}=${v}`).join(' ') || '(empty)';
   console.log(`  queue: total ${h.queue.total} — ${qParts}`);
+  console.log(`  ${landingLine(h.landing)}`);
   console.log(`  asks: ${h.asks.open} open / ${h.asks.total} total`);
   const gateLevels = ['commit', 'team', 'trunk'].filter((lvl) => h.lastGate[lvl]);
   if (gateLevels.length === 0) {

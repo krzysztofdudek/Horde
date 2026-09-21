@@ -3278,6 +3278,41 @@ test('land.mjs: a branch the parent conflicts with is refused before any gate ru
   assert.deepEqual(scratchDirs(dir), []);
 });
 
+// The director cannot tell that landings are what is slowing a mission when nothing measures them: every landing
+// that runs the gate now says how long it took, a batch member says how many landings shared that one run, and
+// tick and status read those to say how much is waiting and how long it will take.
+test('land.mjs: a landing records how long its gate took, and a batch says how many landings shared one gate run', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ids = ['151', '152', '153', '154'];
+  const branches = setupBatchLandable(dir, ids);
+  const gateLog = join(dir, 'gate-calls.log');
+  run('horde.mjs', ['config', 'set', 'gates.team', `sleep 1; echo run >> "${gateLog}"`], dir);
+
+  // Two tickets that share the parent tip batch: one gate run, carried by both.
+  const batch = run('land.mjs', [`${ids[1]},${ids[2]}`], dir);
+  assert.equal(batch.code, 0, batch.stdout + batch.stderr);
+  const a = resultFor(batch, ids[1]).full.timing;
+  const b = resultFor(batch, ids[2]).full.timing;
+  assert.equal(a.sharedBy, 2);
+  assert.equal(b.sharedBy, 2);
+  assert.equal(a.gateMs, b.gateMs, 'one shared gate run, one measurement, carried by both');
+  assert.ok(a.gateMs >= 1000, `the gate took at least the second it slept: ${JSON.stringify(a)}`);
+  assert.equal(gateCallCount(gateLog), 1, 'one gate run for the pair');
+
+  // A ticket landed alone measures its own gate, and its whole landing is at least that.
+  const one = run('land.mjs', [branches['151']], dir);
+  assert.equal(one.code, 0, one.stdout + one.stderr);
+  assert.equal(one.json.timing.sharedBy, 1);
+  assert.ok(one.json.timing.gateMs >= 1000, JSON.stringify(one.json.timing));
+  assert.ok(one.json.timing.landingMs >= one.json.timing.gateMs, 'the whole landing is at least its gate');
+  assert.equal(gateCallCount(gateLog), 2);
+
+  // --no-gate runs no gate, so there is nothing to measure.
+  const noGate = run('land.mjs', [branches['154'], '--no-gate'], dir);
+  assert.equal(noGate.json.timing.gateMs, null);
+});
+
 test('land.mjs batch: a red shared gate falls back to landing every member on its own, in the same run, with correct attribution', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

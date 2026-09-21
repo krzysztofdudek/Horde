@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
-  existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, appendFileSync,
+  existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, appendFileSync, utimesSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1694,4 +1694,50 @@ test('tick.mjs --watch: a refusal in one pass is written down, not the end of th
   const refusals = journal.split('\n').filter((l) => l.includes('tick refused:'));
   assert.ok(refusals.length >= 2, `the journal holds a line per refused pass (got ${refusals.length})`);
   assert.ok(!existsSync(join(dir, '.horde', 'gate.lock')), 'and no pass left the gate lock held');
+});
+
+test('tick.mjs: says how loaded the landing gate is — branches waiting, and what a landing has been costing', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+
+  await t.test('nothing measured yet is said as that, not as zero seconds', () => {
+    const r = tick(dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.json.landing, { ready: 0, measured: 0, lastMs: null, meanMs: null, maxMs: null, forecastMs: null });
+    const text = run('tick.mjs', [], dir, { json: false });
+    assert.match(text.stdout, /landing: 0 branch\(es\) ready to land; no gate time measured yet/);
+  });
+
+  await t.test('the shared gate time of a batch is split over its members, so a group of four reads as the per-landing cost it is and not as four slow landings', () => {
+    const at = (name, seconds) => {
+      const path = writeLandResult(dir, name, { ticket: name, ok: true, timing: seconds.timing });
+      utimesSync(path, seconds.mtime, seconds.mtime);
+    };
+    at('t-901', { mtime: 1000, timing: { gateMs: 60000, landingMs: 61000, sharedBy: 1 } });
+    at('t-902', { mtime: 2000, timing: { gateMs: 120000, landingMs: 121000, sharedBy: 2 } });
+    at('t-903', { mtime: 2000, timing: { gateMs: 120000, landingMs: 121000, sharedBy: 2 } });
+    at('t-904', { mtime: 3000, timing: { gateMs: 20000, landingMs: 21000, sharedBy: 1 } });
+    writeLandResult(dir, 't-905', { ticket: 't-905', ok: true, timing: null });
+    writeLandResult(dir, 't-906', '{ "ticket": "t-906", "timing": { "gateMs": 9');
+    writeLandResult(dir, 't-907', { ticket: 't-907', ok: true, timing: { gateMs: 'soon', sharedBy: 1 } });
+    landedTicket(dir, 'waiting-one', { files: 'src/w1.ts' });
+    landedTicket(dir, 'waiting-two', { files: 'src/w2.ts' });
+
+    const r = tick(dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.json.landing, {
+      ready: 2, measured: 4, lastMs: 20000, meanMs: 50000, maxMs: 60000, forecastMs: 100000,
+    });
+    const text = run('tick.mjs', [], dir, { json: false });
+    assert.match(text.stdout, /landing: 2 branch\(es\) ready to land; gate per landing: last 20s, mean 50s over 4 run\(s\), max 1m 0s; about 1m 40s if landed one after another/);
+  });
+
+  await t.test('status.mjs prints the same line, and holds nothing back because of it', () => {
+    const r = run('status.mjs', [], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const horde = (r.json.hordes || [r.json]).find((h) => h.name === 'mission1') || r.json;
+    assert.equal(horde.landing.measured, 4);
+    assert.equal(horde.landing.ready, 2);
+  });
 });

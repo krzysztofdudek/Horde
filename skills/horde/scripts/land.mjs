@@ -25,7 +25,7 @@
 // recorded where the landing was recorded. See "what became of a ticket after it landed" below.
 
 import {
-  existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync,
+  existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, statSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { execFileSync, execSync, spawn } from 'node:child_process';
@@ -2791,6 +2791,69 @@ function writeLandResult(horde, ticketId, result) {
   writeJSON(resultPath(horde, ticketId), result);
 }
 
+// ---- how loaded the landing gate is ------------------------------------------------------
+//
+// Landings are serial: one gate at a time, whatever the number of workers. Whoever runs the horde
+// sees the queue grow and a wave that does not move, and nothing says the gate is the reason. This
+// reads what the gate has already recorded about itself — each result file's own timing — and sets
+// it against the number of branches waiting for it. It measures and reports; it holds nothing back
+// and decides nothing, and it has no limit of its own to compare against: what counts as too long
+// is the director's call, made from these numbers.
+//
+// A batch runs its gate once for the whole group, so a member's share is the shared time over the
+// group size — otherwise a batch of four would be read as four slow landings instead of one.
+export function landingLoad(horde, items) {
+  const ready = (items || []).filter((i) => i.state === 'landed').length;
+  const dir = hordePath(horde, 'land');
+  const samples = [];
+  let names = [];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    names = [];
+  }
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    const result = readLandResult(horde, name.slice(0, -'.json'.length));
+    const timing = result && result.timing;
+    if (!timing || !Number.isFinite(timing.gateMs)) continue;
+    let at = 0;
+    try {
+      at = statSync(join(dir, name)).mtimeMs;
+    } catch {
+      continue;
+    }
+    samples.push({ at, ms: timing.gateMs / Math.max(1, Number(timing.sharedBy) || 1) });
+  }
+  if (!samples.length) return { ready, measured: 0, lastMs: null, meanMs: null, maxMs: null, forecastMs: null };
+  samples.sort((a, b) => a.at - b.at);
+  const all = samples.map((x) => x.ms);
+  const meanMs = Math.round(all.reduce((a, b) => a + b, 0) / all.length);
+  return {
+    ready,
+    measured: all.length,
+    lastMs: Math.round(all[all.length - 1]),
+    meanMs,
+    maxMs: Math.round(Math.max(...all)),
+    forecastMs: ready * meanMs,
+  };
+}
+
+export function formatDuration(ms) {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+export function landingLine(load) {
+  const waiting = `${load.ready} branch(es) ready to land`;
+  if (!load.measured) return `landing: ${waiting}; no gate time measured yet`;
+  const forecast = load.ready ? `; about ${formatDuration(load.forecastMs)} if landed one after another` : '';
+  return `landing: ${waiting}; gate per landing: last ${formatDuration(load.lastMs)}, mean ${formatDuration(load.meanMs)} over ${load.measured} run(s), max ${formatDuration(load.maxMs)}${forecast}`;
+}
+
 // ---- what became of a ticket after it landed ---------------------------------------------
 //
 // A landing was the end of the record and is not the end of the story. Two things happen to merged
@@ -3145,7 +3208,12 @@ function runSharedGate(cfg, level, worktreePath, addedFiles) {
 // always is) and hands back the same shape a single-ticket run's own result carries. Never exits
 // the process — a batch keeps going whatever one member's own outcome was, so the exit code is the
 // whole batch's to decide, once, at the very end.
-function finishBatchMember(horde, ctx, outcome, provenanceInfo, flags, group, level, lockNotes) {
+// A batch member's share of the one shared gate run: how long that run took, and how many landings it served.
+function batchTiming(shared, group) {
+  return { gateMs: shared.gateMs ?? null, landingMs: null, sharedBy: group.members.length };
+}
+
+function finishBatchMember(horde, ctx, outcome, provenanceInfo, flags, group, level, lockNotes, timing = null) {
   const noEvidenceLayer = noEvidenceLayerNote(horde);
   const full = {
     ...withProvenance({
@@ -3159,6 +3227,7 @@ function finishBatchMember(horde, ctx, outcome, provenanceInfo, flags, group, le
       landed: outcome.landed,
       lock: lockNotes,
       size: ctx.size,
+      timing,
       noEvidenceLayer,
       level,
       parent: group.parentBranch,
@@ -3199,7 +3268,7 @@ function landBatchGreen(root, cfg, horde, level, group, provenanceInfo, shared, 
         note: `${ctx.branch} moved while this landing ran — every item above was measured at ${short(ctx.branchSha)} and the branch now stands at ${short(nowSha)}. Nothing was merged for this ticket; land it again`,
       });
       recordChanges(horde, ctx.ticketId, checks);
-      landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: false, checks, landed: null }, provenanceInfo, flags, group, level, lockNotes) });
+      landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: false, checks, landed: null }, provenanceInfo, flags, group, level, lockNotes, batchTiming(shared, group)) });
       continue;
     }
 
@@ -3207,7 +3276,7 @@ function landBatchGreen(root, cfg, horde, level, group, provenanceInfo, shared, 
     if (!merged.ok) {
       checks.push({ name: 'merge', ok: false, note: merged.note });
       recordChanges(horde, ctx.ticketId, checks);
-      landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: false, checks, landed: null }, provenanceInfo, flags, group, level, lockNotes) });
+      landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: false, checks, landed: null }, provenanceInfo, flags, group, level, lockNotes, batchTiming(shared, group)) });
       continue;
     }
 
@@ -3217,7 +3286,7 @@ function landBatchGreen(root, cfg, horde, level, group, provenanceInfo, shared, 
     appendLanded(ctx.issueDirPath, landed, group.parentBranch);
     ctx.screen.answersUsed.forEach((answer) => consumeAnswer(horde, answer, ctx.ticketId, ctx.branchSha));
     checks.push({ name: 'merge', ok: true, note: `${merged.note} — ${short(merged.sha)}` });
-    landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: true, checks, landed }, provenanceInfo, flags, group, level, lockNotes) });
+    landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: true, checks, landed }, provenanceInfo, flags, group, level, lockNotes, batchTiming(shared, group)) });
   }
   if (currentTip !== group.parentTip && shared.gate.cache) {
     recordGateCache(
@@ -3399,11 +3468,14 @@ function runMany(horde, root, cfg, tickets, level, noGate, flags) {
       }
       cleaner.add(lock.release);
       let shared;
+      const sharedStart = Date.now();
       try {
         shared = runSharedGate(cfg, level, combined.info.path, addedFiles);
       } finally {
         lock.release();
       }
+      // How long the shared gate took, once — every member's result carries it, marked as shared.
+      shared.gateMs = Date.now() - sharedStart;
       const sharedOk = shared.gate.ok && shared.graph.ok && shared.mapping.ok && shared.judge.ok;
       if (!sharedOk) {
         // Design: on red, do not bisect. Fall back to landing every member of this group on its
@@ -3432,6 +3504,7 @@ function runMany(horde, root, cfg, tickets, level, noGate, flags) {
 
 function run(horde, root, cfg, arg, level, noGate, flags) {
   const cleaner = makeCleaner();
+  const landingStart = Date.now();
   const found = findQueueItem(horde, arg);
   if (!found) fail(`no queue item names ${arg} — is the ticket tracked by queue.mjs?`);
   const { team, teamDir, item } = found;
@@ -3568,6 +3641,9 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     // Also on the cleaner, so a landing killed while holding it releases rather than leaving the
     // next one to work out that the pid is gone.
     cleaner.add(lock.release);
+    // How long the gate held the lock: the measurement a director reads to decide whether landings are
+    // what is slowing the mission (see landingLoad). Not taken when there was no gate to run.
+    const gateStart = Date.now();
     try {
       results.gate = checkGate(cfg, level, head.path, branchSha, noGate);
       results.graph = checkGraph(cfg, head.path, noGate);
@@ -3575,6 +3651,8 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     } finally {
       lock.release();
     }
+    const gateMs = noGate ? null : Date.now() - gateStart;
+    const timing = () => ({ gateMs, landingMs: Date.now() - landingStart, sharedBy: 1 });
     results.judge = checkJudge(cfg, ticketId, results.graph, noGate);
 
     const checks = CHECK_ORDER.map((name) => ({ name, ok: !!results[name].ok, note: results[name].note }));
@@ -3592,7 +3670,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
         checks.push({ name: 'merge', ok: false, note: merged.note });
         recordChanges(horde, ticketId, checks);
         return finish(horde, ticketId, {
-          ticket: ticketId, branch, sha: branchSha, ok: false, checks, pairs: [], brief: null, landed: null, lock: lockNotes, size,
+          ticket: ticketId, branch, sha: branchSha, ok: false, checks, pairs: [], brief: null, landed: null, lock: lockNotes, size, timing: timing(),
         }, head, flags, parent, level);
       }
       landed = { ticket: ticketId, sha: merged.sha, at: nowIso() };
@@ -3618,6 +3696,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       landed,
       lock: lockNotes,
       size,
+      timing: timing(),
     }, head, flags, parent, level);
   } finally {
     cleaner.runAll();
