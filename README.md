@@ -43,7 +43,7 @@ That's it.
 
 You and Horde write the charter together first: the goal, what's out of scope, and the evidence that proves it's done (tests, scenarios, nothing vaguer than that). Then it cuts the mission into territories — sets of whole components, sized so one agent can hold one and still have room to work — and spawns one **consultant** per territory, all at once. Each reads its own area and nothing else, and writes the tickets and the law it thinks the work has earned. Nothing any of them writes is dispatched yet: an **architect** rules the whole plan once, before anything starts — what's missing, what's buildable, what's circular, what's grown too big to be one piece.
 
-Workers pick up tickets, each in its own worktree, each against a locked spec. Nothing merges by hand: a nine-item checklist runs fresh on the branch itself, and the moment every item is green it makes the merge commit and moves on — new tests proven to fail without the change, the architecture rules read and satisfied, the diff kept inside what the ticket declared. After a wave, a **legislate** pass reads what that area's own work was refused for and writes the pattern down as a rule, so the next ticket in that area gets it enforced rather than repeated by hand.
+Workers pick up tickets, each in its own worktree, each against a locked spec. When a worker is done, a one-shot **review** reads that ticket's change once. It cannot approve anything — it names what is wrong or says nothing — and a serious finding sends the ticket back to a worker before anything else runs; whatever it wrote, the change still has to pass the checklist. Nothing merges by hand: a nine-item checklist runs fresh on the branch itself, and the moment every item is green it makes the merge commit and moves on — new tests proven to fail without the change, the architecture rules read and satisfied, the diff kept inside what the ticket declared. After a wave, a **legislate** pass reads what that area's own work was refused for and writes the pattern down as a rule, so the next ticket in that area gets it enforced rather than repeated by hand.
 
 You never read a diff. What comes to you: a worker that ran out of spec and stopped rather than guess, a request to weaken a rule, a change to the mission card itself. Everything else, the horde rules on itself and writes down why, so the next session picks it up cold from the files, not from your memory of the conversation. At the very end, a **retrospective** reads everything nobody read twice — every refusal, every note a worker left the next one — and sorts it into what the law could have said, what's worth one line in a component's own history, and what no rule will ever capture; that last list is yours to read, because it's the one thing the horde cannot learn on its own.
 
@@ -66,11 +66,11 @@ Three planes, two loops:
 ```
 INTENT   charter, evidence catalogue, asks           you and the director
 META     the graph: nodes, ports, contracts, rules   the architect, consultants, legislate
-CODE     worktrees, branches, tests, scenarios       workers
+CODE     worktrees, branches, tests, scenarios       workers, reviews
 ```
 
-Three functions carry the work, plus a one-shot review of the whole plan and the one client in the
-loop:
+Three functions carry the work, plus a one-shot review of the whole plan, a one-shot review of each
+ticket's change, and the one client in the loop:
 
 | Function | Model | Decides | Never |
 |---|---|---|---|
@@ -79,6 +79,7 @@ loop:
 | Work | the cheapest model that will pass the merge checklist | implementation detail, one ticket at a time | contracts, decisions, other branches |
 | Legislation | the territory's own class, once per territory per wave | which pattern the code has already earned as a rule | lowering a rule |
 | Architect (one-shot) | Opus, no node of its own | approves or vetoes graph changes, rules the whole plan once | implementation |
+| Review (one-shot) | the ticket's own class, once per ticket, before it lands | nothing — it names what is wrong or stays silent; a serious finding sends the ticket back before the merge checklist runs | approving anything: the checklist runs whatever it wrote |
 | Client | you | the mission, every answered ask, whether it ships | reviewing every diff |
 
 Every change belongs to exactly one ticket. Liveness is judged by files and branches, never by silence. And it never pushes: starting a mission is your consent to local commits on the horde's own branches, nothing more. The pull request, and the push, stay yours.

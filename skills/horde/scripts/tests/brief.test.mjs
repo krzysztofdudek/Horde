@@ -141,8 +141,8 @@ test('brief.mjs: steward, owner, verifier, auditor and counsel are gone — unkn
       const r = run('brief.mjs', [role, 'x', '--name', 'someone'], dir);
       assert.equal(r.code, 1, `${role} should be refused`);
       assert.match(r.stderr, /unknown role: /);
-      // The list is closed, and named in full: four roles and no fifth.
-      assert.match(r.stderr, /roles: worker, architect, legislate, retro\)/);
+      // The list is closed, and named in full: five roles and no sixth.
+      assert.match(r.stderr, /roles: worker, architect, legislate, retro, review\)/);
     }
   });
 });
@@ -384,6 +384,63 @@ test('brief.mjs legislate: one territory\'s own law, and nothing from anyone els
     assert.equal(wrong.code, 1);
     assert.match(wrong.stderr, /no such territory: nowhere/);
     assert.match(wrong.stderr, /edge, heart/);
+  });
+});
+
+// ---- review: the fifth role, and the one with nothing to approve with ------------------------
+//
+// One read of one ticket's change, raised by the loop after its worker and before its landing. The
+// brief carries what to read and where a finding goes, and no way to sign anything: the ticket goes
+// through the gate whatever the review writes, so a command that approved would be a lie.
+
+test('brief.mjs review: one ticket\'s change to read, the review law, and no command that approves', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
+  seedTicket(dir, 'mission1', 'trunk', '004', {
+    branch: 'mission1/t-004', worktree: '.horde/worktrees/mission1/t-004',
+  });
+
+  const r = run('brief.mjs', ['review', '004', '--name', 'r-004'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const { brief } = r.json;
+
+  await t.test('names the reviewer, the ticket, and the diff between the ticket\'s branch and its parent', () => {
+    assert.equal(r.json.role, 'review');
+    assert.equal(r.json.ticket, '004');
+    assert.match(brief, /You are \*\*r-004\*\*, reviewing ticket \*\*004 · Sample ticket\*\*, in node \*\*nodeA\*\*/);
+    assert.match(brief, /git diff mission1\/trunk\.\.\.mission1\/t-004/);
+    assert.match(brief, /node .*\/scripts\/node\.mjs show nodeA/);
+    assert.match(brief, /What this does\./, 'the ticket body is carried whole');
+    assert.match(brief, /report to \*\*main\*\*/);
+    assert.doesNotMatch(brief, /\{\{/);
+  });
+
+  await t.test('carries the review discipline whole, under "## Law"', () => {
+    assert.match(brief, /\n## Law\n/);
+    assert.match(brief, /### Findings with a severity/);
+    assert.match(brief, /#### Red flags — stop/);
+    assert.match(brief, /held to the \*\*review\*\* discipline/);
+  });
+
+  await t.test('no command in it approves, signs, lands or merges anything', () => {
+    const commands = brief.split('\n').filter((l) => /^\s*(node\s+\S*scripts\/\S+\.mjs|git)\s/.test(l));
+    assert.ok(commands.length >= 3, `expected the read commands and the law's own (${commands.join(' | ')})`);
+    const signing = commands.filter((l) => /approv|\bmerged?\b|\blanded\b|\bpush\b|--approve/i.test(l));
+    assert.deepEqual(signing, [], `a review brief offers a way to sign: ${signing.join(' | ')}`);
+  });
+
+  await t.test('the role\'s own text ends with the exact command that closes the review', () => {
+    const own = brief.slice(0, brief.indexOf('\n## Law\n')).trim();
+    assert.match(own, /\nnode \S+\/scripts\/tk\.mjs review-close 004 --by r-004\n```$/);
+  });
+
+  await t.test('a ticket with no branch yet is refused: there is no change to read', () => {
+    seedTicket(dir, 'mission1', 'trunk', '005', { branch: undefined, worktree: undefined });
+    const none = run('brief.mjs', ['review', '005', '--name', 'r-005'], dir);
+    assert.equal(none.code, 1);
+    assert.match(none.stderr, /no branch/);
   });
 });
 

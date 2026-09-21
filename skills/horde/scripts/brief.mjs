@@ -47,7 +47,7 @@ const PLUGIN_ROOT_TOKEN = /\$\{CLAUDE_PLUGIN_ROOT(?::-[^}]*)?\}/g;
 export function absolutizePluginRoot(text, root = SKILL_ROOT) {
   return text.replace(PLUGIN_ROOT_TOKEN, root);
 }
-const ROLES = ['worker', 'architect', 'legislate', 'retro'];
+const ROLES = ['worker', 'architect', 'legislate', 'retro', 'review'];
 
 // role → the disciplines its brief carries, in order. The texts live once, under
 // reference/discipline/; a role file names its disciplines and never repeats them. An entry may
@@ -68,6 +68,9 @@ const ROLE_LAW = {
   // weighing done one level up, so it gets the whole of that text rather than a section of it; and
   // the second half of the run is a measurement, which is verification's subject.
   retro: ['review', 'verification'],
+  // The one role that reads a ticket's diff is held to the discipline written for exactly that, whole:
+  // what each severity means, the shape a change request takes in the log, and the red flags.
+  review: ['review'],
 };
 
 const USAGE = `usage: brief.mjs <role> [args] --name <n> [--tree p] [--horde h] [--json] [--out <path>]
@@ -87,6 +90,11 @@ roles:
       ticket's log, sorted into the rules the law could have said, the taste that goes to a
       component's own log, and what the law will not express at all. Writes one classification
       file; retro.mjs turns it into the document.
+  review <ticket> --name <n>
+      one read of one ticket's change, after its worker and before its landing: the diff between
+      the ticket's branch and its parent, the ticket, and its nodes' rules. It has nothing to
+      approve with — it logs findings or nothing, and the ticket goes to the gate either way.
+      tick.mjs lists it once per ticket; a Critical or Important finding sends the ticket back.
 
 Every role's own graph read (repoRoot, the charter path, gate refusals, dead-rule lookups) runs
 against the tree --tree names; without it, cwd, same as an ordinary read anywhere else in this
@@ -97,7 +105,7 @@ queue.mjs plan/quality, tick.mjs, land.mjs and horde.mjs done already read it.
 Prints the rendered brief for the Agent tool's prompt, verbatim. Refuses — listing every unfilled
 placeholder — rather than print one with "{{…}}" left in it. A role held to a discipline gets it
 inline, under "## Law": worker (tdd, debugging), architect (framing's checklist), legislate (review),
-retro (review, verification). The consultant is held to framing's checklist too, spliced into its own
+retro (review, verification), review (review). The consultant is held to framing's checklist too, spliced into its own
 brief by refine.mjs directly — it is spawned off disk, never through this command.
 
 options: --json  --help  --out <path>  — write the rendered brief to <path> and print only its path
@@ -605,6 +613,53 @@ function cmdRetro(horde, cfg, flags) {
   }, flags);
 }
 
+// ---- review: one read of one ticket's change --------------------------------------------------
+//
+// The brief names the branch and the parent it is measured against, so what the reviewer reads is
+// exactly the diff the landing will merge — a stacked ticket's parent is its dependency's branch,
+// and reading against the team branch would show that dependency's work as this ticket's own. It
+// carries no worktree: the reviewer writes no code, and reads the change through git from wherever
+// --tree/--horde put it, like every role but the worker.
+function cmdReview(horde, cfg, positional, flags) {
+  const rawId = positional[0];
+  if (!rawId) fail('review requires <ticket>');
+  const name = requireName(flags);
+  const t = findTicket(horde, rawId);
+  if (!t) fail(`no such ticket: ${rawId}`);
+  if (!t.queueItem || !t.queueItem.branch) {
+    fail(`ticket ${rawId} has no branch yet, so there is no change to review — a review is raised once its worker's branch has landed work on it`);
+  }
+  // Same reading as cmdArchitect (issue 114): flags.horde, never the resolved horde parameter.
+  const info = resolveTree({ tree: flags.tree, horde: flags.horde });
+  const nodes = ticketNodes(t.issueText);
+  const parent = parentBranchOf(horde, t.team, t.queueItem, { cwd: info.path });
+  const vars = {
+    repoRoot: info.path,
+    name,
+    horde,
+    ticketId: t.id,
+    ticketTitle: ticketTitle(t.issueText),
+    node: nodes.join(', ') || null,
+    nodeShowCmd: nodes.length
+      ? nodes.map((n) => `node \${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs show ${n}`).join('\n')
+      : null,
+    branch: t.queueItem.branch,
+    parentBranch: parent.branch,
+    ticketBody: ticketBody(t.issueText),
+    reportsTo: reportsToFor('review', horde, { name }),
+  };
+  const brief = renderRole('review', vars);
+  emitBrief({
+    role: 'review',
+    ticket: t.id,
+    name,
+    brief,
+    tree: info.path,
+    branch: t.queueItem.branch,
+    parentBranch: parent.branch,
+  }, flags);
+}
+
 // ---- main -----------------------------------------------------------------------
 
 function main() {
@@ -623,6 +678,7 @@ function main() {
     case 'worker': return cmdWorker(horde, cfg, positional, flags);
     case 'legislate': return cmdLegislate(horde, cfg, positional, flags);
     case 'retro': return cmdRetro(horde, cfg, flags);
+    case 'review': return cmdReview(horde, cfg, positional, flags);
     default: fail(`unknown role: ${role}`);
   }
 }

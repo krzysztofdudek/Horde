@@ -15,7 +15,7 @@ INTENT     charter · rulings · evidence catalogue          director + the user
    │ "what must become true"                    ▲ asks, wave closes
 META       the graph: nodes · ports · rules · log          architect, consultants, legislate
    │ "how it must be built"                     ▲ drift: code the graph no longer describes
-CODE       worktrees · branches · tests · scenarios         workers
+CODE       worktrees · branches · tests · scenarios         workers, reviews
 ```
 
 The meta plane is the memory of the organisation, and it is Yggdrasil's:
@@ -54,10 +54,18 @@ architect's own, proposed when a ticket cannot be placed or a node has outgrown 
 
 ## Roles as functions of the graph
 
-Two roles that recur through a mission and three one-shots. Nothing else exists: the five-seat cast
+Two roles that recur through a mission and four one-shots. Nothing else exists: the five-seat cast
 this release started with — a per-branch coordinator, a per-node reviewer, a fresh-context
 reproducer, a periodic re-checker and an on-demand opinion-only seat — was removed outright, rather
 than kept alive behind a flag.
+
+The review is not that per-node reviewer come back. The seat held a node and signed what landed in
+it; a review holds nothing, reads one ticket's change once, and has no verb that signs. Its outputs
+are findings and one closing line that counts them. The gate waits for that line, or for the
+director's recorded skip, and is then asked either way; nothing downstream reads the closing line as
+a pass, so a review that skimmed can never make a change nobody read look safer than it is. What it
+can do is add friction: a Critical or Important finding sends the ticket back to `changes` before
+the gate, with a round counted exactly as a red gate counts one.
 
 | role | model | kind | holds | decides | never |
 |---|---|---|---|---|---|
@@ -65,6 +73,7 @@ than kept alive behind a flag.
 | architect | Opus, cross-cutting, no node | the director's subagent, one-shot, a fresh one per graph ruling | coherence of the whole graph | approves or vetoes graph changes; rules the whole plan once, before wave 1 | implementation |
 | worker | cheapest capable (Haiku with a checker, Sonnet with a spec) | the director's subagent, one per ticket | one ticket, one worktree, one branch | implementation detail | contracts, decisions, other branches |
 | consultant | the territory's own class | one-shot, one per territory, spawned by `refine.mjs` | one territory's own tickets and law proposals | what changes inside its territory | the boundary between territories |
+| review | the ticket's own class | one-shot, one per ticket, after its worker and before its first landing | one ticket's change, read once | nothing: its findings and a closing line that counts them — a Critical or Important finding sends the ticket back to `changes` before the gate | approving; being resumed |
 | legislate | the territory's own class | one-shot, one per territory, after a wave closes | that territory's own rules | which pattern the code has already earned as law | lowering a rule |
 | retro | Opus, once per mission | one-shot, at the very end | the whole mission's unread gate refusals and log remarks | rule / taste / inexpressible, for every one of them | writing the sentence the client reads |
 
@@ -95,6 +104,8 @@ graph — and reads nothing outside it:
 - worker: the ticket, the node's rules and ports, the evidence it must produce;
 - consultant: its own territory alone — its nodes' rules, ports and logs, and the charter cut to
   the evidence rows that are its own;
+- review: one ticket — its diff against the branch it lands on, its spec, and its nodes' rules and
+  ports;
 - legislate: its own territory's gate refusals and ticket logs, and the rules that reach nothing
   there;
 - retro: the whole mission's gate refusals and ticket-log remarks, on purpose — a refusal that hit
@@ -125,6 +136,9 @@ Agents are biased towards their own work, and no prompt fixes that. The structur
   in the neighbour, which surfaces at the next landing rather than staying a claim;
 - the merge checklist is the key: nine items, run fresh on the branch's own tip, and a change lands
   itself the moment every one is green — no second person's signature to collect;
+- a review reads every ticket's change once before that, and can only slow it down: it has no way to
+  approve, a Critical or Important finding sends the ticket back before the gate, and its closing
+  line says only that it happened and what it counted — the key stays the checklist's alone;
 - a rule may only be raised by whoever holds the territory it reaches, and only lowered by the
   client's own answered word — the landing gate refuses a branch that tries the other direction by
   itself, and refuses it the same way for the proof and the gates: a promise put back to planned, a
@@ -143,8 +157,9 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
    per territory, all at once, writing tickets and law as proposals; review, the architect ruling
    the whole plan once; frame, what the client is shown before the one "go".
 3. **Ticking** — `tick.mjs`, one run: reconcile what came back since the last run, land what is
-   ready, print the next dispatch list, and say when a wave is ready to close. Nothing lives between
-   runs.
+   ready — raising a ticket's one review before its first gate, and holding that gate until the
+   review logs its closing line or the director skips it — print the next dispatch list, and say when
+   a wave is ready to close. Nothing lives between runs.
 4. **Landing** — `land.mjs`, the nine-item checklist that merges a ticket branch itself the moment
    every item is green, or refuses naming the one that is not.
 5. **Closing** — `wave.mjs close`: the evidence catalogue's coverage, the quality index and its
@@ -337,10 +352,16 @@ the same call — see "batching" in `scripts/README.md` for the full shape.
 
 `tick.mjs` is a script; something drives it. There are two runners, and the loop's own four steps are
 the same under both. Under the default runner the driver is the session itself — your own turn calls
-`tick.mjs`, reads its dispatch list, and spawns each worker on it as a subagent of yours.
-`--runner external` drives the loop outside any agent altogether — a cron job, a script, whatever
-calls `tick.mjs`, which then starts one worker at a time itself from `config.runner.spawn` — so the
-loop survives a closed session, at the cost of nobody being there to answer an ask. That is the
-whole of the difference the two make: **who starts what the loop hands out**, never whether a
+`tick.mjs`, reads its dispatch list, and spawns each worker and each review on it as a subagent of
+yours. `--runner external` drives the loop outside any agent altogether — a cron job, a script,
+whatever calls `tick.mjs`, which then starts one worker at a time itself from `config.runner.spawn`
+— so the loop survives a closed session, at the cost of nobody being there to answer an ask. That is
+the whole of the difference the two make: **who starts what the loop hands out**, never whether a
 mission can run at all. Under `session`, tick never spawns — the caller does; under `external`,
-tick.mjs spawns each worker itself.
+tick.mjs spawns each worker itself, and each review from the same command.
+
+A review holds its ticket's gate the same way under both: until the ticket's log carries the
+review's closing line (`tk.mjs review-close`) or the director's skip with a reason (`tk.mjs
+review-skip`). There is no timer under either runner — a review that has not closed shows as
+waiting on every run, and deciding it never will is the director's call, made out loud and recorded.
+Anything the review logs after the line that ended it is not acted on.

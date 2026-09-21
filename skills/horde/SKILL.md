@@ -157,14 +157,14 @@ here, so every row of the catalogue stands on what it names itself and somebody 
 at that to know it holds. A mission with a suite behind it and a mission where every row is somebody
 going and looking read the same otherwise, and nobody should have to work out which one they are in.
 
-## Running the mission — two seats, three one-shots
+## Running the mission — two seats, four one-shots
 
-**worker** and **architect** are the only two seats that recur through a mission. Three one-shots do
-everything else: the **consultant** `refine.mjs` briefs per territory during refining, **legislate**,
-one pass over one territory that writes down the rules that territory's own work has been following
-by hand, and **retro**, one pass over the whole mission at its end. Nothing is filed by hand any
-more — refining files every ticket, through its consultants — so what is left for you to spawn is
-the agents that carry the plan out:
+**worker** and **architect** are the only two seats that recur through a mission. Four one-shots do
+everything else: the **consultant** `refine.mjs` briefs per territory during refining, **review**,
+one read of one ticket's change before it lands, **legislate**, one pass over one territory that
+writes down the rules that territory's own work has been following by hand, and **retro**, one pass
+over the whole mission at its end. Nothing is filed by hand any more — refining files every ticket,
+through its consultants — so what is left for you to spawn is the agents that carry the plan out:
 
 - Spawn the **architect** as your subagent (Opus, cross-cutting, no node of its own;
   `brief.mjs architect --name <n>`), a fresh one for each graph ruling, starting at refining — it rebuilds its
@@ -176,6 +176,19 @@ the agents that carry the plan out:
   `tick.mjs`'s own dispatch list says which, in what order, and to which class. A
   worker that needs another round after `tk.mjs status NNN changes` is resumed the same way, or
   replaced one class up past `config.fixRounds`.
+- Spawn a **review** as a one-shot per ticket (`brief.mjs review NNN --name <n>`) when `tick.mjs`
+  lists it: once, after the ticket's worker and before its first landing, on the ticket's own class.
+  It has no way to approve anything. It logs its findings, if any, and always ends with one closing
+  line (`tk.mjs review-close NNN --by <n>`) that counts them. The ticket's gate waits for that line,
+  with no timer: until it is in the log, `tick.mjs` shows the ticket as `review-waiting` on every
+  run. A review that died or will not close is yours to skip, with the reason on record —
+  `tk.mjs review-skip NNN "<why>" --by main` — and nothing it logs after the skip is acted on. Once
+  the review has ended, the gate is asked whatever it found, except that a Critical or Important
+  finding sends the ticket back to `changes` first, counted as a round the way a red gate is; a
+  Minor one never sends it back. The closing line is not a pass and nothing reads it as one: a
+  closing line counting zero findings and one counting Minor findings reach the gate the same way.
+  A fix round gets no second review. It is not the per-node reviewer seat this skill removed —
+  nothing about it recurs.
 - Spawn **legislate** as a one-shot per territory (`brief.mjs legislate <territory> --name <n>`) after a wave
   closes, or whenever a worker's ticket log flags a pattern nothing enforces. It reads what its own
   territory's landings were refused for and writes the rule down, in its own branch, raising it on
@@ -212,7 +225,7 @@ text through it.
 
 **Who holds the Agent tool.** Everything in the cast is your own subagent, and you spawn all of it
 yourself: the architect, one per graph ruling; a worker, one per ticket; every one-shot — a
-consultant, legislate, retro — spoken to once and never resumed. A subagent is reachable and
+consultant, a review, legislate, retro — spoken to once and never resumed. A subagent is reachable and
 reclaimable by the agent that spawned it and by nobody else — that is you, for all of them. An
 architect is never resumed, only replaced; the fresh one rebuilds its context from the files.
 
@@ -220,7 +233,8 @@ architect is never resumed, only replaced; the fresh one rebuilds its context fr
 
 `tick.mjs` is the whole of "while the horde runs": one run, four things in order, then it exits —
 reconcile every `running` item against its actual branch, land what its result file already says is
-ready (calling `land.mjs` itself where a fresh check is needed), print the dispatch list at
+ready (raising a ticket's one review before its first gate, and calling `land.mjs` itself where a
+fresh check is needed), print the dispatch list at
 `config.parallelism`, and say when the queue holds nothing but `merged` items so you know to close
 the wave. Nothing lives between runs, because nothing has to: a run that starts cold reads the same
 state a run that never stopped would have. If the harness gives you a wake-up mechanism (a loop with
@@ -229,7 +243,7 @@ without one, the loop advances while the user is present, and you say so. `refer
 **Runner** section has the whole of who drives that loop and what changes when it runs outside a
 session altogether.
 
-You do: read what `tick.mjs` prints, spawn the workers it lists, relay open asks to the client and
+You do: read what `tick.mjs` prints, spawn the workers and the reviews it lists, relay open asks to the client and
 record their answers (`ask.mjs answer <id> "…"`), and close waves (`wave.mjs close`) when it says the
 queue is ready. You do not: merge by hand, run the test suite yourself to decide a ticket is done, or
 write a brief `brief.mjs` did not render.
@@ -354,9 +368,11 @@ would change it. Put that question to them and record the answer, and the ticket
   the mechanics (branches, worktrees, the `.horde/` tree, node leases, gates per level, the gate
   lock) and the runner (who calls `tick.mjs` and who spawns what it lists). Read once per session.
 - `reference/roles/*.md` — the briefs each role is spawned with (`brief.mjs` renders them with the
-  charter, the node context and the ticket filled in): `worker`, `architect`, `legislate`, `retro` —
-  a closed list of four. `legislate` is the one-shot that
-  writes one territory's law down: nobody needs permission to add a rule, only to take one away. The
+  charter, the node context and the ticket filled in): `worker`, `architect`, `legislate`, `retro`,
+  `review` — a closed list of five. `legislate` is the one-shot that
+  writes one territory's law down: nobody needs permission to add a rule, only to take one away.
+  `review` is the one-shot that reads one ticket's change before it lands, with nothing to approve
+  it with. The
   consultant `refine.mjs --step consult` spawns has no file here: it is briefed straight off disk by
   that tool, never through `brief.mjs`.
 - `reference/discipline/*.md` — the law each role is held to, written once and rendered into the
