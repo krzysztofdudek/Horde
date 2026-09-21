@@ -37,7 +37,7 @@ import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readText, readConfig, nowIso, fail, HordeError, parseArgs, emit,
   isMain, resolveHorde, git, resolveTree, withProvenance, provenanceLine, withQueueLock,
-  runMain, appendText, parseEvidenceRows, classUp,
+  runMain, appendText, parseEvidenceRows, classUp, processAlive,
 } from './_lib.mjs';
 import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine,
@@ -83,6 +83,12 @@ reason (tk.mjs review-skip). Then the gate is asked whatever the review found, e
 Critical or Important finding it logged before that line sends the ticket back to "changes" with a
 round counted, as a red gate does; a Minor one never does. The closing line only counts findings,
 and nothing reads it as a pass. A fix round goes to the gate with no second review.
+
+A gate this run starts is recorded on the queue item as {pid, sha, at}: a landing does its slow
+half (the revert test, the guards) before it takes the gate lock and writes no result until it is
+done, so nothing else on disk says the branch is being landed. While that process lives and the
+branch has not moved, a later run shows the ticket on "landed" as "gate-running" and does not ask
+again; a pid that is gone with no result is a landing that died, and is asked again.
 
 An open ask holds only what depends on its answer, and "held" says what each one held: "stop"
 everything — the dispatch list, every landing and the close — "stuck" that one ticket, "charter"
@@ -270,14 +276,14 @@ function startGate(horde, tickets, root) {
     const items = Array.isArray(parsed.items)
       ? parsed.items
       : [{
-        ticket: parsed.ticket, branch: parsed.branch, resultFile: parsed.resultFile || null, started: true, note: null,
+        ticket: parsed.ticket, branch: parsed.branch, resultFile: parsed.resultFile || null, pid: parsed.pid || null, started: true, note: null,
       }];
     const byTicket = new Map(items.map((it) => [String(it.ticket), it]));
     return tickets.map((t) => {
       const it = byTicket.get(String(t));
       return it
         ? {
-          ticket: t, started: !!it.started, resultFile: it.resultFile || null, note: it.note || null,
+          ticket: t, started: !!it.started, resultFile: it.resultFile || null, pid: it.pid || null, note: it.note || null,
         }
         : {
           ticket: t, started: false, resultFile: null, note: 'land.mjs did not report on this ticket',
@@ -341,6 +347,14 @@ function reviewedGateStep(horde, item) {
   const serious = said.findings.filter((f) => f.severities.some((s) => SENDS_BACK.has(s)));
   if (serious.length === 0) return { closeReview: true, end: said.end };
   return { sendBack: serious.map((f) => f.text).join(' · '), counted: said.status };
+}
+
+// The landing this item started and has not finished: its record names the sha it was started on, and
+// the process is still alive. A pid that is gone with no result written is a landing that died, which
+// is asked again like any other missing answer.
+function gateInFlight(item, tip) {
+  const g = item.gate;
+  return !!(g && g.sha === tip && Number.isInteger(g.pid) && g.pid > 0 && processAlive(g.pid));
 }
 
 function reviewWaitingNote(item) {
@@ -415,9 +429,22 @@ function landTheLanded(horde, cfg, root, holds) {
       const skipped = reviewed.end && reviewed.end.kind === 'skipped'
         ? `its review was skipped by ${reviewed.end.by} (${reviewed.end.reason}); `
         : '';
+      // A landing does its slow half — the revert test, the guards — before it takes the gate lock, and
+      // writes no result until it is done, so for all of that time nothing on disk says this branch is
+      // being landed. The run that started it left the pid on the item; while that process lives and the
+      // branch has not moved, asking again would be a second landing of the same commit.
+      if (gateInFlight(item, tip)) {
+        plan.push({
+          ticket: item.ticket,
+          action: 'gate-running',
+          note: `its gate is still running — started ${item.gate.at} as pid ${item.gate.pid} on ${tip}; asking again would land the same commit twice`,
+        });
+        continue;
+      }
       plan.push({
         ticket: item.ticket,
         action: 'gate',
+        sha: tip,
         closeReview: reviewed.closeReview,
         note: `${skipped}${result ? `the recorded result is about ${result.sha}, and ${item.branch} now stands at ${tip} — running the gate again` : `no readable gate result for ${item.branch} at ${tip} — running the gate`}`,
       });
@@ -435,7 +462,7 @@ function landTheLanded(horde, cfg, root, holds) {
   }
 
   // A review still open writes nothing and starts nothing: it is only said, every run, until it ends.
-  const results = plan.filter((s) => s.action === 'review-waiting')
+  const results = plan.filter((s) => s.action === 'review-waiting' || s.action === 'gate-running')
     .map((s) => ({ ticket: s.ticket, action: s.action, note: s.note }));
   const reviews = [];
   // The review's own record is written before anything is started, under the queue lock like every
@@ -487,6 +514,20 @@ function landTheLanded(horde, cfg, root, holds) {
   if (gateSteps.length) {
     const started = startGate(horde, gateSteps.map((s) => s.ticket), root);
     const byTicket = new Map(started.map((s) => [s.ticket, s]));
+    // Written before this run lets go of the gate lock, so the next run — which has to take that lock
+    // to start at all — always finds it.
+    const marked = started.filter((s) => s.started && s.pid);
+    if (marked.length) {
+      withQueueLock(horde, TEAM, () => {
+        const fresh = readQueue(horde);
+        for (const s of marked) {
+          const item = fresh.items.find((i) => i.ticket === s.ticket);
+          const step = gateSteps.find((g) => g.ticket === s.ticket);
+          if (item && step) item.gate = { pid: s.pid, sha: step.sha, at: nowIso() };
+        }
+        saveQueue(horde, TEAM, fresh);
+      });
+    }
     for (const step of gateSteps) {
       const s = byTicket.get(step.ticket);
       results.push({

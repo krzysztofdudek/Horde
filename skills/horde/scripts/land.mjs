@@ -3278,7 +3278,7 @@ function startBatchInBackground(horde, root, level, noGate, tickets) {
     child.unref();
     for (const r of resolved) {
       items.push({
-        ticket: r.ticket, branch: r.branch, resultFile: resultPath(horde, r.ticket), started: true, note: null,
+        ticket: r.ticket, branch: r.branch, resultFile: resultPath(horde, r.ticket), pid: child.pid || null, started: true, note: null,
       });
     }
   }
@@ -3625,6 +3625,11 @@ function finish(horde, ticketId, result, head, flags, parent, level) {
 // than the one being fixed. Reconcile settles *state* — queue rows and abandoned gate locks, which
 // are this repository's own files and mean exactly one thing; killing operating-system processes on
 // a guess is not the same authority, and it is not taken here.
+//
+// What it hands back is the result file's path and the pid of the process it started: the result
+// file is absent for the whole of a landing's slow, lock-free half (the revert test, the guards) and
+// the gate lock is not yet taken, so the pid is the one thing that tells a caller — tick — the
+// landing is going and not to ask for it twice.
 function startInBackground(horde, ticketId, argv) {
   const self = fileURLToPath(import.meta.url);
   const args = argv.filter((a) => a !== '--background');
@@ -3634,7 +3639,7 @@ function startInBackground(horde, ticketId, argv) {
     cwd: process.cwd(),
   });
   child.unref();
-  return resultPath(horde, ticketId);
+  return { path: resultPath(horde, ticketId), pid: child.pid || null };
 }
 
 function main() {
@@ -3694,9 +3699,9 @@ function main() {
       const found = findQueueItem(horde, arg);
       if (!found) fail(`no queue item names ${arg} — is the ticket tracked by queue.mjs?`);
       const ticketId = String(found.item.ticket);
-      const path = startInBackground(horde, ticketId, argv);
+      const { path, pid } = startInBackground(horde, ticketId, argv);
       emit(
-        { ticket: ticketId, branch: found.item.branch, resultFile: path, started: nowIso() },
+        { ticket: ticketId, branch: found.item.branch, resultFile: path, pid, started: nowIso() },
         flags,
         () => `land ${ticketId} started in the background — its result will be written to ${path}`,
       );

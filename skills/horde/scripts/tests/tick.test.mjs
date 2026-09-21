@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
-  existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, appendFileSync,
+  existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, appendFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -946,6 +946,53 @@ test('tick.mjs dispatch: two non-overlapping ready tickets share one gate run th
 
   const callCount = () => (existsSync(gateLog) ? readFileSync(gateLog, 'utf8').trim().split('\n').filter(Boolean).length : 0);
   assert.equal(callCount(), 1, 'one land.mjs call for the whole ready set shared one run of the repository\'s own gate command');
+});
+
+// A landing does its slow, lock-free half first — the revert test, the guards — and only then takes the gate
+// lock, so for however long that half runs there is no lock and no result to tell the next run the branch is
+// already being landed. The run that starts a gate records the pid of the process it started on the item, and
+// a later run does not ask for a gate the item says is still running.
+test('tick.mjs: a gate it started is recorded with the pid running it, and the next run does not ask for it again while that process lives', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const { id } = landedTicket(dir, 'gate-in-flight', { files: 'src/flight.ts' });
+  throughReview(dir, id);
+
+  const first = tick(dir);
+  assert.equal(first.code, 0, first.stderr);
+  assert.equal(first.json.landed.find((l) => l.ticket === id).action, 'gate');
+  const started = itemOf(dir, id);
+  const tip = git(['rev-parse', '--verify', started.branch], dir);
+  assert.ok(started.gate && Number.isInteger(started.gate.pid) && started.gate.pid > 0, `the item carries the pid of the run it started: ${JSON.stringify(started.gate)}`);
+  assert.equal(started.gate.sha, tip);
+
+  // Let that landing finish, then make the queue say it is still going: the result is gone and the pid is
+  // one that lives (this test's own).
+  const deadline = Date.now() + 60000;
+  while (!landResultExists(dir, id) && Date.now() < deadline) await new Promise((resolve) => { setTimeout(resolve, 100); });
+  assert.ok(landResultExists(dir, id), 'the landing wrote its result');
+  rmSync(join(dir, '.horde', 'hordes', 'mission1', 'land', `${id}.json`), { force: true });
+  const doc = readQueue(dir);
+  doc.items.find((i) => i.ticket === id).gate.pid = process.pid;
+  writeQueue(dir, doc);
+
+  const second = tick(dir);
+  assert.equal(second.code, 0, second.stderr);
+  const step = second.json.landed.find((l) => l.ticket === id);
+  assert.equal(step.action, 'gate-running', JSON.stringify(step));
+  assert.match(step.note, new RegExp(`pid ${process.pid}`));
+  assert.equal(landResultExists(dir, id), false, 'no second landing was started');
+
+  // The process that was landing it is gone and left no result: that is a landing that died, and the next
+  // run asks the gate again.
+  const gone = spawnSync(process.execPath, ['-e', '0']);
+  const dead = readQueue(dir);
+  dead.items.find((i) => i.ticket === id).gate.pid = gone.pid;
+  writeQueue(dir, dead);
+  const third = tick(dir);
+  assert.equal(third.code, 0, third.stderr);
+  assert.equal(third.json.landed.find((l) => l.ticket === id).action, 'gate');
 });
 
 test('tick.mjs: a queue.json caught half-written is refused by name and never written over', async (t) => {
