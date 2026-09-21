@@ -65,7 +65,9 @@ commands:
       worktree to read (default: this one).
   propose <kind> "<text>" --by <name> [--node n] [--boundary <glob>[,glob…]] [--horde h]
       kinds: new-node, move-boundary, rename, rule. move-boundary requires --node and --boundary
-      so apply can name the exact edit later, not just record that it happened.
+      so apply can name the exact edit later, not just record that it happened. A ticket on a node
+      that maps no code yet names an approved move-boundary in tk.mjs new/edit --boundary-proposal <id>:
+      it may declare files inside the proposal's globs, and land reads its scope from them.
   proposals [--open] [--horde h]
   approve <id> ["why"] --by <name> [--horde h]
   veto <id> ["why"] --by <name> [--horde h]
@@ -1652,6 +1654,41 @@ function nextGraphId(horde, graph) {
 // An item by the id it was given, however it was written: "g-004", "004" or "4". Returns the item
 // and the note to print when the caller wrote a bare number — accepted for one release, so nothing
 // filed before this stops being reachable.
+// ---- a ticket that stands on an approved boundary move -----------------------------------
+//
+// A node that maps no code yet cannot have a file declared under it: the boundary a declaration is
+// checked against is the node's mapping, and the mapping is what the work itself writes. Reading the
+// boundary off the branch would let a branch widen the very boundary it is judged by, so the way in
+// is the one the rules already have — a move-boundary proposal, approved by the architect. A ticket
+// that names one (`**Boundary proposal:** <id>`) may declare files inside its globs, and the landing
+// reads its scope from them. Both read the proposal from the horde's own record, never from a branch.
+export function ticketBoundaryProposal(text) {
+  const m = /^\*\*Boundary proposal:\*\*[ \t]*([^\s·][^\n·]*?)[ \t]*$/m.exec(text || '');
+  return m ? m[1] : '';
+}
+
+// The write side: refuses, naming why, anything that is not an approved move-boundary proposal for
+// one of the ticket's own nodes.
+export function approvedBoundaryProposal(horde, ref, nodes) {
+  const { item: p } = findGraphItem(loadGraph(horde).proposals, ref);
+  if (!p) fail(`--boundary-proposal ${ref}: this horde has no such proposal (node.mjs proposals lists them)`);
+  if (p.kind !== 'move-boundary') fail(`--boundary-proposal ${p.id}: that is a ${p.kind} proposal — only an approved move-boundary proposal moves a boundary`);
+  if (p.status !== 'approved') fail(`--boundary-proposal ${p.id}: it is ${p.status} — only one the architect has approved (node.mjs approve ${p.id}) moves a boundary; until then a file outside the node's mapping stays refused`);
+  if (!p.node || !nodes.includes(p.node)) fail(`--boundary-proposal ${p.id}: it moves the boundary of ${p.node || 'no node'}, and this ticket is on ${nodes.join(', ')}`);
+  if (!Array.isArray(p.boundary) || p.boundary.length === 0) fail(`--boundary-proposal ${p.id}: it carries no boundary globs to declare files in`);
+  return p;
+}
+
+// The read side, for scope: the globs of the approved proposal a ticket names, and nothing when it
+// names none — or one that no longer qualifies, which must never widen anything.
+export function proposalBoundaryOf(horde, text, nodes) {
+  const ref = ticketBoundaryProposal(text);
+  if (!ref) return [];
+  const { item: p } = findGraphItem(loadGraph(horde).proposals, ref);
+  if (!p || p.kind !== 'move-boundary' || p.status !== 'approved' || !p.node || !nodes.includes(p.node)) return [];
+  return Array.isArray(p.boundary) ? p.boundary : [];
+}
+
 function findGraphItem(items, ref) {
   const exact = items.find((x) => String(x.id) === String(ref));
   if (exact) return { item: exact, note: null };

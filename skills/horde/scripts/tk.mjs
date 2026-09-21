@@ -34,6 +34,7 @@ import {
 } from './_lib.mjs';
 import {
   ticketBoundary, pathInBoundary, portExists, nodeExists, nodeGraphPathPrefix,
+  approvedBoundaryProposal, proposalBoundaryOf,
 } from './node.mjs';
 // `queue.mjs` imports this file in turn. The cycle is the one this tool set already runs on (see
 // wave.mjs's own note): every binding on both sides is a hoisted function declaration and neither
@@ -113,7 +114,10 @@ commands:
       so the evidence it claimed is red again. It writes "**Reopens:** t-NNN" on the ticket, and
       refuses a number this horde has never filed.
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
-      the merge checklist refuses a diff that reaches past them). The log.md of every named node is
+      the merge checklist refuses a diff that reaches past them). --boundary-proposal <id> names an approved
+      move-boundary proposal (node.mjs propose/approve) for one of the ticket's nodes: the files may then
+      lie inside its globs, and the landing reads its scope from them, for a node that maps no code yet.
+      The log.md of every named node is
       written into the list for you, visibly, because the worker brief asks for a log entry there and a
       declared list replaces the node's boundary; yg-node.yaml is not, it carries the mapping and the
       rules, and takes an explicit edit --files. --consumes/--produces name the
@@ -157,7 +161,7 @@ commands:
       the director's call that a raised review will not close: "review skipped by <name> —
       <reason>". The reason is required. The gate is asked on the next tick.mjs run, and nothing
       the review logs after this line is acted on. Refuses a ticket with no review raised.
-  edit <ticket> --by <name> [--files a,b] [--consumes …] [--produces …] [--evidence E1,…]
+  edit <ticket> --by <name> [--files a,b] [--boundary-proposal <id>] [--consumes …] [--produces …] [--evidence E1,…]
       [--depends NNN,MMM] [--horde h]
       rewrites the body (everything from "## What" on) from stdin, leaving the header block —
       the id/title heading, Status, Node/Class/Severity/Team, Depends on/Branch, Reopens, Files,
@@ -544,11 +548,11 @@ function listFlag(value) {
 // is work on a node, and a file outside every one of its nodes belongs to somebody else's — the
 // node that would have to answer for it never sees this ticket. A node the graph does not know
 // contributes no boundary, and with no boundary at all there is nothing to check against.
-function checkFilesInBoundary(nodes, files) {
+function checkFilesInBoundary(nodes, files, moved = []) {
   if (files.length === 0) return;
   const cfg = readConfig() || {};
   const root = resolveTree({}).path;
-  const boundary = ticketBoundary(root, cfg, nodes);
+  const boundary = [...ticketBoundary(root, cfg, nodes), ...moved];
   if (boundary.length === 0) return;
   const outside = files.filter((f) => !pathInBoundary(f, boundary));
   if (outside.length) {
@@ -654,6 +658,7 @@ export function createTicket(horde, spec) {
     slug, title, nodes, cls, severity = 'medium', kind = 'work', quality = 'autonomous',
     team = 'trunk', evidence = [], files: fileList = [], consumes: consumesRaw,
     produces: producesRaw, depends = [], revertBase = null, mutate = null, reopens = null,
+    boundaryProposal = null,
   } = spec;
   if (!slug) fail('new requires <slug>');
   if (mutate && revertBase) {
@@ -708,7 +713,8 @@ export function createTicket(horde, spec) {
   const declared = listFlag(fileList);
   const consumes = parsePortList(consumesRaw, 'Consumes');
   const produces = parsePortList(producesRaw, 'Produces');
-  checkFilesInBoundary(nodes, declared);
+  const proposal = boundaryProposal ? approvedBoundaryProposal(horde, boundaryProposal, nodes) : null;
+  checkFilesInBoundary(nodes, declared, proposal ? proposal.boundary : []);
   const files = withNodeLogs(nodes, declared);
   checkConsumesHaveProducers(horde, consumes, null);
 
@@ -738,6 +744,7 @@ export function createTicket(horde, spec) {
     ...(revertBase ? { revertBase } : {}),
     ...(mutate ? { mutate } : {}),
   });
+  if (proposal) text = setHeaderField(text, 'Boundary proposal', proposal.id);
   if (acceptance.length) {
     text = text.replace('- [ ] …', acceptance.map((e) => `- [ ] ${e}`).join('\n'));
   }
@@ -784,6 +791,7 @@ function cmdNew(horde, positional, flags) {
     revertBase: flags['revert-base'] || null,
     mutate: flags.mutate || null,
     reopens: flags.reopens || null,
+    boundaryProposal: flags['boundary-proposal'] || null,
   });
   emit({
     id: created.id,
@@ -1099,6 +1107,7 @@ function readStdin() {
 // existed gains them where it can be read, rather than staying invisible to the plan forever.
 const FIELD_AFTER = {
   Files: 'Depends on',
+  'Boundary proposal': 'Files',
   Consumes: 'Files',
   Produces: 'Consumes',
   Evidence: 'Produces',
@@ -1143,7 +1152,7 @@ export function setTicketBody(horde, id, body, by) {
 function cmdEdit(horde, positional, flags) {
   const ticket = requireTicket(horde, positional[0]);
   if (!flags.by) fail('edit requires --by <name>');
-  const wantsFields = ['files', 'consumes', 'produces', 'evidence', 'depends'].some((k) => flags[k] !== undefined);
+  const wantsFields = ['files', 'consumes', 'produces', 'evidence', 'depends', 'boundary-proposal'].some((k) => flags[k] !== undefined);
 
   let text = ticket.text;
   const changed = [];
@@ -1158,9 +1167,14 @@ function cmdEdit(horde, positional, flags) {
   }
   if (wantsFields) {
     const nodes = nodesOf(text);
+    if (flags['boundary-proposal'] !== undefined) {
+      const proposal = approvedBoundaryProposal(horde, flags['boundary-proposal'], nodes);
+      text = setHeaderField(text, 'Boundary proposal', proposal.id);
+      changed.push(`boundary proposal: ${proposal.id} (${proposal.boundary.join(', ')})`);
+    }
     if (flags.files !== undefined) {
       const declared = listFlag(flags.files);
-      checkFilesInBoundary(nodes, declared);
+      checkFilesInBoundary(nodes, declared, proposalBoundaryOf(horde, text, nodes));
       const files = withNodeLogs(nodes, declared);
       text = setHeaderField(text, 'Files', files.length ? files.join(', ') : 'none');
       changed.push(`files: ${files.length ? files.join(', ') : 'none'}`);

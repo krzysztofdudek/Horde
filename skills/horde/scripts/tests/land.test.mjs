@@ -439,6 +439,35 @@ test('land.mjs: a diff outside the files the ticket declared is refused, and dec
   assert.equal(byName(ok).scope.ok, true);
 });
 
+test('land.mjs: a ticket that names an approved boundary move is judged against the moved boundary, and one that names an unapproved proposal is not', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: issue } = setupLandable(dir, '009', { mapping: ['feature-009.mjs'] });
+
+  const nameProposal = (id) => {
+    const path = join(issue, 'issue.md');
+    writeFileSync(path, readFileSync(path, 'utf8').replace(/^(\*\*Status:\*\*[^\n]*)$/m, `$1\n**Boundary proposal:** ${id}`));
+  };
+  const proposed = run('node.mjs', ['propose', 'move-boundary', 'the feature owns its tests too', '--by', 'owner', '--node', 'feature', '--boundary', 'feature-009.*'], dir);
+  assert.equal(proposed.code, 0, proposed.stderr);
+  nameProposal(proposed.json.id);
+
+  await t.test('an open proposal moves nothing', () => {
+    const r = run('land.mjs', [branch, '--no-gate'], dir);
+    assert.equal(r.code, 1);
+    assert.match(byName(r).scope.note, /outside boundary: feature-009\.test\.mjs/);
+  });
+
+  await t.test('once the architect approves it, the scope is read from its globs', () => {
+    const approved = run('node.mjs', ['approve', proposed.json.id, 'yes', '--by', 'architect'], dir);
+    assert.equal(approved.code, 0, approved.stderr);
+    const r = run('land.mjs', [branch, '--no-gate'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(byName(r).scope.ok, true);
+    assert.match(byName(r).scope.note, /diff inside node boundary/);
+  });
+});
+
 test('land.mjs: the revert test refuses when this repository\'s test convention is unknown', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

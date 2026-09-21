@@ -921,3 +921,67 @@ test('tk.mjs: a declared Files list carries the log.md of every node the ticket 
     assert.deepEqual(plan.hubFiles.filter((h) => h.file.endsWith('log.md')), []);
   });
 });
+
+test('tk.mjs: files in a node that maps no code yet are declared through an approved move-boundary proposal, and only through one', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'shiny', {});
+  addNode(dir, 'other', { mapping: ['src/other/**'] });
+  const propose = (kind, node, boundary) => {
+    const r = run('node.mjs', ['propose', kind, `${kind} for ${node}`, '--by', 'owner', '--node', node, ...(boundary ? ['--boundary', boundary] : [])], dir);
+    assert.equal(r.code, 0, r.stderr);
+    return r.json.id;
+  };
+  const approve = (id) => assert.equal(run('node.mjs', ['approve', id, 'yes', '--by', 'architect'], dir).code, 0);
+  const newTicket = (slug, args) => run('tk.mjs', ['new', slug, '--title', slug, '--class', 'standard', '--evidence', 'it works', ...args], dir);
+  const filesOf = (id) => /\*\*Files:\*\* ([^\n·]*)/.exec(run('tk.mjs', ['show', id], dir).json.text)[1].trim();
+
+  await t.test('without a proposal the declaration is refused, as before', () => {
+    const r = newTicket('bare', ['--node', 'shiny', '--files', 'src/shiny/a.ts']);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /outside the boundary of shiny/);
+  });
+
+  await t.test('an open proposal is refused by name', () => {
+    const open = propose('move-boundary', 'shiny', 'src/shiny/**');
+    const r = newTicket('open-one', ['--node', 'shiny', '--files', 'src/shiny/a.ts', '--boundary-proposal', open]);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, new RegExp(`${open}: it is open — only one the architect has approved`));
+  });
+
+  await t.test('a proposal of another kind, or for another node, is refused', () => {
+    const rule = propose('rule', 'shiny');
+    const wrongKind = newTicket('wrong-kind', ['--node', 'shiny', '--files', 'src/shiny/a.ts', '--boundary-proposal', rule]);
+    assert.equal(wrongKind.code, 1);
+    assert.match(wrongKind.stderr, /only an approved move-boundary proposal moves a boundary/);
+    const elsewhere = propose('move-boundary', 'other', 'src/other/**,src/shiny/**');
+    approve(elsewhere);
+    const wrongNode = newTicket('wrong-node', ['--node', 'shiny', '--files', 'src/shiny/a.ts', '--boundary-proposal', elsewhere]);
+    assert.equal(wrongNode.code, 1);
+    assert.match(wrongNode.stderr, /moves the boundary of other, and this ticket is on shiny/);
+  });
+
+  await t.test('an approved one lets the ticket declare files inside its globs, records the proposal, and still refuses a file outside them', () => {
+    const ok = propose('move-boundary', 'shiny', 'src/shiny/**');
+    approve(ok);
+    const r = newTicket('allowed', ['--node', 'shiny', '--files', 'src/shiny/a.ts', '--boundary-proposal', ok]);
+    assert.equal(r.code, 0, r.stderr);
+    const text = run('tk.mjs', ['show', r.json.id], dir).json.text;
+    assert.match(text, new RegExp(`\\*\\*Boundary proposal:\\*\\* ${ok}`));
+    assert.match(filesOf(r.json.id), /^src\/shiny\/a\.ts, \.yggdrasil\/model\/shiny\/log\.md$/);
+    const outside = newTicket('outside', ['--node', 'shiny', '--files', 'src/elsewhere/x.ts', '--boundary-proposal', ok]);
+    assert.equal(outside.code, 1);
+    assert.match(outside.stderr, /outside the boundary of shiny/);
+
+    const later = newTicket('later', ['--node', 'shiny']);
+    assert.equal(later.code, 0, later.stderr);
+    const refused = run('tk.mjs', ['edit', later.json.id, '--by', 'owner', '--files', 'src/shiny/b.ts'], dir);
+    assert.equal(refused.code, 1, 'a ticket that names no proposal gets nothing from one');
+    const named = run('tk.mjs', ['edit', later.json.id, '--by', 'owner', '--boundary-proposal', ok, '--files', 'src/shiny/b.ts'], dir);
+    assert.equal(named.code, 0, named.stderr);
+    assert.match(run('tk.mjs', ['show', later.json.id, '--log'], dir).json.log, new RegExp(`boundary proposal: ${ok} \\(src/shiny/\\*\\*\\) — changed by owner`));
+    const again = run('tk.mjs', ['edit', later.json.id, '--by', 'owner', '--files', 'src/shiny/c.ts'], dir);
+    assert.equal(again.code, 0, 'and once named, later edits of the files use it too');
+  });
+});
