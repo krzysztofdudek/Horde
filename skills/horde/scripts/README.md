@@ -299,7 +299,7 @@ earning no row at all claims nothing — neither is a mismatch.
   `**Produces:**` that port exactly like a hand-written `**Depends on:**` or `dep`, so a consumer of
   a port whose producer has not merged yet is not ready even with no manual edge between the two,
   and `--why` names the producer and the port it is still waiting on. A ticket declaring
-  `**Files:**` collides only on an overlapping path or glob; a ticket with none (or a `running` item whose ticket can no longer be read) locks
+  `**Files:**` (a node's `log.md`, which `tk.mjs` writes into every declared list, is not counted — it would lock every ticket of a node against every other and make the node's log a "hub file") collides only on an overlapping path or glob; a ticket with none (or a `running` item whose ticket can no longer be read) locks
   every file of every node it names instead — the safe degradation for a ticket that never said
   which files it touches. Ranked: a `prototype`-kind ticket (`tk.mjs new --kind prototype`) always
   first and a `quality`-kind one (`tk.mjs new --kind quality`) always

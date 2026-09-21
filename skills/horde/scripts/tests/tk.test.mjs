@@ -573,9 +573,9 @@ test('tk.mjs: Files, Consumes, Produces and Evidence on the ticket', async (t) =
     const r = run('tk.mjs', ['edit', consumer, '--by', 'owner-api', '--files', 'src/api/guard.ts,src/api/guard.test.ts'], dir);
     assert.equal(r.code, 0, r.stderr);
     const text = run('tk.mjs', ['show', consumer], dir).json.text;
-    assert.match(text, /\*\*Files:\*\* src\/api\/guard\.ts, src\/api\/guard\.test\.ts/);
+    assert.match(text, /\*\*Files:\*\* src\/api\/guard\.ts, src\/api\/guard\.test\.ts, \.yggdrasil\/model\/api\/log\.md/, 'the node\'s own log.md is in the list, visibly');
     const log = run('tk.mjs', ['show', consumer, '--log'], dir).json.log;
-    assert.match(log, /files: src\/api\/guard\.ts, src\/api\/guard\.test\.ts — changed by owner-api/);
+    assert.match(log, /files: src\/api\/guard\.ts, src\/api\/guard\.test\.ts, \.yggdrasil\/model\/api\/log\.md — changed by owner-api/);
   });
 
   await t.test('edit --files refuses a path outside the boundary, and changes nothing', () => {
@@ -870,4 +870,54 @@ test('allocateId: N parallel ticket/ask/proposal filings each get a distinct num
     `${numbers.length - distinct.size} of ${numbers.length} parallel ticket/ask/proposal filings collided on the `
       + `same shared-counter number: ${[...numbers].sort((a, b) => a - b).join(', ')}`,
   );
+});
+
+test('tk.mjs: a declared Files list carries the log.md of every node the ticket names, and only that file of the graph', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'core', { mapping: ['src/core/**'] });
+  addNode(dir, 'web', { mapping: ['src/web/**'] });
+  const filesOf = (id) => /\*\*Files:\*\* ([^\n·]*)/.exec(run('tk.mjs', ['show', id], dir).json.text)[1].trim();
+  const fresh = (slug, args) => {
+    const r = run('tk.mjs', ['new', slug, '--title', slug, '--class', 'standard', '--evidence', 'it works', ...args], dir);
+    assert.equal(r.code, 0, r.stderr);
+    return r.json.id;
+  };
+
+  await t.test('new: the log of each named node, after the declared files, visible in the ticket', () => {
+    const id = fresh('two-nodes', ['--node', 'core', '--node', 'web', '--files', 'src/core/a.ts,src/web/b.ts']);
+    assert.equal(filesOf(id), 'src/core/a.ts, src/web/b.ts, .yggdrasil/model/core/log.md, .yggdrasil/model/web/log.md');
+  });
+
+  await t.test('a log already declared is not added twice, and yg-node.yaml is never added', () => {
+    const id = fresh('has-log', ['--node', 'core', '--files', 'src/core/a.ts,.yggdrasil/model/core/log.md']);
+    assert.equal(filesOf(id), 'src/core/a.ts, .yggdrasil/model/core/log.md');
+    assert.doesNotMatch(filesOf(id), /yg-node\.yaml/);
+  });
+
+  await t.test('a ticket with no Files stays with none — its scope is the node already', () => {
+    const id = fresh('no-files', ['--node', 'core']);
+    assert.equal(filesOf(id), 'none');
+  });
+
+  await t.test('edit --files does the same, and yg-node.yaml still takes an explicit edit', () => {
+    const id = fresh('edited', ['--node', 'core', '--files', 'src/core/a.ts']);
+    const r = run('tk.mjs', ['edit', id, '--by', 'owner', '--files', 'src/core/a.ts,src/core/b.ts'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(filesOf(id), 'src/core/a.ts, src/core/b.ts, .yggdrasil/model/core/log.md');
+    const wider = run('tk.mjs', ['edit', id, '--by', 'owner', '--files', 'src/core/a.ts,.yggdrasil/model/core/yg-node.yaml'], dir);
+    assert.equal(wider.code, 0, wider.stderr);
+    assert.equal(filesOf(id), 'src/core/a.ts, .yggdrasil/model/core/yg-node.yaml, .yggdrasil/model/core/log.md');
+  });
+
+  await t.test('the shared log is no reason for tickets of one node to lock each other or to be called a hub', () => {
+    const ids = ['x', 'y', 'z'].map((n) => fresh(`shares-${n}`, ['--node', 'web', '--files', `src/web/${n}.ts`]));
+    for (const id of ids) assert.match(filesOf(id), /\.yggdrasil\/model\/web\/log\.md$/);
+    for (const id of ids) run('queue.mjs', ['add', id], dir);
+    const plan = run('queue.mjs', ['plan'], dir).json;
+    const mine = (c) => c.tickets.some((tk) => ids.includes(tk));
+    assert.deepEqual(plan.lockConflicts.filter(mine), []);
+    assert.deepEqual(plan.hubFiles.filter((h) => h.file.endsWith('log.md')), []);
+  });
 });

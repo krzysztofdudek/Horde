@@ -33,7 +33,7 @@ import {
   runMain,
 } from './_lib.mjs';
 import {
-  ticketBoundary, pathInBoundary, portExists,
+  ticketBoundary, pathInBoundary, portExists, nodeExists, nodeGraphPathPrefix,
 } from './node.mjs';
 // `queue.mjs` imports this file in turn. The cycle is the one this tool set already runs on (see
 // wave.mjs's own note): every binding on both sides is a hoisted function declaration and neither
@@ -113,7 +113,10 @@ commands:
       so the evidence it claimed is red again. It writes "**Reopens:** t-NNN" on the ticket, and
       refuses a number this horde has never filed.
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
-      the merge checklist refuses a diff that reaches past them). --consumes/--produces name the
+      the merge checklist refuses a diff that reaches past them). The `log.md` of every named node is
+      written into the list for you, visibly, because the worker brief asks for a log entry there and a
+      declared list replaces the node's boundary; `yg-node.yaml` is not, it carries the mapping and the
+      rules, and takes an explicit `edit --files`. --consumes/--produces name the
       ports the ticket needs and delivers, as <node>/<port>; a consumed port with no producing
       ticket and no such port in the graph is refused. Boundary and port existence are both read
       from the graph in the tree this command runs from (cwd) — --horde here only picks which
@@ -243,6 +246,14 @@ function listField(text, label) {
 }
 
 export function ticketFiles(text) { return listField(text, 'Files'); }
+
+// A node's own decision log. `tk new` and `edit --files` write it into every declared list (see
+// withNodeLogs), so it is in every ticket of a node and says nothing about which ticket touches what:
+// counting it as a file two tickets share would lock every pair of tickets on a node against each
+// other and make it a "hub file" of the whole node. The landing's scope check reads the full list;
+// the plan and the file locks read this one.
+const NODE_LOG_FILE = /^\.yggdrasil\/model\/(?:.+\/)?log\.md$/;
+export function ticketWorkFiles(text) { return ticketFiles(text).filter((f) => !NODE_LOG_FILE.test(f)); }
 
 export function ticketEvidence(text) { return listField(text, 'Evidence'); }
 
@@ -545,6 +556,20 @@ function checkFilesInBoundary(nodes, files) {
   }
 }
 
+// A ticket that declares Files replaces its node's boundary — graph files included — as its scope, and
+// the brief tells the worker to log its decisions in the node's own `log.md`. So a declared list would
+// refuse the very entry the brief asks for, at the landing, after the work is done. The `log.md` of
+// every node the ticket names is therefore written into the list, where the ticket shows it. The
+// node's `yg-node.yaml` is not: it carries the mapping and the rules, so widening the scope to it is a
+// decision, made with an explicit `edit --files`. A node the graph does not know has no log to add.
+function withNodeLogs(nodes, files) {
+  if (files.length === 0) return files;
+  const cfg = readConfig() || {};
+  const root = resolveTree({}).path;
+  const logs = nodes.filter((n) => nodeExists(root, cfg, n)).map((n) => `${nodeGraphPathPrefix(root, cfg, n)}log.md`);
+  return [...files, ...logs.filter((l) => !files.includes(l))];
+}
+
 function parsePortList(raw, label) {
   return listFlag(raw).map((entry) => {
     if (/@\d+$/.test(entry.trim())) {
@@ -680,10 +705,11 @@ export function createTicket(horde, spec) {
     reopensRef = `t-${reopened.id}`;
   }
 
-  const files = listFlag(fileList);
+  const declared = listFlag(fileList);
   const consumes = parsePortList(consumesRaw, 'Consumes');
   const produces = parsePortList(producesRaw, 'Produces');
-  checkFilesInBoundary(nodes, files);
+  checkFilesInBoundary(nodes, declared);
+  const files = withNodeLogs(nodes, declared);
   checkConsumesHaveProducers(horde, consumes, null);
 
   const allocated = allocateId(horde, 'ticket');
@@ -1133,8 +1159,9 @@ function cmdEdit(horde, positional, flags) {
   if (wantsFields) {
     const nodes = nodesOf(text);
     if (flags.files !== undefined) {
-      const files = listFlag(flags.files);
-      checkFilesInBoundary(nodes, files);
+      const declared = listFlag(flags.files);
+      checkFilesInBoundary(nodes, declared);
+      const files = withNodeLogs(nodes, declared);
       text = setHeaderField(text, 'Files', files.length ? files.join(', ') : 'none');
       changed.push(`files: ${files.length ? files.join(', ') : 'none'}`);
     }
