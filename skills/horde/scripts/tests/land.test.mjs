@@ -960,6 +960,36 @@ test('land.mjs revert test via gates.commit: the mutation variant runs its contr
   assert.match(git(['show', `${branch}:feature-084.mjs`], dir), /a \+ b/);
 });
 
+// A runner that works off the index — a pre-commit hook, lint-staged, anything asking `git diff --cached` — exits
+// 0 when nothing is staged, so a test file that is only sitting in the working tree looks like a green run that
+// proves nothing, and every real test is refused as "not load-bearing". The revert test puts the file in the
+// index in the same move that puts it in the tree, and takes it out of both together.
+const STAGED_SPEC_LANE = `git diff --cached --name-only | grep -q '[.]test[.]json$' && exit 1; exit 0`;
+
+test('land.mjs revert test via gates.commit: the test file is in the index when gates.commit runs, so a runner that works off the index sees it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupSpecTicket(dir, '046', { spec: { pass: true }, commit: STAGED_SPEC_LANE });
+
+  const item = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(item.ok, true, item.note);
+  assert.match(item.note, /feature-046\.test\.json: gates\.commit red with it in place, green on the base without it/);
+  assert.deepEqual(scratchDirs(dir), []);
+});
+
+test('land.mjs revert test via gates.commit: the mutation variant stages the ticket\'s change too, and its control run has the test files out of the index as well as the tree', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: dst } = setupSpecTicket(dir, '046', { spec: { pass: true }, commit: STAGED_SPEC_LANE });
+  addMutateField(dst, "node -e \"require('fs').writeFileSync('scratch-note.txt', 'mutated')\"");
+
+  const item = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(item.ok, true, item.note);
+  assert.match(item.note, /^mutate `node -e/);
+  assert.match(item.note, /feature-046\.test\.json: gates\.commit red with it in place, green on the mutated tree without it/);
+  assert.deepEqual(scratchDirs(dir), []);
+});
+
 test('land.mjs: the journal item fails when no log entry is newer than the last commit', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

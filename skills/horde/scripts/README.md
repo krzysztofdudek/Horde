@@ -1671,6 +1671,12 @@ file is anywhere near it — a test nobody touched failing, an environment that 
 runner can skip a file it cannot load and still exit 0. So the fallback never reads the exit code
 alone:
 
+- **The index goes with the tree.** Each of the ticket's test files is added to the scratch tree's index
+  the moment it is written there and taken out of it the moment it is removed, so a runner that works
+  off the index (a pre-commit hook, lint-staged, anything asking `git diff --cached`) finds the file
+  instead of exiting 0 over an empty index. In the mutation variant the scratch tree is the branch's own
+  tip, which is committed, so its HEAD is moved back to where the ticket began and the whole change
+  sits in the index; the mutation itself stays in the working tree.
 - **A control run first.** `gates.commit` runs once on the same tree holding none of the ticket's own
   test files: the base exactly as it stands (a changed file's base version included) for the
   revert-to-base variant, the mutated tree with them taken out for the mutation one. Red or stopped
