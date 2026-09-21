@@ -492,14 +492,22 @@ function runNodeTestFile(tmp, relPath, cfg) {
 // what the tree held there before, in the same shape, so the same call puts it back. Every file the
 // revert test puts into a tree or takes out of one goes through here, so anything a runner needs
 // done around that has one place to go.
+//
+// The index goes with the tree. A runner that works off the index — a pre-commit hook, lint-staged,
+// anything asking `git diff --cached` — finds nothing to run when a file is only sitting in the
+// working tree and exits 0, which reads as a green run that proves nothing and refuses every real
+// test as "not load-bearing". So the file is added to the index the moment it is written, and taken
+// out of it the moment it is removed, exactly as the tree says.
 function setTestFile(tmp, relPath, content) {
   const abs = join(tmp, relPath);
   const before = existsSync(abs) ? readFileSync(abs) : null;
   if (content === null) {
     rmSync(abs, { force: true });
+    git(['rm', '-q', '--cached', '--ignore-unmatch', '--', relPath], tmp);
   } else {
     mkdirSync(dirname(abs), { recursive: true });
     writeFileSync(abs, content);
+    git(['add', '-f', '--', relPath], tmp);
   }
   return before;
 }
@@ -690,13 +698,19 @@ function runRevertToBaseVariant(root, cfg, branch, parentBranch, base, newTestFi
 // as "no mutation happened, so of course the tests are still green" — a mutate command naming the
 // wrong path or a syntax the shell can't run is an authoring error worth surfacing by name, not a
 // red the tests happened to produce on their own.
-function runMutateVariant(root, cfg, branch, mutate, newTestFiles) {
+function runMutateVariant(root, cfg, branch, parentBranch, mutate, newTestFiles) {
   const branchSha = git(['rev-parse', '--verify', `${branch}^{commit}`]);
   if (!branchSha) return { ok: false, note: `branch not found: ${branch}` };
 
   const info = resolveTree({ scratch: branchSha }, { cwd: root });
   const tmp = info.path;
   try {
+    // The tree is the branch's own tip, so a runner that works off the index would find nothing
+    // staged — the tip is committed. HEAD goes back to where the ticket began and the index stays at
+    // the tip: the ticket's whole change is staged, as it would be one commit before it lands, and the
+    // working tree (the mutation goes there) is untouched.
+    const forkPoint = git(['merge-base', parentBranch, branchSha], root);
+    if (forkPoint) git(['reset', '-q', '--soft', forkPoint], tmp);
     try {
       execSync(mutate, { cwd: tmp, stdio: 'pipe', timeout: gateTimeout(cfg) });
     } catch (e) {
@@ -806,7 +820,7 @@ function checkRevertTest(horde, root, cfg, branch, parentBranch, files, issueTex
     };
   }
 
-  if (mutate) return runMutateVariant(root, cfg, branch, mutate, newTestFiles);
+  if (mutate) return runMutateVariant(root, cfg, branch, parentBranch, mutate, newTestFiles);
   return runRevertToBaseVariant(root, cfg, branch, parentBranch, explicitBase || parentBranch, newTestFiles);
 }
 
