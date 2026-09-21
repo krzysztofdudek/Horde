@@ -526,8 +526,10 @@ function setTestFile(tmp, relPath, content) {
 //   attribute at least one failing case to the file for a red to count — a red with none of the
 //   file's own cases failing came from somewhere else — and a produced report that cannot be read is
 //   "no verdict". Not produced (or not configured, or configured where no file can be looked for),
-//   the control-run rule alone decides, and the result says no report was available. A configured
-//   report therefore never refuses a run the same repository without one would pass.
+//   the control-run rule alone decides, and the result says no report was available. A report
+//   configured for the landing gate and not written here therefore never refuses a run the same
+//   repository without one would pass; only a report this run wrote can add a refusal, by showing
+//   that a red was not the file's own or by being unreadable.
 // - Green is never proof. With a produced report showing every case from the file ran and passed,
 //   it is the one "not load-bearing" verdict there is. With nothing from the file in that report it
 //   is a file the runner never ran, and with no report available it cannot tell those two apart:

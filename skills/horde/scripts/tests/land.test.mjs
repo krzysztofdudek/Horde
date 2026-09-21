@@ -862,8 +862,8 @@ test('land.mjs revert test via gates.commit: red with the file and green without
   assert.match(produced.note, /feature-082\.test\.json: gates\.commit red with it in place, green on the base without it, and 1 failing case\(s\) from it in reports\/specs\.xml \("feature-082\.test\.json"\)/);
 
   // Configured and not produced: the same proof the unconfigured repository gets, and the note says
-  // the report was not available — a configured report never refuses what the same repository
-  // without one would pass.
+  // the report was not available — a report the run did not write never refuses what the same
+  // repository without one would pass.
   run('horde.mjs', ['config', 'set', 'gates.commit', 'node run-specs.mjs'], dir);
   const notProduced = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
   assert.equal(notProduced.ok, true, notProduced.note);

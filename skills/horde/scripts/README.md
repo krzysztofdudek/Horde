@@ -1620,8 +1620,10 @@ alone:
   verdict"; a produced report that cannot be read (not the configured format, or a format nothing
   here reads) is "no verdict" too. When it is not there — or no report is configured, or the
   configured path is one nothing may look at — the control-run rule alone decides, and the result
-  says "no report was available" and why. Configuring a report therefore never refuses a run that
-  the same repository without one would pass.
+  says "no report was available" and why. A report configured for the landing gate that `gates.commit`
+  does not write therefore never refuses a run that the same repository without one would pass; only
+  a report the run wrote can add a refusal, by showing that the red was not the file's own or by being
+  unreadable.
 - **Green is never proof.** "Not load-bearing" is said only when a produced report shows every case
   from the file ran and passed on that tree. Green with nothing from the file in that report is a file
   the runner never ran; any case from it skipped is a file that did not fully run; green with no
