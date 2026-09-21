@@ -733,11 +733,11 @@ test('tick.mjs review: nothing reads a review\'s approval — a closing line wit
     assert.equal(outcome(signingOpen).action, 'review-waiting');
   });
 
-  // A review line reads "review: <node> <verb> by <who>". The one script that still parses an
-  // "approve" verb out of that shape is drill.mjs, over logs a pre-6.0.0 mission left behind, and only
-  // to count that a review was recorded at all — it moves no ticket and lands nothing. Any other
-  // script reading one is a code path that trusts a signature, which is what this role must never have.
-  await t.test('no script but the drill over old logs parses an approval out of a review line', () => {
+  // A review line reads "review: <node> <verb> by <who>". No script parses an "approve" verb out of
+  // that shape: a script that did would be a code path that trusts a signature, which is what this
+  // role must never have. (drill.mjs was the last one, over logs a pre-6.0.0 mission left behind, and
+  // stopped reading it in issue 074.)
+  await t.test('no script parses an approval out of a review line', () => {
     const readers = [];
     for (const file of readdirSync(SCRIPTS_DIR).filter((n) => n.endsWith('.mjs'))) {
       readFileSync(join(SCRIPTS_DIR, file), 'utf8').split('\n').forEach((line) => {
@@ -746,7 +746,7 @@ test('tick.mjs review: nothing reads a review\'s approval — a closing line wit
         if (/review:/.test(code) && /approve/.test(code)) readers.push(`${file}: ${code}`);
       });
     }
-    assert.deepEqual(readers.map((x) => x.split(':')[0]), ['drill.mjs'], readers.join('\n'));
+    assert.deepEqual(readers, [], readers.join('\n'));
   });
 });
 
