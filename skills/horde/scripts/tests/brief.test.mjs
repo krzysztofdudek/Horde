@@ -51,6 +51,46 @@ function seedNode(dir, node, mapping, ports) {
   addNode(dir, node, ports ? { mapping, ports } : { mapping });
 }
 
+// A worker whose subagent starts in the main checkout, not in its own worktree, once ran a checkout and two
+// commits there, and the director's landing later merged six branches into whatever branch that left
+// checked out. The brief cannot stop a host from starting an agent in the wrong directory, but nothing in it
+// may depend on the directory the agent starts in: every git command names the worktree, the gate command
+// runs from it, and the first action is to check the place before doing anything.
+test('brief.mjs worker: every git and gate command is pinned to the worktree, and the first action checks the place', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  seedNode(dir, 'nodeA', ['src/a/**']);
+  run('horde.mjs', ['config', 'set', 'gates.commit', 'npm test'], dir);
+  seedTicket(dir, 'mission1', 'trunk', '001', { branch: 'mission1/t-001', worktree: '/abs/wt/mission1/t-001', sha: 'abc1234def' });
+
+  const r = run('brief.mjs', ['worker', '001', '--name', 'mission1-worker-trunk-1'], dir);
+  assert.equal(r.code, 0);
+  const brief = r.json.brief;
+  const wt = '/abs/wt/mission1/t-001';
+
+  // The first action compares where the agent is with where it should be, and stops on a mismatch.
+  assert.match(brief, new RegExp(`git -C ${wt} rev-parse --show-toplevel`));
+  assert.match(brief, new RegExp(`git -C ${wt} branch --show-current`));
+  assert.match(brief, /differs\b[^]*stop and report/i);
+  const firstAction = brief.slice(brief.indexOf('## First action'), brief.indexOf('## The ticket'));
+  assert.ok(firstAction.indexOf('rev-parse --show-toplevel') < firstAction.indexOf('merge mission1/trunk'), 'the place is checked before anything merges');
+
+  // No git command in a code fence, and no gate command, depends on the directory the agent starts in.
+  const fenced = [...brief.matchAll(/```\n([^]*?)```/g)].flatMap((m) => m[1].split('\n')).map((l) => l.trim()).filter(Boolean);
+  const commands = fenced.filter((l) => /^(git|cd|npm)\b|&&/.test(l) || l.includes('git '));
+  assert.ok(commands.length >= 4, `the fenced commands were found: ${JSON.stringify(fenced)}`);
+  for (const line of commands) {
+    for (const piece of line.split('&&').map((p) => p.trim())) {
+      if (/^git\b/.test(piece)) assert.match(piece, new RegExp(`^git -C ${wt} `), `a bare git command in the brief: ${piece}`);
+    }
+  }
+  // The fast check and the final report's `git log` run from the worktree too.
+  assert.match(brief, new RegExp(`cd ${wt} && npm test`));
+  assert.match(brief, new RegExp(`git -C ${wt} log -1 --oneline`));
+  assert.doesNotMatch(brief, /\{\{/);
+});
+
 test('brief.mjs: renders worker and architect from a seeded ticket, queue and roster', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -255,8 +295,8 @@ test('brief.mjs: a stacked ticket\'s brief names the branch it was started from,
   await t.test('the worker merges the parent ticket\'s branch and is told which ticket it belongs to', () => {
     const r = run('brief.mjs', ['worker', second, '--name', 'mission1-worker-trunk-2'], dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.json.brief, new RegExp(`git merge mission1/t-${first}`));
-    assert.doesNotMatch(r.json.brief, /git merge mission1\/trunk/);
+    assert.match(r.json.brief, new RegExp(`git -C \\S+ merge mission1/t-${first}`));
+    assert.doesNotMatch(r.json.brief, /git -C \S+ merge mission1\/trunk/);
     assert.match(r.json.brief, /\*\*This ticket is stacked\.\*\*/);
     assert.match(r.json.brief, new RegExp(`Ticket ${first} has not merged yet`));
     assert.doesNotMatch(r.json.brief, /\{\{/);
@@ -265,7 +305,7 @@ test('brief.mjs: a stacked ticket\'s brief names the branch it was started from,
   await t.test('an unstacked ticket\'s brief is the team branch, with no note at all', () => {
     const r = run('brief.mjs', ['worker', first, '--name', 'mission1-worker-trunk-1'], dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.json.brief, /git merge mission1\/trunk/);
+    assert.match(r.json.brief, /git -C \S+ merge mission1\/trunk/);
     assert.doesNotMatch(r.json.brief, /This ticket is stacked/);
     assert.doesNotMatch(r.json.brief, /\{\{/);
   });

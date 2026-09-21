@@ -8,20 +8,31 @@ has to reach them is a line in the ticket's log and a doorbell to **{{reportsTo}
 
 
 Your worktree is `{{worktree}}` on branch `{{branch}}`; work only there — every command runs from there,
-every relative path starts there.
+every relative path starts there. You may have been started in another directory (the main checkout,
+say): nothing below depends on where you started, so every git command names the worktree and the fast
+check runs from it, and you check the place first.
 
 {{takeoverBlock | }}
 
 ## First action, before anything else
 
 ```
-git merge {{parentBranch}}
-git merge-base --is-ancestor {{parentBranch}} HEAD && git status --porcelain
+git -C {{worktree}} rev-parse --show-toplevel
+git -C {{worktree}} branch --show-current
+```
+
+The first must print `{{worktree}}` and the second `{{branch}}`. If either differs you are in the wrong
+place, or on the wrong branch: **stop and report**, touching nothing — a merge or a commit made in the
+main checkout lands on whatever branch it has checked out, and the landing later merges that too.
+
+```
+git -C {{worktree}} merge {{parentBranch}}
+git -C {{worktree}} merge-base --is-ancestor {{parentBranch}} HEAD && git -C {{worktree}} status --porcelain
 ```
 
 `git status` must print nothing. A dirty tree after the merge is a stale base or somebody else's diff:
-**stop and report**. Then run the fast check `{{fastCheck}}`; the team branch last reported
-{{fastCheckCount}} — a lower count means a wrong base: stop and report.
+**stop and report**. Then run the fast check `cd {{worktree}} && {{fastCheck}}`; the team branch last
+reported {{fastCheckCount}} — a lower count means a wrong base: stop and report.
 
 {{stackNote | }}
 
@@ -79,13 +90,13 @@ at the end of this brief; read them before your first commit.
   all refuse at landing, by name. So does sharpening a rule in the same change as the code that rule
   refuses. If a rule is genuinely wrong, say so in your log and stop — that is the client's call to
   make, not yours to route around.
-- Commit on your branch `{{branch}}` with the repository's commit hooks passing. Anything that has to
+- Commit on your branch `{{branch}}` (`git -C {{worktree}} commit …`) with the repository's commit hooks passing. Anything that has to
   count — your code, and any verdict recorded on the graph — has to be **committed**: the gate reads
   a fresh tree at your branch's tip, not your worktree.
 - **Your last action** is
   `node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tk.mjs log {{ticketId}} "landed <sha> — <one line>"` after the
   commit; the landing gate requires a log entry newer than the last commit. Your final report
-  **contains `git log -1 --oneline`** of the landed commit; "done" with an uncommitted diff is not done.
+  **contains `git -C {{worktree}} log -1 --oneline`** of the landed commit; "done" with an uncommitted diff is not done.
 - If the branch already carries a commit whose message starts with `wip:` it is a previous worker's
   unfinished work, reclaimed at a cold boot: read it first, keep what is right, reset what is not, and
   say which in your log.

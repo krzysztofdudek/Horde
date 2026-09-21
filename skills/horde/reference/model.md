@@ -230,7 +230,7 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
 
 - Every worker gets its own worktree on its ticket branch, cut from trunk's tip (or, while a ticket
   is stacked on a dependency that has not merged yet, from that dependency's own branch — see
-  `queue.mjs set --on` in `scripts/README.md`). First action, always: `git merge <parent>`, then
+  `queue.mjs set --on` in `scripts/README.md`). First action, always: check the place (`git -C <worktree> rev-parse --show-toplevel` and `branch --show-current` must print the worktree and the ticket's branch, or stop), then `git -C <worktree> merge <parent>`, then
   `git status` must be clean — a worktree that is not clean after the merge is a stale base or
   somebody else's diff, and the worker stops and reports.
 - The director works in the main checkout and touches no branch of the horde; the trunk checkout
