@@ -74,10 +74,11 @@ commands:
   set <ticket> <${SETTABLE_STATES.join('|')}> [--sha x] [--agent name] [--note "…"]
       [--on MMM] [--team t] [--horde h]
       "running --on MMM" starts the ticket from MMM's tip instead of the team's (a stack): MMM
-      must be a dependency of this ticket, in this same team, running or landed, and on a
-      branch. The item records "stackedOn"; everything measured against a parent — base
-      freshness, the diff, the revert test — then names MMM's branch, until MMM merges and this
-      item's "merged" write clears it back to the team branch.
+      must be a dependency of this ticket — plan's own derived set, so a port this ticket
+      Consumes that MMM Produces counts exactly like a hand-written one — in this same team,
+      running or landed, and on a branch. The item records "stackedOn"; everything measured
+      against a parent — base freshness, the diff, the revert test — then names MMM's branch,
+      until MMM merges and this item's "merged" write clears it back to the team branch.
       A prototype ticket (tk.mjs new --kind prototype) is cut from "<horde>/prototype" instead —
       made off the team's tip the first time one starts — and merges back only there: the trunk
       never takes a prototype, and land.mjs refuses a prototype branch cut anywhere else.
@@ -104,19 +105,24 @@ commands:
   next [--class c] [--why] [--stack] [--team t] [--horde h]
       the first ready queued item — every dependency merged, and its declared Files (a ticket with
       none locks every file of every node it names) clear of every "running" ticket's own Files in
-      this team. Ranked: prototype-kind tickets (tk.mjs new --kind prototype) always first and
-      quality-kind ones always last, whatever either's severity — a prototype is the question the
+      this team. "Every dependency" is plan's own derived set: a port the ticket Consumes orders
+      it after whoever Produces that port exactly like a hand-written Depends on/dep, so a
+      consumer of a port whose producer has not merged yet is not ready even with no manual edge
+      between the two. Ranked: prototype-kind tickets (tk.mjs new --kind prototype) always first
+      and quality-kind ones always last, whatever either's severity — a prototype is the question the
       work behind it is waiting on; then severity (read live from the ticket); then the longer remaining
       critical path through the ticket wins (queue.mjs plan's own DAG, read in-process, never
       shelled out); then a ticket whose nodes hold no running ticket; then FIFO by queue order.
       A "waiting" item is never a candidate. --why prints every queued item with its rank or
-      the reason it did not qualify (an unmet dependency, a file lock naming the running ticket
-      and the file, or the --class filter).
+      the reason it did not qualify (an unmet dependency — the producer and the port it is named
+      by when the edge is a consumed port rather than a hand-written one — a file lock naming the
+      running ticket and the file, or the --class filter).
       --stack also offers, after every ready item and in the same rank order, a queued item whose
-      unmerged dependencies are all in this team, running or landed, and on a branch: it can be
-      started now from one of their tips ("set <ticket> running --on <that one>"). Such an item
-      comes back marked stack-ready, naming the tickets it could start from. A file lock is a
-      refusal there too — the tip it would start from is the very ticket holding the file.
+      unmerged dependencies (port edges included) are all in this team, running or landed, and on
+      a branch: it can be started now from one of their tips ("set <ticket> running --on <that
+      one>" — the producer's own tip when the edge is a port). Such an item comes back marked
+      stack-ready, naming the tickets it could start from. A file lock is a refusal there too —
+      the tip it would start from is the very ticket holding the file.
   plan [--team t] [--apply-order] [--out <file>] [--horde h]
       --out writes the plan (rendered, or JSON with --json) to a file instead of stdout, for a reader
       who must see it whole — the architect — rather than a summary relayed through a message
