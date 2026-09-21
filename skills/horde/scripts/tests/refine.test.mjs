@@ -659,6 +659,35 @@ test('refine.mjs --step review: the architect\'s ruling is the only way out of "
     assert.equal(r.json.ticket, first);
   });
 
+  await t.test('the applied file is set aside, so the next run issues a fresh brief instead of applying the old verdict again', () => {
+    assert.equal(existsSync(hordeFile(dir, 'm1', 'review.json')), false, 'review.json was set aside once applied');
+    const again = run('refine.mjs', ['--step', 'review', '--horde', 'm1'], dir);
+    assert.equal(again.code, 0, again.stderr);
+    assert.equal(again.json.state, 'awaiting');
+  });
+
+  await t.test('a verdict for a ticket that has moved on changes nothing about it and is reported as skipped', () => {
+    // The first ticket is out on a branch now; the second is still waiting for its ruling.
+    assert.equal(run('queue.mjs', ['set', first, 'running', '--agent', 'w1', '--horde', 'm1'], dir).code, 0);
+    writeFileSync(hordeFile(dir, 'm1', 'review.json'), JSON.stringify({
+      [first]: { verdict: 'pass' },
+      [second]: { verdict: 'pass' },
+    }));
+    const r = run('refine.mjs', ['--step', 'review', '--horde', 'm1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const byTicket = Object.fromEntries(r.json.rulings.map((x) => [x.ticket, x]));
+    assert.equal(byTicket[first].skipped, true, JSON.stringify(byTicket[first]));
+    assert.equal(byTicket[first].status, 'running');
+    assert.match(byTicket[first].why, /already running/);
+    assert.equal(byTicket[second].skipped, undefined);
+    assert.equal(byTicket[second].status, 'queued');
+    // The ticket's own status is whatever it was; only the queue says the ticket is out on a branch. Neither moved.
+    assert.match(run('tk.mjs', ['show', first, '--horde', 'm1'], dir).json.text, /\*\*Status:\*\* queued/);
+    assert.equal(run('queue.mjs', ['list', '--horde', 'm1'], dir).json.find((i) => i.ticket === first).state, 'running');
+    assert.equal(r.json.rulings.filter((x) => x.skipped).length, 1);
+    assert.match(r.json.appliedFile, /review\.applied-.*\.json$/);
+  });
+
   await t.test('a rejection with no reason is refused before anything is applied', () => {
     writeFileSync(hordeFile(dir, 'm1', 'review.json'), JSON.stringify({ [second]: { verdict: 'reject' } }));
     const r = run('refine.mjs', ['--step', 'review', '--horde', 'm1'], dir);

@@ -22,22 +22,22 @@
 // reads back the file the brief asked for, checks it, and applies what it says. A step with
 // nothing to read yet never guesses at an answer.
 
-import { existsSync, statSync, readdirSync } from 'node:fs';
+import { existsSync, statSync, readdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   hordePath, readJSON, readText, writeText, readConfig, fail, parseArgs, emit, isMain,
   resolveHorde, resolveTree, git, claimLease, assertLeaseAvailable, provenanceLine, withProvenance,
   firstClass, parseEvidenceRows, noEvidenceLayerIn,
-  runMain,
+  runMain, nowIso,
 } from './_lib.mjs';
 import {
   ygCommand, ygNode, ygContext, nodeExists, nodeBoundary, nodeRules, renderRules, listAllNodes,
   pathInBoundary, nodeDir, loadGraph,
 } from './node.mjs';
-import { buildPlan, renderPlan, titleOf } from './queue.mjs';
+import { buildPlan, renderPlan, titleOf, loadQueue } from './queue.mjs';
 import {
-  findTicket, allTickets, nodesOf, ticketEvidence, ticketKind,
+  findTicket, allTickets, nodesOf, ticketEvidence, ticketKind, parseField,
 } from './tk.mjs';
 import {
   EVIDENCE_SECTION, catalogueCut, upsertCharterSection,
@@ -900,6 +900,7 @@ function stepReview(horde, flags) {
     fail(`${reviewPath(horde)} is not an object of rulings — the shape is {"<ticket>": {"verdict": "pass"|"reject", "why": "<one sentence>"}}`);
   }
   const applied = [];
+  const queueItems = new Map((loadQueue(horde, team).items || []).map((i) => [String(i.ticket), i]));
   for (const [rawId, ruling] of Object.entries(rulings)) {
     const ticket = findTicket(horde, rawId);
     if (!ticket) fail(`${reviewPath(horde)} rules on "${rawId}", which is not a ticket of horde "${horde}"`);
@@ -910,15 +911,39 @@ function stepReview(horde, flags) {
     if (verdict === 'reject' && (!ruling.why || !String(ruling.why).trim())) {
       fail(`${reviewPath(horde)}: ticket ${ticket.id} is rejected with no reason. A rejection the writer cannot answer is a rejection they cannot fix — say why, in one sentence.`);
     }
-    applied.push({ ticket: ticket.id, verdict, why: verdict === 'reject' ? String(ruling.why).trim() : null });
+    applied.push({
+      ticket: ticket.id, verdict, why: verdict === 'reject' ? String(ruling.why).trim() : null, status: parseField(ticket.text, 'Status'),
+      // Where the ticket stands in the queue, which moves on past what its own Status says once it is out on a
+      // branch: the two are read together.
+      queueState: queueItems.has(ticket.id) ? queueItems.get(ticket.id).state : null,
+    });
   }
 
-  const results = applied.map((a) => applyRuling(horde, team, a));
+  // A ruling is only ever about a ticket still waiting for one. A verdict file applied again mid-wave — the
+  // architect's file is still on disk — must not move a ticket that has merged, landed or gone out to a
+  // worker back to queued: `queue set` has no guard on purpose (it is the way to repair a queue by hand), so
+  // the guard is here. A ticket in any other status is reported as skipped and left exactly as it is.
+  const waiting = (a) => a.status === 'proposed' && (a.queueState === null || a.queueState === 'proposed');
+  const results = applied.map((a) => (waiting(a)
+    ? applyRuling(horde, team, a)
+    : {
+      ticket: a.ticket,
+      verdict: a.verdict,
+      status: a.queueState && a.queueState !== 'proposed' ? a.queueState : a.status,
+      why: `already ${a.queueState && a.queueState !== 'proposed' ? a.queueState : a.status} — a ruling on the plan applies only to a ticket still waiting for one`,
+      skipped: true,
+    }));
+  // The file has been applied; it is set aside, so the next `--step review` issues a fresh brief instead of
+  // applying an old verdict again.
+  const file = reviewPath(horde);
+  const asideAs = file.replace(/\.json$/, `.applied-${nowIso().replace(/[:.]/g, '-')}.json`);
+  renameSync(file, asideAs);
   emit(withProvenance({
-    step: 'review', horde, team, state: 'applied', rulings: results,
+    step: 'review', horde, team, state: 'applied', rulings: results, appliedFile: asideAs,
   }, info), flags, () => [
-    `ruled: ${results.filter((r) => r.verdict === 'pass').length} passed, ${results.filter((r) => r.verdict === 'reject').length} rejected`,
+    `ruled: ${results.filter((r) => !r.skipped && r.verdict === 'pass').length} passed, ${results.filter((r) => !r.skipped && r.verdict === 'reject').length} rejected, ${results.filter((r) => r.skipped).length} skipped`,
     ...results.map((r) => `  ${r.ticket} -> ${r.status}${r.why ? ` — ${r.why}` : ''}`),
+    `the verdict file was set aside as ${asideAs}`,
     provenanceLine(info),
   ].join('\n'));
 }

@@ -263,7 +263,7 @@ file ever conflicts in a merge.
                                     touched and new nodes, decision rights, quality policy
     territories.json                the cut: {"<territory>": {nodes, class, why}}, written by the
                                     architect at `refine.mjs --step cut`
-    review.json                     the architect's plan ruling, written at `refine.mjs --step review`
+    review.json                     the architect's plan ruling, written at `refine.mjs --step review`; set aside as review.applied-<time>.json once applied
     counter.json                    the one shared counter every id in this horde comes out of
     plan.md                         wave journal: starts, merges, closes
     decisions.md                    build decisions and the answered asks recorded through them
