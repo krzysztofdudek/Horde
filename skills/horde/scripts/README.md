@@ -1518,6 +1518,14 @@ inherits whatever tree the session's shell is already in.
    a closing line counting zero and one counting Minor findings reach the gate the same way, and a
    line claiming to approve is read by nothing. A hold on a branch's landing (`stop`, `lower`) holds
    its review too, since the review is the first half of that landing.
+
+   **A gate that is still running is not asked for twice.** A landing does its slow half (the revert
+   test, the guards) before it takes the gate lock and writes no result until it is done, so for that
+   long nothing on disk says the branch is being landed. The run that starts a gate records
+   `gate: {pid, sha, at}` on the queue item, the pid being the process `land --background` started.
+   While that process lives and the branch still stands at `sha`, every later run puts
+   `{ticket, action: "gate-running", note}` on `landed` and does not ask again; a pid that is gone
+   with no result written is a landing that died, and the next run asks the gate again.
 3. **The dispatch list.** `queue.mjs next`'s own order (stacked last, quality last, then severity,
    then the longer remaining critical path, then a node nothing is running on, then FIFO), with its
    file locks and its dependency rule, cut to the configured parallelism cap minus what is already
