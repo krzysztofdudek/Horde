@@ -1063,3 +1063,84 @@ test('queue.mjs add: a ticket the mission card does not cover is refused, and an
     );
   });
 });
+
+// A port edge with no manual "Depends on" and no queue.mjs dep at all: the consumer never wrote
+// anything down, but the producer still has to merge first. `next`, `set … merged` and `--stack`
+// have to read the same derived edge `queue.mjs plan` already orders the two tickets by, or a
+// worker gets dispatched against a port nobody has built yet.
+test('queue.mjs: a port edge with no manual dependency governs readiness, merge order and the stack', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'auth', { mapping: ['src/auth/**'] });
+  addNode(dir, 'api', { mapping: ['src/api/**'] });
+
+  const producer = run('tk.mjs', ['new', 'policy-engine', '--title', 'policy engine', '--node', 'auth',
+    '--class', 'standard', '--files', 'src/auth/policy.ts', '--produces', 'auth/policy', '--evidence', 'it works'], dir).json.id;
+  const consumer = run('tk.mjs', ['new', 'api-guard', '--title', 'api guard', '--node', 'api',
+    '--class', 'standard', '--files', 'src/api/guard.ts', '--consumes', 'auth/policy', '--evidence', 'it works'], dir).json.id;
+  run('queue.mjs', ['add', producer], dir);
+  run('queue.mjs', ['add', consumer], dir);
+
+  await t.test('next --why skips the consumer and names the producer and the port, with no manual edge recorded', () => {
+    const list = run('queue.mjs', ['list'], dir).json;
+    assert.deepEqual(list.find((i) => i.ticket === consumer).dependsOn, []);
+
+    const why = run('queue.mjs', ['next', '--why'], dir);
+    const rows = Object.fromEntries(why.json.entries.map((e) => [e.ticket, e]));
+    assert.equal(rows[producer].eligible, true);
+    assert.equal(rows[producer].rank, 1);
+    assert.equal(rows[consumer].eligible, false);
+    assert.match(rows[consumer].reason, new RegExp(`waiting on dependency ${producer} \\(producer of auth/policy\\)`));
+
+    assert.equal(run('queue.mjs', ['next'], dir).json.ticket, producer);
+  });
+
+  await t.test('--stack does not propose the consumer while the producer has no tip yet', () => {
+    const r = run('queue.mjs', ['next', '--stack'], dir);
+    assert.equal(r.json.ticket, producer);
+    assert.equal(r.json.stackReady, false);
+  });
+
+  const started = run('queue.mjs', ['set', producer, 'running', '--agent', 'w1'], dir);
+  git(['-C', started.json.worktree, 'commit', '--allow-empty', '-qm', 'the port is built'], dir);
+
+  await t.test('--stack now proposes the consumer on the producer\'s own tip', () => {
+    const withoutStack = run('queue.mjs', ['next', '--why'], dir);
+    const row = withoutStack.json.entries.find((e) => e.ticket === consumer);
+    assert.match(row.reason, new RegExp(`waiting on dependency ${producer} \\(producer of auth/policy\\) — could be started on top of ${producer} \\(--stack\\)`));
+
+    const withStack = run('queue.mjs', ['next', '--stack'], dir);
+    assert.equal(withStack.json.ticket, consumer);
+    assert.equal(withStack.json.stackReady, true);
+    assert.deepEqual(withStack.json.stackOn, [producer]);
+    const printed = run('queue.mjs', ['next', '--stack'], dir, { json: false });
+    assert.match(printed.stdout, new RegExp(`stack-ready on ${producer}`));
+  });
+
+  let child = null;
+  await t.test('"set running --on" accepts the port producer as a real dependency', () => {
+    const r = run('queue.mjs', ['set', consumer, 'running', '--agent', 'w2', '--on', producer], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.stackedOn, producer);
+    child = r.json;
+  });
+
+  await t.test('"set … merged" refuses the consumer ahead of the port\'s producer, naming it and the port', () => {
+    const r = run('queue.mjs', ['set', consumer, 'merged', '--sha', 'abc1234'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, new RegExp(`${consumer} depends on ${producer} \\(producer of auth/policy\\), still unmerged`));
+  });
+
+  await t.test('once the producer merges, the consumer is free to merge too', () => {
+    git(['checkout', 'mission1/trunk'], dir);
+    git(['merge', '--no-ff', started.json.branch, '-m', `merge ${producer}`], dir);
+    const producerSha = git(['rev-parse', '--short', 'mission1/trunk'], dir);
+    const mergedProducer = run('queue.mjs', ['set', producer, 'merged', '--sha', producerSha], dir);
+    assert.equal(mergedProducer.code, 0, mergedProducer.stderr);
+
+    const consumerSha = git(['rev-parse', '--short', child.branch], dir);
+    const mergedConsumer = run('queue.mjs', ['set', consumer, 'merged', '--sha', consumerSha], dir);
+    assert.equal(mergedConsumer.code, 0, mergedConsumer.stderr);
+  });
+});

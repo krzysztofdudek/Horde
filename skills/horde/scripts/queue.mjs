@@ -565,21 +565,50 @@ function findItem(horde, team, key) {
   return { doc, item: doc.items.find((i) => i.ticket === key) };
 }
 
+// The dependency set readiness, merge order and the stack all have to agree on: `plan`'s own
+// derived graph for one ticket, in this team — the ports it consumes (ordered after whoever
+// produces them) added to what was written by hand, exactly what buildPlan computes as that
+// ticket's `dependsOn`. Falls back to the queue item's raw `dependsOn` when the ticket is not in
+// `plan.tickets` (already merged, or the plan could not be built), so a caller mid-transition
+// never reads an empty set where the manual edge alone would have said something.
+function derivedDependsOn(plan, item) {
+  const found = plan && Array.isArray(plan.tickets) ? plan.tickets.find((t) => t.id === item.ticket) : null;
+  return found ? found.dependsOn : (item.dependsOn || []);
+}
+
+// The port, if any, that made one derived edge exist — read straight off `plan.edges`, whose
+// `why` already says "consumes <ref>" for a port edge and something else for a hand-written one.
+// Null for a manual edge: there is no port to name, only the dependency itself.
+function portBehindEdge(plan, ticketId, dep) {
+  const edge = plan && Array.isArray(plan.edges)
+    ? plan.edges.find((e) => e.from === ticketId && e.on === dep && e.why.startsWith('consumes '))
+    : null;
+  return edge ? edge.why.slice('consumes '.length) : null;
+}
+
+// One unmet dependency, named the way a reader can act on: a port edge says which port it is
+// waiting on and who makes it, not just a ticket number nobody can place.
+function describeUnmet(plan, ticketId, dep) {
+  const port = portBehindEdge(plan, ticketId, dep);
+  return port ? `${dep} (producer of ${port})` : dep;
+}
+
 // `set NNN running --on MMM`: the ticket starts from MMM's tip rather than the team's, so a chain
 // of tickets can be written and reviewed in one wave instead of one per link. What MMM has to be
 // is what makes the base honest — a real dependency of this ticket (merge order is the same DAG,
-// only now the work rides on top of it), in this same team (these branches only ever merge into
-// their own team's), and unmerged but already on a branch (a merged one's work is on the team branch
-// already, and there is nothing else to start from). Anything else is refused here rather than
-// cut into a branch nobody can reason about afterwards.
-function resolveStackParent(horde, team, key, item, raw) {
+// only now the work rides on top of it, and a port edge counts exactly like a hand-written one —
+// `plan`'s own derived set, not the queue item's raw dependsOn), in this same team (these branches
+// only ever merge into their own team's), and unmerged but already on a branch (a merged one's
+// work is on the team branch already, and there is nothing else to start from). Anything else is
+// refused here rather than cut into a branch nobody can reason about afterwards.
+function resolveStackParent(horde, team, key, item, raw, plan) {
   const ref = resolveDepRef(horde, raw, team);
   if (ref.team !== team) {
     fail(`--on ${raw}: ${ref.ticket} belongs to team ${ref.team}, not ${team} — a ticket can only start from a branch its own team owns and merges; drop --on, or move the ticket first`);
   }
   if (!ref.item) fail(`--on ${raw}: no queue item ${ref.ticket} in team ${team}`);
-  if (!(item.dependsOn || []).includes(ref.canonical)) {
-    fail(`--on ${raw}: ${key} does not depend on ${ref.canonical} — a stack follows a dependency and nothing else, or the merge order and the base say different things; record the dependency first (queue.mjs dep ${key} --on ${ref.canonical}) if that is what you mean`);
+  if (!derivedDependsOn(plan, item).includes(ref.canonical)) {
+    fail(`--on ${raw}: ${key} does not depend on ${ref.canonical} — a stack follows a dependency (a port or a hand-written one) and nothing else, or the merge order and the base say different things; record the dependency first (queue.mjs dep ${key} --on ${ref.canonical}) if that is what you mean`);
   }
   if (ref.item.state === 'merged') {
     fail(`--on ${raw}: ${ref.canonical} is already merged — its work is on ${horde}/${team}, so this ticket starts from the team's tip: run it again without --on`);
@@ -602,10 +631,15 @@ function resolveStackParent(horde, team, key, item, raw) {
 // shapes of the same event in one queue.
 function applyMerged(horde, team, doc, item, key, sha, { tree } = {}) {
   // Merge order is the dependency order, stack or no stack: a ticket written on top of an
-  // unmerged one still lands after it.
-  const unmerged = (item.dependsOn || []).filter((d) => !dependencySatisfied(horde, doc, team, d));
+  // unmerged one still lands after it — and a port edge is a dependency here exactly like a
+  // hand-written one, read off `plan`'s own derived set rather than the queue item's raw
+  // dependsOn, so a consumer cannot merge ahead of the producer of a port it reads just because
+  // nobody wrote that edge by hand.
+  const cfg = readConfig() || {};
+  const plan = buildPlan(horde, team, cfg, { tree });
+  const unmerged = derivedDependsOn(plan, item).filter((d) => !dependencySatisfied(horde, doc, team, d));
   if (unmerged.length) {
-    fail(`${key} depends on ${unmerged.join(', ')}, still unmerged — merge order follows the dependencies, so ${unmerged.length === 1 ? 'that ticket merges' : 'those tickets merge'} first`);
+    fail(`${key} depends on ${unmerged.map((d) => describeUnmet(plan, key, d)).join(', ')}, still unmerged — merge order follows the dependencies, so ${unmerged.length === 1 ? 'that ticket merges' : 'those tickets merge'} first`);
   }
   const ticket = findTicket(horde, key);
   if (!ticket) fail(`ticket ${key} not found`);
@@ -663,7 +697,9 @@ function provisionRunning(horde, team, key, item, { tree, on } = {}) {
   const teamBranch = `${horde}/${team}`;
   const cfg = readConfig() || {};
   const root = resolveTree({ tree }).path;
-  const stack = on !== undefined ? resolveStackParent(horde, team, key, item, on) : null;
+  const stack = on !== undefined
+    ? resolveStackParent(horde, team, key, item, on, buildPlan(horde, team, cfg, { tree: root }))
+    : null;
   let branchName = item.branch;
   if (!branchName) {
     const from = stack ? stack.branch : prototypeAwareBase(horde, key, teamBranch, root);
@@ -878,12 +914,13 @@ function dependencySatisfied(horde, doc, defaultTeam, dep) {
 }
 
 // The tickets a queued item could be started from today, though it is not ready: every dependency
-// it still waits on is in this team, running or landed, and on a branch, so the work can be
-// written on top of one of those tips instead of after the wave that merges it. Empty when the
-// item is ready anyway, and empty when even one dependency is out of reach — another team's
-// branch is not this team's to start from, and a queued dependency has no tip at all.
-function stackParentsFor(horde, doc, team, item) {
-  const unmerged = (item.dependsOn || []).filter((d) => !dependencySatisfied(horde, doc, team, d));
+// it still waits on — a port's producer counts exactly like a hand-written one, read off `plan`'s
+// derived set — is in this team, running or landed, and on a branch, so the work can be written
+// on top of one of those tips instead of after the wave that merges it. Empty when the item is
+// ready anyway, and empty when even one dependency is out of reach — another team's branch is not
+// this team's to start from, and a queued dependency has no tip at all.
+function stackParentsFor(horde, doc, team, item, plan) {
+  const unmerged = derivedDependsOn(plan, item).filter((d) => !dependencySatisfied(horde, doc, team, d));
   if (unmerged.length === 0) return [];
   const parents = [];
   for (const d of unmerged) {
@@ -975,17 +1012,21 @@ export function rankedCandidates(horde, team, {
     .map(({ item, idx }) => {
       const heldBy = exclude ? exclude.get(item.ticket) : null;
       if (heldBy) return { item, idx, eligible: false, reason: heldBy };
-      const unmet = (item.dependsOn || []).filter((d) => !dependencySatisfied(horde, doc, team, d));
+      // The same edges `plan` derives govern readiness here: a port a ticket consumes orders it
+      // after the ticket producing that port exactly like a hand-written dependency, so a
+      // consumer of a port whose producer is still unmerged is not ready even with no manual
+      // edge between the two.
+      const unmet = derivedDependsOn(plan, item).filter((d) => !dependencySatisfied(horde, doc, team, d));
       // A ticket whose unmet dependencies are all running or landed in this team, each on a
       // branch, can be started now on top of one of those tips instead of after the wave that
       // merges it. With --stack it stays a candidate — ranked below every ready one, and held to
       // the same file locks, since the ticket it would start from is often the one holding the
       // file. Without --stack, an unmet dependency is what it always was.
-      const stackOn = unmet.length ? stackParentsFor(horde, doc, team, item) : [];
+      const stackOn = unmet.length ? stackParentsFor(horde, doc, team, item, plan) : [];
       if (unmet.length && !(stack && stackOn.length)) {
         return {
           item, idx, eligible: false,
-          reason: `waiting on dependenc${unmet.length > 1 ? 'ies' : 'y'} ${unmet.join(', ')}`
+          reason: `waiting on dependenc${unmet.length > 1 ? 'ies' : 'y'} ${unmet.map((d) => describeUnmet(plan, item.ticket, d)).join(', ')}`
             + (stackOn.length ? ` — could be started on top of ${stackOn.join(', ')} (--stack)` : ''),
         };
       }
