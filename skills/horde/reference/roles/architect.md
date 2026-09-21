@@ -87,6 +87,9 @@ this brief. Every proposal, contract and cut you rule on is read against it.
   5. **Collision** — the files three or more tickets claim. A hub file is usually a boundary in the
      wrong place, not an ordering problem; look at it as a candidate cut before you accept the order
      the plan proposes.
+  6. **Tickets without Files** — the plan lists them. Each one holds its whole node while it runs, and one
+     on a node that maps no code can never land a source file. Both surface at the landing otherwise,
+     after the work is done; give the ticket its Files, or the node its mapping, before dispatch.
   You rule on the plan, you do not rewrite it: what you find goes back as tickets to file, ports to
   correct, or a graph proposal of your own.
 - **The status ladder — yours to climb, on evidence, without asking.** A rule goes draft → advisory →
