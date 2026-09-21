@@ -65,7 +65,8 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
 - `config get|set <key> [value]` — `.horde/config.json`: `base`, `gates.commit|team|trunk` (commands),
   `gates.report.path` and `gates.report.format` (`junit`, `tap` or `playwright-json` — the report the
   gate command's own runner leaves behind, which the landing reads back to confirm every live
-  promise's paired case actually ran; unset means nothing reads one),
+  promise's paired case actually ran — and which the revert test also reads, only when
+  `gates.commit` wrote that same file in its own run; unset means nothing reads one),
   `testGlobs[]` (the patterns this repository's tests are named under — the merge checklist refuses
   rather than guess when it is empty), `ygCommand` (how this
   repository invokes the Yggdrasil CLI
@@ -935,9 +936,14 @@ the JSON, and every item below is measured against it:
 4. revert test — new test files in the diff, extracted onto the parent's tree, show at least one
    failure; or, when the ticket carries a `**Mutate:**` command, run against a scratch copy of the
    branch's own tip with that command applied, show at least one failure there instead. The variant
-   is always the ticket's own choice, never a `land.mjs` flag. The result is derived by running
-   them; nothing declares it to this gate, and no flag offers to say so, because a declaration
-   about a test is not evidence about a test;
+   is always the ticket's own choice, never a `land.mjs` flag. A file `node --test` cannot run goes
+   through the whole `config.gates.commit`, and its red counts only when that command is green on the
+   same tree without the file — and, when that run wrote the file `config.gates.report` names, when
+   that report names a failing case from the file; anything less is "no verdict", a ✗ that names the
+   ways out of it (see
+   [the revert test](#landmjss-revert-test--how-a-new-test-file-is-found-and-run) below). The result
+   is derived by running them; nothing declares it to this gate, and no flag offers to say so,
+   because a declaration about a test is not evidence about a test;
 5. gate — `config.gates.<level>` run fresh on the branch's own tree, **and** the report that run
    left behind. No recorded green run is accepted from anywhere: a "green at sha …" line in a
    ticket's log is a claim about a run this gate did not see. A command that hangs is stopped at
@@ -994,7 +1000,10 @@ or sit where the gate command's own runner never looks, and every rule in the `p
 every guard below still reads it as proof — they all read source, and source cannot say what ran.
 The only thing that can is the runner's own record of its own run.
 
-So item 5 reads it back. Configure it and nothing else changes:
+So item 5 reads it back. Configure it and nothing else changes, with one exception: when
+`gates.commit` writes that same file, the revert test reads it too, to tell whose red it saw (see
+[the revert test](#landmjss-revert-test--how-a-new-test-file-is-found-and-run)). A `gates.commit`
+that does not write it is judged exactly as if no report were configured.
 
 ```
 horde.mjs config set gates.report.path   "<path, relative to the tree the gate ran in>"
@@ -1603,9 +1612,46 @@ files; when it is empty the item is ✗, because a ✓ reading "no new or change
 over a repository whose tests this tool cannot recognize is the strongest guarantee in the checklist
 passing without looking. A ✓ names the patterns it did look for. A matched file whose extension
 `node --test` can run directly is extracted and run that way; anything else falls back to running
-the whole `config.gates.commit` command in the scratch worktree, treating any red as "this file's a
-failure" — isolating just one file's test lane out of an arbitrary configured command isn't possible
-in general.
+the whole `config.gates.commit` command in the scratch worktree — isolating just one file's test lane
+out of an arbitrary configured command isn't possible in general.
+
+A whole command's exit code is not one file's result, in either direction. It can be red before the
+file is anywhere near it — a test nobody touched failing, an environment that isn't there — and a
+runner can skip a file it cannot load and still exit 0. So the fallback never reads the exit code
+alone:
+
+- **A control run first.** `gates.commit` runs once on the same tree holding none of the ticket's own
+  test files: the base exactly as it stands (a changed file's base version included) for the
+  revert-to-base variant, the mutated tree with them taken out for the mutation one. Red or stopped
+  there, every fallback file is "no verdict", and the note says which of the two: its red with the
+  file in place would say nothing about the file.
+- **Each file on its own.** Each file is put in, run, and taken out again, so one file's red is never
+  another file's proof.
+- **Proof** is red with the file in place and green without it — the control-run rule.
+- **The report, only when this run produced it.** `config.gates.report` names the report of the
+  landing gate's own command, and `gates.commit` may or may not write the same file. The fallback
+  clears that path before every run, so a file there afterwards is this run's own. When it is there,
+  a red counts only if the report attributes at least one failing case to the file — by the same
+  file-attribution rule the gate item reads it with — or the red came from somewhere else and is "no
+  verdict"; a produced report that cannot be read (not the configured format, or a format nothing
+  here reads) is "no verdict" too. When it is not there — or no report is configured, or the
+  configured path is one nothing may look at — the control-run rule alone decides, and the result
+  says "no report was available" and why. A report configured for the landing gate that `gates.commit`
+  does not write therefore never refuses a run that the same repository without one would pass; only
+  a report the run wrote can add a refusal, by showing that the red was not the file's own or by being
+  unreadable.
+- **Green is never proof.** "Not load-bearing" is said only when a produced report shows every case
+  from the file ran and passed on that tree. Green with nothing from the file in that report is a file
+  the runner never ran; any case from it skipped is a file that did not fully run; green with no
+  report available cannot tell a skipped file from a test that proves nothing. All of those are "no
+  verdict", never that verdict.
+
+"No verdict" is a ✗ like any other: nothing lands without proof, and no flag or declaration waives it.
+It says why the run showed nothing, and the item names the ways out once: make `gates.commit` green
+on the base without the file; name a revert base where it is green (`**Revert base:** <ref>`); give
+the ticket a `**Mutate:**` command that only this file catches; or run the file with a command for
+that one file, once one can be configured. A ticket that carries no such file pays nothing for this;
+one that does pays one extra `gates.commit` run per landing.
 
 A diff with no new or changed test file is not automatically refused: a ticket can declare
 `**No new tests:** <reason>` in its issue.md, and the item passes on that declared exemption
