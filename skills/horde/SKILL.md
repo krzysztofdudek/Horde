@@ -201,7 +201,9 @@ through its consultants — so what is left for you to spawn is the agents that 
   what, what it proves and what it did to the rules belong to git, which outlives `.horde/`. It is
   the only place trailers are written, because it is the only place a merge commit is made. Where an
   adopter's history already has its own convention for this, take theirs and say so. On red it refuses, puts the ticket back on `changes` with the gate's own words, and
-  ticks the round counter. A test file that exists is not a test that ran, so where
+  ticks the round counter. Landings are one at a time, so when many branches wait, the `landing:` line of
+  `tick.mjs` and `status.mjs` says how many, what a landing has cost and how long they would take in
+  a row; slowing the dispatch or landing in batches is your call, it never holds anything itself. A test file that exists is not a test that ran, so where
   `config.gates.report` names the report the gate command's own runner leaves behind (`junit`, `tap`
   or `playwright-json`), the gate reads it back: every live promise's own paired case has to be in
   it and passed, and one missing, skipped or failed is a red gate naming that promise. With none

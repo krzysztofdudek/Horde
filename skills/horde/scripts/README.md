@@ -139,8 +139,8 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
 ## status.mjs — the digest
 
 One screen: hordes, for each: trunk sha and distance from base, its branch tip, ticket branches
-beyond it (landed, unverified, unmerged, waiting), queue counts by state (including `waiting`), open
-asks, the last recorded gate result per level, any lease another *live* horde holds on a node this
+beyond it (landed, unverified, unmerged, waiting), queue counts by state (including `waiting`), the
+**landing load** (see `tick.mjs` below), open asks, the last recorded gate result per level, any lease another *live* horde holds on a node this
 horde's own tickets touch (node-lease-across-hordes — `.horde/leases.json`, shared by every horde
 on the repository), and an **evidence** block: every row of the charter's evidence catalogue in one
 of six states — `no-ticket` (nothing claims it), `prototyping` (every ticket naming it is a
@@ -1547,7 +1547,15 @@ inherits whatever tree the session's shell is already in.
    against a tree that exists; `model` is the ticket's own class. A stacked entry carries the
    separate line `STACKED, parent t-NNN unmerged`. `judge` carries the prose pairs the gate handed
    back, and only under `config.judge: one-shot`. `askClient` is the open items of `asks.json` — an
-   absent file is an empty in-tray, never a refusal.
+   absent file is an empty in-tray, never a refusal. `landing` is how loaded the landing gate is:
+   `{ready, measured, lastMs, meanMs, maxMs, forecastMs}`. Landings are serial — one gate at a time
+   whatever the number of workers — so this puts the branches waiting for it (`ready`, the queue
+   items in `landed`) next to what a landing has cost, read from the `timing` each result file in
+   `land/` records (`gateMs`, and `sharedBy`, the group size when a batch shared one gate run; a
+   member's share is the gate time over that size). `forecastMs` is `ready` times the mean: how long
+   the queue would take landed one after another. It measures and reports and holds nothing back —
+   no threshold, no limit; what counts as too long is the director's call. Nothing measured yet
+   gives nulls and the line says so. `status.mjs` prints the same line.
 4. **Close.** A queue holding nothing but `merged` items gives `close: true` and the command that
    closes the wave. Tick prints that command and never runs it.
 

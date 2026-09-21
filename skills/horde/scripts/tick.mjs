@@ -45,7 +45,7 @@ import {
 import {
   findTicket, parseField, changesRoundInfo, transitionStatus, ticketEvidence, readReview,
 } from './tk.mjs';
-import { readLandResult, acquireGateLock, gateLockWaitMs } from './land.mjs';
+import { readLandResult, acquireGateLock, gateLockWaitMs, landingLoad, landingLine } from './land.mjs';
 import { asksPath, loadAsks, addAsk } from './ask.mjs';
 import { mentionsEvidenceId } from './wave.mjs';
 
@@ -849,6 +849,7 @@ function runOnce(horde, cfg, flags, runner) {
       })),
       judge,
       askClient: openAsks(horde),
+      landing: landingLoad(horde, doc.items),
       close,
       closeCommand: close ? closeCommand(horde) : null,
       external,
@@ -881,6 +882,7 @@ function render(out) {
   for (const j of out.judge) lines.push(`judge ${j.ticket}: ${j.pairs.length} prose pair(s) waiting`);
   for (const a of out.askClient) lines.push(`ask client ${a.id} (${a.kind}): ${a.why}`);
   for (const e of out.external) lines.push(`started ${e.ticket} (${e.role}): ${e.started ? e.command : e.note}`);
+  lines.push(landingLine(out.landing));
   const closeHeld = out.held.find((h) => h.holds === 'close');
   if (out.close) lines.push(`close: the queue holds nothing unmerged — ${out.closeCommand}`);
   else lines.push(closeHeld ? `close: held — ${closeHeld.note}` : 'close: not yet');

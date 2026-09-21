@@ -161,7 +161,10 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
    review logs its closing line or the director skips it — print the next dispatch list, and say when
    a wave is ready to close. Nothing lives between runs.
 4. **Landing** — `land.mjs`, the nine-item checklist that merges a ticket branch itself the moment
-   every item is green, or refuses naming the one that is not.
+   every item is green, or refuses naming the one that is not. Landings are serial, so this is where
+   a horde queues up as workers multiply; every landing records how long its gate took, and `tick`
+   and `status` set that against the branches waiting for it, so the director can see the queue
+   forming instead of guessing at it.
 5. **Closing** — `wave.mjs close`: the evidence catalogue's coverage, the quality index and its
    trend, the raises the chairman may still veto, and the mission's own `horde-law/1` document. It
    is also where the law gets audited, because nobody here holds that as a seat: rules past their
