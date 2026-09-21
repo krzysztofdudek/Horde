@@ -6,7 +6,7 @@
 
 import {
   existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, realpathSync, rmSync,
-  cpSync, linkSync,
+  cpSync, linkSync, renameSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -315,6 +315,12 @@ export function sleepSync(ms) {
 // gitignored whole, so `git worktree add` never sees it and `git reset --hard` never touches it.
 const TREE_LOCK_WAIT_MS = 120000;
 const TREE_LOCK_POLL_MS = 50;
+
+// Shared by the queue lock and the counter lock below (allocateId): both wrap the same plain
+// read-it, change-it, write-it-back on a small JSON file, so both wait and poll on the same
+// schedule rather than each earning a tuned pair of its own.
+const QUEUE_LOCK_WAIT_MS = 15000;
+const QUEUE_LOCK_POLL_MS = 20;
 
 // withTreeLock(treePath, fn) — runs `fn` with nothing else on this repository creating or
 // resyncing the worktree at `treePath`. Returns whatever `fn` returns; releases on the way out of
@@ -704,6 +710,77 @@ export function idNumber(id) {
   return m ? parseInt(m[1], 10) : null;
 }
 
+// ---- the counter lock (one sequence, one writer) -----------------------------------------------
+//
+// allocateId used to do the same thing queue.json used to do before withQueueLock existed: read
+// counter.json, work out the next number, write it back — a plain read-compute-write with nothing
+// between two processes doing it at once. Two tickets filed in parallel, a ticket racing a proposal,
+// tick.mjs's "stuck" path filing an ask while landing — any two calls that land between each
+// other's read and write hand out the same number to two different things, exactly the class of bug
+// 010 and the loop-fix issues already closed against queue.json. counter.json was the one shared
+// sequence this missed.
+//
+// Same machinery as withQueueLock, keyed to counter.json instead: `createLockFile` for the
+// exclusive-create, `processAlive` to take over a dead holder rather than wait on it forever, and
+// the queue lock's own QUEUE_LOCK_WAIT_MS / QUEUE_LOCK_POLL_MS rather than a tuned pair of its own.
+//
+// Lock order: withCounterLock is always the innermost lock taken. allocateId acquires it, reads,
+// writes and releases before returning — it never calls out to anything that takes another lock
+// while this one is held, and nothing that holds the counter lock ever tries to take the queue
+// lock. So a caller that already holds the queue lock (tick.mjs's "stuck" path files an ask via
+// allocateId from inside its own withQueueLock block) can still call allocateId safely: the two
+// locks are only ever taken in one order — queue lock first, counter lock second and released
+// immediately — never the reverse, so there is no cycle for two processes to deadlock on.
+function counterLockPath(horde) {
+  return `${counterPath(horde)}.lock`;
+}
+
+function withCounterLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
+  const path = counterLockPath(horde);
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+      createLockFile(path, `${JSON.stringify({ pid: process.pid, horde, at: nowIso() }, null, 2)}\n`);
+      break;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+    }
+    let held = null;
+    try { held = JSON.parse(readFileSync(path, 'utf8')); } catch { held = null; }
+    // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
+    // like a dead one: taken over rather than waited on.
+    if (!held || !processAlive(held.pid)) {
+      try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
+      continue;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`counter.json for horde "${horde}" is locked by another process (pid ${held.pid}, taken ${held.at || 'at an unrecorded time'}) — timed out waiting for ${path}`);
+    }
+    sleepSync(QUEUE_LOCK_POLL_MS);
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      const holder = JSON.parse(readFileSync(path, 'utf8'));
+      if (holder.pid !== process.pid) throw new Error('not ours');
+      rmSync(path, { force: true });
+    } catch { /* unreadable, already gone, or already taken over by someone else: nothing to do */ }
+  }
+}
+
+// writeJSONAtomic(file, obj) — same document shape as writeJSON, written so a reader outside the
+// lock above (or outside any lock) never observes a torn write: the content goes whole to a name
+// nobody is watching, exactly like createLockFile's own temp-then-link, then `renameSync` swaps it
+// into place in one filesystem operation instead of writeJSON's own write-in-place.
+function writeJSONAtomic(file, obj) {
+  mkdirSync(dirname(file), { recursive: true });
+  const temp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
+  writeFileSync(temp, `${JSON.stringify(obj, null, 2)}\n`);
+  renameSync(temp, file);
+}
+
 // allocateId(horde, kind, {floor}) — the next number in the shared sequence, as {n, number, id}.
 // `floor` is the highest number a caller already knows about from its own file: a graph.json
 // written before this change carries ids from a sequence the counter never saw, and handing out a
@@ -712,11 +789,13 @@ export function allocateId(horde, kind, { floor = 0 } = {}) {
   const prefix = ID_PREFIXES[kind];
   if (!prefix) throw new Error(`unknown id kind: ${kind} (kinds: ${Object.keys(ID_PREFIXES).join(', ')})`);
   const path = counterPath(horde);
-  const doc = readJSON(path, { next: 1 });
-  const declared = Number(doc && doc.next);
-  const n = Math.max(Number.isFinite(declared) && declared >= 1 ? declared : 1, Number(floor) + 1);
-  writeJSON(path, { next: n + 1 });
-  return { n, number: padNumber(n), id: `${prefix}-${padNumber(n)}` };
+  return withCounterLock(horde, () => {
+    const doc = readJSON(path, { next: 1 });
+    const declared = Number(doc && doc.next);
+    const n = Math.max(Number.isFinite(declared) && declared >= 1 ? declared : 1, Number(floor) + 1);
+    writeJSONAtomic(path, { next: n + 1 });
+    return { n, number: padNumber(n), id: `${prefix}-${padNumber(n)}` };
+  });
 }
 
 // The note a command prints when it was handed a bare number instead of a prefixed id. Null when
@@ -1131,8 +1210,11 @@ export function teamPath(horde, team, ...parts) {
 // — and a dead holder must not wedge every later command on this queue forever, so — exactly like
 // `acquireGateLock` and `acquireRetroLock` — the lock file names the pid that took it, and a pid
 // no longer running is taken over immediately rather than waited out.
-const QUEUE_LOCK_WAIT_MS = 15000;
-const QUEUE_LOCK_POLL_MS = 20;
+//
+// QUEUE_LOCK_WAIT_MS / QUEUE_LOCK_POLL_MS are declared above, next to the tree lock's own timing,
+// because allocateId's counter lock (below) reuses them too: it is the same short read-compute-
+// write shape as a queue.json update, not the longer worktree-creation wait the tree lock is tuned
+// for, so it takes the queue lock's numbers rather than earning a tuned pair of its own.
 
 function queueLockPath(horde, team) {
   return `${teamPath(horde, team, 'queue.json')}.lock`;

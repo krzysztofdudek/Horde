@@ -54,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The architect's instructions no longer point it at a step that always failed when a disputed port needed the director's attention.
 - The example a reviewer is shown for sending work back with findings now runs, instead of naming a command that no longer exists.
 - Raising a rule now credits the person who did the review, not the area of the codebase it covers.
+- Ordering tickets that touch the same file no longer risks writing an ordering nobody could ever start — a file many tickets share now gets a short chain instead of every possible pair, and any single step that would still close a loop against another dependency is skipped and named rather than written. A dependency the queue itself added can now be taken back off; one that instead comes from the ticket's own text or from a contract between two components is refused, naming which.
 - The worker brief now states the ticket log's actual location, including the horde-scoped path segment it was missing before.
 - Copied straight from the documentation, the first commands for raising an architect, a worker or a territory's own rule-writer used to be refused. Every example in the docs now runs as shown.
 - Setting up a repository built with more than one language or build tool now runs every one of their test suites at every gate, instead of only the first one found.
@@ -62,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Asking a ticket owner for a scoped re-review no longer points at a place that never had the file it asked for; it now says how to produce that file yourself.
 - The evidence package's named pairing now requires the name to land on a real test case's title, not just appear anywhere in the file — a comment or a piece of prose mentioning the same words no longer counts as proof.
 - A test suite that used to occasionally fail for no reason, when its tests ran alongside others touching the same files, now runs clean every time.
+- Filing a ticket, a question or a proposal at the same moment as another one could hand both the same number, so two different things ended up sharing one identifier. Numbers are now handed out one at a time, so this can no longer happen.
 - A `tick --watch` loop that hit a genuine internal problem used to write it down as a refusal and keep going forever. It now stops and exits with an error instead, so the problem is noticed rather than retried silently.
 - The documentation on who starts a worker under each runner now says the same thing as the mission loop actually does.
 - The sample drawn for the two-judges measurement is now reproducible: run the retrospective twice over the same landed work and it draws the same tickets both times, and the retrospective document records what drew it.
@@ -95,6 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Two commands changing one mission's queue at the same moment — a running loop and one you type yourself, or two sessions side by side — could rarely both believe they held the lock protecting it and overwrite each other's change. They now always take turns.
 - Recording a decision or answering a question, interrupted partway through — killed outright, a container recycled — used to block every one after it until someone cleared it by hand. The next one now recovers on its own.
 - A graph write refused for sitting on the mission's own base branch no longer creates the mission's trunk tree — or discards uncommitted work already sitting in it — just to name that tree in the refusal message.
+- The review drill no longer reads a reviewer's approval, a leftover reading from the per-node reviewer seat removed in 6.0.0. A hand-logged "review: <node> approve by <who>" line now counts as no review at all, the same as if the line were never written; only a change request still counts.
+- The landing check that a new test fails without the change could be wrong both ways for a test it can only run through your whole commit gate. Any failure counted as proof, even one that was already there before the change, and a pass was read as the test proving nothing, even when the runner had skipped the file. The landing now runs the gate without the test first, and when it already fails there, it gives no verdict and says why. When your commit gate also writes the test report you configured, the test counts only when that report shows one of its own cases failing, and a test the runner never ran is turned down as not run, not as useless. A commit gate that writes no report is judged by the run without the test alone, the same as a repository with no report configured. Every "no verdict" lists the ways to get one.
 
 ## [6.0.0] - 2026-09-12
 

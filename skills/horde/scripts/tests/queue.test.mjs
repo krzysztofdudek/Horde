@@ -217,6 +217,86 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
   });
 });
 
+// ---- undep: the other half of dep -----------------------------------------------------------
+//
+// `dep` writes a queue edge; nothing took one back off until this. Only a queue-added edge is
+// undep's to remove — a ticket's own "Depends on" field and a port are both recomputed by `plan`
+// from what the ticket declares every time, never read out of queue.json, so dropping the
+// queue's copy of either would leave the dependency exactly where it was.
+
+test('queue.mjs undep: removes a queue edge with a note; refuses one from the ticket\'s own Depends on field, and one from a port, naming which', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  await t.test('removes an edge dep added, with a note', () => {
+    const a = readyTicket(dir, 'undep-a', { severity: 'medium' });
+    const b = readyTicket(dir, 'undep-b', { severity: 'medium' });
+    run('queue.mjs', ['add', a], dir);
+    run('queue.mjs', ['add', b], dir);
+    run('queue.mjs', ['dep', a, '--on', b], dir);
+    assert.deepEqual(run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === a).dependsOn, [b]);
+
+    const r = run('queue.mjs', ['undep', a, '--on', b, '--note', 'was ordered by mistake'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.json.dependsOn, []);
+    const item = run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === a);
+    assert.deepEqual(item.dependsOn, []);
+    assert.match(item.notes[item.notes.length - 1].text, /undep: removed dependency on .*was ordered by mistake/);
+  });
+
+  await t.test('refuses an unknown queue edge', () => {
+    const a = readyTicket(dir, 'undep-c', { severity: 'medium' });
+    const b = readyTicket(dir, 'undep-d', { severity: 'medium' });
+    run('queue.mjs', ['add', a], dir);
+    run('queue.mjs', ['add', b], dir);
+    const r = run('queue.mjs', ['undep', a, '--on', b], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no queue edge/);
+  });
+
+  await t.test('refuses an edge that comes from the ticket\'s own "Depends on" field', () => {
+    const dep = readyTicket(dir, 'undep-field-dep', { severity: 'medium' });
+    const r0 = run('tk.mjs', ['new', 'undep-field-owner', '--title', 'undep-field-owner', '--node', 'core',
+      '--class', 'standard', '--depends', dep, '--evidence', 'it works'], dir);
+    assert.equal(r0.code, 0, r0.stderr);
+    const owner = r0.json.id;
+    run('queue.mjs', ['add', dep], dir);
+    // `add` writes the ticket's own field into the queue item's own dependsOn too (createTicket's
+    // template writes the field; `add` does not copy it — only `--depends` on `add` itself, or
+    // `dep`, writes the queue edge), so the edge has to be recorded on the queue for this refusal
+    // to have anything to catch: `dep` records the same number the ticket's field already names.
+    run('queue.mjs', ['add', owner, '--depends', dep], dir);
+
+    const r = run('queue.mjs', ['undep', owner, '--on', dep], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /Depends on.*field/);
+    assert.match(r.stderr, new RegExp(owner));
+  });
+
+  await t.test('refuses an edge that comes from a port', () => {
+    const producer = tkNew(dir, 'undep-port-producer', { produces: 'core/undep-port' });
+    const consumer = tkNew(dir, 'undep-port-consumer', { consumes: 'core/undep-port' });
+    run('queue.mjs', ['add', producer], dir);
+    run('queue.mjs', ['add', consumer], dir);
+    run('queue.mjs', ['dep', consumer, '--on', producer], dir);
+
+    const r = run('queue.mjs', ['undep', consumer, '--on', producer], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /comes from a port/);
+    assert.match(r.stderr, /core\/undep-port/);
+  });
+});
+
+function tkNew(dir, slug, { produces, consumes } = {}) {
+  const flags = ['--node', 'core', '--class', 'standard'];
+  if (produces) flags.push('--produces', produces);
+  if (consumes) flags.push('--consumes', consumes);
+  const r = run('tk.mjs', ['new', slug, '--title', slug, ...flags, '--evidence', 'it works'], dir);
+  if (r.code !== 0) throw new Error(`tk new (${slug}) failed: ${r.stderr}`);
+  return r.json.id;
+}
+
 // ---- one write per merge -------------------------------------------------------------
 //
 // A merge is one event. The queue holds the state; the wave journal is what `wave.mjs close`
