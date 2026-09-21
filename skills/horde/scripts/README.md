@@ -469,7 +469,12 @@ guesses at an answer.
   `{"<ticket>": {"verdict": "pass"|"reject", "why": "<one sentence>"}}`. Second run applies it: a
   pass moves the ticket and its queue item to `queued`; a rejection leaves both `proposed` and puts
   the reason on the ticket's own log; a ticket nobody ruled on stays `proposed` and is never
-  dispatched, because silence is not a pass. This is the only way out of `proposed`.
+  dispatched, because silence is not a pass. This is the only way out of `proposed`. A ruling applies
+  only to a ticket still waiting for one: a verdict for a ticket that has since queued, gone out on a
+  branch, landed or merged is reported as `skipped` (`{ticket, verdict, status, why, skipped: true}`)
+  and left exactly as it is, so applying a verdict file a second time mid-wave never resets what has
+  moved on. Once applied, the verdict file is set aside as `review.applied-<time>.json`, so the next
+  `--step review` issues a fresh brief instead of applying the old verdict again.
 - `--step frame [--json]` — the data a session renders to the client through Ratatoskr. Three
   sections and not one tool name: what will change and where (territory → nodes → tickets), what it
   will prove (the charter's evidence rows through `parseEvidenceRows`, with who is taking them and
