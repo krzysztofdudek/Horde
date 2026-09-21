@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The refusal for an old Yggdrasil CLI names the tree the call ran in and the version the CLI reports from that tree, not from wherever the command was typed. The README and the model say that Horde's trees have no tool install of their own, where a relative `ygCommand` resolves, and to use an absolute path to a CLI at the trunk graph's version.
 - The brief command a dispatch list prints no longer carries `--tree <worktree>`: a worker's brief read the graph from the worktree that had just been cut, where the Yggdrasil CLI may not run, and a wrong "upgrade the CLI" was the diagnosis. The worktree still comes off the queue item, and the graph read goes to the horde's trunk.
 - A Yggdrasil CLI that exits 0 and prints nothing is refused as not working in the tree it ran in — naming the tree and how to point `ygCommand` at an absolute path — and no longer as an old version to upgrade.
 - The director can see when landings are the bottleneck. `tick` and `status` print a line with the branches ready to land and what a landing has been costing (last, mean and max gate time, and how long the queue would take landed one after another); `tick --json` carries it as `landing`. Every landing records how long its gate took, and a batch records how many landings shared one gate run. It reports and holds nothing back.

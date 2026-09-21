@@ -236,6 +236,11 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
   `queue.mjs set --on` in `scripts/README.md`). First action, always: check the place (`git -C <worktree> rev-parse --show-toplevel` and `branch --show-current` must print the worktree and the ticket's branch, or stop), then `git -C <worktree> merge <parent>`, then
   `git status` must be clean — a worktree that is not clean after the merge is a stale base or
   somebody else's diff, and the worker stops and reports.
+- A worktree is a checkout and nothing more: no `node_modules`, no tool install. Horde runs the Yggdrasil
+  CLI with the tree it is reading as its working directory, so a relative `ygCommand` resolves from there —
+  to nothing, or to a parent directory's install, which can be another version than the trunk's graph was
+  written with. Set `ygCommand` to an absolute path to a CLI at the trunk graph's version; the refusal for an
+  old CLI names the tree and the version that tree's own CLI reports.
 - The director works in the main checkout and touches no branch of the horde; the trunk checkout
   itself is written only by `land.mjs`'s own merge commits.
 - The trunk worktree is resynced to the branch's tip on every read (`git reset --hard`). A hand

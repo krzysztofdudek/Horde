@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, yg, requireYg, MARKER_CHECK,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, yg, requireYg, MARKER_CHECK, git,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -853,4 +853,29 @@ test('node.mjs: a CLI that exits 0 and prints no document is refused as not work
   assert.ok(r.stderr.includes(dir) || r.stderr.includes(realpathSync(dir)), 'it names the tree it ran in');
   assert.match(r.stderr, /absolute path to a CLI at the version the graph was written with/);
   assert.doesNotMatch(r.stderr, /predates|Upgrade to a release/, 'and it does not send anyone to upgrade a CLI that is current');
+});
+
+test('node.mjs: a refusal for an old CLI names the tree it ran in and the version that tree\'s own CLI reports', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'core', { mapping: ['src/core/**'] });
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'the graph'], dir);
+  const tree = join(dir, 'tree-b');
+  git(['worktree', 'add', '--detach', tree, 'HEAD'], dir);
+  const old = join(dir, 'old-yg.mjs');
+  writeFileSync(old, [
+    "if (process.argv.includes('--version')) { console.log(process.cwd().endsWith('tree-b') ? '5.7.3' : '9.9.9'); process.exit(0); }",
+    "console.error(\"error: unknown option '--json'\");",
+    'process.exit(1);',
+    '',
+  ].join('\n'));
+  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${old}`], dir);
+
+  const r = run('node.mjs', ['bind', '--tree', tree], dir);
+  assert.equal(r.code, 1);
+  assert.ok(r.stderr.includes(`run in ${tree}`) || r.stderr.includes(`run in ${realpathSync(tree)}`), 'it names the tree the call ran in');
+  assert.match(r.stderr, /reports version 5\.7\.3 and predates/, 'the version is the one that tree reports, not the one from the caller\'s own directory');
+  assert.doesNotMatch(r.stderr, /9\.9\.9/);
 });

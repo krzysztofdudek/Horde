@@ -73,7 +73,12 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   `testGlobs[]` (the patterns this repository's tests are named under — the merge checklist refuses
   rather than guess when it is empty), `ygCommand` (how this
   repository invokes the Yggdrasil CLI
-  — default `yg` on PATH; set it to e.g. `node path/to/bin.js` for a local build), `grainCommand`
+  — default `yg` on PATH; set it to e.g. `node path/to/bin.js` for a local build. Horde's trees — trunk,
+  each ticket's worktree, the scratch trees the landing gate makes — have no tool install of their own,
+  and the command runs with the tree it reads as its working directory, so a *relative* path resolves
+  against that tree: to nothing, or to the install of a directory above it, which may be another version
+  than the graph was written with. Give an absolute path to a CLI at the version of the trunk's graph. A
+  refusal for an old CLI names the tree it ran in and the version the CLI reports from there), `grainCommand`
   (how it invokes Grain, when it has one — default none, and `init` says what naming one would add),
   `protectedPaths[]`, `fixRounds.resume|fresh` (the fix-loop
   breaker `tk.mjs status <ticket> changes` reads: rounds 1..`resume` resume the same worker, the
