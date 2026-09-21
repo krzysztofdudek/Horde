@@ -348,3 +348,38 @@ test('queue.mjs plan: the graph edge comes from yg-impact/1, and a CLI that cann
     assert.match(r.stderr, /config set ygCommand/);
   });
 });
+
+test('queue.mjs plan: a ticket with no Files is named as holding its node, and one on a node that maps no code as unable to land a source file', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'core', { mapping: ['src/core/**'] });
+  addNode(dir, 'docs', { mapping: [] });
+  const declared = tk(dir, ['declared', '--title', 'declared', '--node', 'core', '--class', 'standard', '--files', 'src/core/a.ts']);
+  const bare = tk(dir, ['bare-core', '--title', 'bare core', '--node', 'core', '--class', 'standard']);
+  const unmapped = tk(dir, ['bare-docs', '--title', 'bare docs', '--node', 'docs', '--class', 'standard']);
+  const withFilesOnUnmapped = tk(dir, ['docs-with-files', '--title', 'docs with files', '--node', 'docs', '--class', 'standard', '--files', '.yggdrasil/model/docs/log.md']);
+  for (const id of [declared, bare, unmapped, withFilesOnUnmapped]) run('queue.mjs', ['add', id], dir);
+
+  const plan = run('queue.mjs', ['plan'], dir).json;
+  assert.deepEqual(plan.filesBlockingNode, [
+    { ticket: bare, nodes: ['core'] },
+    { ticket: unmapped, nodes: ['docs'] },
+  ]);
+  assert.deepEqual(plan.noCodeToLandOn, [{ ticket: unmapped, nodes: ['docs'] }]);
+
+  const human = run('queue.mjs', ['plan'], dir, { json: false }).stdout;
+  assert.match(human, new RegExp(`no Files, holding their whole node: ${bare} \\(core\\) · ${unmapped} \\(docs\\)`));
+  assert.match(human, new RegExp(`no Files on a node that maps no code, so no source file can land: ${unmapped} \\(docs\\)`));
+
+  await t.test('a plan where every ticket names its Files says none, twice', () => {
+    run('tk.mjs', ['edit', bare, '--by', 'owner', '--files', 'src/core/b.ts'], dir);
+    run('tk.mjs', ['edit', unmapped, '--by', 'owner', '--files', '.yggdrasil/model/docs/yg-node.yaml'], dir);
+    const clean = run('queue.mjs', ['plan'], dir).json;
+    assert.deepEqual(clean.filesBlockingNode, []);
+    assert.deepEqual(clean.noCodeToLandOn, []);
+    const text = run('queue.mjs', ['plan'], dir, { json: false }).stdout;
+    assert.match(text, /no Files, holding their whole node: none/);
+    assert.match(text, /no Files on a node that maps no code: none/);
+  });
+});

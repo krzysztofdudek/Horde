@@ -27,7 +27,7 @@ import {
 import { noteMerged, parsePrototypeArtifacts } from './wave.mjs';
 import { loadAsks } from './ask.mjs';
 import {
-  consumersOf, portExists, globToRegExp, nodeExists, advisoryKey, readAdvisoryLedger,
+  consumersOf, portExists, globToRegExp, nodeExists, nodeBoundary, advisoryKey, readAdvisoryLedger,
   recordAdvisory,
 } from './node.mjs';
 
@@ -1354,6 +1354,19 @@ export function buildPlan(horde, team, cfg, { tree } = {}) {
     .map(([file, ids]) => ({ file, tickets: ids }))
     .sort((a, b) => b.tickets.length - a.tickets.length || a.file.localeCompare(b.file));
 
+  // A ticket with no `**Files:**` is legal and degrades, and the degradation is worth the architect's
+  // eye before dispatch rather than at the landing: `next` never hands out a second ticket on its node
+  // beside it (it cannot know what it touches, so it claims the whole node), and when the node it
+  // names maps no code at all, its scope is the node's own graph files and nothing else — a change to
+  // a source file lands as "outside the ticket's scope" however the work went. Both are readings; the
+  // plan refuses nothing because of them. A node the graph does not know is left out: with no
+  // boundary there is nothing to check a change against, which reads as "no limit" and not as a limit.
+  const withoutFiles = tickets.filter((t) => !t.files.length);
+  const filesBlockingNode = withoutFiles.map((t) => ({ ticket: t.id, nodes: t.nodes }));
+  const noCodeToLandOn = withoutFiles
+    .filter((t) => t.nodes.length && t.nodes.every((n) => nodeExists(root, cfg, n) && nodeBoundary(root, cfg, n).length === 0))
+    .map((t) => ({ ticket: t.id, nodes: t.nodes }));
+
   const charter = readText(hordePath(horde, 'charter.md')) || '';
   const claimed = new Set(everyTicket.flatMap((t) => ticketEvidence(t.text)));
   const uncoveredEvidence = parseEvidenceRows(charter)
@@ -1404,6 +1417,8 @@ export function buildPlan(horde, team, cfg, { tree } = {}) {
     loose,
     lockConflicts,
     hubFiles,
+    filesBlockingNode,
+    noCodeToLandOn,
     splitSuggestions,
     consumesWithoutProducer,
     cycles,
@@ -1493,6 +1508,12 @@ export function renderPlan(plan) {
   lines.push(plan.hubFiles.length
     ? `hub files: ${plan.hubFiles.map((h) => `${h.file} (${h.tickets.join(', ')})`).join(' · ')}`
     : 'hub files: none');
+  lines.push(plan.filesBlockingNode.length
+    ? `no Files, holding their whole node: ${plan.filesBlockingNode.map((f) => `${f.ticket} (${f.nodes.join(', ') || 'no node'})`).join(' · ')} — nothing else on that node is handed out beside it`
+    : 'no Files, holding their whole node: none');
+  lines.push(plan.noCodeToLandOn.length
+    ? `no Files on a node that maps no code, so no source file can land: ${plan.noCodeToLandOn.map((f) => `${f.ticket} (${f.nodes.join(', ')})`).join(' · ')} — declare Files or map the node`
+    : 'no Files on a node that maps no code: none');
   const sized = plan.tickets.filter((t) => t.size)
     .sort((a, b) => a.size.rank - b.size.rank || a.id.localeCompare(b.id));
   const unsized = plan.tickets.length - sized.length;

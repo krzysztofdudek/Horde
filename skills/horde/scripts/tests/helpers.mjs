@@ -240,9 +240,11 @@ export function addNode(dir, path, spec = {}) {
     lines.push('aspects:');
     for (const a of aspects) lines.push(`  - ${a}`);
   }
-  lines.push('mapping:');
-  if (mapping.length) for (const m of mapping) lines.push(`  - "${m}"`);
-  else lines.push('  []');
+  // Yggdrasil refuses a `mapping:` that is empty, so a node that maps no code leaves the key out.
+  if (mapping.length) {
+    lines.push('mapping:');
+    for (const m of mapping) lines.push(`  - "${m}"`);
+  }
   if (relations.length) {
     lines.push('relations:');
     for (const r of relations) {
