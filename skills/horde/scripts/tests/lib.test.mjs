@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import {
   existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, rmSync,
 } from 'node:fs';
@@ -900,4 +900,41 @@ test('_lib.mjs qualityPolicy: reads a recognized value or the ruling\'s own defa
   } finally {
     process.chdir(origCwd);
   }
+});
+
+// writeJSON used to write in place: the file is truncated, then filled, so a reader with no lock — every
+// `tk.mjs`, `tick.mjs` and test that reads queue.json while a detached land.mjs writes it — could catch it
+// empty or half-written and die on "Unexpected end of JSON input". It now writes a sibling and renames it
+// over the file, so a reader sees the whole old document or the whole new one and never anything between.
+test('_lib.mjs writeJSON: a reader racing a writer never sees a torn document', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const file = join(dir, 'state', 'queue.json');
+  const here = dirname(fileURLToPath(import.meta.url));
+  const lib = join(here, '..', '_lib.mjs');
+  // A document big enough that one write takes many syscalls, so an in-place write has a wide window;
+  // built inside the writer, because a document this size does not fit on a command line.
+  const writer = `
+    import { writeJSON } from ${JSON.stringify(lib)};
+    const items = Array.from({ length: 20000 }, (_, i) => ({ ticket: 't-' + i, note: 'x'.repeat(40) }));
+    for (let round = 0; round < 60; round += 1) writeJSON(${JSON.stringify(file)}, { round, items });
+  `;
+  execFileSync(process.execPath, ['--input-type=module', '-e', `import { writeJSON } from ${JSON.stringify(lib)}; writeJSON(${JSON.stringify(file)}, { round: -1, items: [] });`]);
+  const child = spawn(process.execPath, ['--input-type=module', '-e', writer], { stdio: 'ignore' });
+  const done = new Promise((resolve) => { child.on('exit', resolve); });
+  let reads = 0;
+  const torn = [];
+  let finished = false;
+  done.then(() => { finished = true; });
+  while (!finished) {
+    try {
+      JSON.parse(readFileSync(file, 'utf8'));
+    } catch (e) {
+      torn.push(e.message);
+    }
+    reads += 1;
+    await new Promise((resolve) => { setImmediate(resolve); });
+  }
+  assert.ok(reads > 20, `the reader got to look ${reads} times`);
+  assert.deepEqual(torn, [], `${torn.length} of ${reads} reads saw a torn queue.json: ${torn[0]}`);
 });
