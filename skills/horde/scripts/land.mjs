@@ -465,11 +465,12 @@ function noNewTestsReason(issueText) {
 // came to hold the file and what state its implementation is in when it runs.
 function runnerFor(relPath, cfg) {
   if (/\.(m?js|c?js)$/.test(relPath)) return 'node';
+  if (cfg.gates && cfg.gates.testFile) return 'test-file';
   if (cfg.gates && cfg.gates.commit) return 'whole-command';
   return null;
 }
 
-const NO_RUNNER_NOTE = 'no runner available (not a node test file, and no gates.commit configured)';
+const NO_RUNNER_NOTE = 'no runner available (not a node test file, and neither gates.testFile nor gates.commit configured)';
 
 // Every runner here executes whatever the branch or the repository configured, on a landing that may
 // be running detached with nothing waiting on it, so each runs under the same ceiling the gate
@@ -486,6 +487,38 @@ function runNodeTestFile(tmp, relPath, cfg) {
   if (out === null) return { path: relPath, ok: false, note: stoppedNote(cfg) };
   const summary = parseNodeTestSummary(out);
   return { path: relPath, ok: (summary.fail ?? 0) > 0, note: `${summary.fail ?? '?'} fail / ${summary.tests ?? '?'} tests` };
+}
+
+// Runs one already-materialised test file in `tmp` through `config.gates.testFile` — a command with
+// `{file}` standing for the file's path — for a file `node --test` cannot run and the commit gate does
+// not run either (an end-to-end spec under a runner of its own). Red is proof and green is not, as for a
+// node test file; but a command that never ran — the shell's 126 and 127, "not executable" and "not
+// found" — is red for the wrong reason, so it is no verdict, never proof.
+function shellQuote(text) {
+  return `'${String(text).replace(/'/g, `'\\''`)}'`;
+}
+
+function runTestFileCommand(tmp, relPath, cfg) {
+  const command = String(cfg.gates.testFile).replace(/\{file\}/g, () => shellQuote(relPath));
+  try {
+    execSync(command, {
+      cwd: tmp, env: childTestEnv(), stdio: 'pipe', timeout: gateTimeout(cfg), killSignal: 'SIGTERM',
+    });
+    return { path: relPath, ok: false, note: 'gates.testFile green with it in place — the test passes here, so it proves nothing about the change' };
+  } catch (e) {
+    if (e.killed === true || e.signal === 'SIGTERM') return { path: relPath, ok: false, note: `gates.testFile ${stoppedNote(cfg)}` };
+    const code = typeof e.status === 'number' ? e.status : null;
+    if (code === 126 || code === 127) {
+      const detail = ((e.stderr ? e.stderr.toString() : '') || '').trim().split('\n')[0];
+      return { path: relPath, ok: false, noVerdict: true, note: `no verdict — gates.testFile could not run (exit ${code})${detail ? `: ${detail}` : ''}` };
+    }
+    return { path: relPath, ok: true, note: `gates.testFile red (exit ${code === null ? `signal ${e.signal}` : code}) with it in place` };
+  }
+}
+
+// Runs one already-materialised test file with the runner `runnerFor` chose for it.
+function runTestFile(tmp, relPath, runner, cfg) {
+  return runner === 'test-file' ? runTestFileCommand(tmp, relPath, cfg) : runNodeTestFile(tmp, relPath, cfg);
 }
 
 // Sets one test file in a scratch tree to `content` — or takes it out, for null — and hands back
@@ -550,7 +583,7 @@ function setTestFile(tmp, relPath, content) {
 // The cost is one more `gates.commit` run per landing, and only for a ticket carrying a file that
 // needs this fallback at all.
 
-const NO_VERDICT_WAYS_OUT = 'ways out of "no verdict": make gates.commit green on the base without the file; name a revert base where it is green ("**Revert base:** <ref>"); give the ticket a "**Mutate:**" command that only this file catches; or run the file with a command for that one file, once one can be configured';
+const NO_VERDICT_WAYS_OUT = 'ways out of "no verdict": make gates.commit green on the base without the file; name a revert base where it is green ("**Revert base:** <ref>"); give the ticket a "**Mutate:**" command that only this file catches; or set gates.testFile to a command that runs one test file ({file} stands for its path)';
 
 // Where the fallback looks for a report `gates.commit` may have produced, and in what format — or
 // why there is nowhere to look. A path is only ever one gateReportConfig accepted as staying inside
@@ -675,7 +708,7 @@ function runRevertToBaseVariant(root, cfg, branch, parentBranch, base, newTestFi
       if (f.runner === 'whole-command') continue;
       if (f.runner === null) { byPath.set(f.path, { path: f.path, ok: false, note: NO_RUNNER_NOTE }); continue; }
       setTestFile(tmp, f.path, f.content);
-      byPath.set(f.path, runNodeTestFile(tmp, f.path, cfg));
+      byPath.set(f.path, runTestFile(tmp, f.path, f.runner, cfg));
     }
   } finally {
     cleanupTree(info, root);
@@ -740,8 +773,9 @@ function runMutateVariant(root, cfg, branch, parentBranch, mutate, newTestFiles)
     }
     for (const relPath of newTestFiles) {
       if (byPath.has(relPath)) continue;
-      byPath.set(relPath, runnerFor(relPath, cfg) === 'node'
-        ? runNodeTestFile(tmp, relPath, cfg)
+      const runner = runnerFor(relPath, cfg);
+      byPath.set(relPath, runner === 'node' || runner === 'test-file'
+        ? runTestFile(tmp, relPath, runner, cfg)
         : { path: relPath, ok: false, note: NO_RUNNER_NOTE });
     }
     const results = newTestFiles.map((relPath) => byPath.get(relPath));
