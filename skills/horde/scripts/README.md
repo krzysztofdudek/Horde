@@ -379,6 +379,15 @@ earning no row at all claims nothing — neither is a mismatch.
   out which evidence rows the wave turned green, and the catalogue used to sit at zero whenever the
   second command was forgotten. `wave.mjs merged` remains, for a merge the queue never saw, and
   never records one twice.
+- `set NNN running --adopt` is for an item whose record lost its branch (`branch: null`) while the branch
+  `<horde>/t-NNN` itself still exists — a write that raced, or a record restored from before the branch
+  was cut. Without it `set running` refuses to cut a second branch over the first; with it the existing
+  branch is bound back as it is, its worktree is made again, and a note on the item says so. It refuses
+  where there is no such branch to adopt, where the record still has its branch, with `--on` (a stack is
+  chosen when a branch is cut) and with any state but `running`. Until then `next --why` names such an
+  item an orphan — with the command that puts it right — instead of ranking it, and `tick` leaves it
+  on its held list and hands out the rest: one ticket that cannot be started, for this or any other
+  reason, is named there and skipped, never a reason to stop the run.
 - `set NNN running --on MMM` cuts the branch from `MMM`'s tip instead of the team's — a **stack**, so
   a chain of tickets does not cost one wave per link — and records `stackedOn: MMM` on the item.
   `MMM` must be a dependency of `NNN` — `plan`'s own derived set, so a port `NNN` `**Consumes:**`

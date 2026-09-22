@@ -1741,3 +1741,71 @@ test('tick.mjs: says how loaded the landing gate is — branches waiting, and wh
     assert.equal(horde.landing.ready, 2);
   });
 });
+
+test('tick.mjs: an item whose record lost its branch is named an orphan and left, the rest of the list still goes out, and --adopt binds the branch back', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const orphan = mkTicket(dir, 'lost-branch', { files: 'src/lost.ts', severity: 'high' });
+  const other = mkTicket(dir, 'goes-out-one', { files: 'src/one.ts' });
+  const another = mkTicket(dir, 'goes-out-two', { files: 'src/two.ts' });
+  for (const id of [orphan, other, another]) run('queue.mjs', ['add', id], dir);
+  git(['branch', `mission1/t-${orphan}`, 'mission1/trunk'], dir);
+  assert.equal(itemOf(dir, orphan).branch, null, 'the record has no branch, and the branch exists');
+
+  await t.test('next --why names it an orphan instead of ranking it', () => {
+    const r = run('queue.mjs', ['next', '--why'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const row = r.json.entries.find((e) => e.ticket === orphan);
+    assert.equal(row.eligible, false);
+    assert.equal(row.orphan, true);
+    assert.match(row.reason, new RegExp(`orphan — branch mission1/t-${orphan} exists.*set ${orphan} running --adopt`));
+    assert.notEqual(r.json.chosen, orphan, 'and it is not what next chooses');
+  });
+
+  await t.test('tick hands out the rest and says what is held and why', () => {
+    const r = tick(dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.json.spawn.map((s) => s.ticket).sort(), [other, another].sort());
+    const held = r.json.held.find((h) => h.ticket === orphan);
+    assert.ok(held, 'the orphan is on the held list');
+    assert.equal(held.holds, 'dispatch');
+    assert.match(held.note, /--adopt/);
+    assert.equal(itemOf(dir, orphan).state, 'queued', 'and nothing about it was written');
+    assert.match(run('tick.mjs', [], dir, { json: false }).stdout, new RegExp(`held \\(dispatch\\): ${orphan}: orphan`));
+  });
+
+  await t.test('--adopt binds the branch back, makes the worktree again and notes it', () => {
+    const r = run('queue.mjs', ['set', orphan, 'running', '--adopt'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const item = itemOf(dir, orphan);
+    assert.equal(item.state, 'running');
+    assert.equal(item.branch, `mission1/t-${orphan}`);
+    assert.ok(item.worktree && existsSync(item.worktree), 'the worktree exists');
+    assert.equal(git(['-C', item.worktree, 'branch', '--show-current'], dir), `mission1/t-${orphan}`);
+    assert.ok(item.notes.some((n) => /adopted the existing branch/.test(n.text)));
+  });
+
+  await t.test('--adopt refuses where there is nothing to adopt, where the record has its branch, and with any other state', () => {
+    const fresh = mkTicket(dir, 'never-cut', { files: 'src/fresh.ts' });
+    run('queue.mjs', ['add', fresh], dir);
+    const none = run('queue.mjs', ['set', fresh, 'running', '--adopt'], dir);
+    assert.equal(none.code, 1);
+    assert.match(none.stderr, /there is no branch mission1\/t-\d+ to adopt/);
+    const has = run('queue.mjs', ['set', other, 'running', '--adopt'], dir);
+    assert.equal(has.code, 1);
+    assert.match(has.stderr, /still records its branch/);
+    const wrong = run('queue.mjs', ['set', fresh, 'landed', '--adopt'], dir);
+    assert.equal(wrong.code, 1);
+    assert.match(wrong.stderr, /--adopt only goes with "set <ticket> running"/);
+  });
+
+  await t.test('without --adopt the refusal says how to put it right', () => {
+    const lost = mkTicket(dir, 'lost-again', { files: 'src/again.ts' });
+    run('queue.mjs', ['add', lost], dir);
+    git(['branch', `mission1/t-${lost}`, 'mission1/trunk'], dir);
+    const r = run('queue.mjs', ['set', lost, 'running'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, new RegExp(`branch already exists: mission1/t-${lost} — .*set ${lost} running --adopt`));
+  });
+});

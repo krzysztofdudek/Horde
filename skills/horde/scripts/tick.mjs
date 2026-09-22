@@ -690,9 +690,15 @@ function dispatch(horde, cfg, root, flags, holds) {
   // otherwise every run would hand out a full list on top of the last one's and the number would
   // mean nothing at all.
   const budget = Math.max(0, parallelism - running);
-  const { picked } = rankedCandidates(horde, TEAM, {
+  const { picked, entries } = rankedCandidates(horde, TEAM, {
     stack: !!flags.stack, tree: root, limit: budget, exclude,
   });
+
+  // An item that lost its branch is named and left, never a reason to stop: it stays on the held
+  // list with the command that puts it right, and everything else is handed out as usual.
+  for (const e of entries) {
+    if (e.orphan) held.push({ ticket: e.item.ticket, ask: null, kind: 'orphan', holds: 'dispatch', note: `${e.item.ticket}: ${e.reason}` });
+  }
 
   const out = [];
   for (const candidate of picked || []) {
@@ -701,11 +707,21 @@ function dispatch(horde, cfg, root, flags, holds) {
     // "resume the same worker" and "a fresh worker, one class heavier" are the two shapes a fix
     // round takes; the brief's own --takeover section is what the second is briefed with.
     const takeover = !!(info && prior > 0 && prior >= Number(info.resume ?? 3));
-    const started = startRunning(horde, TEAM, id, {
-      tree: root,
-      on: candidate.stackOn && candidate.stackOn.length ? candidate.stackOn[0] : undefined,
-      agent: workerName(id, prior),
-    });
+    let started;
+    try {
+      started = startRunning(horde, TEAM, id, {
+        tree: root,
+        on: candidate.stackOn && candidate.stackOn.length ? candidate.stackOn[0] : undefined,
+        agent: workerName(id, prior),
+      });
+    } catch (e) {
+      // One ticket that cannot be started — a branch appearing between the ranking and the cut, a
+      // worktree git will not make — is named and skipped; it must not take the run down with it and
+      // leave the tickets before it, already cut and marked running, off the list nobody receives.
+      if (!(e instanceof HordeError)) throw e;
+      held.push({ ticket: id, ask: null, kind: 'not-started', holds: 'dispatch', note: `${id} could not be started: ${e.message.split('\n')[0]}` });
+      continue;
+    }
     const baseClass = (ticket && parseField(ticket.text, 'Class')) || started.class || null;
     out.push({
       ticket: id,

@@ -71,8 +71,12 @@ commands:
       does not carry. The refusal names what does not fit and prints the "charter" question that
       would change it; --ask <id>, naming an answered ask of that kind, is the one way in, and the
       queue item records which ask took it.
-  set <ticket> <${SETTABLE_STATES.join('|')}> [--sha x] [--agent name] [--note "…"]
+  set <ticket> <${SETTABLE_STATES.join('|')}> [--sha x] [--agent name] [--note "…"] [--adopt]
       [--on MMM] [--team t] [--horde h]
+      "running --adopt" is for an item whose record lost its branch while the branch itself is still
+      there: it binds that branch back, makes its worktree again and notes it on the item. "next"
+      names such an item an orphan rather than ranking it, and tick leaves it on its held list and
+      hands out the rest.
       "running --on MMM" starts the ticket from MMM's tip instead of the team's (a stack): MMM
       must be a dependency of this ticket — plan's own derived set, so a port this ticket
       Consumes that MMM Produces counts exactly like a hand-written one — in this same team,
@@ -699,7 +703,7 @@ function prototypeAwareBase(horde, key, teamBranch, root) {
 // The branch a ticket is worked on and the worktree it is worked in, cut where `set <ticket>
 // running` cuts them. Its own function because it has two callers now: that command, and tick
 // building a dispatch list, which has to cut several in a row against one queue document.
-function provisionRunning(horde, team, key, item, { tree, on } = {}) {
+function provisionRunning(horde, team, key, item, { tree, on, adopt = false } = {}) {
   const teamBranch = `${horde}/${team}`;
   const cfg = readConfig() || {};
   const root = resolveTree({ tree }).path;
@@ -707,10 +711,16 @@ function provisionRunning(horde, team, key, item, { tree, on } = {}) {
     ? resolveStackParent(horde, team, key, item, on, buildPlan(horde, team, cfg, { tree: root }))
     : null;
   let branchName = item.branch;
-  if (!branchName) {
+  if (adopt) {
+    if (item.branch) fail(`--adopt: ${key} still records its branch (${item.branch}) — there is nothing to bind back; drop --adopt`);
+    if (stack) fail('--adopt and --on do not go together — adopting binds the branch as it is, and a stack is chosen when a branch is cut');
+    branchName = `${horde}/t-${key}`;
+    if (git(['rev-parse', '--verify', branchName], root) === null) fail(`--adopt: there is no branch ${branchName} to adopt — start ${key} without --adopt and it is cut`);
+    item.notes.push({ at: nowIso(), text: `adopted the existing branch ${branchName}: the record had lost it, and its worktree is made again` });
+  } else if (!branchName) {
     const from = stack ? stack.branch : prototypeAwareBase(horde, key, teamBranch, root);
     branchName = `${horde}/t-${key}`;
-    if (git(['rev-parse', '--verify', branchName], root) !== null) fail(`branch already exists: ${branchName}`);
+    if (git(['rev-parse', '--verify', branchName], root) !== null) fail(`branch already exists: ${branchName} — this item's record lost it; \`set ${key} running --adopt\` binds it back with its worktree`);
     const created = git(['branch', branchName, from], root);
     if (created === null) fail(`could not create branch ${branchName} off ${from}`);
     if (stack) {
@@ -762,7 +772,11 @@ function cmdSet(horde, positional, flags) {
       fail('--on only goes with "set <ticket> running" — it says which branch the ticket is cut from, and nothing else cuts one');
     }
 
-    if (state === 'running') provisionRunning(horde, team, key, found.item, { tree: flags.tree, on: flags.on });
+    if (flags.adopt && state !== 'running') {
+      fail('--adopt only goes with "set <ticket> running" — it binds a branch that exists back to an item whose record lost it, and nothing else starts work');
+    }
+
+    if (state === 'running') provisionRunning(horde, team, key, found.item, { tree: flags.tree, on: flags.on, adopt: !!flags.adopt });
 
     if (state === 'merged') {
       if (!flags.sha) fail('set merged requires --sha');
@@ -1009,6 +1023,7 @@ export function rankedCandidates(horde, team, {
   // figures rather than a second, possibly stale, reading of the tickets.
   const plan = buildPlan(horde, team, cfg, { tree });
   const remainingPath = new Map(plan.tickets.map((t) => [t.id, t.remainingPath]));
+  const root = resolveTree({ tree, horde }).path;
   const locks = runningLocks(horde, doc);
   const busyNodes = new Set(locks.flatMap((l) => l.nodes));
 
@@ -1018,6 +1033,15 @@ export function rankedCandidates(horde, team, {
     .map(({ item, idx }) => {
       const heldBy = exclude ? exclude.get(item.ticket) : null;
       if (heldBy) return { item, idx, eligible: false, reason: heldBy };
+      // An item whose record lost its branch while the branch itself is still there cannot be started
+      // — `set running` would refuse to cut a second one over it — so it is named for what it is
+      // instead of being ranked, and everything behind it moves up.
+      if (!item.branch && git(['rev-parse', '--verify', `${horde}/t-${item.ticket}`], root) !== null) {
+        return {
+          item, idx, eligible: false, orphan: true,
+          reason: `orphan — branch ${horde}/t-${item.ticket} exists but this item's record lost it; \`set ${item.ticket} running --adopt\` binds it back with its worktree`,
+        };
+      }
       // The same edges `plan` derives govern readiness here: a port a ticket consumes orders it
       // after the ticket producing that port exactly like a hand-written dependency, so a
       // consumer of a port whose producer is still unmerged is not ready even with no manual
@@ -1131,6 +1155,7 @@ function cmdNext(horde, positional, flags) {
       class: e.item.class,
       eligible: e.eligible,
       reason: e.eligible ? null : e.reason,
+      orphan: !!e.orphan,
       rank: e.eligible ? e.rank : null,
       stackOn: e.eligible ? e.stackOn : [],
       stacked: e.eligible ? stackedLine(e.stackOn) : null,
@@ -1747,7 +1772,7 @@ function cmdReconcile(horde, positional, flags) {
 }
 
 function main() {
-  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['apply-order', 'why', 'stack', 'dry-run', 'proposed'] });
+  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['apply-order', 'why', 'stack', 'dry-run', 'proposed', 'adopt'] });
   const [cmd, ...positional] = allPositional;
 
   if (flags.help) { console.log(USAGE); process.exit(0); }
