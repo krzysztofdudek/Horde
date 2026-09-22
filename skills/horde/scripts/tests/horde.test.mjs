@@ -357,6 +357,55 @@ test('horde.mjs charter edit: a rewrite that drops a recorded verifier says so',
   assert.deepEqual(dropped.droppedEvidence, [{ id: 'E1', was: 'verifier1' }]);
 });
 
+test('horde.mjs charter edit: rewording a stamped row\'s evidence or class leaves the stamp and warns, since the stamp no longer says what it proved', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const row = (evidence, cls) => [
+    '# Mission · m', '', '## Acceptance — the evidence catalogue', '',
+    '| id | evidence | node | reproduced by | class |', '|---|---|---|---|---|',
+    `| E1 | ${evidence} | api | verifier1 | ${cls} |`, '',
+  ].join('\n');
+  const charterEdit = (input) => JSON.parse(execFileSync(
+    'node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit', '--json'],
+    { cwd: dir, input, encoding: 'utf8' },
+  ));
+  charterEdit(row('the suite is green', 'unit'));
+
+  await t.test('the same text, unchanged, warns nothing', () => {
+    const same = charterEdit(row('the suite is green', 'unit'));
+    assert.deepEqual(same.redraftedEvidence, []);
+  });
+
+  await t.test('a reworded evidence text, stamp kept, warns by id and names the stamp', () => {
+    const reworded = charterEdit(row('the whole suite is green', 'unit'));
+    assert.deepEqual(reworded.redraftedEvidence, [{
+      id: 'E1', by: 'verifier1', was: 'the suite is green', now: 'the whole suite is green', wasClass: 'unit', nowClass: 'unit',
+    }]);
+    charterEdit(row('the suite is green', 'unit'));
+    const worded = execFileSync('node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit'], {
+      cwd: dir, input: row('the whole suite is green', 'unit'), encoding: 'utf8',
+    });
+    assert.match(worded, /warning: E1 is still recorded as reproduced by verifier1, but this text changed its evidence — the stamp may no longer match what it now promises/);
+  });
+
+  await t.test('a changed class, evidence text unchanged, warns the same way', () => {
+    charterEdit(row('the suite is green', 'unit'));
+    const reclassed = charterEdit(row('the suite is green', 'e2e'));
+    assert.deepEqual(reclassed.redraftedEvidence, [{
+      id: 'E1', by: 'verifier1', was: 'the suite is green', now: 'the suite is green', wasClass: 'unit', nowClass: 'e2e',
+    }]);
+  });
+
+  await t.test('wiping the stamp on a reworded row is the drop warning, not this one — the two never fire together', () => {
+    charterEdit(row('the suite is green', 'unit'));
+    const wiped = charterEdit(row('the whole suite is green', 'unit').replace('| verifier1 |', '| |'));
+    assert.deepEqual(wiped.redraftedEvidence, []);
+    assert.deepEqual(wiped.droppedEvidence, [{ id: 'E1', was: 'verifier1' }]);
+  });
+});
+
 // E13 — dropping a row outright is free before the mission's wave 1 starts, and needs an answered
 // ask of kind "charter" naming it afterwards.
 test('horde.mjs charter edit: dropping a row is free before wave 1, refused after without an answered ask naming it', async (t) => {

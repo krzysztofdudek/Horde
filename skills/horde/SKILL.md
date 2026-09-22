@@ -356,6 +356,8 @@ pile is held against — set it before a mission runs, never after its number is
 A charter rewrite that drops an evidence row outright is free before the mission's wave 1 starts; after
 it, `horde.mjs charter edit` refuses the drop unless `--ask <id>` names an answered ask of kind `charter`
 whose own text names the row — a promise made to the chairman does not quietly disappear from a later edit.
+Rewording a stamped row's evidence or class while keeping its stamp warns by id instead — the stamp still
+exists, so nothing refuses it, but it no longer necessarily proves what the row now says.
 
 **The chairman may dictate a ticket; the mission card is what says it belongs.** `queue.mjs add` refuses
 one whose nodes lie outside every territory the mission was cut into, or which earns an evidence row the

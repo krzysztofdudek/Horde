@@ -95,7 +95,11 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   with what arrives on stdin, and reports how
   many evidence rows the new text carries and how many are recorded as reproduced — naming any row
   that was recorded and is no longer, since a rewrite that drops one loses work already done against
-  it otherwise. This is how the goal, the non-goals, the evidence catalogue and every amendment are
+  it otherwise, and separately warning by id on a row that keeps its stamp but changes what it
+  promises (its evidence text or its class) — a rewording a stamp survives silently otherwise, so the
+  stamp is left claiming proof of a promise the text no longer makes; nothing refuses this, since the
+  row and its stamp both still exist, and resolving the mismatch (revert the wording, or re-earn the
+  stamp) is for whoever wrote the text to judge. This is how the goal, the non-goals, the evidence catalogue and every amendment are
   written: the charter is the one file where what the chairman asked for lands, and it is written
   through a tool like everything else. Dropping a row outright (present before, gone from the new
   text entirely) is free before the mission's wave 1 has started; once it has, the drop refuses
