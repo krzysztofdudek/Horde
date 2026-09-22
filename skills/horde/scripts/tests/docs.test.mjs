@@ -1140,6 +1140,8 @@ test('scripts/README.md\'s dependency-forms bullet names only forms queue.mjs\'s
   } finally {
     rmRepo(dir);
   }
+});
+
 // ---- issue 071: reference/discipline/tdd.md described a "--revert no-new-tests" flag land.mjs
 // never had (the real declaration is the **No new tests:** field on the ticket itself, which
 // land.mjs's noNewTestsReason reads from issue.md) — invisible to the doc-vs-USAGE scan above
