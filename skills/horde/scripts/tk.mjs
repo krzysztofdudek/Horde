@@ -790,6 +790,8 @@ export function createTicket(horde, spec) {
 // filed. This is advisory only — a warning, never a refusal, because Grain's history is a pattern,
 // not a promise, and the architect (or whoever files the ticket) is the one who judges whether it
 // applies here. No Grain configured is said once, plainly, rather than silently skipped.
+const OBLIGATION_SCHEMA = 'grain-obligation/1';
+
 function checkObligations(horde, root, cfg, nodes, files) {
   if (!files.length) return { checked: true, why: null, warnings: [] };
   if (!grainLine(cfg)) return { checked: false, why: 'no Grain CLI is configured for this repository', warnings: [] };
@@ -801,6 +803,17 @@ function checkObligations(horde, root, cfg, nodes, files) {
     if (!res.available) continue; // a Grain call that did not run is silent here, never a refusal
     let data = null;
     try { data = JSON.parse(res.text); } catch { data = null; }
+    // A document of another version is not read as if it were this one: its `rules[]` may mean something
+    // else, and reading nothing out of it would look exactly like "no obligation". The check says it did
+    // not run and names what Grain answered, as the family's contract register asks of every consumer.
+    if (data && data.schema !== OBLIGATION_SCHEMA) {
+      return {
+        checked: false,
+        why: `Grain answered \`${data.schema === undefined ? 'a document with no schema' : data.schema}\`, not \`${OBLIGATION_SCHEMA}\` — `
+          + 'this Horde does not know that version, so the obligations were not read; install the Grain release this Horde ships with',
+        warnings,
+      };
+    }
     for (const rule of asArray(data && data.rules)) {
       const companion = rule && rule.file ? String(rule.file) : null;
       if (!companion || files.includes(companion) || pathInBoundary(companion, boundary)) continue;
