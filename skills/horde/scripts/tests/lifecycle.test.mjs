@@ -164,14 +164,6 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     assert.equal(landedState.json.state, 'landed');
   });
 
-  // review-request only appends a line to the ticket's log now. Nothing downstream reads it and
-  // nothing waits on it — a landing asks no second party for anything — so this is here as the
-  // one surviving piece of the old flow, not as a gate.
-  await t.test('8. review requested — a line on the log, and nothing waits on it', () => {
-    const reviewRequest = run('tk.mjs', ['review-request', ticketId], dir);
-    assert.equal(reviewRequest.code, 0, reviewRequest.stderr);
-  });
-
   // "proposed" (016) is the state a ticket nobody has ruled on sits in: in the queue, listed and
   // counted, and never a candidate for anyone to start.
   await t.test('9. proposed: a ticket nobody has ruled on is counted, and never handed out', () => {

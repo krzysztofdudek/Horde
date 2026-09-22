@@ -82,7 +82,6 @@ const KINDS = ['work', 'quality', 'prototype'];
 // is walled off without turning the policy off for the whole mission. Neither value ever permits
 // making anything weaker.
 const TICKET_QUALITY = ['autonomous', 'only-the-work'];
-const REVIEW_PENDING_STATUSES = new Set(['landed', 'changes']);
 const OPEN_EXCLUDE = new Set(['merged', 'dropped']);
 
 const USAGE = `usage: tk.mjs <command> [options]
@@ -131,7 +130,7 @@ commands:
       own "- [ ] …" line in the ticket's Acceptance — evidence checklist, and the ids cited in it
       fill the field too. A catalogue id (E1, E2, …) must already be a row in the horde's
       charter.md evidence table — refuses otherwise, listing the unknown ids.
-  list [--state s] [--node n] [--review-pending] [--open] [--team t] [--horde h]
+  list [--state s] [--node n] [--open] [--team t] [--horde h]
   show <ticket> [--log] [--horde h]
   status <ticket> <${STATUSES.join('|')}> ["note"] [--horde h]
       "changes" counts the round and prints it: rounds 1..config.fixRounds.resume (default 3) —
@@ -147,11 +146,6 @@ commands:
       into the row's own "reproduced by" cell: saying "yes, that is what I meant" is not saying it
       is built. Refuses a ticket that is not a prototype. Until it has run, queue.mjs refuses every
       other ticket against that row.
-  review-request <ticket> [--delta <path>] [--horde h]
-      appends a timestamped log entry. --delta names a diff file you write yourself (e.g.
-      \`git diff <approved-sha>..HEAD -- <files> > path/to/diff\`), holding the difference between
-      what was approved before and what is on the branch now, so a re-review reads that instead
-      of the whole change again.
   review-close <ticket> --by <name> [--horde h]
       the last line a ticket's review writes, whatever it found: "review closed by <name> —
       Critical N · Important N · Minor N", the findings it logged since tick.mjs raised it, counted
@@ -876,7 +870,6 @@ function cmdList(horde, positional, flags) {
   }
   if (flags.state) rows = rows.filter((r) => r.status === flags.state);
   if (flags.node) rows = rows.filter((r) => r.node.includes(flags.node));
-  if (flags['review-pending']) rows = rows.filter((r) => REVIEW_PENDING_STATUSES.has(r.status));
   if (flags.open) rows = rows.filter((r) => !OPEN_EXCLUDE.has(r.status));
   emit(rows, flags, () => (rows.length ? rows.map((r) => `${r.id} ${r.status} ${r.severity} ${r.title}`).join('\n') : '(no tickets)'));
 }
@@ -951,22 +944,6 @@ function cmdGrep(horde, positional, flags) {
   emit(results, flags, () => (results.length ? results.map((r) => `${r.id} ${r.file}: ${r.line}`).join('\n') : '(no matches)'));
 }
 
-// --delta <path> — the file holding the difference between what was already reviewed and
-// what is on the branch now. Nothing in this tool set writes it: the caller generates it
-// themselves (e.g. `git diff <approved-sha>..HEAD -- <files> > path/to/diff`) and passes its path.
-// Logged by path rather than by content: the reviewer reads the file, and the log keeps a record of
-// which re-review this request was, so a later reader can tell a scoped one from a full one.
-function cmdReviewRequest(horde, positional, flags) {
-  const ticket = requireTicket(horde, positional[0]);
-  if (flags.delta === true) fail('--delta requires the path of a diff file you generate yourself (e.g. `git diff <approved-sha>..HEAD -- <files> > path/to/diff`) recording what changed since the last approval');
-  const delta = typeof flags.delta === 'string' ? flags.delta : null;
-  appendLog(ticket, delta ? `review requested — scoped re-review: ${delta}` : 'review requested');
-  emit(
-    { id: ticket.id, delta },
-    flags,
-    () => `review requested: ${ticket.id}${delta ? ` — scoped re-review: ${delta}` : ''}`,
-  );
-}
 
 // --- a ticket's one review, read back off its log -------------------------------------------------
 //
@@ -1266,7 +1243,7 @@ function main() {
   const {
     positional: allPositional,
     flags,
-  } = parseArgs(process.argv.slice(2), { flags: ['open', 'review-pending', 'log', 'from-queue', 'no-quality'] });
+  } = parseArgs(process.argv.slice(2), { flags: ['open', 'log', 'from-queue', 'no-quality'] });
   const [cmd, ...positional] = allPositional;
 
   if (flags.help) { console.log(USAGE); process.exit(0); }
@@ -1281,7 +1258,6 @@ function main() {
     case 'status': return cmdStatus(horde, positional, flags);
     case 'log': return cmdLog(horde, positional, flags);
     case 'grep': return cmdGrep(horde, positional, flags);
-    case 'review-request': return cmdReviewRequest(horde, positional, flags);
     case 'review-close': return cmdReviewClose(horde, positional, flags);
     case 'review-skip': return cmdReviewSkip(horde, positional, flags);
     case 'accept': return cmdAccept(horde, positional, flags);

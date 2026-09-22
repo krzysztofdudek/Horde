@@ -47,7 +47,7 @@ function tkEdit(dir, id, body, args = []) {
   }
 }
 
-test('tk.mjs: new, list, show, status, log, grep, review-request, move', async (t) => {
+test('tk.mjs: new, list, show, status, log, grep, move', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -130,13 +130,6 @@ test('tk.mjs: new, list, show, status, log, grep, review-request, move', async (
     assert.equal(r.code, 0);
     assert.equal(r.json.length, 1);
     assert.equal(r.json[0].id, id);
-  });
-
-  await t.test('review-request timestamps the log', () => {
-    const r = run('tk.mjs', ['review-request', id], dir);
-    assert.equal(r.code, 0);
-    const log = run('tk.mjs', ['show', id, '--log'], dir);
-    assert.match(log.json.log, /review requested/);
   });
 
   await t.test('move relocates the issue folder and updates the Team field', () => {
@@ -600,42 +593,6 @@ test('tk.mjs: Files, Consumes, Produces and Evidence on the ticket', async (t) =
     const after = run('tk.mjs', ['show', producer], dir).json.text;
     assert.equal(after.slice(after.indexOf('## What')), before.slice(before.indexOf('## What')));
   });
-});
-
-test('tk.mjs review-request --delta logs the file the owner is asked to read', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-
-  const created = run('tk.mjs', ['new', 'scoped', '--title', 'Scoped again', '--node', 'core', '--class', 'standard'], dir);
-  const id = created.json.id;
-
-  const plain = run('tk.mjs', ['review-request', id], dir);
-  assert.equal(plain.code, 0, plain.stderr);
-  assert.equal(plain.json.delta, null);
-
-  const scoped = run('tk.mjs', ['review-request', id, '--delta', '.horde/hordes/mission1/teams/trunk/issues/001-scoped/rereview-aaaaaaa..bbbbbbb.diff'], dir);
-  assert.equal(scoped.code, 0, scoped.stderr);
-  assert.match(scoped.json.delta, /rereview-aaaaaaa\.\.bbbbbbb\.diff$/);
-  const log = run('tk.mjs', ['show', id, '--log'], dir);
-  assert.match(log.json.log, /review requested$/m);
-  assert.match(log.json.log, /review requested — scoped re-review: .*rereview-aaaaaaa\.\.bbbbbbb\.diff/);
-});
-
-test('tk.mjs review-request --delta (bare) refuses without pointing the caller at a source that writes nothing', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-
-  const created = run('tk.mjs', ['new', 'scoped2', '--title', 'Scoped bare', '--node', 'core', '--class', 'standard'], dir);
-  const id = created.json.id;
-
-  const bare = run('tk.mjs', ['review-request', id, '--delta'], dir);
-  assert.equal(bare.code, 1);
-  // The refusal must not send the caller looking for output "the merge checklist" never produces —
-  // nothing in this tool set writes a rereview diff file. It must instead say the caller builds it.
-  assert.doesNotMatch(bare.stderr, /merge checklist/);
-  assert.match(bare.stderr, /generate yourself/);
 });
 
 // Backward compatibility: a ticket written before this task deleted the **Keys:** line (by an

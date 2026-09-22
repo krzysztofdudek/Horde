@@ -235,7 +235,7 @@ its folder and of the `id:` its issue.md carries.
   no boundary and no port, so a ticket named against it is accepted uncontested rather than refused —
   run `new`/`edit` from the tree whose graph state should decide the check, or land the graph change
   there first.
-- `list [--state s] [--node n] [--team t] [--review-pending] [--open]`, `show NNN [--log]`,
+- `list [--state s] [--node n] [--team t] [--open]`, `show NNN [--log]`,
   `status NNN <state> ["note"]` (states: proposed queued running landed changes blocked merged
   dropped — `blocked` is `tick.mjs`'s own, for a ticket whose fix rounds ran out; `verified` and
   `escalated` are pre-6.0.0 history and refused by name, saying what replaced each) —
@@ -245,8 +245,6 @@ its folder and of the `id:` its issue.md carries.
   worker, class up" — a new one, one class heavier (`config.classes`), briefed with `brief.mjs
   worker NNN --name <n> --takeover`. Beyond that cap the command refuses outright — there is no next command
   to propose yet. `log NNN "text"`, `grep <re>`.
-- `review-request NNN [--delta <path>]` — appends to the log with a timestamp; `--delta` names the
-  file a scoped re-review was written to, so the log records which kind of review was asked for.
 - `review-close NNN --by <name>` — the line a ticket's one review ends with, whatever it found:
   `review closed by <name> — Critical N · Important N · Minor N`, the findings logged since
   `tick.mjs` raised the review, counted off the log (`readReview`, the one reader `tick.mjs` uses
