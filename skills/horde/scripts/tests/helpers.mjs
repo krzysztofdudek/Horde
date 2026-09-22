@@ -107,8 +107,11 @@ export function makeRepo() {
   return dir;
 }
 
+// A background `land.mjs` can still be removing its own scratch trees when a test's result is
+// already written, so the first attempt can meet a directory that is not empty yet; retrying is what
+// `rmSync` offers for exactly that.
 export function rmRepo(dir) {
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
 
 function safeJSON(s) {
