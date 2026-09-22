@@ -500,7 +500,7 @@ function sweepAdvise(horde, cfg, team, { advise, trunkReach, allNodes }) {
 // already read off the trunk. Resolved against the graph, in that order, and never guessed at: a
 // subject neither the model nor the reach map knows resolves to nothing, which the sweep reports
 // as "names nothing this mission holds" rather than inventing an owner for it.
-function subjectNodes(item, trunkReach, allNodes) {
+export function subjectNodes(item, trunkReach, allNodes) {
   const raw = String(item.id || '');
   const at = raw.indexOf(':');
   if (at === -1) return [];
@@ -508,8 +508,13 @@ function subjectNodes(item, trunkReach, allNodes) {
   if (allNodes.has(subject)) return [subject];
   const reached = trunkReach.get(subject);
   if (reached) return [...reached.nodes];
-  // A rule's own drill case reads as `<aspect>/<case>`.
-  const viaCase = trunkReach.get(subject.split('/')[0]);
+  // A rule's own drill case reads as `<aspect>/<case>`, and both halves can hold a `/`: a rule id is
+  // its directory path under aspects/ (`boundary/clean-core`), and a case label is a path inside the
+  // corpus. The case always starts at the verdict directory (`violates-*` or `satisfies-*`), so the
+  // rule is everything before that segment — never just the first one.
+  const segs = subject.split('/');
+  const caseAt = segs.findIndex((s) => /^(violates|satisfies)-/.test(s));
+  const viaCase = trunkReach.get(caseAt > 0 ? segs.slice(0, caseAt).join('/') : segs[0]);
   if (viaCase) return [...viaCase.nodes];
   return [];
 }
