@@ -373,6 +373,30 @@ test('horde.mjs init works out the judge policy and says so', async (t) => {
   assert.equal(JSON.parse(readFileSync(join(dir, '.horde', 'config.json'), 'utf8')).judge, 'one-shot');
 });
 
+// A config whose `reviewer:` block is its LAST top-level key — Yggdrasil's own repository ends its
+// yg-config.yaml that way, and a reviewer added to an existing config lands there too. The judge
+// detection used to need another top-level key after the block, so it read such a config as having
+// no reviewer at all.
+test('horde.mjs init finds a reviewer block that ends the config file, and judges with the tier', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
+  const configPath = join(dir, '.yggdrasil', 'yg-config.yaml');
+  const lines = readFileSync(configPath, 'utf8').split('\n');
+  const start = lines.findIndex((l) => /^reviewer:\s*$/.test(l));
+  assert.ok(start >= 0, 'yg init --provider wrote a reviewer block');
+  let end = start + 1;
+  while (end < lines.length && !/^\S/.test(lines[end])) end += 1;
+  const block = lines.slice(start, end).join('\n').replace(/\s+$/, '');
+  const rest = [...lines.slice(0, start), ...lines.slice(end)].join('\n').replace(/\s+$/, '');
+  writeFileSync(configPath, `${rest}\n${block}\n`);
+
+  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
+  assert.equal(r.code, 0, r.stderr);
+  assert.match(r.stdout, /judge: tier/);
+  assert.equal(JSON.parse(readFileSync(join(dir, '.horde', 'config.json'), 'utf8')).judge, 'tier');
+});
+
 test('horde.mjs init refuses a commit hook that needs a judge this repository has not got', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
