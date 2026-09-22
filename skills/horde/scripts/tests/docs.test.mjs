@@ -1166,3 +1166,23 @@ test('scripts/README.md\'s set-merged bullet no longer names a sub-team\'s "team
   assert.doesNotMatch(m[0], /team:<name>/, 'the bullet still names a sub-team item form the code does not check for any more');
   assert.doesNotMatch(m[0], /sub-team/);
 });
+
+// ---- a fresh tree carries no install of its own, and Horde does not build one (ruling: the test
+// environment is supplied from outside). A fast check that dies before running anything in such a
+// tree used to read to the worker as "a lower count means a wrong base" — the brief now tells the
+// two apart, and the config reference says the gate commands prepare a fresh tree themselves.
+
+test('the worker brief reads a fast check that ran nothing as a missing environment, not a wrong base', () => {
+  const brief = readText(join(SKILL_DIR, 'reference', 'roles', 'worker.md'));
+  assert.match(brief, /a lower count means a wrong base/, 'the wrong-base rule itself stays');
+  assert.match(brief, /fails before it runs a single test[\s\S]*?is a missing environment, not a wrong base/,
+    'the brief must tell a fast check that never started apart from a wrong base');
+  assert.match(brief, /do not build it yourself/, 'the worker must not build the missing environment');
+});
+
+test('scripts/README.md says the gate commands prepare a fresh tree, since Horde runs nothing to do it', () => {
+  const readme = readText(join(SCRIPTS_DIR, 'README.md'));
+  assert.match(readme, /Horde runs nothing to prepare a fresh tree/);
+  assert.match(readme, /either prepares the tree itself[\s\S]*?or relies on what `worktree\.copy` carries in/);
+  assert.doesNotMatch(readme, /worktree\.prepare/, 'there is no prepare key — the ruling kept the environment outside Horde');
+});

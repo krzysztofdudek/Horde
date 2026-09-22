@@ -88,7 +88,10 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   heavy: opus`), `parallelism`, `worktree.copy[]` (repository-root-relative paths copied into
   every ticket, trunk or scratch tree the moment it is made — for whatever a worker's tools need
   that git itself does not check out, e.g. an untracked env file or a dependency cache; a path git
-  already tracks is refused — default none).
+  already tracks is refused — default none). Horde runs nothing to prepare a fresh tree: every gate
+  command has to work in one as it is checked out, so it either prepares the tree itself (e.g.
+  `npm ci && npm test`) or relies on what `worktree.copy` carries in. A worker whose fast check fails
+  before running a single test reports a missing environment, not a wrong base.
   A list-valued key (`testGlobs`, `protectedPaths`) takes either a comma-separated list or a JSON
   array and is stored as a list either way — never as the text of one.
 - `charter show|edit [--ask id]` — the mission charter. `show` prints it; `edit` replaces it
