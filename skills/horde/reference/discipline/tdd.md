@@ -17,9 +17,9 @@ design — it is simply not the thing the machine reads. Write the implementatio
 betting that a test written afterwards happens to be load-bearing. That bet is usually lost, and it
 is lost at the merge, after all the work is done.
 
-A change that adds no test at all — a rename, a move, a settings change — says so on its verdict
-(`--revert no-new-tests`) and is verified on its evidence rows instead. That is a claim about the
-diff, and the checklist reads the diff itself.
+A change that adds no test at all — a rename, a move, a settings change — declares it on the
+ticket itself (`**No new tests:** <reason>` in `issue.md`) and is verified on its evidence rows
+instead. That is a claim about the diff, and the checklist reads the diff itself.
 
 ## The loop
 
