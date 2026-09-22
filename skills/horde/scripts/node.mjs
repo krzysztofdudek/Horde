@@ -549,6 +549,13 @@ export function pendingProsePairs(cfg, cwd) {
         ? ['context', '--node', pair.unit, '--json']
         : ['context', '--file', pair.unit, '--json'];
       const answer = ygJson(cwd, cfg, args, 'yg-context/1');
+      // Only a unit the graph does not know has no kind to read. An older CLI, or a call that failed,
+      // is not "not a prose rule": read that way, the pair went to `scriptPending` and no verifier was
+      // ever sent to judge it.
+      if (answer.state === 'stale') failStaleCli(cfg, answer);
+      if (answer.state !== 'ok' && answer.state !== 'absent') {
+        fail(`\`${answer.command}\` could not say which kind of rule ${pair.aspect} is on ${key}: ${answer.detail || answer.state}`);
+      }
       docs.set(key, answer.state === 'ok' ? answer.doc : null);
     }
     const doc = docs.get(key);

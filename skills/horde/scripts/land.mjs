@@ -1260,7 +1260,10 @@ function consumeAnswer(horde, answer, ticketId, sha) {
 // node or by file alone, which is right for a command that looks at one tree and exactly wrong
 // for a comparison of two.
 function ygDocAt(tree, cfg, args, schema, what) {
-  const res = ygJson(tree, cfg, args, schema);
+  return docOrStop(ygJson(tree, cfg, args, schema), cfg, schema, what);
+}
+
+function docOrStop(res, cfg, schema, what) {
   if (res.state === 'ok') return res.doc;
   if (res.state === 'no-cli') {
     fail(`\`${res.command}\` could not be started — there is no Yggdrasil CLI at "${ygCommand(cfg).display}", and ${what} cannot be read without one. Point config.ygCommand at a build: horde.mjs config set ygCommand "node path/to/bin.js"`);
@@ -1507,10 +1510,14 @@ function conflictGuard(cfg, baseTree, headTree, changedFiles, headReach) {
   const codeFiles = changedFiles.filter((f) => !f.startsWith('.yggdrasil/'));
   // Who owns each changed file, asked once. A rule reaching a whole component reaches every file
   // that component owns, and its pair is written against the component, not the file.
+  // A file the graph does not know has no owner. Any other answer that is not the document — an older
+  // CLI, a call that failed — stops here: read as "no owner", it matched only a rule's `file:` reach, and a
+  // branch that bent a rule reaching the whole component slipped past this guard.
   const ownerOf = new Map();
   for (const f of codeFiles) {
-    const doc = ygJson(headTree, cfg, ['context', '--file', f, '--json'], 'yg-context/1');
-    ownerOf.set(f, doc.state === 'ok' && doc.doc.owner && doc.doc.owner.kind === 'node' ? doc.doc.owner.path : null);
+    const res = ygJson(headTree, cfg, ['context', '--file', f, '--json'], 'yg-context/1');
+    const doc = res.state === 'absent' ? null : docOrStop(res, cfg, 'yg-context/1', `who owns ${f}`);
+    ownerOf.set(f, doc && doc.owner && doc.owner.kind === 'node' ? doc.owner.path : null);
   }
   const refusals = [];
   for (const [id, files] of touched) {
