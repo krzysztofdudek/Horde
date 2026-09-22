@@ -307,13 +307,17 @@ export function processAlive(pid) {
 // still reads exactly as it did when it was judged. One narrow window stays open: two processes
 // taking over the same genuinely abandoned lock at once can still, between one's second read and
 // its remove, lose the other's fresh lock — a crash-recovery corner, not the everyday release.
-// A lock that cannot be read at all (gone since the failed create, or unreadable) comes back as
-// null and is treated like a dead holder's, exactly as before: removed if it still reads as null.
+// A lock that cannot be read comes back as null. If the path is gone, its holder released it
+// between the failed create and the read, which is the everyday case under load: there is nothing
+// to take over, and removing the path could only ever delete a fresh lock another process linked
+// there a moment later — measured again after the first fix, 23 of 24 on a loaded CI runner. Only a
+// lock that exists and still cannot be read is treated like a dead holder's and removed.
 export function readLockText(path) {
   try { return readFileSync(path, 'utf8'); } catch { return null; }
 }
 
 export function removeStaleLock(path, seen) {
+  if (seen === null && !existsSync(path)) return;
   if (readLockText(path) !== seen) return;
   try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
 }
