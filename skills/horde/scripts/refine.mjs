@@ -528,10 +528,13 @@ function consultBrief(horde, root, cfg, info, charter, territory) {
     grainSection(cfg, root, [
       { label: `Where work like "${intent}" lives here`, args: ['where', intent] },
       { label: `How a change like "${intent}" has been made here before`, args: ['how', intent] },
-      ...territory.nodes.map((n) => ({
-        label: `What a new file under ${n} has had to come with`,
-        args: ['obligation', obligationPath(root, cfg, n)],
-      })),
+      ...territory.nodes.map((n) => {
+        const { path, ext } = obligationPath(root, cfg, n);
+        return {
+          label: `What a new ${ext ? `.${ext} ` : ''}file under ${n} has had to come with`,
+          args: ['obligation', path],
+        };
+      }),
     ]),
     '',
     archiveSection(territory),
@@ -654,16 +657,29 @@ function missionIntent(charter) {
   return (m ? m[1] : 'this change').trim();
 }
 
-// `grain obligation` takes a path, not a component. A component's first mapping glob, cut at the
-// first wildcard, is the directory that mapping is about; a component that maps nothing at all
-// falls back to its own graph directory, which at least exists.
+// `grain obligation` takes the path of a file, not a component, and answers for that file's class:
+// the module it sits in and its extension. Handed a bare directory it answers for extension-less
+// files of the directory's PARENT module, which is nothing a new file under the component would be.
+// So the question is asked about a file that is not there yet, inside the directory the component's
+// first mapping glob names (the glob cut at its first wildcard), with the extension most of the
+// files already there carry. A component that maps nothing at all falls back to its own graph
+// directory, which at least exists.
 function obligationPath(root, cfg, node) {
   const boundary = nodeBoundary(root, cfg, node);
+  let dir = null;
   for (const glob of boundary) {
     const cut = String(glob).split('*')[0].replace(/\/+$/, '');
-    if (cut) return cut;
+    if (cut) { dir = cut; break; }
   }
-  return `.yggdrasil/model/${node}`;
+  if (!dir) dir = `.yggdrasil/model/${node}`;
+  const listed = git(['ls-files', '--cached', '--others', '--exclude-standard', '--', dir], root) || '';
+  const counts = new Map();
+  for (const file of listed.split('\n').filter(Boolean)) {
+    const m = /\.([A-Za-z0-9]+)$/.exec(file.slice(file.lastIndexOf('/') + 1));
+    if (m) counts.set(m[1], (counts.get(m[1]) || 0) + 1);
+  }
+  const ext = [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0] || null;
+  return { path: `${dir}/new-file${ext ? `.${ext}` : ''}`, ext };
 }
 
 // The consultant is a spawned agent, and a spawned agent is not guaranteed the plugin variable, so the

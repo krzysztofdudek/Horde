@@ -413,7 +413,10 @@ test('refine.mjs --step consult: one spawn per territory, each seeing only its o
     const front = withGrain.json.spawns.find((s) => s.territory === 'the front door').brief;
     assert.match(front, /grain-stub answering: where/);
     assert.match(front, /grain-stub answering: how/);
-    assert.match(front, /grain-stub answering: obligation src\/auth/);
+    // Grain answers for a file's class, module and extension, so it is asked about a new file in the
+    // component's directory with the extension the files there carry, never about the bare directory.
+    assert.match(front, /grain-stub answering: obligation src\/auth\/new-file\.mjs/);
+    assert.match(front, /What a new \.mjs file under /);
     assert.doesNotMatch(front, /no Grain CLI is configured/);
     assert.equal(run('horde.mjs', ['config', 'set', 'grainCommand', ''], dir).code, 0);
   });
