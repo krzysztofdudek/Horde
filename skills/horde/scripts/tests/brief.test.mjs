@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, git,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, git, MARKER_CHECK,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -619,4 +619,26 @@ test('brief.mjs: architect/legislate/retro — no --horde stays on cwd; --horde 
       assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], dir), 'develop');
     });
   }
+});
+
+// "Rules that reach nothing" is the one place the legislate brief tells its reader a rule may be
+// deleted without asking anybody, so it must never list a rule that still reaches something. A rule
+// at draft — where a Grain proposal leaves most of them — reaches its units all the same; the gate's
+// own pairs leave draft rules out by design, and reading the list from them listed every draft rule.
+test('brief.mjs legislate: a draft rule attached to a component is not listed as reaching nothing', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addAspect(dir, 'still-drafting', { status: 'draft', check: MARKER_CHECK });
+  addAspect(dir, 'attached-nowhere', { status: 'advisory', check: MARKER_CHECK });
+  addNode(dir, 'nodeA', { mapping: ['src/a/**'], aspects: ['still-drafting'] });
+  mkdirSync(join(dir, 'src', 'a'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'a', 'one.mjs'), 'export const one = 1;\n');
+  seedTerritories(dir, 'mission1', { heart: { nodes: ['nodeA'], class: 'standard', why: 'the middle of it' } });
+
+  const r = run('brief.mjs', ['legislate', 'heart', '--name', 'mission1-legislate-heart-1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const section = r.json.brief.split('### Rules that reach nothing')[1].split('\n### ')[0];
+  assert.match(section, /\*\*attached-nowhere\*\*/, 'a rule no component carries reaches nothing');
+  assert.doesNotMatch(section, /still-drafting/, 'a draft rule on a component still reaches its files');
 });
