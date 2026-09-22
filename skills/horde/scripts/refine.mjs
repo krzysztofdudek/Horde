@@ -33,7 +33,7 @@ import {
 } from './_lib.mjs';
 import {
   ygCommand, ygNode, ygContext, nodeExists, nodeBoundary, nodeRules, renderRules, listAllNodes,
-  pathInBoundary, nodeDir, loadGraph,
+  pathInBoundary, nodeDir, loadGraph, grainLine, grainAsk,
 } from './node.mjs';
 import { buildPlan, renderPlan, titleOf, loadQueue } from './queue.mjs';
 import {
@@ -313,36 +313,6 @@ function cutBrief(horde, root, cfg, info, charter) {
     '',
     'The "why" is read by the client, in their own words, in the frame at the end. Write it for them.',
   ].join('\n');
-}
-
-function grainLine(cfg) {
-  const raw = cfg && cfg.grainCommand;
-  return raw ? String(raw).trim() : null;
-}
-
-// ---- Grain, where it is available -------------------------------------------------------------
-//
-// Grain is optional (config.grainCommand is null by default) and a brief that fell over without it
-// would make an optional tool mandatory in practice. So every call reports one of three things —
-// what it said, that there is no Grain here, or that the command did not run — and the brief
-// carries whichever it got.
-function grainAsk(cfg, root, args) {
-  const raw = grainLine(cfg);
-  if (!raw) return { available: false, why: 'no Grain CLI is configured for this repository' };
-  const parts = raw.split(/\s+/).filter(Boolean);
-  const display = `${raw} ${args.join(' ')}`;
-  try {
-    const out = execFileSync(parts[0], [...parts.slice(1), ...args], {
-      cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024,
-    });
-    return { available: true, display, text: String(out).trim() };
-  } catch (e) {
-    return {
-      available: false,
-      display,
-      why: `\`${display}\` did not run (exit ${e.status === undefined ? '?' : e.status})`,
-    };
-  }
 }
 
 function grainSection(cfg, root, asks) {

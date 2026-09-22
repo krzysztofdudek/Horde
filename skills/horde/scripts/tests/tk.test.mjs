@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -983,5 +983,74 @@ test('tk.mjs: files in a node that maps no code yet are declared through an appr
     assert.match(run('tk.mjs', ['show', later.json.id, '--log'], dir).json.log, new RegExp(`boundary proposal: ${ok} \\(src/shiny/\\*\\*\\) — changed by owner`));
     const again = run('tk.mjs', ['edit', later.json.id, '--by', 'owner', '--files', 'src/shiny/c.ts'], dir);
     assert.equal(again.code, 0, 'and once named, later edits of the files use it too');
+  });
+});
+
+test('tk.mjs new: a declared file with a Grain obligation outside the ticket\'s nodes warns, and names the companion and its owner', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'api', { mapping: ['src/api/**'] });
+  addNode(dir, 'contracts', { mapping: ['src/contracts/**'] });
+  // ygFileContext resolves ownership off the tracked tree, not off the mapping glob alone — the
+  // companion has to actually exist and be committed for `yg context --file` to name its owner.
+  mkdirSync(join(dir, 'src', 'contracts'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'contracts', 'handler.schema.ts'), 'export const schema = {};\n');
+  execFileSync('git', ['add', '-A'], { cwd: dir });
+  execFileSync('git', ['commit', '-qm', 'the contract the handler is born with'], { cwd: dir });
+
+  const stub = join(dir, 'grain-stub.mjs');
+  writeFileSync(stub, [
+    "const argv = process.argv.slice(2);",
+    "if (argv[0] === '--version') { console.log('0.0.0-stub'); process.exit(0); }",
+    "if (argv[0] === 'obligation') {",
+    "  const path = argv[1];",
+    "  const rules = path === 'src/api/handler.ts'",
+    "    ? [{ file: 'src/contracts/handler.schema.ts', k: 4, n: 5 }]",
+    "    : [];",
+    "  console.log(JSON.stringify({ schema: 'grain-obligation/1', path, module: 'src/api', suffix: 'ts', births: 5, rules, ambient: [] }));",
+    "  process.exit(0);",
+    "}",
+    "console.log('{}');",
+    'process.exit(0);',
+    '',
+  ].join('\n'));
+
+  await t.test('with no Grain configured, it says so and refuses nothing', () => {
+    const r = run('tk.mjs', ['new', 'handler', '--title', 'handler', '--node', 'api', '--class', 'standard',
+      '--files', 'src/api/handler.ts', '--evidence', 'it works'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.json.obligationWarnings, []);
+    const text = run('tk.mjs', ['new', 'handler2', '--title', 'handler2', '--node', 'api', '--class', 'standard',
+      '--files', 'src/api/handler2.ts', '--evidence', 'it works'], dir, { json: false }).stdout;
+    assert.match(text, /not checked: no Grain CLI is configured/);
+  });
+
+  assert.equal(run('horde.mjs', ['config', 'set', 'grainCommand', `node ${stub}`], dir).code, 0);
+
+  await t.test('with Grain configured, a companion outside the ticket\'s nodes warns and names the owner, and never refuses', () => {
+    const r = run('tk.mjs', ['new', 'handler3', '--title', 'handler3', '--node', 'api', '--class', 'standard',
+      '--files', 'src/api/handler.ts', '--evidence', 'it works'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.json.obligationWarnings, [{
+      file: 'src/api/handler.ts', companion: 'src/contracts/handler.schema.ts', k: 4, n: 5, owner: 'contracts',
+    }]);
+    const text = run('tk.mjs', ['new', 'handler4', '--title', 'handler4', '--node', 'api', '--class', 'standard',
+      '--files', 'src/api/handler.ts', '--evidence', 'it works'], dir, { json: false }).stdout;
+    assert.match(text, /warning: src\/api\/handler\.ts — Grain says a new file like this has come with src\/contracts\/handler\.schema\.ts \(4 of 5 such commits\), owned by contracts, outside this ticket's node\(s\)/);
+  });
+
+  await t.test('a companion inside the ticket\'s own boundary (its node named too) warns nothing', () => {
+    const bothNodes = run('tk.mjs', ['new', 'handler5', '--title', 'handler5', '--node', 'api', '--node', 'contracts', '--class', 'standard',
+      '--files', 'src/api/handler.ts', '--evidence', 'it works'], dir);
+    assert.equal(bothNodes.code, 0, bothNodes.stderr);
+    assert.deepEqual(bothNodes.json.obligationWarnings, []);
+  });
+
+  await t.test('a ticket with no Files is not checked at all', () => {
+    const r = run('tk.mjs', ['new', 'bare', '--title', 'bare', '--node', 'api', '--class', 'standard', '--evidence', 'it works'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.json.obligationWarnings, []);
+    assert.doesNotMatch(run('tk.mjs', ['new', 'bare2', '--title', 'bare2', '--node', 'api', '--class', 'standard', '--evidence', 'it works'], dir, { json: false }).stdout, /not checked/);
   });
 });

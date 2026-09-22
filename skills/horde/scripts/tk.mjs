@@ -34,7 +34,7 @@ import {
 } from './_lib.mjs';
 import {
   ticketBoundary, pathInBoundary, portExists, nodeExists, nodeGraphPathPrefix,
-  approvedBoundaryProposal, proposalBoundaryOf,
+  approvedBoundaryProposal, proposalBoundaryOf, grainLine, grainAsk, ygFileContext,
 } from './node.mjs';
 // `queue.mjs` imports this file in turn. The cycle is the one this tool set already runs on (see
 // wave.mjs's own note): every binding on both sides is a hoisted function declaration and neither
@@ -771,6 +771,42 @@ export function createTicket(horde, spec) {
   };
 }
 
+// A rule a node's own boundary check cannot see: the graph says "this file is inside your node",
+// Grain says "a file born alongside one like it has, historically, come with a change somewhere
+// else". A ticket that only widens the first and never asks the second lands, by the graph's own
+// rules, and then fails the landing anyway because the companion its class always needed was never
+// filed. This is advisory only — a warning, never a refusal, because Grain's history is a pattern,
+// not a promise, and the architect (or whoever files the ticket) is the one who judges whether it
+// applies here. No Grain configured is said once, plainly, rather than silently skipped.
+function checkObligations(horde, root, cfg, nodes, files) {
+  if (!files.length) return { checked: true, why: null, warnings: [] };
+  if (!grainLine(cfg)) return { checked: false, why: 'no Grain CLI is configured for this repository', warnings: [] };
+  const boundary = ticketBoundary(root, cfg, nodes);
+  if (boundary.length === 0) return { checked: false, why: 'none of the declared files map to a node the graph knows', warnings: [] };
+  const warnings = [];
+  for (const file of files) {
+    const res = grainAsk(cfg, root, ['obligation', file, '--json']);
+    if (!res.available) continue; // a Grain call that did not run is silent here, never a refusal
+    let data = null;
+    try { data = JSON.parse(res.text); } catch { data = null; }
+    for (const rule of asArray(data && data.rules)) {
+      const companion = rule && rule.file ? String(rule.file) : null;
+      if (!companion || files.includes(companion) || pathInBoundary(companion, boundary)) continue;
+      let owner = null;
+      try {
+        const ctx = ygFileContext(root, cfg, companion);
+        owner = ctx && ctx.owner && ctx.owner.kind === 'node' ? ctx.owner.path : null;
+      } catch {
+        owner = null;
+      }
+      warnings.push({
+        file, companion, k: rule.k, n: rule.n, owner,
+      });
+    }
+  }
+  return { checked: true, why: null, warnings };
+}
+
 function cmdNew(horde, positional, flags) {
   const created = createTicket(horde, {
     slug: positional[0],
@@ -793,6 +829,10 @@ function cmdNew(horde, positional, flags) {
     reopens: flags.reopens || null,
     boundaryProposal: flags['boundary-proposal'] || null,
   });
+  const cfg = readConfig() || {};
+  const root = resolveTree({}).path;
+  const declared = listFlag(flags.files);
+  const obligation = checkObligations(horde, root, cfg, asArray(flags.node), declared);
   emit({
     id: created.id,
     ref: created.ref,
@@ -805,8 +845,14 @@ function cmdNew(horde, positional, flags) {
     produces: created.produces,
     evidence: created.evidence,
     reopens: created.reopens,
-  }, flags, () => `${created.ref} created — ${created.dirName} (team ${created.team})`
-    + `${created.reopens ? `, reopening ${created.reopens}` : ''}`);
+    obligationWarnings: obligation.warnings,
+  }, flags, () => [
+    `${created.ref} created — ${created.dirName} (team ${created.team})`
+      + `${created.reopens ? `, reopening ${created.reopens}` : ''}`,
+    ...(obligation.checked ? [] : [`not checked: ${obligation.why}`]),
+    ...obligation.warnings.map((w) => `warning: ${w.file} — Grain says a new file like this has come with ${w.companion} (${w.k} of ${w.n} such commits)`
+      + `${w.owner ? `, owned by ${w.owner}` : ''}, outside this ticket's node(s) — file a ticket for it too, or widen --node`),
+  ].join('\n'));
 }
 
 function cmdList(horde, positional, flags) {
