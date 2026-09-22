@@ -210,6 +210,14 @@ its folder and of the `id:` its issue.md carries.
   Ticket creation itself is one exported function (`createTicket`), so a ticket the quality pass
   files is the same object, validated the same way, as one filed by hand; `setTicketBody`
   is the same for a body, and `edit`'s own write goes through it.
+  `new` also asks Grain, when `config.grainCommand` names one, `grain obligation <file> --json` for
+  every declared file: a specific obligation (a companion file Grain's own history certifies, never a
+  glob) that lies outside the boundary of the ticket's own node(s) is a warning, never a refusal — the
+  graph's boundary check above already refused an impossible declaration; this is a pattern from
+  history, not a rule, and the ticket's `--node` may simply not cover it yet. The warning names the
+  file, the companion, Grain's own k-of-n count and the companion's owning node (`yg context --file`).
+  No Grain configured, or none of the declared files mapping to a node the graph knows, says "not
+  checked" instead of guessing. `--json` carries the findings as `obligationWarnings`.
 - The four structural fields — `**Files:**`, `**Consumes:**`/`**Produces:**`, `**Evidence:**` — are
   what `queue.mjs plan` computes the mission's order from, and they are validated where they are
   written: every path in `--files` must lie inside the boundary of a node the ticket names (the same
