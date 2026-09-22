@@ -1004,6 +1004,23 @@ test('tk.mjs new: a declared file with a Grain obligation outside the ticket\'s 
     assert.deepEqual(bothNodes.json.obligationWarnings, []);
   });
 
+  await t.test('an obligation document of another version is not read as this one, and the ticket says so', () => {
+    const future = join(dir, 'grain-future.mjs');
+    writeFileSync(future, [
+      "const argv = process.argv.slice(2);",
+      "if (argv[0] === '--version') { console.log('9.0.0-stub'); process.exit(0); }",
+      "console.log(JSON.stringify({ schema: 'grain-obligation/2', path: argv[1], rules: [{ file: 'src/contracts/handler.schema.ts', k: 4, n: 5 }] }));",
+      '',
+    ].join('\n'));
+    assert.equal(run('horde.mjs', ['config', 'set', 'grainCommand', `node ${future}`], dir).code, 0);
+    const r = run('tk.mjs', ['new', 'handler6', '--title', 'handler6', '--node', 'api', '--class', 'standard',
+      '--files', 'src/api/handler.ts', '--evidence', 'it works'], dir, { json: false });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /not checked: Grain answered `grain-obligation\/2`, not `grain-obligation\/1`/);
+    assert.doesNotMatch(r.stdout, /warning: src\/api\/handler\.ts/);
+    assert.equal(run('horde.mjs', ['config', 'set', 'grainCommand', `node ${stub}`], dir).code, 0);
+  });
+
   await t.test('a ticket with no Files is not checked at all', () => {
     const r = run('tk.mjs', ['new', 'bare', '--title', 'bare', '--node', 'api', '--class', 'standard', '--evidence', 'it works'], dir);
     assert.equal(r.code, 0, r.stderr);
