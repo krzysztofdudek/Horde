@@ -32,7 +32,10 @@ git -C {{worktree}} merge-base --is-ancestor {{parentBranch}} HEAD && git -C {{w
 
 `git status` must print nothing. A dirty tree after the merge is a stale base or somebody else's diff:
 **stop and report**. Then run the fast check `cd {{worktree}} && {{fastCheck}}`; the team branch last
-reported {{fastCheckCount}} — a lower count means a wrong base: stop and report.
+reported {{fastCheckCount}} — a lower count means a wrong base: stop and report. A fast check that
+fails before it runs a single test, because a module, a tool or a build output it needs is missing from
+this fresh tree, is a missing environment, not a wrong base: report it as that, name what was missing,
+and do not build it yourself.
 
 {{stackNote | }}
 

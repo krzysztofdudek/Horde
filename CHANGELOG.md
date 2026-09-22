@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A worker whose fast check fails before running a single test in its fresh tree now reports a missing environment instead of a wrong base. Horde builds no environment of its own, so a fresh tree carries no install; the brief used to read that failure as "a lower count means a wrong base". The config reference now says every gate command has to work in a fresh tree, preparing it itself or relying on `worktree.copy`.
 - The refusal for a CLI that predates its own rule log (`node.mjs promote`/`demote`) or the law diff's own documents (`law.mjs diff`) now names the tree it ran in and the version that tree's own CLI reports, the same fix issue 034 already gave the ordinary graph-read refusal — a relative `ygCommand` can resolve to a different install than the one that actually failed.
 - `scripts/README.md`'s `set NNN merged --sha` bullet described `team:<name>` items standing for a sub-team's branch and skipping branch creation — dead since sub-teams were removed, the same class of drift as the dependency-forms bullet below.
 - `scripts/README.md`'s dependency bullet (`add --depends`, `dep`/`undep` `--on`) described `<team>:NNN` and `<team>:team:<name>` forms `queue.mjs`'s `resolveDepRef` refuses outright — dead since sub-teams were removed. It now describes only the bare `NNN` form the code actually accepts.
