@@ -186,7 +186,7 @@ Yes, and you don't have to set it up first. Horde works on an architecture graph
 <details>
 <summary><b>What if I'd rather just have one agent do the whole thing?</b></summary>
 
-Then don't reach for this — but you don't need a separate tool to make that call. Horde is the one door: hand it any mission and it runs the same charter-first loop whether that mission turns out to need one worker or twelve. A mission whose charter, contracts and code fit in one session with room to work moves through Horde as a single ticket, no ceremony beyond the charter itself.
+Then you may not need Horde at all. Work too big for one agent has two doors, and Horde is the one for a mission held to Yggdrasil's law: hand it any mission and it runs the same charter-first loop whether that mission turns out to need one worker or twelve. A mission whose charter, contracts and code fit in one session with room to work moves through Horde as a single ticket, with no ceremony beyond the charter itself. If you want more hands but no architecture graph, [Jarl](https://github.com/krzysztofdudek/JarlSkill) is the lighter door beside it: an issue loop, a worker per issue and evidence before each merge, with no law and no landing gate.
 </details>
 
 <details>
@@ -199,7 +199,7 @@ Not a Norse name, unlike Ratatoskr and Urd. It says what it does: raise many che
 
 ## The Yggdrasil family
 
-**Three jobs, one core, in layers.** **[Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil)** is the law: the architecture graph and the rails that hold every change to it. **[Grain](https://github.com/krzysztofdudek/Grain)** surveys the terrain: it mines that graph from a repository's own code and history, so there is a rule-backed map before anyone writes a rule by hand. **Horde** is the software house that builds on the law: zero standing roles, a worker per ticket and a one-shot architect who rules the whole plan once, each ticket refined onto the graph and given a tick. Adoption runs Grain first — install it day zero for a soft, draft-only law that never blocks — then Yggdrasil as the core you keep long term, hard law with proof and CI; Horde is the one door for any mission too big for one agent, not a second path that only opens once a lone agent runs out of room. From 6.0.0 the core ships as one version; the add-ons keep their own. In the family, law is raised by whichever agent does the work in its own territory, and only the client — the one person the whole system answers to — lowers or vetoes it. The three repositories' shared machine contracts are registered on [one page](https://krzysztofdudek.github.io/Yggdrasil/family-contracts).
+**Three jobs, one core, in layers.** **[Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil)** is the law: the architecture graph and the rails that hold every change to it. **[Grain](https://github.com/krzysztofdudek/Grain)** surveys the terrain: it mines that graph from a repository's own code and history, so there is a rule-backed map before anyone writes a rule by hand. **Horde** is the software house that builds on the law: zero standing roles, a worker per ticket and a one-shot architect who rules the whole plan once, each ticket refined onto the graph and given a tick. Adoption runs Grain first — install it day zero for a soft, draft-only law that never blocks — then Yggdrasil as the core you keep long term, hard law with proof and CI. Work too big for one agent has two doors. Horde is the door for a mission held to Yggdrasil's law, and the add-on **[Jarl](https://github.com/krzysztofdudek/JarlSkill)** is the lighter door beside it: an issue loop, a worker per issue and evidence before each merge, with no law and no landing gate. From 6.0.0 the core ships as one version; the add-ons keep their own. In the family, law is raised by whichever agent does the work in its own territory, and only the client — the one person the whole system answers to — lowers or vetoes it. The three core repositories' shared machine contracts are registered on [one page](https://krzysztofdudek.github.io/Yggdrasil/family-contracts).
 
 | Core | What it holds |
 |---|---|
@@ -207,13 +207,14 @@ Not a Norse name, unlike Ratatoskr and Urd. It says what it does: raise many che
 | **[Grain](https://github.com/krzysztofdudek/Grain)** | The terrain survey. Mines a repository's own code and history into a first graph — components, dependencies, and the rules the code already keeps, each with the count of places that break it today; Yggdrasil accepts it with one command. |
 | **Horde** (this one) | The software house on the law. Zero standing roles: a worker per ticket in its own worktree, refined onto the graph and given a tick by a nine-item merge checklist; a one-shot architect rules the whole plan once; the client orders the mission and is the only one who can lower or veto a rule. |
 
-Three add-ons attach to the agent rather than to the graph, and each works alone. Horde doesn't assume any of them is installed — it carries its own minimum discipline in each role's law — but uses them when they are, one sentence per row below.
+Four add-ons attach to the agent rather than to the graph, and each works alone. Horde doesn't assume any of them is installed — it carries its own minimum discipline in each role's law — but uses Ratatoskr, Urd and Researcher when they are, one sentence per row below.
 
 | Add-on | Stage | What it makes the agent prove | In Horde's loop |
 |---|---|---|---|
 | **[Ratatoskr](https://github.com/krzysztofdudek/RatatoskrSkill)** | request → intent | Keeps the agent talking to you in plain words, not code, so you can follow what it's doing. | Keeps the client's plain-language registry open at both ends of a mission. |
 | **[Urd](https://github.com/krzysztofdudek/UrdSkill)** | intent → code | When the spec is ambiguous, it consults the source of truth and asks, it doesn't guess. | The stop a worker hits before it guesses. |
 | **[Researcher](https://github.com/krzysztofdudek/ResearcherSkill)** | code → measured result | Point it at a metric and it runs experiments, hypotheses kept and discarded. | Runs the retrospective's measurement. |
+| **[Jarl](https://github.com/krzysztofdudek/JarlSkill)** | issues → merged branch | The agent directs a crew: it files what it sees as issues, gives each issue a worker in its own worktree, and merges a worker's branch only after a fresh reviewer approves it. | None. Jarl runs beside Horde, for work that needs more hands than one agent and no architecture graph. |
 
 ## Acknowledgements
 
