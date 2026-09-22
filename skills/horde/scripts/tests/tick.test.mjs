@@ -1037,6 +1037,40 @@ test('tick.mjs: a stale result puts the ticket back with no round counted', asyn
   assert.match(second.json.landed.find((l) => l.ticket === other.id).note, /gate red, round 1\//);
 });
 
+// issue 076: when land.mjs itself already recorded the round (its own recordChanges, the same
+// path tk.mjs status changes takes), tick's own note about that same red gate has to read back the
+// round that was written, not compute the next one — the ticket's log already carries round 1, and
+// a director reading tick's note that says round 2 would misjudge how close the fix loop is to its
+// cap, and a worker started under "takeover" a round early.
+test('tick.mjs: the round in tick\'s own note matches the round land.mjs already recorded, when land.mjs recorded it first', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const { id } = landedTicket(dir, 'already-recorded', { files: 'src/already.ts' });
+  throughReview(dir, id);
+
+  // Exactly what land.mjs's own recordChanges does on a red gate: compute the round and write it.
+  const written = run('tk.mjs', ['status', id, 'changes', 'land refused: gate red (make test)'], dir);
+  assert.equal(written.code, 0, written.stderr);
+  assert.equal(written.json.round, 1);
+  const logAfterLand = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', readdirSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues')).find((n) => n.startsWith(id)), 'log.md'), 'utf8');
+  assert.match(logAfterLand, /round 1\/5/);
+
+  writeLandResult(dir, id, {
+    ticket: id, branch: itemOf(dir, id).branch, sha: git(['rev-parse', '--verify', itemOf(dir, id).branch], dir), ok: false,
+    checks: [{ name: 'gate', ok: false, note: 'red (make test)' }], pairs: [], brief: null, landed: null,
+  });
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+  const step = r.json.landed.find((l) => l.ticket === id);
+  assert.equal(step.round, 1, 'tick\'s own round must be the one the log already carries, not one more');
+  assert.match(step.note, /gate red, round 1\/5/);
+
+  const logAfterTick = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', readdirSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues')).find((n) => n.startsWith(id)), 'log.md'), 'utf8');
+  assert.equal((logAfterTick.match(/round \d+\//g) || []).length, 1, 'tick must not have written a second round on top of land\'s own');
+});
+
 test('tick.mjs: a queue.json caught half-written is refused by name and never written over', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
