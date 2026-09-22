@@ -22,7 +22,7 @@ import {
   runMain,
 } from './_lib.mjs';
 import {
-  findTicket, parseField, padId, allTickets, nodesOf, ticketFiles, ticketPorts, ticketEvidence, ticketKind, prototypeBranchOf, createTicket, setTicketBody, acceptanceLines, charterPushback,
+  findTicket, parseField, padId, allTickets, nodesOf, ticketWorkFiles, ticketPorts, ticketEvidence, ticketKind, prototypeBranchOf, createTicket, setTicketBody, acceptanceLines, charterPushback,
 } from './tk.mjs';
 import { noteMerged, parsePrototypeArtifacts } from './wave.mjs';
 import { loadAsks } from './ask.mjs';
@@ -964,7 +964,7 @@ function runningLocks(horde, doc) {
       const ticket = findTicket(horde, i.ticket);
       return {
         ticket: i.ticket,
-        files: ticket ? ticketFiles(ticket.text) : [],
+        files: ticket ? ticketWorkFiles(ticket.text) : [],
         nodes: ticket ? nodesOf(ticket.text) : [],
       };
     });
@@ -974,7 +974,7 @@ function runningLocks(horde, doc) {
 // decided by path/glob overlap alone; either side with none falls back to whole-node overlap —
 // the case a ticket without Files (or a running item whose ticket vanished) has to degrade to.
 function lockConflict(ticketText, ticketId, locks) {
-  const files = ticketFiles(ticketText);
+  const files = ticketWorkFiles(ticketText);
   const nodes = nodesOf(ticketText);
   for (const running of locks) {
     if (running.ticket === ticketId) continue;
@@ -1126,7 +1126,7 @@ export function rankedCandidates(horde, team, {
       const ticket = findTicket(horde, e.item.ticket);
       const text = ticket ? ticket.text : '';
       if (lockConflict(text, e.item.ticket, held)) continue;
-      held.push({ ticket: e.item.ticket, files: ticketFiles(text), nodes: nodesOf(text) });
+      held.push({ ticket: e.item.ticket, files: ticketWorkFiles(text), nodes: nodesOf(text) });
       picked.push(e);
     }
   }
@@ -1243,7 +1243,7 @@ export function buildPlan(horde, team, cfg, { tree } = {}) {
       class: parseField(t.text, 'Class') || firstClass(cfg),
       severity: parseField(t.text, 'Severity') || 'medium',
       state: item ? item.state : t.status,
-      files: ticketFiles(t.text),
+      files: ticketWorkFiles(t.text),
       consumes: ticketPorts(t.text, 'Consumes').map((c) => c.ref),
       produces: produces.map((p) => p.ref),
       evidence: ticketEvidence(t.text),

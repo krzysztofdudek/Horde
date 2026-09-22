@@ -299,7 +299,7 @@ earning no row at all claims nothing — neither is a mismatch.
   `**Produces:**` that port exactly like a hand-written `**Depends on:**` or `dep`, so a consumer of
   a port whose producer has not merged yet is not ready even with no manual edge between the two,
   and `--why` names the producer and the port it is still waiting on. A ticket declaring
-  `**Files:**` collides only on an overlapping path or glob; a ticket with none (or a `running` item whose ticket can no longer be read) locks
+  `**Files:**` (a node's `log.md`, which `tk.mjs` writes into every declared list, is not counted — it would lock every ticket of a node against every other and make the node's log a "hub file") collides only on an overlapping path or glob; a ticket with none (or a `running` item whose ticket can no longer be read) locks
   every file of every node it names instead — the safe degradation for a ticket that never said
   which files it touches. Ranked: a `prototype`-kind ticket (`tk.mjs new --kind prototype`) always
   first and a `quality`-kind one (`tk.mjs new --kind quality`) always
@@ -634,7 +634,13 @@ several users.
   move-boundary, rename, rule; move-boundary requires --node and --boundary, so apply can name
   the exact edit later, not just record that it happened), `proposals [--open]`,
   `approve|veto <id> ["why"] --by architect`, `apply <id>`. Approval and apply record; filing
-  into the graph is the architect's own `yg` calls, and `apply` prints the exact edit.
+  into the graph is the architect's own `yg` calls, and `apply` prints the exact edit. An approved
+  move-boundary is also how a node that maps no code yet gets its first files: a ticket on it names the
+  proposal (`tk.mjs new|edit --boundary-proposal <id>`, written as `**Boundary proposal:**`), may declare
+  files inside the proposal's globs, and the landing reads its scope from them when the ticket declares
+  none. The proposal is read from the horde's own record, never from the branch, so a branch cannot widen
+  the boundary it is judged by; an open, vetoed, wrong-kind or other-node proposal is refused at `tk`
+  and widens nothing at the landing. Without one, both refusals stand.
 - **The status ladder** (ruling quality-always-authorised). A rule goes draft → advisory → enforced,
   and which rung it deserves is a question about evidence. `ladder` lists every rule the graph
   declares with its rung, the number of cases it is drilled against, what it refuses here, the

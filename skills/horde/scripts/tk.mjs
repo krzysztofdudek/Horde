@@ -33,7 +33,8 @@ import {
   runMain,
 } from './_lib.mjs';
 import {
-  ticketBoundary, pathInBoundary, portExists,
+  ticketBoundary, pathInBoundary, portExists, nodeExists, nodeGraphPathPrefix,
+  approvedBoundaryProposal, proposalBoundaryOf,
 } from './node.mjs';
 // `queue.mjs` imports this file in turn. The cycle is the one this tool set already runs on (see
 // wave.mjs's own note): every binding on both sides is a hoisted function declaration and neither
@@ -113,7 +114,13 @@ commands:
       so the evidence it claimed is red again. It writes "**Reopens:** t-NNN" on the ticket, and
       refuses a number this horde has never filed.
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
-      the merge checklist refuses a diff that reaches past them). --consumes/--produces name the
+      the merge checklist refuses a diff that reaches past them). --boundary-proposal <id> names an approved
+      move-boundary proposal (node.mjs propose/approve) for one of the ticket's nodes: the files may then
+      lie inside its globs, and the landing reads its scope from them, for a node that maps no code yet.
+      The log.md of every named node is
+      written into the list for you, visibly, because the worker brief asks for a log entry there and a
+      declared list replaces the node's boundary; yg-node.yaml is not, it carries the mapping and the
+      rules, and takes an explicit edit --files. --consumes/--produces name the
       ports the ticket needs and delivers, as <node>/<port>; a consumed port with no producing
       ticket and no such port in the graph is refused. Boundary and port existence are both read
       from the graph in the tree this command runs from (cwd) — --horde here only picks which
@@ -154,7 +161,7 @@ commands:
       the director's call that a raised review will not close: "review skipped by <name> —
       <reason>". The reason is required. The gate is asked on the next tick.mjs run, and nothing
       the review logs after this line is acted on. Refuses a ticket with no review raised.
-  edit <ticket> --by <name> [--files a,b] [--consumes …] [--produces …] [--evidence E1,…]
+  edit <ticket> --by <name> [--files a,b] [--boundary-proposal <id>] [--consumes …] [--produces …] [--evidence E1,…]
       [--depends NNN,MMM] [--horde h]
       rewrites the body (everything from "## What" on) from stdin, leaving the header block —
       the id/title heading, Status, Node/Class/Severity/Team, Depends on/Branch, Reopens, Files,
@@ -243,6 +250,14 @@ function listField(text, label) {
 }
 
 export function ticketFiles(text) { return listField(text, 'Files'); }
+
+// A node's own decision log. `tk new` and `edit --files` write it into every declared list (see
+// withNodeLogs), so it is in every ticket of a node and says nothing about which ticket touches what:
+// counting it as a file two tickets share would lock every pair of tickets on a node against each
+// other and make it a "hub file" of the whole node. The landing's scope check reads the full list;
+// the plan and the file locks read this one.
+const NODE_LOG_FILE = /^\.yggdrasil\/model\/(?:.+\/)?log\.md$/;
+export function ticketWorkFiles(text) { return ticketFiles(text).filter((f) => !NODE_LOG_FILE.test(f)); }
 
 export function ticketEvidence(text) { return listField(text, 'Evidence'); }
 
@@ -533,16 +548,30 @@ function listFlag(value) {
 // is work on a node, and a file outside every one of its nodes belongs to somebody else's — the
 // node that would have to answer for it never sees this ticket. A node the graph does not know
 // contributes no boundary, and with no boundary at all there is nothing to check against.
-function checkFilesInBoundary(nodes, files) {
+function checkFilesInBoundary(nodes, files, moved = []) {
   if (files.length === 0) return;
   const cfg = readConfig() || {};
   const root = resolveTree({}).path;
-  const boundary = ticketBoundary(root, cfg, nodes);
+  const boundary = [...ticketBoundary(root, cfg, nodes), ...moved];
   if (boundary.length === 0) return;
   const outside = files.filter((f) => !pathInBoundary(f, boundary));
   if (outside.length) {
     fail(`file(s) outside the boundary of ${nodes.join(', ')}: ${outside.join(', ')} — the boundary is ${boundary.join(', ')}. Declare only files of the node this ticket is on, or ask the architect to move the boundary`);
   }
+}
+
+// A ticket that declares Files replaces its node's boundary — graph files included — as its scope, and
+// the brief tells the worker to log its decisions in the node's own `log.md`. So a declared list would
+// refuse the very entry the brief asks for, at the landing, after the work is done. The `log.md` of
+// every node the ticket names is therefore written into the list, where the ticket shows it. The
+// node's `yg-node.yaml` is not: it carries the mapping and the rules, so widening the scope to it is a
+// decision, made with an explicit `edit --files`. A node the graph does not know has no log to add.
+function withNodeLogs(nodes, files) {
+  if (files.length === 0) return files;
+  const cfg = readConfig() || {};
+  const root = resolveTree({}).path;
+  const logs = nodes.filter((n) => nodeExists(root, cfg, n)).map((n) => `${nodeGraphPathPrefix(root, cfg, n)}log.md`);
+  return [...files, ...logs.filter((l) => !files.includes(l))];
 }
 
 function parsePortList(raw, label) {
@@ -629,6 +658,7 @@ export function createTicket(horde, spec) {
     slug, title, nodes, cls, severity = 'medium', kind = 'work', quality = 'autonomous',
     team = 'trunk', evidence = [], files: fileList = [], consumes: consumesRaw,
     produces: producesRaw, depends = [], revertBase = null, mutate = null, reopens = null,
+    boundaryProposal = null,
   } = spec;
   if (!slug) fail('new requires <slug>');
   if (mutate && revertBase) {
@@ -680,10 +710,12 @@ export function createTicket(horde, spec) {
     reopensRef = `t-${reopened.id}`;
   }
 
-  const files = listFlag(fileList);
+  const declared = listFlag(fileList);
   const consumes = parsePortList(consumesRaw, 'Consumes');
   const produces = parsePortList(producesRaw, 'Produces');
-  checkFilesInBoundary(nodes, files);
+  const proposal = boundaryProposal ? approvedBoundaryProposal(horde, boundaryProposal, nodes) : null;
+  checkFilesInBoundary(nodes, declared, proposal ? proposal.boundary : []);
+  const files = withNodeLogs(nodes, declared);
   checkConsumesHaveProducers(horde, consumes, null);
 
   const allocated = allocateId(horde, 'ticket');
@@ -712,6 +744,7 @@ export function createTicket(horde, spec) {
     ...(revertBase ? { revertBase } : {}),
     ...(mutate ? { mutate } : {}),
   });
+  if (proposal) text = setHeaderField(text, 'Boundary proposal', proposal.id);
   if (acceptance.length) {
     text = text.replace('- [ ] …', acceptance.map((e) => `- [ ] ${e}`).join('\n'));
   }
@@ -758,6 +791,7 @@ function cmdNew(horde, positional, flags) {
     revertBase: flags['revert-base'] || null,
     mutate: flags.mutate || null,
     reopens: flags.reopens || null,
+    boundaryProposal: flags['boundary-proposal'] || null,
   });
   emit({
     id: created.id,
@@ -1073,6 +1107,7 @@ function readStdin() {
 // existed gains them where it can be read, rather than staying invisible to the plan forever.
 const FIELD_AFTER = {
   Files: 'Depends on',
+  'Boundary proposal': 'Files',
   Consumes: 'Files',
   Produces: 'Consumes',
   Evidence: 'Produces',
@@ -1117,7 +1152,7 @@ export function setTicketBody(horde, id, body, by) {
 function cmdEdit(horde, positional, flags) {
   const ticket = requireTicket(horde, positional[0]);
   if (!flags.by) fail('edit requires --by <name>');
-  const wantsFields = ['files', 'consumes', 'produces', 'evidence', 'depends'].some((k) => flags[k] !== undefined);
+  const wantsFields = ['files', 'consumes', 'produces', 'evidence', 'depends', 'boundary-proposal'].some((k) => flags[k] !== undefined);
 
   let text = ticket.text;
   const changed = [];
@@ -1132,9 +1167,15 @@ function cmdEdit(horde, positional, flags) {
   }
   if (wantsFields) {
     const nodes = nodesOf(text);
+    if (flags['boundary-proposal'] !== undefined) {
+      const proposal = approvedBoundaryProposal(horde, flags['boundary-proposal'], nodes);
+      text = setHeaderField(text, 'Boundary proposal', proposal.id);
+      changed.push(`boundary proposal: ${proposal.id} (${proposal.boundary.join(', ')})`);
+    }
     if (flags.files !== undefined) {
-      const files = listFlag(flags.files);
-      checkFilesInBoundary(nodes, files);
+      const declared = listFlag(flags.files);
+      checkFilesInBoundary(nodes, declared, proposalBoundaryOf(horde, text, nodes));
+      const files = withNodeLogs(nodes, declared);
       text = setHeaderField(text, 'Files', files.length ? files.join(', ') : 'none');
       changed.push(`files: ${files.length ? files.join(', ') : 'none'}`);
     }

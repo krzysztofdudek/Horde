@@ -39,7 +39,7 @@ import {
 } from './_lib.mjs';
 import {
   ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, verdictCommandsFor,
-  globToRegExp, pathInBoundary, ticketBoundary, ygFileContext, ygAvailable, ygJson,
+  globToRegExp, pathInBoundary, ticketBoundary, proposalBoundaryOf, ygFileContext, ygAvailable, ygJson,
 } from './node.mjs';
 import {
   ticketFiles, ticketEvidence, ticketKind, prototypeBranchOf, ticketReopens, findTicket,
@@ -355,8 +355,8 @@ function checkBaseFreshness(branch, parentBranch) {
 // a quiet pass — it is `tk.mjs edit NNN --files …`, which writes the new list and a log line
 // saying who widened it and when.
 const DERIVED_LOCK = /^\.yggdrasil\/yg-lock\.[^/]+\.json$/;
-function checkScope(root, cfg, nodes, files, declared = []) {
-  const boundary = declared.length ? declared : ticketBoundary(root, cfg, nodes);
+function checkScope(root, cfg, nodes, files, declared = [], moved = []) {
+  const boundary = declared.length ? declared : [...ticketBoundary(root, cfg, nodes), ...moved];
   const derived = files.filter((f) => DERIVED_LOCK.test(f));
   files = files.filter((f) => !DERIVED_LOCK.test(f));
   const outside = boundary.length ? files.filter((f) => !pathInBoundary(f, boundary)) : files;
@@ -3135,7 +3135,7 @@ function screenBatchMember(root, cfg, horde, ctx, basePath, cleaner) {
 
   const results = {};
   results['base freshness'] = checkBaseFreshness(ctx.branch, ctx.parentBranch);
-  results.scope = checkScope(root, cfg, ctx.nodes, ctx.changedFiles, ctx.declaredFiles);
+  results.scope = checkScope(root, cfg, ctx.nodes, ctx.changedFiles, ctx.declaredFiles, proposalBoundaryOf(horde, ctx.issueText, ctx.nodes));
   results['revert test'] = checkRevertTest(horde, root, cfg, ctx.branch, ctx.parentBranch, ctx.changedFiles, ctx.issueText);
   results.journal = checkJournal(ctx.logText, ctx.branch);
   results['graph text'] = checkGraphText(root, ctx.branch, ctx.parentBranch, ctx.changedFiles);
@@ -3611,7 +3611,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
         size,
       }, head, flags, parent, level);
     }
-    results.scope = checkScope(root, cfg, nodes, changedFiles, declaredFiles);
+    results.scope = checkScope(root, cfg, nodes, changedFiles, declaredFiles, proposalBoundaryOf(horde, issueText, nodes));
     results['revert test'] = checkRevertTest(horde, root, cfg, branch, parentBranch, changedFiles, issueText);
     results.journal = checkJournal(logText, branch);
     results['graph text'] = checkGraphText(root, branch, parentBranch, changedFiles);
