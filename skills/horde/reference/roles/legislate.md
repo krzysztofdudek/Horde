@@ -21,7 +21,7 @@ The one exception is below, and it is narrow.
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/node.mjs ladder --horde {{horde}}          # every rule, its rung, and what it has earned
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/escalate.mjs recurring --horde {{horde}}   # answers this mission has given three times or more
 yg aspects                                                                                          # the rules as the graph states them
-yg check                                                                                            # what they refuse here, right now
+yg check --no-approve                                                                               # what they refuse here, right now
 ```
 
 Read the mission charter at `{{charterPath}}` and, for each component above, `yg node <path>` and its
