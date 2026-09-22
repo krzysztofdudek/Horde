@@ -22,7 +22,9 @@
 // reads back the file the brief asked for, checks it, and applies what it says. A step with
 // nothing to read yet never guesses at an answer.
 
-import { existsSync, statSync, readdirSync, renameSync } from 'node:fs';
+import {
+  existsSync, statSync, readdirSync, renameSync, openSync, readSync, closeSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
@@ -126,11 +128,51 @@ function readHandback(path, what) {
 // separately — because which part is large says what to do about it. Code is a cut. Rules reaching
 // the files is often a rule scoped too widely. A long log is history, and history does not have to
 // travel with the work.
+// A file linguist has been told is generated (the `.gitattributes` convention every GitHub repository
+// already writes: `path/** linguist-generated=true`), or one git's own content heuristic would treat
+// as binary, is not one the consultant reads. Counting it into the budget divides a territory, or
+// raises the limit, over bytes nobody looks at — the report that raised this named exactly that: a
+// generated template file the consultant never opens pushed a territory over. No new threshold: this
+// reuses git's own attribute and its own binary detection, never a file-size cutoff of its own.
+function generatedFiles(root, files) {
+  if (!files.length) return new Set();
+  let out;
+  try {
+    out = execFileSync('git', ['check-attr', 'linguist-generated', '--stdin'], {
+      cwd: root, input: files.join('\n'), encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  } catch {
+    return new Set();
+  }
+  const set = new Set();
+  for (const line of out.split('\n')) {
+    const m = /^(.*): linguist-generated: (.*)$/.exec(line);
+    if (m && (m[2] === 'true' || m[2] === 'set')) set.add(m[1]);
+  }
+  return set;
+}
+
+// git's own heuristic (used by diff, grep, and everything else that decides "is this text"): a NUL
+// byte anywhere in the file's first chunk. Read directly, no subprocess, no attribute needed — this
+// is what git falls back to for a path nobody wrote a `.gitattributes` rule for.
+function looksBinary(path) {
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+    const buf = Buffer.alloc(8000);
+    const n = readSync(fd, buf, 0, buf.length, 0);
+    return buf.subarray(0, n).includes(0);
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) { try { closeSync(fd); } catch { /* already gone */ } }
+  }
+}
+
 function territoryBytes(root, cfg, nodes) {
   const tracked = (git(['ls-files'], root) || '').split('\n').map((l) => l.trim()).filter(Boolean);
   const codeFiles = [];
   const seenAspects = new Set();
-  let code = 0;
   let aspects = 0;
   let logs = 0;
 
@@ -140,7 +182,6 @@ function territoryBytes(root, cfg, nodes) {
       if (codeFiles.includes(rel)) continue;
       if (!pathInBoundary(rel, boundary)) continue;
       codeFiles.push(rel);
-      code += fileBytes(join(root, rel));
     }
     logs += fileBytes(join(nodeDir(root, node), 'log.md'));
     const ctx = ygContext(root, cfg, node);
@@ -153,8 +194,24 @@ function territoryBytes(root, cfg, nodes) {
       aspects += dirBytes(join(root, '.yggdrasil', 'aspects', id));
     }
   }
+
+  const generated = generatedFiles(root, codeFiles);
+  const counted = [];
+  let code = 0;
+  let generatedOrBinaryCount = 0;
+  for (const rel of codeFiles) {
+    const bytes = fileBytes(join(root, rel));
+    if (generated.has(rel) || looksBinary(join(root, rel))) {
+      generatedOrBinaryCount += 1;
+      continue;
+    }
+    counted.push({ file: rel, bytes });
+    code += bytes;
+  }
+  const largest = counted.slice().sort((a, b) => b.bytes - a.bytes || a.file.localeCompare(b.file)).slice(0, 5);
+
   return {
-    code, aspects, logs, total: code + aspects + logs, files: codeFiles.length, rules: seenAspects.size,
+    code, aspects, logs, total: code + aspects + logs, files: counted.length, rules: seenAspects.size, largest, excludedFiles: generatedOrBinaryCount,
   };
 }
 
@@ -241,10 +298,13 @@ function validateCut(horde, root, cfg, doc) {
     t.bytes = territoryBytes(root, cfg, t.nodes);
     // Closed boundary: exactly the limit fits. The number is a limit, not a limit minus one.
     if (t.bytes.total > maxBytes) {
+      const largestLine = t.bytes.largest.length
+        ? ` largest: ${t.bytes.largest.map((f) => `${f.file} (${f.bytes})`).join(', ')}.`
+        : '';
       fail(
         `territory "${t.territory}" is ${t.bytes.total} bytes against a limit of ${maxBytes} — `
         + `code ${t.bytes.code} (${t.bytes.files} file(s)), rules ${t.bytes.aspects} (${t.bytes.rules} rule(s)), `
-        + `logs ${t.bytes.logs}.\n`
+        + `logs ${t.bytes.logs}.${largestLine}\n`
         + 'Nobody can hold that much and still have room to work, whatever class is sent to it. Cut it finer: '
         + `split "${t.territory}" into territories of whole components (${t.nodes.join(', ')}), or, where the code `
         + 'itself is the size, cut the graph first.',

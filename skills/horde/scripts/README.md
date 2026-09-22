@@ -452,9 +452,13 @@ guesses at an answer.
   so a refused cut leaves no lease behind.
 - **The size.** `config.territory.maxBytes` (default 400000), one number for the whole horde: the
   bytes of the code a territory's nodes map, plus the text of every rule that reaches those files
-  (counted once per rule), plus those nodes' own logs. Over it, refused with the count broken into
-  code, rules and logs — which part is large says what to do about it. The boundary is closed:
-  exactly the limit fits. One threshold and not a table of them per class, because the class decides
+  (counted once per rule), plus those nodes' own logs. A mapped file the consultant does not read —
+  one `.gitattributes` marks `linguist-generated=true` (the convention GitHub itself uses for a
+  generated template or lockfile), or one git's own content heuristic treats as binary — never enters
+  the code sum; no size threshold of its own decides this, only git's own attribute and its own
+  binary detection. Over it, refused with the count broken into code, rules and logs, and the largest
+  files actually counted named — which part is large, and which files in it, says what to do about
+  it. The boundary is closed: exactly the limit fits. One threshold and not a table of them per class, because the class decides
   which model works a territory, never what fits in one.
 - **Leases.** `.horde/leases.json`, the same file and the same mechanism `node.mjs bind` uses, keyed
   by the territory instead of the node (the on-disk shape is unchanged; history's `node` field
