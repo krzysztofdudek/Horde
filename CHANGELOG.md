@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The refusal for a Yggdrasil too old to read now asks for "6.0.0 or newer", as the Requirements section does. It asked for "a release later than 6.0.0", which read as if 6.0.0 itself were not enough. The refusal for a CLI with no rule log said the log was a feature from after 5.9.0 and asked for a release later than 5.9.0; the log arrived in 5.9.0, and the refusal now says so and points at Horde's own floor, 6.0.0 or newer.
 - The record command the retrospective prints for a second judge now carries `--report`. Yggdrasil refuses a refusal recorded without its report, so the printed command failed as written whenever the second judge refused.
 - The audit's advise sweep now finds the rule behind a drill miss on a nested rule id such as `boundary/clean-core`. It read the rule as the first path segment of `<rule>/<case>`, found nothing, and dropped the regression as naming nothing the mission holds. The rule is now everything before the case's `violates-*` or `satisfies-*` directory.
 - The legislate brief's "Rules that reach nothing" no longer lists every draft and aggregate rule. It read reach from the gate's pairs, which leave those rules out by design, so a rule a Grain proposal left at draft, still attached to half the repository, was offered as one the legislator could delete without asking anybody. The list now comes from `yg aspects --json --reach`, as the law guard's does.
