@@ -617,7 +617,8 @@ function measureJudge(horde, root, cfg, tickets, landed) {
         held: first ? first.verdict : v.verdict,
         heldBy: first ? first.judge : (v.judge === undefined ? null : v.judge),
         record: `${yg.display} verdict record --aspect ${v.aspect} ${unitFlag} ${v.unit.path} --by ${tier || '<the second judge>'} `
-          + '--verdict pass|refused --hash <hashes.pass or hashes.refused from the package>',
+          // Yggdrasil refuses a refusal recorded without its report, so the command carries the flag.
+          + '--verdict pass|refused --hash <hashes.pass or hashes.refused from the package> [--report "<what is wrong and where> — required with refused"]',
       });
     }
   }

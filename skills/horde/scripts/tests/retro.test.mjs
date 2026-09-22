@@ -713,6 +713,8 @@ test('retro.mjs: two judges that disagree come back with the count and the inter
   assert.equal(first.json.judge.pending[0].held, 'refused');
   assert.equal(first.json.judge.pending[0].heldBy, 'tier-a');
   assert.match(first.json.judge.pending[0].record, /verdict record .*--by tier-b/);
+  // Yggdrasil refuses a refusal with no report, so the command the second judge copies must carry --report.
+  assert.match(first.json.judge.pending[0].record, /--report "<what is wrong and where>/);
 
   const [kept] = onFile(dir);
   assert.equal(kept.judge, 'tier-a');
