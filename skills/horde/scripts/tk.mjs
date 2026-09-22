@@ -313,6 +313,24 @@ export function changesRoundInfo(horde, ticket) {
   };
 }
 
+// The round already recorded, read back rather than recomputed — for a caller that knows something
+// else (land.mjs's own recordChanges, or a review that wrote its own status line) already wrote this
+// ticket's "changes" round on this same event. Calling changesRoundInfo again here would read that
+// same write back and count a second round on top of it: the log has round N, and the caller's own
+// note about the event it did not write would say N+1. This reads the round that IS there, never one
+// more.
+export function lastChangesRoundInfo(horde, ticket) {
+  const cfg = readConfig();
+  const fixRounds = (cfg && cfg.fixRounds) || {};
+  const resume = Number(fixRounds.resume ?? 3);
+  const fresh = Number(fixRounds.fresh ?? 2);
+  const round = latestChangesRound(readText(ticket.logPath));
+  const label = round <= resume ? 'resume same worker' : 'fresh worker, class up';
+  return {
+    refused: false, round, resume, fresh, cap: resume + fresh, label,
+  };
+}
+
 // Writes the status and its log line for one transition, embedding the round suffix
 // changesRoundInfo computed (when given) so latestChangesRound can read it back later.
 export function transitionStatus(ticket, status, note, roundInfo) {

@@ -43,7 +43,7 @@ import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine,
 } from './queue.mjs';
 import {
-  findTicket, parseField, changesRoundInfo, transitionStatus, ticketEvidence, readReview,
+  findTicket, parseField, changesRoundInfo, lastChangesRoundInfo, transitionStatus, ticketEvidence, readReview,
 } from './tk.mjs';
 import { readLandResult, acquireGateLock, gateLockWaitMs, landingLoad, landingLine } from './land.mjs';
 import { asksPath, loadAsks, addAsk } from './ask.mjs';
@@ -580,11 +580,19 @@ function landTheLanded(horde, cfg, root, holds) {
         // every finding already in the log, so nothing written there so far sends it back again.
         if (item.review && !item.review.closedAt) item.review.closedAt = nowIso();
         const ticket = findTicket(horde, step.ticket);
+        // A round the landing gate already counted is not counted again here: the gate writes the
+        // ticket's "changes" line with the round number in it the moment it comes back red — read
+        // ahead of roundInfo below so that reading, not a second count on top of it, is what a note
+        // about this same event reports.
+        const written = byReview ? !!step.counted : (ticket && parseField(ticket.text, 'Status') === 'changes');
         // A review that followed the discipline to the letter wrote the status line itself, and
         // tk.mjs counted that round when it did — the round is that one, never a second on top.
+        // Likewise a red gate already recorded by land.mjs: `written` reads that round back instead
+        // of computing the next one, which would count the same event twice under two different
+        // numbers — the log's own and this note's.
         const roundInfo = byReview && step.counted
           ? { refused: false, ...step.counted }
-          : (ticket ? changesRoundInfo(horde, ticket) : { refused: false, round: 1 });
+          : (ticket ? (written ? lastChangesRoundInfo(horde, ticket) : changesRoundInfo(horde, ticket)) : { refused: false, round: 1 });
         if (roundInfo.refused) {
           // The rounds are spent, including the ones a fresh worker was given, so another round would
           // be a state pretending to be progress. The ticket stops here and the client is asked —
@@ -604,12 +612,9 @@ function landTheLanded(horde, cfg, root, holds) {
           });
           continue;
         }
-        // A round the landing gate already counted is not counted again here: the gate writes the
-        // ticket's "changes" line with the round number in it the moment it comes back red, and a
-        // second write would tick the counter for one red gate twice. The status is only written
-        // when nothing wrote it — a result read back after a run that died before recording it.
-        // A review's finding is written by nobody but this run, unless the review wrote it itself.
-        const written = byReview ? !!step.counted : (ticket && parseField(ticket.text, 'Status') === 'changes');
+        // A second write here would tick the counter for one red gate twice. The status is only
+        // written when nothing wrote it — a result read back after a run that died before recording
+        // it. A review's finding is written by nobody but this run, unless the review wrote it itself.
         if (ticket && !written) {
           transitionStatus(ticket, 'changes', step.words, roundInfo);
         }
