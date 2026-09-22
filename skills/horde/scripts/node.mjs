@@ -162,10 +162,14 @@ const YG_DOCUMENTS_AFTER = '6.0.0';
 
 const YG_DOCUMENTS = 'yg-node/1, yg-context/1 and yg-impact/1';
 
-function ygVersion(cfg) {
+// Asked in `cwd` when one is given: a relative ygCommand resolves against the directory the call runs
+// in, so the version that matters is the one that directory's CLI reports, not the one the caller's own.
+function ygVersion(cfg, cwd) {
   const { cmd, prefix } = ygCommand(cfg);
   try {
-    return execFileSync(cmd, [...prefix, '--version'], ygOpts(cfg, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })).trim();
+    return execFileSync(cmd, [...prefix, '--version'], ygOpts(cfg, {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...(cwd ? { cwd } : {}),
+    })).trim();
   } catch {
     return null;
   }
@@ -188,12 +192,13 @@ function failNoCli(cfg, command) {
 // document set this call site reads (defaulting to the three read all over this file); the
 // quality index reads a different pair (yg-check/1, yg-aspects/1) and names those instead, so the
 // message never claims a CLI is missing documents it never asked for.
-function failStaleCli(cfg, command, saw, docs = YG_DOCUMENTS) {
+function failStaleCli(cfg, res, docs = YG_DOCUMENTS) {
   const { display } = ygCommand(cfg);
-  const version = ygVersion(cfg);
+  const { command, saw, root } = res;
+  const version = ygVersion(cfg, root);
   fail(
-    `\`${command}\` did not answer with the document Horde reads${saw ? ` (${saw})` : ''}.\n`
-    + `The Yggdrasil CLI at "${display}"${version ? ` reports version ${version} and` : ''} predates `
+    `\`${command}\` did not answer with the document Horde reads${saw ? ` (${saw})` : ''}${root ? `, run in ${root}` : ''}.\n`
+    + `The Yggdrasil CLI at "${display}"${root ? `, as it resolves from there,` : ''}${version ? ` reports version ${version} and` : ''} predates `
     + `${docs} — the versioned answers Horde reads the graph through. An older CLI cannot be `
     + 'read around: the alternative would be Horde reading the graph a second, fragile way — its own '
     + 'files, or a report meant to be read, parsed as data — which is exactly what these documents '
@@ -297,10 +302,10 @@ export function ygJson(root, cfg, args, schema) {
     let parsed = null;
     try { parsed = JSON.parse(body); } catch { parsed = null; }
     if (parsed && parsed.schema === schema) return { state: 'ok', command, doc: parsed };
-    if (parsed) return { state: 'stale', command, saw: `it answered a "${parsed.schema || 'nameless'}" document, not ${schema}` };
+    if (parsed) return { state: 'stale', command, root, saw: `it answered a "${parsed.schema || 'nameless'}" document, not ${schema}` };
   }
   if (/does not exist in the graph/.test(err)) return { state: 'absent', command };
-  if (/unknown option|unknown command/i.test(err)) return { state: 'stale', command, saw: 'it does not know that option' };
+  if (/unknown option|unknown command/i.test(err)) return { state: 'stale', command, root, saw: 'it does not know that option' };
   // Exit 0 and nothing to read is not an old CLI — an old one refuses the option, which is the branch
   // above. It is a CLI that does not work from this directory: a relative command that resolves to
   // nothing here, or a tree with no install of its own. Told apart so the refusal names the tree and
@@ -326,7 +331,7 @@ function ygDoc(root, cfg, args, schema) {
   if (res.state === 'ok') return res.doc;
   if (res.state === 'absent') return null;
   if (res.state === 'no-cli') failNoCli(cfg, res.command);
-  if (res.state === 'stale') failStaleCli(cfg, res.command, res.saw);
+  if (res.state === 'stale') failStaleCli(cfg, res);
   fail(res.code === null
     ? `\`${res.command}\` — ${res.detail}`
     : `\`${res.command}\` exited ${res.code} — the graph could not be read:\n${res.detail}`);
@@ -357,7 +362,7 @@ export function ygContext(root, cfg, node) {
   if (contextCache.has(node)) return contextCache.get(node);
   const res = ygJson(root, cfg, ['context', '--node', node, '--json'], 'yg-context/1');
   if (res.state === 'no-cli') failNoCli(cfg, res.command);
-  if (res.state === 'stale') failStaleCli(cfg, res.command, res.saw);
+  if (res.state === 'stale') failStaleCli(cfg, res);
   const out = res.state === 'ok'
     ? { doc: res.doc }
     : { doc: null, why: res.state === 'absent' ? `the graph has no component '${node}'` : res.detail };
@@ -375,7 +380,7 @@ export function ygFileContext(root, cfg, relFile) {
   let doc = null;
   if (res.state === 'ok') doc = res.doc;
   else if (res.state === 'no-cli') failNoCli(cfg, res.command);
-  else if (res.state === 'stale') failStaleCli(cfg, res.command, res.saw);
+  else if (res.state === 'stale') failStaleCli(cfg, res);
   else if (res.state === 'silent') fail(`\`${res.command}\` — ${res.detail}`);
   fileContextCache.set(relFile, doc);
   return doc;
@@ -578,7 +583,7 @@ export function ygQualityIndex(cfg, cwd) {
   if (checkRes.state === 'no-cli') {
     return { available: false, command: checkRes.command, why: 'the Yggdrasil CLI could not be started' };
   }
-  if (checkRes.state === 'stale') failStaleCli(cfg, checkRes.command, checkRes.saw, YG_QUALITY_DOCUMENTS);
+  if (checkRes.state === 'stale') failStaleCli(cfg, checkRes, YG_QUALITY_DOCUMENTS);
   if (checkRes.state !== 'ok') {
     fail(checkRes.code == null
       ? `\`${checkRes.command}\` — ${checkRes.detail}`
@@ -590,7 +595,7 @@ export function ygQualityIndex(cfg, cwd) {
   if (aspectsRes.state === 'no-cli') {
     return { available: false, command: aspectsRes.command, why: 'the Yggdrasil CLI could not be started' };
   }
-  if (aspectsRes.state === 'stale') failStaleCli(cfg, aspectsRes.command, aspectsRes.saw, YG_QUALITY_DOCUMENTS);
+  if (aspectsRes.state === 'stale') failStaleCli(cfg, aspectsRes, YG_QUALITY_DOCUMENTS);
   if (aspectsRes.state !== 'ok') {
     fail(aspectsRes.code == null
       ? `\`${aspectsRes.command}\` — ${aspectsRes.detail}`
