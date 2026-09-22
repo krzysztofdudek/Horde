@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, MARKER_CHECK, git,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, MARKER_CHECK, git, requireYg,
 } from './helpers.mjs';
 
 function write(dir, rel, text) {
@@ -443,6 +443,32 @@ test('conflict guard: sharpening a rule and changing code it reaches in one land
   assert.match(out, /no-marker/, 'the rule is named');
   assert.match(out, /src\/a\.mjs/, 'and so is the file');
   assert.match(out, /one ticket for the code, one for the rule/, 'and the way out');
+});
+
+test('conflict guard: a file whose owner the CLI cannot answer for stops the landing, never reads as "no owner"', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = lawFixture(dir, '149', (dir2) => {
+    writeFileSync(join(dir2, '.yggdrasil', 'aspects', 'no-marker', 'check.mjs'), MARKER_CHECK.replace('UNFINISHED', 'TODO'));
+    write(dir2, 'src/a.mjs', 'export const a = 11;\n');
+  });
+  // The real CLI for everything but `context`, which answers a version this Horde does not know.
+  const real = requireYg().split(/\s+/);
+  const shim = join(dir, 'yg-shim.mjs');
+  writeFileSync(shim, [
+    "import { spawnSync } from 'node:child_process';",
+    'const args = process.argv.slice(2);',
+    "if (args[0] === 'context') { console.log(JSON.stringify({ schema: 'yg-context/2' })); process.exit(0); }",
+    `const r = spawnSync(${JSON.stringify(real[0])}, [...${JSON.stringify(real.slice(1))}, ...args], { stdio: 'inherit' });`,
+    'process.exit(r.status === null ? 1 : r.status);',
+    '',
+  ].join('\n'));
+  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${shim}`], dir);
+
+  const r = run('land.mjs', [branch], dir);
+  assert.notEqual(r.code, 0, said(r));
+  assert.match(said(r), /did not answer with the yg-context\/1 document Horde reads/, said(r));
+  assert.match(said(r), /who owns src\/a\.mjs/, said(r));
 });
 
 test('conflict guard: a hand-written "conflict"-kind decision lets nothing through — there is no waiver', async (t) => {
