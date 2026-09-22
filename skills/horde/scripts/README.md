@@ -291,6 +291,17 @@ Same take-over rule as the gate lock below: the file names the pid that holds it
 longer running — including one that just refused via `fail()`, which exits before its own `finally`
 can release the lock — is taken over immediately rather than waited on.
 
+`asks.json` (`ask.mjs`) and `graph.json` (`node.mjs`) carry the same hazard — every command that
+changes either reads the whole document, mutates it and writes it back — and now carry the same
+lock, generalized in `_lib.mjs` as `withFileLock` and instantiated per file as `withAsksLock` and
+`withGraphLock` (`<file>.lock`, same exclusive-create and take-over rule as above). Lock order,
+where two are ever held at once: the queue lock is outermost when it appears at all (`tick.mjs`'s
+red-gate handling files a "stuck" ask from inside its own `withQueueLock` block), the asks lock is
+outermost over the decisions lock (`answerAsk` calls into `decide.mjs`'s own lock while holding
+this one), and nothing that holds the asks, graph, counter or decisions lock ever reaches back for
+the queue lock — so the order is always queue → { asks → decisions, graph, counter } on whichever
+edges exist, never the reverse, and never a cycle to deadlock two processes on.
+
 `add` is the door a ticket is held at. Three things are checked there and nowhere else: a ticket with
 no acceptance line has nothing anybody could reproduce; one earning an `**Evidence:**` row a
 prototype is still waiting an answer on is built against the guess the prototype exists to replace,

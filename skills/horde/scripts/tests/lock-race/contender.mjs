@@ -1,6 +1,6 @@
 // Test-only: one of the two processes that race a single lock file.
 //
-//   usage: contender.mjs <gate|retro|queue|decide> --hold <ms> [--after <file>] [--wait <ms>]
+//   usage: contender.mjs <gate|retro|queue|decide|asks|graph> --hold <ms> [--after <file>] [--wait <ms>]
 //
 // It takes the real lock — the shipped function, imported from the shipped script, never a copy
 // of it — holds it for `--hold`, releases it, and prints the one line the test reads:
@@ -73,6 +73,24 @@ async function takeTheLock() {
     const { withDecisionsLock } = await import('../../decide.mjs');
     let acquired;
     withDecisionsLock('mission1', () => {
+      acquired = Date.now();
+      sleepSync(hold);
+    }, { waitMs });
+    return { ok: true, held: true, acquired, release: () => {} };
+  }
+  if (kind === 'asks') {
+    const { withAsksLock } = await import('../../_lib.mjs');
+    let acquired;
+    withAsksLock('mission1', () => {
+      acquired = Date.now();
+      sleepSync(hold);
+    }, { waitMs });
+    return { ok: true, held: true, acquired, release: () => {} };
+  }
+  if (kind === 'graph') {
+    const { withGraphLock } = await import('../../_lib.mjs');
+    let acquired;
+    withGraphLock('mission1', () => {
       acquired = Date.now();
       sleepSync(hold);
     }, { waitMs });

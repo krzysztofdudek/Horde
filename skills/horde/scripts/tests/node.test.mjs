@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode, addAspect, yg, requireYg, MARKER_CHECK, git,
 } from './helpers.mjs';
+import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -878,4 +879,65 @@ test('node.mjs: a refusal for an old CLI names the tree it ran in and the versio
   assert.ok(r.stderr.includes(`run in ${tree}`) || r.stderr.includes(`run in ${realpathSync(tree)}`), 'it names the tree the call ran in');
   assert.match(r.stderr, /reports version 5\.7\.3 and predates/, 'the version is the one that tree reports, not the one from the caller\'s own directory');
   assert.doesNotMatch(r.stderr, /9\.9\.9/);
+});
+
+function spawnPropose(dir, i) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [join(SCRIPTS_DIR, 'node.mjs'), 'propose', 'rule', `a racing proposal ${i}`, '--by', 'racer', '--json'], {
+      cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('close', (code) => {
+      let json = null;
+      try { json = JSON.parse(stdout); } catch { json = null; }
+      resolve({ code, stdout, stderr, json });
+    });
+  });
+}
+
+// issue 084: graph.json is one shared document every write-side command (propose, approve, veto,
+// apply, promote, demote, and the two contract commands) reads, mutates and writes back whole —
+// the same read-modify-write hazard queue.json, counter.json and asks.json already had. N real
+// processes proposing at once, with nothing serializing them, lose all but the last write — this
+// proves the fix the same way issue 041 proved the counter one: N processes in, N proposals
+// recorded, the file parses end to end.
+test('node.mjs propose: N parallel proposals each land as their own item — graph.json never loses one to another', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const N = 24;
+  const results = await Promise.all(Array.from({ length: N }, (_, i) => spawnPropose(dir, i)));
+  const failed = results.filter((r) => r.code !== 0);
+  assert.deepEqual(failed.map((r) => r.stderr), [], 'every node.mjs propose should succeed');
+
+  const ids = results.map((r) => r.json && r.json.id);
+  assert.ok(ids.every(Boolean), `every result should carry an id: ${JSON.stringify(results.map((r) => r.json))}`);
+  assert.equal(new Set(ids).size, N, 'every proposal should get its own item, none overwriting another');
+
+  const onDisk = run('node.mjs', ['proposals'], dir);
+  assert.equal(onDisk.code, 0, onDisk.stderr);
+  assert.equal(onDisk.json.length, N, 'graph.json should carry exactly the N proposals filed, no more and no fewer');
+});
+
+test('node.mjs: a graph lock caught half-made is waited for, never taken for an abandoned one', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const race = await raceOneLock(dir, 'graph');
+  assert.ok(race.paused, `nothing was ever paused, so this run proves nothing:\n${describeRace(race)}`);
+  assert.equal(race.slow.code, 0, describeRace(race));
+  assert.equal(race.other.code, 0, describeRace(race));
+
+  const paused = race.slow.window;
+  const other = race.other.window;
+  assert.ok(paused && paused.ok && other && other.ok, describeRace(race));
+  assert.notEqual(paused.pid, other.pid, 'two processes, not one');
+  assert.equal(overlaps(paused, other), false,
+    'both processes held the graph lock at the same time: the one paused mid-creation had its '
+    + `lock file read as an abandoned one and taken.\n${describeRace(race)}`);
 });

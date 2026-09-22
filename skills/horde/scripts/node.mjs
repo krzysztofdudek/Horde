@@ -24,7 +24,7 @@ import {
   hordePath, readJSON, writeJSON, readText, writeText, readConfig, nowIso,
   fail, parseArgs, asArray, emit, isMain, resolveHorde, claimLease, qualityPolicy,
   resolveTree, assertGraphWritable, provenanceLine, withProvenance,
-  allocateId, idNumber, migrationNote,
+  allocateId, idNumber, migrationNote, withGraphLock,
   runMain,
 } from './_lib.mjs';
 
@@ -1295,6 +1295,7 @@ function cmdLadder(horde, root, cfg, flags) {
 // promoted by running a command twice in one afternoon.
 export function observeAspects(horde, root, cfg, wave) {
   if (qualityPolicy(horde) === 'only-the-work') return { observed: [], policy: 'only-the-work' };
+  return withGraphLock(horde, () => {
   const graph = loadGraph(horde);
   if (aspectLedger(graph).length === 0) return { observed: [], policy: 'autonomous' };
   const doc = ygAspectsDoc(root, cfg);
@@ -1322,6 +1323,7 @@ export function observeAspects(horde, root, cfg, wave) {
   }
   saveGraph(horde, graph);
   return { observed, policy: 'autonomous' };
+  });
 }
 
 // Every rung granted that no wave close has shown the chairman yet. Not "since this wave opened":
@@ -1343,13 +1345,15 @@ export function pendingPromotions(horde) {
 export function markPromotionsReported(horde, promotions) {
   if (!promotions.length) return;
   const shown = new Set(promotions.map((p) => `${p.aspect}@${p.at}`));
-  const graph = loadGraph(horde);
-  for (const entry of aspectLedger(graph)) {
-    for (const h of asArray(entry.history)) {
-      if (h && shown.has(`${entry.aspect}@${h.at}`)) h.reported = nowIso();
+  withGraphLock(horde, () => {
+    const graph = loadGraph(horde);
+    for (const entry of aspectLedger(graph)) {
+      for (const h of asArray(entry.history)) {
+        if (h && shown.has(`${entry.aspect}@${h.at}`)) h.reported = nowIso();
+      }
     }
-  }
-  saveGraph(horde, graph);
+    saveGraph(horde, graph);
+  });
 }
 
 // ---- the advisories a quality ticket is filed from --------------------------------------------
@@ -1372,10 +1376,12 @@ export function readAdvisoryLedger(horde) {
 }
 
 export function recordAdvisory(horde, entry) {
-  const graph = loadGraph(horde);
-  if (!Array.isArray(graph.advisories)) graph.advisories = [];
-  graph.advisories.push({ ...entry, at: nowIso() });
-  saveGraph(horde, graph);
+  withGraphLock(horde, () => {
+    const graph = loadGraph(horde);
+    if (!Array.isArray(graph.advisories)) graph.advisories = [];
+    graph.advisories.push({ ...entry, at: nowIso() });
+    saveGraph(horde, graph);
+  });
 }
 
 // ---- what the law audit has already raised ----------------------------------------------------
@@ -1392,10 +1398,12 @@ export function readAuditLedger(horde) {
 }
 
 export function recordAudit(horde, entry) {
-  const graph = loadGraph(horde);
-  if (!Array.isArray(graph.audits)) graph.audits = [];
-  graph.audits.push({ ...entry, at: nowIso() });
-  saveGraph(horde, graph);
+  withGraphLock(horde, () => {
+    const graph = loadGraph(horde);
+    if (!Array.isArray(graph.audits)) graph.audits = [];
+    graph.audits.push({ ...entry, at: nowIso() });
+    saveGraph(horde, graph);
+  });
 }
 
 // ---- where a node's own files live -----------------------------------------------------------
@@ -2171,21 +2179,21 @@ function main() {
   if (cmd === 'log') return cmdLog(horde, root, cfg, rest, flags, info);
   if (cmd === 'contract') {
     const [sub, ...subRest] = rest;
-    if (sub === 'propose') return cmdContractPropose(horde, root, cfg, subRest, flags);
-    if (sub === 'approve') return cmdContractRule(horde, root, cfg, subRest, flags, 'approved');
-    if (sub === 'veto') return cmdContractRule(horde, root, cfg, subRest, flags, 'vetoed');
+    if (sub === 'propose') return withGraphLock(horde, () => cmdContractPropose(horde, root, cfg, subRest, flags));
+    if (sub === 'approve') return withGraphLock(horde, () => cmdContractRule(horde, root, cfg, subRest, flags, 'approved'));
+    if (sub === 'veto') return withGraphLock(horde, () => cmdContractRule(horde, root, cfg, subRest, flags, 'vetoed'));
     fail('contract requires "propose", "approve" or "veto"');
   }
   if (cmd === 'contracts') return cmdContracts(horde, root, cfg, flags);
   if (cmd === 'verdicts') return cmdVerdicts(horde, root, cfg, flags);
-  if (cmd === 'propose') return cmdPropose(horde, rest, flags);
+  if (cmd === 'propose') return withGraphLock(horde, () => cmdPropose(horde, rest, flags));
   if (cmd === 'proposals') return cmdProposals(horde, flags);
-  if (cmd === 'approve') return cmdProposalRule(horde, rest, flags, 'approved');
-  if (cmd === 'veto') return cmdProposalRule(horde, rest, flags, 'vetoed');
-  if (cmd === 'apply') return cmdApply(horde, root, cfg, rest, flags);
+  if (cmd === 'approve') return withGraphLock(horde, () => cmdProposalRule(horde, rest, flags, 'approved'));
+  if (cmd === 'veto') return withGraphLock(horde, () => cmdProposalRule(horde, rest, flags, 'vetoed'));
+  if (cmd === 'apply') return withGraphLock(horde, () => cmdApply(horde, root, cfg, rest, flags));
   if (cmd === 'ladder') return cmdLadder(horde, root, cfg, flags);
-  if (cmd === 'promote') return cmdPromote(horde, root, cfg, rest, flags, info);
-  if (cmd === 'demote') return cmdDemote(horde, root, cfg, rest, flags, info);
+  if (cmd === 'promote') return withGraphLock(horde, () => cmdPromote(horde, root, cfg, rest, flags, info));
+  if (cmd === 'demote') return withGraphLock(horde, () => cmdDemote(horde, root, cfg, rest, flags, info));
   fail(`unknown command: ${cmd} (see --help)`);
 }
 

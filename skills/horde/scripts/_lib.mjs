@@ -751,13 +751,21 @@ function counterLockPath(horde) {
   return `${counterPath(horde)}.lock`;
 }
 
-function withCounterLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
-  const path = counterLockPath(horde);
+// The shared machinery behind every per-file lock in this tool set: exclusive-create `<file>.lock`
+// naming the pid that holds it (so a racing caller can never read a lock still being written as an
+// abandoned one and take it out from under its holder), take over a dead holder rather than wait on
+// it forever, and release in a `finally` so a refusal raised through fail() still lets go. One
+// implementation — queue.json's own withQueueLock predates this and is left as it is (its own
+// tuned two extra fields, `team` and a bespoke error line, are not worth a generic options bag for
+// one caller) — but every per-file lock added after it (counter.json below, and asks.json /
+// graph.json in node.mjs and ask.mjs) goes through this one, so a later fix to the primitive fixes
+// every one of them at once instead of a fourth or fifth hand-rolled copy.
+function withFileLock(path, meta, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
   const deadline = Date.now() + waitMs;
   for (;;) {
     try {
       mkdirSync(dirname(path), { recursive: true });
-      createLockFile(path, `${JSON.stringify({ pid: process.pid, horde, at: nowIso() }, null, 2)}\n`);
+      createLockFile(path, `${JSON.stringify({ pid: process.pid, ...meta, at: nowIso() }, null, 2)}\n`);
       break;
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
@@ -771,7 +779,7 @@ function withCounterLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
       continue;
     }
     if (Date.now() > deadline) {
-      throw new Error(`counter.json for horde "${horde}" is locked by another process (pid ${held.pid}, taken ${held.at || 'at an unrecorded time'}) — timed out waiting for ${path}`);
+      throw new Error(`${path} is locked by another process (pid ${held.pid}, taken ${held.at || 'at an unrecorded time'}) — timed out waiting for it`);
     }
     sleepSync(QUEUE_LOCK_POLL_MS);
   }
@@ -784,6 +792,30 @@ function withCounterLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
       rmSync(path, { force: true });
     } catch { /* unreadable, already gone, or already taken over by someone else: nothing to do */ }
   }
+}
+
+function withCounterLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
+  return withFileLock(counterLockPath(horde), { horde }, fn, { waitMs });
+}
+
+// asks.json and graph.json — the same read-modify-write hazard queue.json and counter.json already
+// had, closed here rather than with two more hand-rolled copies. Lock order: both are always the
+// innermost lock taken relative to the queue lock, exactly like the counter lock — tick.mjs's red-
+// gate handling calls fileAsk (addAsk) from inside its own withQueueLock block, so the queue lock is
+// sometimes held while this one is acquired, but never the other way: nothing that holds the asks or
+// the graph lock ever tries to take the queue lock (checked at every one of node.mjs's, queue.mjs's
+// and audit.mjs's own call sites — recordAdvisory/recordAudit are always called after their nearby
+// withQueueLock block has already released, never from inside one). Only one exception nests the
+// other direction: asks.json's answerAsk calls into decide.mjs's own decisions lock WHILE holding
+// this one — asks lock outermost, decisions lock innermost, the one order the two are ever taken in.
+// So the full ordering, queue first when it appears at all, is: queue → { asks → decisions, graph,
+// counter } — never the reverse on any edge, so there is no cycle for two processes to deadlock on.
+export function withAsksLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
+  return withFileLock(`${hordePath(horde, 'asks.json')}.lock`, { horde, kind: 'asks' }, fn, { waitMs });
+}
+
+export function withGraphLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
+  return withFileLock(`${hordePath(horde, 'graph.json')}.lock`, { horde, kind: 'graph' }, fn, { waitMs });
 }
 
 // writeJSONAtomic(file, obj) — same document shape as writeJSON, written so a reader outside the
