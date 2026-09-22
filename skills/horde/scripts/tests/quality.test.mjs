@@ -311,6 +311,39 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
     assert.match(readFileSync(aspectPath(other, 'no-marker'), 'utf8'), /^status: advisory$/m);
   });
 
+  await t.test('the refusal names the tree it ran in and the version that tree\'s own CLI reports (issue 086)', () => {
+    const other = makeRepo();
+    t.after(() => rmRepo(other));
+    graphFixture(other, yg, { status: 'draft' });
+    initHorde(other);
+    const tree = join(other, 'tree-b');
+    git(['worktree', 'add', '--detach', tree, 'HEAD'], other);
+
+    const stub = join(other, 'version-dependent-yg.mjs');
+    writeFileSync(stub, [
+      "import { execFileSync } from 'node:child_process';",
+      `const REAL = ${JSON.stringify(yg)};`,
+      'const argv = process.argv.slice(2);',
+      "if (argv[0] === '--version') { console.log(process.cwd().endsWith('tree-b') ? '5.7.3' : '9.9.9'); process.exit(0); }",
+      "if (argv[0] === 'aspects' && argv[1] === 'log') {",
+      '  process.stderr.write("error: too many arguments for \'aspects\'. Expected 0 arguments but got " + (argv.length - 2) + ": " + argv.slice(2).join(", ") + ".\\n");',
+      '  process.exit(1);',
+      '}',
+      'const real = REAL.split(/\\s+/);',
+      'try {',
+      '  execFileSync(real[0], [...real.slice(1), ...argv], { stdio: "inherit" });',
+      '} catch (e) { process.exit(e.status ?? 1); }',
+      '',
+    ].join('\n'));
+    run('horde.mjs', ['config', 'set', 'ygCommand', `node ${stub}`], other);
+
+    const r = run('node.mjs', ['promote', 'no-marker', '--tree', tree], other);
+    assert.equal(r.code, 1, r.stderr);
+    assert.ok(r.stderr.includes(`run in ${tree}`), `names the tree it ran in:\n${r.stderr}`);
+    assert.match(r.stderr, /reports version 5\.7\.3 and predates/, 'the version is the one the tree\'s own CLI reports, not the caller\'s own directory');
+    assert.doesNotMatch(r.stderr, /9\.9\.9/);
+  });
+
   await t.test('the user may lower it, and that too lands in the log', () => {
     const r = run('node.mjs', [
       'demote', 'no-marker', '--to', 'advisory', '--by', 'user',

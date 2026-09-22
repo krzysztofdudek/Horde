@@ -319,6 +319,42 @@ test('a Yggdrasil CLI Horde does not know: a refusal naming the version to insta
   assert.equal(existsSync(lawPath(dir, '1')), false);
 });
 
+test('a stale-CLI refusal names the tree it ran on and the version that tree\'s own CLI reports (issue 086)', async (t) => {
+  const yg = requireYg();
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  baseFixture(dir, yg);
+  initHorde(dir);
+  workTheLaw(dir, yg);
+
+  // The base is always read first (lawDiff's own order), on a scratch tree under `.horde/scratch/`
+  // — the trunk worktree carries no such path segment — so a version that depends on which one this
+  // ran in proves the fix reads the tree that actually failed, not wherever the caller started.
+  const stub = join(dir, 'stale-tree-aware-yg.mjs');
+  writeFileSync(stub, [
+    "import { execFileSync } from 'node:child_process';",
+    `const REAL = ${JSON.stringify(yg)};`,
+    'const argv = process.argv.slice(2);',
+    "if (argv[0] === '--version') { console.log(process.cwd().includes('/scratch/') ? '5.7.3' : '9.9.9'); process.exit(0); }",
+    "if (argv[0] === 'aspects' && argv.includes('--json') && argv[1] !== 'log') {",
+    '  process.stdout.write(JSON.stringify({ schema: "yg-aspects/0", aspects: [] }) + "\\n");',
+    '  process.exit(0);',
+    '}',
+    'const real = REAL.split(/\\s+/);',
+    'try {',
+    '  execFileSync(real[0], [...real.slice(1), ...argv], { stdio: "inherit" });',
+    '} catch (e) { process.exit(e.status ?? 1); }',
+    '',
+  ].join('\n'));
+  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${stub}`], dir);
+
+  const r = run('law.mjs', ['diff', '--wave', '1'], dir);
+  assert.equal(r.code, 1, r.stderr);
+  assert.match(r.stderr, /on the base \(/, 'names the base tree, read first');
+  assert.match(r.stderr, /reports version 5\.7\.3 and predates/, 'the version is the one the base\'s own scratch tree CLI reports');
+  assert.doesNotMatch(r.stderr, /9\.9\.9/);
+});
+
 test('a CLI that does not know a flag the law diff needs: a refusal naming the command, never a silently empty document', async (t) => {
   const yg = requireYg();
   const dir = makeRepo();
