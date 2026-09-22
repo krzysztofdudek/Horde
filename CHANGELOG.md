@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The consultant's brief now asks Grain what a new file under each component had to come with about a file, not a directory. It passed the component's directory (`src/orders`), and Grain answers for a path's class, its module and its extension, so it answered for extension-less files of the parent module `src`. The question is now about a new file in that directory with the extension most of its files carry (`src/orders/new-file.ts`), and the label names the extension.
 - The record command the retrospective prints for a second judge now carries `--report`. Yggdrasil refuses a refusal recorded without its report, so the printed command failed as written whenever the second judge refused.
 - The audit's advise sweep now finds the rule behind a drill miss on a nested rule id such as `boundary/clean-core`. It read the rule as the first path segment of `<rule>/<case>`, found nothing, and dropped the regression as naming nothing the mission holds. The rule is now everything before the case's `violates-*` or `satisfies-*` directory.
 - The legislate brief's "Rules that reach nothing" no longer lists every draft and aggregate rule. It read reach from the gate's pairs, which leave those rules out by design, so a rule a Grain proposal left at draft, still attached to half the repository, was offered as one the legislator could delete without asking anybody. The list now comes from `yg aspects --json --reach`, as the law guard's does.
