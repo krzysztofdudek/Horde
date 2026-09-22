@@ -205,6 +205,54 @@ test('refine.mjs --step cut: one size for the whole horde, and the limit is clos
   });
 });
 
+test('refine.mjs --step cut: a linguist-generated file and a binary file are not counted into the territory\'s code budget', async (t) => {
+  // Two fixtures, not one repo edited in place: --horde reads the horde\'s own trunk worktree, cut
+  // from the base branch's tip at init time, so a commit made afterward on the main checkout\'s own
+  // branch is invisible to it — the generated and binary files have to be part of the graph BEFORE
+  // the horde is cut, same as every other file graphFixture commits.
+  const baseline = makeRepo();
+  t.after(() => rmRepo(baseline));
+  graphFixture(baseline);
+  initHorde(baseline, 'm1');
+  writeTerritories(baseline, 'm1', { doors: { nodes: ['auth'], class: 'standard', why: 'The way in.' } });
+  const before = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], baseline).json.territories[0].bytes;
+
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  writeFile(dir, '.gitattributes', 'src/auth/generated.js linguist-generated=true\n');
+  writeFile(dir, 'src/auth/generated.js', 'x'.repeat(5000));
+  writeFileSync(join(dir, 'src/auth/data.bin'), Buffer.from([0x00, 0x01, 0x02, 0x03, 0xff, 0xfe, 0x00]));
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'a generated template and a binary blob, neither one read'], dir);
+  git(['branch', '-f', 'develop', 'HEAD'], dir);
+  initHorde(dir, 'm1');
+  writeTerritories(dir, 'm1', { doors: { nodes: ['auth'], class: 'standard', why: 'The way in.' } });
+  const after = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).json.territories[0].bytes;
+
+  await t.test('neither file grows the code total or the file count', () => {
+    assert.equal(after.code, before.code);
+    assert.equal(after.files, before.files);
+    assert.equal(after.excludedFiles, 2);
+  });
+
+  await t.test('the largest counted files never name the excluded ones', () => {
+    for (const f of after.largest) {
+      assert.notEqual(f.file, 'src/auth/generated.js');
+      assert.notEqual(f.file, 'src/auth/data.bin');
+    }
+  });
+
+  await t.test('a refusal over the limit names the largest files it actually counted, never the excluded ones', () => {
+    assert.equal(run('horde.mjs', ['config', 'set', 'territory.maxBytes', String(after.total - 1)], dir).code, 0);
+    const r = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /largest: /);
+    assert.doesNotMatch(r.stderr, /generated\.js/);
+    assert.doesNotMatch(r.stderr, /data\.bin/);
+  });
+});
+
 test('refine.mjs: a territory is leased across every live horde on the repository', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
