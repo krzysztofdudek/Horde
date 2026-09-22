@@ -375,7 +375,9 @@ function detectJudge(root) {
   for (const name of YG_CONFIG_FILES) {
     let text = '';
     try { text = readFileSync(join(root, '.yggdrasil', name), 'utf8'); } catch { continue; }
-    const block = /^reviewer:\s*$([\s\S]*?)(?=^\S|\Z)/m.exec(text);
+    // The block runs to the next top-level key or to the end of the file — `yg init` writes
+    // `reviewer:` as the last key, and JavaScript has no `\Z` (it would match a literal Z).
+    const block = /^reviewer:\s*$([\s\S]*?)(?=^\S|(?![\s\S]))/m.exec(text);
     if (block && /^\s+provider:\s*\S/m.test(block[1])) return 'tier';
   }
   return 'one-shot';
