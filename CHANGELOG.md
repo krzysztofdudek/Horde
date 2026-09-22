@@ -66,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The refusal for a CLI that predates its own rule log (`node.mjs promote`/`demote`) or the law diff's own documents (`law.mjs diff`) now names the tree it ran in and the version that tree's own CLI reports, the same fix issue 034 already gave the ordinary graph-read refusal — a relative `ygCommand` can resolve to a different install than the one that actually failed.
+- `scripts/README.md`'s `set NNN merged --sha` bullet described `team:<name>` items standing for a sub-team's branch and skipping branch creation — dead since sub-teams were removed, the same class of drift as the dependency-forms bullet below.
 - `scripts/README.md`'s dependency bullet (`add --depends`, `dep`/`undep` `--on`) described `<team>:NNN` and `<team>:team:<name>` forms `queue.mjs`'s `resolveDepRef` refuses outright — dead since sub-teams were removed. It now describes only the bare `NNN` form the code actually accepts.
 - `reference/discipline/tdd.md` described a `--revert no-new-tests` flag `land.mjs` never had — the real declaration is `**No new tests:** <reason>` on the ticket itself, which `land.mjs`'s `noNewTestsReason` reads from `issue.md`.
 - The revert test's own extraction of a new test file onto the base tree no longer trims the file's trailing whitespace — a file that ends in a blank line (or several) now lands in the scratch tree byte-identical to the branch's own copy, not the trimmed reading `git()`'s own return value takes for command output.
