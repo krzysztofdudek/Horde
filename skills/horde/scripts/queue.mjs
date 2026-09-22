@@ -510,6 +510,13 @@ function cmdQuality(horde, positional, flags) {
       skipped.push({ key, node: nodes[0], why: 'already filed as a ticket' });
       continue;
     }
+    // Grain reports every pair that changes together, declared or not, and says so in the evidence: for
+    // a pair the graph already joins (a relation, or one inside the other) the item is data, not advice,
+    // and a ticket asking to declare what is declared is work for nobody.
+    if (item.kind === 'relation' && item.evidence && item.evidence.declared === true) {
+      skipped.push({ key, node: nodes[0], why: 'the graph already joins these components, so there is nothing to declare' });
+      continue;
+    }
     const node = nodes[0];
     if (!nodeExists(root, cfg, node)) {
       skipped.push({ key, node, why: 'the graph has no such component' });
