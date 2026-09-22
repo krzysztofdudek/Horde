@@ -377,12 +377,10 @@ earning no row at all claims nothing — neither is a mismatch.
   ticket's own text still declaring it) or from a port `NNN` consumes that `MMM` produces (`plan`
   recomputes that edge fresh from `**Consumes:**`/`**Produces:**` every time, so the queue never
   actually held it), naming which and what to edit instead.
-- A dependency (`add`'s `--depends`, `dep`'s and `undep`'s `--on`) is `NNN` (same team), `<team>:NNN`
-  (a ticket in another team's queue), or `<team>:team:<name>` (that team's own merge-up item, e.g.
-  `trunk:team:allies`) — `next` checks a cross-team one against that team's own `queue.json`, read
-  fresh every call, so a dependency between teams is enforced by the DAG rather than held only in
-  prose. Refuses an unknown team or item; a same-team cycle is refused, a cross-team one is not
-  checked (a merge-up DAG only ever points up or sideways).
+- A dependency (`add`'s `--depends`, `dep`'s and `undep`'s `--on`) is `NNN`, a bare ticket number
+  in this same team — there is only ever one team (`trunk`), so a dependency has nowhere else to
+  point. Refuses anything with a `:` in it, naming the dependency and saying so, and refuses an
+  unknown ticket number; a cycle is refused, with the circle it would close.
 - `set NNN waiting --note "<why>"` — for "the class this ticket needs is overloaded, no agent of that
   class can be spawned right now": just changes the state, keeping `class`, `branch` and `worktree`
   exactly as they were (so a ticket already `running` when its class gets overloaded can be waited
