@@ -935,6 +935,21 @@ function cmdCharter(positional, flags) {
     .filter((r) => !afterById.has(r.id) || !afterById.get(r.id).reproducedBy)
     .map((r) => ({ id: r.id, was: r.reproducedBy }));
 
+  // Wiping the stamp is the loud case above; the quiet one is keeping it on a row this same edit
+  // just reworded. A stamp says "this is what was reproduced" — a row still stamped but now
+  // promising something else (different evidence text, or a different class) carries proof of the
+  // OLD promise on the new one, and nothing about writing the charter checks that the two still
+  // match. No flag mutes this: unlike a drop, the row and its stamp both survive, so there is
+  // nothing to put back — only a mismatch for whoever wrote the text to notice and resolve, by
+  // hand, in whichever direction is right (revert the wording, or re-earn the stamp).
+  const redrafted = filledBefore
+    .filter((r) => afterById.has(r.id) && afterById.get(r.id).reproducedBy)
+    .map((r) => ({ before: r, after: afterById.get(r.id) }))
+    .filter(({ before: b, after: a }) => b.evidence !== a.evidence || b.evidenceClass !== a.evidenceClass)
+    .map(({ before: b, after: a }) => ({
+      id: b.id, by: a.reproducedBy, was: b.evidence, now: a.evidence, wasClass: b.evidenceClass, nowClass: a.evidenceClass,
+    }));
+
   writeText(path, content);
   const result = {
     horde,
@@ -943,11 +958,13 @@ function cmdCharter(positional, flags) {
     evidenceRows: rowsAfter.length,
     evidenceReproduced: rowsAfter.filter((r) => r.reproducedBy).length,
     droppedEvidence: dropped,
+    redraftedEvidence: redrafted,
     quality: policy === null ? QUALITY_POLICIES[0] : policy,
   };
   emit(result, flags, () => [
     `charter written: ${horde} (${content.length} bytes) — evidence catalogue: ${result.evidenceRows} row(s), ${result.evidenceReproduced} reproduced · quality ${result.quality}`,
     ...dropped.map((d) => `warning: ${d.id} was recorded as reproduced by ${d.was} and this text drops that — put it back with: wave.mjs evidence ${d.id} --by "${d.was}"`),
+    ...redrafted.map((r) => `warning: ${r.id} is still recorded as reproduced by ${r.by}, but this text changed its evidence — the stamp may no longer match what it now promises`),
   ].join('\n'));
 }
 
