@@ -31,7 +31,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, git, gitError, fail,
+  hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, git, gitBlob, gitError, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine,
   withProvenance, nowIso, parseDecisionEntries, decisionField, diffSize, sizeRanks, sizeLine,
   noEvidenceLayerNote, createLockFile, processAlive, sleepSync, HordeError,
@@ -696,7 +696,7 @@ function runRevertToBaseVariant(root, cfg, branch, parentBranch, base, newTestFi
   try {
     const extracted = [];
     for (const relPath of newTestFiles) {
-      const content = git(['show', `${branch}:${relPath}`], root);
+      const content = gitBlob(`${branch}:${relPath}`, root);
       if (content === null) byPath.set(relPath, { path: relPath, ok: false, note: 'could not extract from branch' });
       else extracted.push({ path: relPath, content, runner: runnerFor(relPath, cfg) });
     }

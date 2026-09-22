@@ -63,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The revert test's own extraction of a new test file onto the base tree no longer trims the file's trailing whitespace — a file that ends in a blank line (or several) now lands in the scratch tree byte-identical to the branch's own copy, not the trimmed reading `git()`'s own return value takes for command output.
 - A rule proposal is only raised when the same answer has actually been given repeatedly. Three different answers to the same kind of question in one place no longer get treated as one recurring answer.
 - The architect's instructions no longer point it at a step that always failed when a disputed port needed the director's attention.
 - The example a reviewer is shown for sending work back with findings now runs, instead of naming a command that no longer exists.

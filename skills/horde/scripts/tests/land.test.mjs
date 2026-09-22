@@ -1001,6 +1001,35 @@ const ONE_SPEC_RUNNER = [
   '',
 ].join('\n');
 
+// issue 072: the new test file this checklist item extracts onto the base tree has to be byte-
+// identical with the branch's own copy — trailing blank lines included. A revert-test runner that
+// depends on exact content (a snapshot comparison, a lint rule on trailing whitespace) would read a
+// different file than the one that actually lands otherwise.
+const TRAILING_BLANKS_RUNNER = [
+  "import { readFileSync } from 'node:fs';",
+  "const expected = 'a test with trailing blank lines of its own\\n\\n\\n';",
+  'const actual = readFileSync(process.argv[2], \'utf8\');',
+  '// Red (exit 1) only when the file the base tree actually has is byte-identical to what the',
+  '// branch declared — trimmed, this never matches, and the checklist item reports no proof.',
+  'process.exit(actual === expected ? 1 : 0);',
+  '',
+].join('\n');
+
+test('land.mjs revert test: the test file extracted onto the base is byte-identical with the branch, trailing blank lines included', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const trailingContent = 'a test with trailing blank lines of its own\n\n\n';
+  const { branch } = setupLandable(dir, '046', {
+    trunkFiles: { 'run-one.mjs': TRAILING_BLANKS_RUNNER },
+    extraFiles: { 'feature-046-extra.test.json': trailingContent },
+  });
+  run('horde.mjs', ['config', 'set', 'gates.testFile', 'node run-one.mjs {file}'], dir);
+
+  const r = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
+  assert.equal(r.ok, true, r.note);
+  assert.match(r.note, /feature-046-extra\.test\.json: gates\.testFile red \(exit 1\) with it in place/);
+});
+
 test('land.mjs revert test via gates.testFile: a runner outside the commit gate goes red on the base, and only a red proves the ticket', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
