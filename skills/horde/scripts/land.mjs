@@ -1134,12 +1134,19 @@ function checkGraphText(root, branch, parentBranch, changedFiles) {
 // A file the graph owns nowhere passes `yg check` in a repository that requires coverage of
 // nothing, so a new folder can land with its mapping forgotten and only the next reader finds a
 // node with no files. The mapping belongs in the same commit as the first file — this asks the
-// graph, on the branch's own tree, who owns every file the branch added.
+// graph, on the branch's own tree, who owns every file the branch added. Yggdrasil names three
+// owners, and only one of them is a forgotten mapping: a node owns the file, or its architecture
+// type covers it (coverage.type_level), or nothing does — and of those, a file the coverage config
+// excludes by design is one Yggdrasil says cannot and need not be mapped. Only `none` for any
+// other reason, or a file the graph could not answer about at all, is refused here.
 export function unmappedFiles(contextByFile) {
   const out = [];
   for (const [file, doc] of contextByFile) {
-    const kind = doc && doc.owner && doc.owner.kind;
-    if (kind !== 'node') out.push(file);
+    const owner = doc && doc.owner;
+    const kind = owner && owner.kind;
+    if (kind === 'node' || kind === 'type') continue;
+    if (kind === 'none' && owner.reason === 'excluded') continue;
+    out.push(file);
   }
   return out;
 }
@@ -1151,7 +1158,7 @@ function checkMapping(cfg, worktree, addedFiles, noGate) {
   if (!ygAvailable(cfg, worktree)) return { ok: false, note: 'the Yggdrasil CLI cannot be run, so the graph cannot say who owns the added files' };
   const contexts = new Map(candidates.map((f) => [f, ygFileContext(worktree, cfg, f)]));
   const unmapped = unmappedFiles(contexts);
-  if (unmapped.length === 0) return { ok: true, note: `${candidates.length} added file(s), every one owned by a node` };
+  if (unmapped.length === 0) return { ok: true, note: `${candidates.length} added file(s), every one owned by a node, covered by its type, or excluded from coverage by design` };
   const shown = unmapped.slice(0, 5).join(', ') + (unmapped.length > 5 ? '…' : '');
   return {
     ok: false,
