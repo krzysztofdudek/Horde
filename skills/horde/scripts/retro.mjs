@@ -711,7 +711,6 @@ export function acquireRetroLock(horde, waitMs = LOCK_WAIT_MS) {
       if (e.code !== 'EEXIST') throw e;
     }
     const seen = readLockText(path);
-    if (seen === null) continue; // released between the failed create and this read: try again
     let held = null;
     try { held = JSON.parse(seen); } catch { held = null; }
     if (!held || !processAlive(held.pid)) {

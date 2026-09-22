@@ -970,3 +970,24 @@ test('removeStaleLock takes over only the lock it judged, never a fresh one take
   removeStaleLock(path, fresh);
   assert.equal(readLockText(path), null);
 });
+
+// A lock file nobody can read names no pid to wait on, so it is taken over like a dead holder's —
+// it must never leave the loop spinning without its sleep or its deadline.
+test('an unreadable lock is taken over, not spun on', { timeout: 20000 }, async (t) => {
+  if (process.getuid && process.getuid() === 0) { t.skip('root reads a 000 file anyway'); return; }
+  const mod = await import('../_lib.mjs');
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const origCwd = process.cwd();
+  process.chdir(dir);
+  try {
+    const lock = `${mod.hordePath('h1', 'graph.json')}.lock`;
+    mkdirSync(dirname(lock), { recursive: true });
+    writeFileSync(lock, 'unreadable');
+    execFileSync('chmod', ['000', lock]);
+    assert.equal(mod.withGraphLock('h1', () => 'ran', { waitMs: 2000 }), 'ran');
+    assert.equal(existsSync(lock), false, 'the lock is released after the run');
+  } finally {
+    process.chdir(origCwd);
+  }
+});

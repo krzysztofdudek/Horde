@@ -84,7 +84,6 @@ export function withDecisionsLock(horde, fn, { waitMs = DECISIONS_LOCK_WAIT_MS }
       if (e.code !== 'EEXIST') throw e;
     }
     const seen = readLockText(path);
-    if (seen === null) continue; // released between the failed create and this read: try again
     let held = null;
     try { held = JSON.parse(seen); } catch { held = null; }
     // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
