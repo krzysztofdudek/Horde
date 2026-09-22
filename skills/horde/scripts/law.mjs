@@ -80,10 +80,10 @@ function docOn(tree, cfg, args, schema, where) {
     );
   }
   if (res.state === 'stale') {
-    const version = ygVersionOf(cfg);
+    const version = ygVersionOf(cfg, tree);
     fail(
       `\`${res.command}\` did not answer with the ${schema} document Horde reads${res.saw ? ` (${res.saw})` : ''}, on ${where}.\n`
-      + `The Yggdrasil CLI at "${display}"${version ? ` reports version ${version} and` : ''} predates ${LAW_DOCUMENTS} — `
+      + `The Yggdrasil CLI at "${display}", as it resolves from ${where},${version ? ` reports version ${version} and` : ''} predates ${LAW_DOCUMENTS} — `
       + 'the versioned answers the law diff is read from. Reading it a second, fragile way is exactly what those '
       + 'documents exist to remove, so this stops rather than writing half a truth.\n'
       + `Upgrade to ${LAW_CLI_AFTER} or later (npm i -g @chrisdudek/yg), or point the horde at a newer build: `
@@ -94,10 +94,12 @@ function docOn(tree, cfg, args, schema, where) {
   return null;
 }
 
-function ygVersionOf(cfg) {
+function ygVersionOf(cfg, cwd) {
   const { cmd, prefix } = ygCommand(cfg);
   try {
-    return execFileSync(cmd, [...prefix, '--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    return execFileSync(cmd, [...prefix, '--version'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...(cwd ? { cwd } : {}),
+    }).trim();
   } catch {
     return null;
   }

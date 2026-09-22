@@ -892,11 +892,11 @@ const ASPECT_LOG_AFTER = '5.9.0';
 // rule's own log, never that the graph refused something.
 const STALE_ASPECT_LOG_RE = /unknown option|unknown command|too many arguments for/i;
 
-function failNoAspectLog(cfg, command) {
+function failNoAspectLog(cfg, command, root) {
   const { display } = ygCommand(cfg);
-  const version = ygVersion(cfg);
+  const version = ygVersion(cfg, root);
   fail(
-    `\`${command}\` did not run — the Yggdrasil CLI at "${display}"${version ? ` reports version ${version} and` : ''} `
+    `\`${command}\` did not run${root ? `, run in ${root}` : ''} — the Yggdrasil CLI at "${display}"${root ? ', as it resolves from there,' : ''}${version ? ` reports version ${version} and` : ''} `
     + `predates its own rule log ("yg aspects log add" / "yg aspects log read"), the release-after-${ASPECT_LOG_AFTER} `
     + 'feature a rule\'s own history now lives in.\n'
     + `Upgrade to a release later than ${ASPECT_LOG_AFTER} (npm i -g @chrisdudek/yg), or point the horde at a newer `
@@ -922,7 +922,7 @@ function logToAspect(root, cfg, aspectId, reason, { status, evidence, by } = {})
     return null;
   }
   if (run.code !== 0) {
-    if (STALE_ASPECT_LOG_RE.test(run.err || '')) { failNoAspectLog(cfg, command); return null; }
+    if (STALE_ASPECT_LOG_RE.test(run.err || '')) { failNoAspectLog(cfg, command, root); return null; }
     fail(`\`${command}\` — ${(run.err || run.out || '').trim()}`);
     return null;
   }
