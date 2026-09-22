@@ -1098,3 +1098,46 @@ test('every constant issue 013 found has a row in scripts/README.md\'s constants
     assert.ok(matches[0].includes(String(value)), `the row for ${key} does not carry its current value (${value}):\n${matches[0]}`);
   }
 });
+
+// ---- issue 068: README's dependency-forms bullet named "<team>:NNN" and "<team>:team:<name>", a
+// syntax resolveDepRef (queue.mjs) refuses outright — dead from Agent Teams' removal. This scans
+// the bullet's own backtick-quoted examples and runs each through the real CLI, so a form the
+// bullet claims a dependency accepts is checked against what the code actually does with it,
+// instead of trusting the prose. Against the old text this fails on "<team>:NNN" et al., each
+// refused with "team-scoped dependencies no longer exist"; the fix leaves only the bare `NNN` form.
+
+test('scripts/README.md\'s dependency-forms bullet names only forms queue.mjs\'s dep --on actually accepts', () => {
+  const readme = readFileSync(join(SCRIPTS_DIR, 'README.md'), 'utf8');
+  const m = /^- A dependency \(`add`'s `--depends`.*(?:\n {2}.*)*/m.exec(readme);
+  assert.ok(m, 'scripts/README.md no longer has the dependency-forms bullet — update this test\'s anchor');
+  const bullet = m[0];
+  // Every backtick-quoted token in the bullet that is not a flag (`--depends`) and not a command
+  // invocation (`dep`, `undep`) is read as a claimed example of a dependency VALUE.
+  const tokens = [...bullet.matchAll(/`([^`]+)`/g)].map((x) => x[1])
+    .filter((t) => !t.startsWith('--') && !/^(add|dep|undep)$/.test(t) && /^[\w.:<>-]{2,}$/.test(t));
+  assert.ok(tokens.length > 0, 'no example tokens found in the dependency-forms bullet');
+
+  const dir = makeRepo();
+  try {
+    initHorde(dir);
+    addNode(dir, 'core', { mapping: ['src/core/**'] });
+    const base = run('tk.mjs', ['new', 'base', '--title', 'base', '--node', 'core', '--class', 'standard', '--evidence', 'it works'], dir);
+    assert.equal(base.code, 0, base.stderr);
+    run('queue.mjs', ['add', base.json.id], dir);
+
+    for (const token of tokens) {
+      const candidate = token.replace(/NNN|MMM/g, base.json.id);
+      const dep = run('tk.mjs', ['new', `dep-${tokens.indexOf(token)}`, '--title', 'x', '--node', 'core', '--class', 'standard', '--evidence', 'it works'], dir);
+      assert.equal(dep.code, 0, dep.stderr);
+      run('queue.mjs', ['add', dep.json.id], dir);
+      const r = run('queue.mjs', ['dep', dep.json.id, '--on', candidate], dir);
+      assert.doesNotMatch(
+        r.stderr || '',
+        /team-scoped dependencies no longer exist/,
+        `README names "${token}" as a dependency form, but queue.mjs dep --on refuses it as team-scoped: ${r.stderr}`,
+      );
+    }
+  } finally {
+    rmRepo(dir);
+  }
+});
