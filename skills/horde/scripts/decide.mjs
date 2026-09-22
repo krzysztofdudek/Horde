@@ -18,7 +18,7 @@ import {
 } from 'node:fs';
 import {
   hordePath, readConfig, readText, appendText, today, fail, parseArgs, emit, isMain, resolveHorde,
-  parseDecisionEntries, createLockFile, processAlive, sleepSync, nowIso,
+  parseDecisionEntries, createLockFile, processAlive, readLockText, removeStaleLock, sleepSync, nowIso,
   runMain,
 } from './_lib.mjs';
 import { ygCommand } from './node.mjs';
@@ -83,12 +83,14 @@ export function withDecisionsLock(horde, fn, { waitMs = DECISIONS_LOCK_WAIT_MS }
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
     }
+    const seen = readLockText(path);
+    if (seen === null) continue; // released between the failed create and this read: try again
     let held = null;
-    try { held = JSON.parse(readFileSync(path, 'utf8')); } catch { held = null; }
+    try { held = JSON.parse(seen); } catch { held = null; }
     // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
     // like a dead one: taken over rather than waited on.
     if (!held || !processAlive(held.pid)) {
-      try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
+      removeStaleLock(path, seen);
       continue;
     }
     if (Date.now() > deadline) {

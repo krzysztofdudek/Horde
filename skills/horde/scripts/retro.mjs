@@ -48,7 +48,7 @@ import { execFileSync } from 'node:child_process';
 import {
   hordePath, readJSON, writeJSON, nowIso, fail, parseArgs, emit, isMain,
   resolveHorde, resolveTree, readConfig, asArray, parseLogEntries, noEvidenceLayerNote,
-  createLockFile, processAlive, sleepSync,
+  createLockFile, processAlive, readLockText, removeStaleLock, sleepSync,
   runMain,
 } from './_lib.mjs';
 import {
@@ -710,10 +710,12 @@ export function acquireRetroLock(horde, waitMs = LOCK_WAIT_MS) {
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
     }
+    const seen = readLockText(path);
+    if (seen === null) continue; // released between the failed create and this read: try again
     let held = null;
-    try { held = JSON.parse(readFileSync(path, 'utf8')); } catch { held = null; }
+    try { held = JSON.parse(seen); } catch { held = null; }
     if (!held || !processAlive(held.pid)) {
-      try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
+      removeStaleLock(path, seen);
       continue;
     }
     if (Date.now() >= deadline) {
