@@ -335,7 +335,6 @@ test('drill.mjs check verification: red when a commit landed after the gate was 
 // now, so an "approve" line carries no weight at all — the ticket reads as having no review.
 test('drill.mjs check review: green when findings are ranked and Minor stayed in the log', async (t) => {
   const m = testFirstBranch(t);
-  assert.equal(run('tk.mjs', ['review-request', '001'], m.dir).code, 0);
   assert.equal(run('tk.mjs', ['log', '001',
     'review: core changes by owner-core — Important: a permanent failure still costs three calls'], m.dir).code, 0);
   assert.equal(run('tk.mjs', ['log', '001', 'Minor: "last" would read better as "lastError"'], m.dir).code, 0);
@@ -347,7 +346,6 @@ test('drill.mjs check review: green when findings are ranked and Minor stayed in
 
 test('drill.mjs check review: red when a Minor finding sent the ticket back', async (t) => {
   const m = testFirstBranch(t);
-  assert.equal(run('tk.mjs', ['review-request', '001'], m.dir).code, 0);
   assert.equal(run('tk.mjs', ['log', '001',
     'review: core changes by owner-core — Minor: "last" would read better as "lastError"'], m.dir).code, 0);
 
@@ -369,7 +367,6 @@ test('drill.mjs check review: red when a change request names no severity at all
 // seat. The drill reads past all of it, so a new note on the key never makes a review invisible.
 test('drill.mjs check review: a review key carrying its sha and diff notes is still read', async (t) => {
   const m = testFirstBranch(t);
-  assert.equal(run('tk.mjs', ['review-request', '001'], m.dir).code, 0);
   // tk.mjs review used to bind a verdict to the sha and diff it was read at, appending a tail
   // like "at <sha> (diff <id>)" right after "by <who>" — written by hand here since that command
   // no longer exists, to prove checkReview still reads past whatever tail note rides there.
@@ -386,7 +383,6 @@ test('drill.mjs check review: a review key carrying its sha and diff notes is st
 // same as no review line at all, so a reviewer's approval can never feed a landing decision.
 test('drill.mjs check review: an approve review line is not read as a review', async (t) => {
   const m = testFirstBranch(t);
-  assert.equal(run('tk.mjs', ['review-request', '001'], m.dir).code, 0);
   assert.equal(run('tk.mjs', ['log', '001', 'review: core approve by owner-core'], m.dir).code, 0);
 
   const r = run('drill.mjs', ['check', 'review', '--repo', m.dir, '--ticket', '001'], m.dir);

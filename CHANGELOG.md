@@ -59,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `tk.mjs review-request` and `list --review-pending` are gone — the standing per-node reviewer seat they belonged to was removed before 6.0.0, and neither did anything but append a log line or filter on ticket status. The one review that matters today is the one-shot role from issue 001 (`review-close`/`review-skip`, raised and tracked by `tick.mjs`).
 - Cost tracking and the charter's cost limit are gone: no cost report, no per-run ledger, and nothing stops a mission on a budget. Watch your own account the way you would for any other agent work.
 
 ### Fixed

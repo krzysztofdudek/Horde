@@ -578,9 +578,9 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     );
 
     assert.equal(run('tk.mjs', ['log', '001', `landed ${tipSha.slice(0, 7)}`], dir).code, 0);
-    // review-request only appends a log note now. Nothing downstream reads it and nothing waits on
-    // it — it is here because a real worker still writes one, not because it gates anything.
-    assert.equal(run('tk.mjs', ['review-request', '001'], dir).code, 0);
+    // Nothing downstream reads this or waits on it — it is here because a real worker still
+    // writes a log line noting the review, not because anything gates on it.
+    assert.equal(run('tk.mjs', ['log', '001', 'review requested'], dir).code, 0);
   });
 
   let trunkSha;
@@ -929,14 +929,14 @@ function buildContractTicket(t, {
 
 // The worker's own half: commit the branch's real change into the worktree tick.mjs already cut,
 // then the two log lines every landable ticket in this suite carries (checkJournal needs a log
-// entry newer than the branch's last commit; review-request is what a real worker writes and
-// nothing downstream gates on).
+// entry newer than the branch's last commit; the second is what a real worker writes noting the
+// review, and nothing downstream gates on it).
 function landWorkerBranch(dir, ticketId, worktree, rel, content, message) {
   write(worktree, rel, content);
   git(['add', '--', rel], worktree);
   git(['commit', '-qm', message], worktree);
   assert.equal(run('tk.mjs', ['log', ticketId, 'ready to land'], dir).code, 0);
-  assert.equal(run('tk.mjs', ['review-request', ticketId], dir).code, 0);
+  assert.equal(run('tk.mjs', ['log', ticketId, 'review requested'], dir).code, 0);
 }
 
 test('E19 — family contract: a skip added to the "adds-two-numbers" promise\'s own test refuses through the real pipeline (021)', async (t) => {
