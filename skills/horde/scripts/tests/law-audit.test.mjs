@@ -570,3 +570,18 @@ test('the law audit: only-the-work turns the whole sweep off and says so', async
   assert.match(auditSection(dir), /This mission is set to only-the-work: the horde audited nothing of the law this wave/);
   assert.match(readFileSync(aspectPath(dir, 'no-marker'), 'utf8'), /^review_by: 2020-01-01$/m);
 });
+
+// A drill miss names its subject as `<rule>/<case>`, and a rule id is its directory path under
+// aspects/ — it can hold a `/` of its own. Reading the rule as the first segment looked up
+// `boundary` for `boundary/clean-core`, found nothing, and dropped a regression the graph flagged.
+test('audit: a drill miss on a nested rule id resolves to the rule, not to its first path segment', async () => {
+  const { subjectNodes } = await import('../audit.mjs');
+  const reach = new Map([
+    ['boundary/clean-core', { nodes: new Set(['core']) }],
+    ['plain-rule', { nodes: new Set(['app']) }],
+  ]);
+  const none = new Set();
+  assert.deepEqual(subjectNodes({ id: 'drill-miss:boundary/clean-core/violates-x/src/a' }, reach, none), ['core']);
+  assert.deepEqual(subjectNodes({ id: 'drill-miss:plain-rule/satisfies-ok/f' }, reach, none), ['app']);
+  assert.deepEqual(subjectNodes({ id: 'drill-miss:boundary/unknown/violates-x/f' }, reach, none), [], 'an unknown rule resolves to nothing, never guessed');
+});
