@@ -1159,12 +1159,14 @@ function checkMapping(cfg, worktree, addedFiles, noGate) {
   };
 }
 
-function checkJournal(text, branch) {
+function checkJournal(text, branch, parentBranch) {
   const lastEntry = latestTimestamp(text);
-  // The last commit somebody WORKED — a merge of the parent into the branch, which this tool makes when
-  // the parent moved while the ticket waited, changes nothing the worker did and is not what the log
-  // has to have caught up with.
-  const commitDate = git(['log', '-1', '--no-merges', '--format=%cI', branch]);
+  // The last commit THIS TICKET's worker made. A merge of the parent into the branch, which this tool
+  // makes when the parent moved while the ticket waited, changes nothing the worker did — and neither
+  // do the commits that merge brings in: other tickets landed on the parent after this one's log was
+  // written. Reading the newest commit reachable from the branch counted those, and refused a ticket
+  // for a log "older" than somebody else's work. So only the branch's own commits are read.
+  const commitDate = git(['log', '-1', '--no-merges', '--format=%cI', `${parentBranch}..${branch}`]);
   const commitTime = commitDate ? new Date(commitDate) : null;
   if (!lastEntry) return { ok: false, note: 'no log entry found' };
   if (!commitTime) return { ok: false, note: `could not read the last commit on ${branch}` };
@@ -3137,7 +3139,7 @@ function screenBatchMember(root, cfg, horde, ctx, basePath, cleaner) {
   results['base freshness'] = checkBaseFreshness(ctx.branch, ctx.parentBranch);
   results.scope = checkScope(root, cfg, ctx.nodes, ctx.changedFiles, ctx.declaredFiles, proposalBoundaryOf(horde, ctx.issueText, ctx.nodes));
   results['revert test'] = checkRevertTest(horde, root, cfg, ctx.branch, ctx.parentBranch, ctx.changedFiles, ctx.issueText);
-  results.journal = checkJournal(ctx.logText, ctx.branch);
+  results.journal = checkJournal(ctx.logText, ctx.branch, ctx.parentBranch);
   results['graph text'] = checkGraphText(root, ctx.branch, ctx.parentBranch, ctx.changedFiles);
 
   const law = lawGuard(cfg, horde, basePath, head.path);
@@ -3613,7 +3615,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     }
     results.scope = checkScope(root, cfg, nodes, changedFiles, declaredFiles, proposalBoundaryOf(horde, issueText, nodes));
     results['revert test'] = checkRevertTest(horde, root, cfg, branch, parentBranch, changedFiles, issueText);
-    results.journal = checkJournal(logText, branch);
+    results.journal = checkJournal(logText, branch, parentBranch);
     results['graph text'] = checkGraphText(root, branch, parentBranch, changedFiles);
 
     if (!noGate) {

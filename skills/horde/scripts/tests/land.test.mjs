@@ -1118,6 +1118,30 @@ test('land.mjs: the journal item fails when no log entry is newer than the last 
   assert.match(byName(r).journal.note, /predates last commit/);
 });
 
+// The parent moving on while a ticket waits is the everyday case: other tickets land after this one's
+// worker wrote its last log entry, and the landing brings the parent in with a merge. The journal item
+// asks whether THIS ticket's log caught up with THIS ticket's work — the parent's newer commits are
+// somebody else's. Dated far ahead here so the comparison cannot pass by landing in the same second.
+test('land.mjs: the journal item reads only the ticket\'s own commits, not the parent\'s it merged in', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '092');
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  writeFileSync(join(dir, 'landed-later.txt'), 'another ticket, landed after this one logged\n');
+  git(['add', '--', 'landed-later.txt'], dir);
+  execFileSync('git', ['commit', '-qm', 'another ticket'], {
+    cwd: dir,
+    env: { ...process.env, GIT_AUTHOR_DATE: '2099-01-01T00:00:00Z', GIT_COMMITTER_DATE: '2099-01-01T00:00:00Z' },
+  });
+
+  // With its gate, a landing brings the moved parent into the branch before it measures anything.
+  const r = run('land.mjs', [branch], dir);
+  assert.match(byName(r)['base freshness'].note, /brought mission1\/trunk into/);
+  const journal = byName(r).journal;
+  assert.equal(journal.ok, true, journal.note);
+  assert.doesNotMatch(journal.note, /2099/, 'the parent\'s commit is not what the log is compared with');
+});
+
 test('land.mjs: the graph text item refuses mission language in a charter the branch touches', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
