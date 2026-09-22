@@ -726,6 +726,14 @@ export function ygAspectsJson(root, cfg) {
   return res.state === 'ok' ? res.doc : null;
 }
 
+// `yg aspects --json --reach`, read softly: every rule the graph declares with every unit it judges,
+// draft rules included — the gate's own pairs leave out a draft or an aggregate rule, so they cannot
+// answer "does this rule reach anything". `null` when the CLI could not answer.
+export function ygAspectsReachJson(root, cfg) {
+  const res = ygJson(root, cfg, ['aspects', '--json', '--reach'], 'yg-aspects/1');
+  return res.state === 'ok' ? res.doc : null;
+}
+
 // What one rule refuses on this repository right now, from that document: the pairs it holds a
 // refusal against, and the pairs nobody has judged yet (an LLM rule's pairs, before a reader has
 // answered them, are neither refusals nor clean — reporting them as clean would be a baseline of

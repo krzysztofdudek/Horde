@@ -25,7 +25,7 @@ import {
   runMain,
 } from './_lib.mjs';
 import {
-  nodeExists, readNodePortsText, ticketNodes, ygCheckJson, ygAspectsJson,
+  nodeExists, readNodePortsText, ticketNodes, ygAspectsReachJson,
 } from './node.mjs';
 import { collectRetroInput, classesPath } from './retro.mjs';
 
@@ -502,15 +502,21 @@ function gateRefusalsFor(horde, tickets) {
   return lines.length ? lines.join('\n') : '(nothing this wave — the gate refused none of this territory\'s landings)';
 }
 
-// Rules that judge nothing here. Read from the gate's own per-pair report, which is the graph's
-// answer to "what does this rule reach" and costs one keyless call.
+// Rules that judge nothing here. Read from `yg aspects --json --reach`, the graph's own answer to
+// "which units does this rule reach" — one keyless call that runs no verification. The gate's pairs
+// (`yg check --json`) are the wrong source: they leave out every draft and every aggregate rule by
+// design, so a rule a Grain proposal left at draft, still attached to half the repository, read as
+// reaching nothing, and the brief told the legislator it could be deleted without asking anyone.
 function deadRulesFor(root, cfg) {
-  const doc = ygCheckJson(root, cfg);
-  if (!doc) return '(not measured — the Yggdrasil CLI could not be read from here)';
-  const reached = new Set(asArray(doc.pairs).map((p) => p && p.aspect).filter(Boolean));
-  const aspects = ygAspectsJson(root, cfg);
+  const aspects = ygAspectsReachJson(root, cfg);
   if (!aspects) return '(not measured — the Yggdrasil CLI could not be read from here)';
-  const dead = asArray(aspects.aspects).filter((a) => a && a.id && !reached.has(a.id));
+  const declared = asArray(aspects.aspects).filter((a) => a && a.id);
+  // A CLI that answered the document but ignored the flag carries no reach on any rule; an absent
+  // reach is not an empty one, so nothing is listed as dead on its word.
+  if (declared.length && !declared.some((a) => a.reach)) {
+    return '(not measured — the Yggdrasil CLI answered without `--reach`, so it cannot say what reaches nothing)';
+  }
+  const dead = declared.filter((a) => asArray(a.reach && a.reach.units).length === 0);
   if (dead.length === 0) return '(none — every rule the graph declares reaches something here)';
   return dead.map((a) => `- **${a.id}** [${a.status}] — ${a.description || 'no description'}`).join('\n');
 }
