@@ -40,6 +40,22 @@ export function git(args, cwd = process.cwd()) {
   }
 }
 
+// The exact bytes of one blob (`git show <ref>`), never trimmed. `git()`'s own trim is right for
+// command output — a sha, a status line, a log — and wrong for a file's content: a test file that
+// ends in a blank line, or in none, is a different file once its trailing whitespace is gone, and a
+// revert test has to run the file the branch actually carries, not a nearby one. `null` on any git
+// failure, same as `git()`.
+export function gitBlob(ref, cwd = process.cwd()) {
+  try {
+    const out = execFileSync('git', ['show', ref], { cwd, stdio: ['ignore', 'pipe', 'pipe'] }).toString();
+    lastGitError = null;
+    return out;
+  } catch (e) {
+    lastGitError = (e.stderr ? e.stderr.toString() : String(e.message || e)).trim();
+    return null;
+  }
+}
+
 // gitError() — the stderr text of the most recent failed git() call (see git() above), or null
 // when that call succeeded or none has run yet. Never printed on its own: a caller folds it into
 // its own refusal so the refusal says WHY, in git's own words, not just THAT.
