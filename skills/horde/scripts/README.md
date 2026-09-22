@@ -563,8 +563,10 @@ versioned machine documents: `yg node <path> --json` (`yg-node/1` — mapping, r
 `yg context --node|--file <path> --json` (`yg-context/1` — the rules in force, with each one's
 effective status and the channel it arrives by, plus, for a file, the component that owns it), and
 `yg impact --node <path> --json` (`yg-impact/1` — who consumes each port, and what depends on the
-node). Nothing here parses a file the layer below owns. A CLI that cannot be started, and one that
-answers those calls with anything but the document, are both refusals that name what to do —
+node). Nothing here parses a file the layer below owns. A CLI that cannot be started, one that
+answers those calls with anything but the document, and one that exits 0 and prints nothing (the
+refusal says it does not work in that tree, names the tree, and does not call it an old version) are
+all refusals that name what to do —
 install the CLI, point `config.ygCommand` at a build, or upgrade to the same 6.x line as this
 release of Horde. There is no second graph and no manual mode to fall back to.
 
@@ -1557,7 +1559,10 @@ inherits whatever tree the session's shell is already in.
    then the longer remaining critical path, then a node nothing is running on, then FIFO), with its
    file locks and its dependency rule, cut to the configured parallelism cap minus what is already
    running. Every entry has had its branch and worktree cut, so the `brief` command on it renders
-   against a tree that exists; `model` is the ticket's own class. A stacked entry carries the
+   against a tree that exists — and that command carries `--horde`, never `--tree`: the brief reads the
+   worktree off the ticket's queue item, and its graph reads (the node's ports) go to the horde's trunk,
+   because nothing has run in a worktree that was just cut and a CLI that works from the trunk may
+   not work from there; `model` is the ticket's own class. A stacked entry carries the
    separate line `STACKED, parent t-NNN unmerged`. `judge` carries the prose pairs the gate handed
    back, and only under `config.judge: one-shot`. `askClient` is the open items of `asks.json` — an
    absent file is an empty in-tray, never a refusal. `landing` is how loaded the landing gate is:

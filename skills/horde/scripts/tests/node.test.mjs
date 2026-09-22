@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -831,4 +831,26 @@ test('node.mjs pathInBoundary: a sibling directory that shares a prefix is outsi
   assert.equal(pathInBoundary('.yggdrasil/model/foo/yg-node.yaml', graphPrefix), true);
   assert.equal(pathInBoundary('.yggdrasil/model/foo/sub/log.md', graphPrefix), true);
   assert.equal(pathInBoundary('.yggdrasil/model/foobar/x.md', graphPrefix), false);
+});
+
+test('node.mjs: a CLI that exits 0 and prints no document is refused as not working in this tree, never as an old version', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'core', { mapping: ['src/core/**'] });
+  const silent = join(dir, 'silent-yg.mjs');
+  writeFileSync(silent, [
+    "if (process.argv.includes('--version')) { console.log('6.1.0'); process.exit(0); }",
+    'process.exit(0);',
+    '',
+  ].join('\n'));
+  run('horde.mjs', ['config', 'set', 'ygCommand', `node ${silent}`], dir);
+
+  const r = run('node.mjs', ['show', 'core'], dir);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /exited 0 and printed no document/);
+  assert.match(r.stderr, /not working in this tree, not an old version/);
+  assert.ok(r.stderr.includes(dir) || r.stderr.includes(realpathSync(dir)), 'it names the tree it ran in');
+  assert.match(r.stderr, /absolute path to a CLI at the version the graph was written with/);
+  assert.doesNotMatch(r.stderr, /predates|Upgrade to a release/, 'and it does not send anyone to upgrade a CLI that is current');
 });
