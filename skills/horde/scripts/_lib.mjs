@@ -307,6 +307,8 @@ export function processAlive(pid) {
 // still reads exactly as it did when it was judged. One narrow window stays open: two processes
 // taking over the same genuinely abandoned lock at once can still, between one's second read and
 // its remove, lose the other's fresh lock — a crash-recovery corner, not the everyday release.
+// A lock that cannot be read at all (gone since the failed create, or unreadable) comes back as
+// null and is treated like a dead holder's, exactly as before: removed if it still reads as null.
 export function readLockText(path) {
   try { return readFileSync(path, 'utf8'); } catch { return null; }
 }
@@ -371,7 +373,6 @@ function withTreeLock(treePath, fn, { waitMs = TREE_LOCK_WAIT_MS } = {}) {
       if (e.code !== 'EEXIST') throw e;
     }
     const seen = readLockText(path);
-    if (seen === null) continue; // released between the failed create and this read: try again
     let held = null;
     try { held = JSON.parse(seen); } catch { held = null; }
     // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
@@ -790,7 +791,6 @@ function withFileLock(path, meta, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
       if (e.code !== 'EEXIST') throw e;
     }
     const seen = readLockText(path);
-    if (seen === null) continue; // released between the failed create and this read: try again
     let held = null;
     try { held = JSON.parse(seen); } catch { held = null; }
     // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
@@ -1301,7 +1301,6 @@ export function withQueueLock(horde, team, fn, { waitMs = QUEUE_LOCK_WAIT_MS } =
       if (e.code !== 'EEXIST') throw e;
     }
     const seen = readLockText(path);
-    if (seen === null) continue; // released between the failed create and this read: try again
     let held = null;
     try { held = JSON.parse(seen); } catch { held = null; }
     // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
