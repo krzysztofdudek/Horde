@@ -611,6 +611,28 @@ function charterEdit(dir, text) {
   }
 }
 
+test('E17 — a relation the graph already declares is not filed as a ticket', async (t) => {
+  const yg = requireYg();
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir, yg);
+  initHorde(dir);
+  run('node.mjs', ['bind', 'feature'], dir);
+  const doc = join(dir, 'declared-advice.json');
+  writeFileSync(doc, `${JSON.stringify({
+    schema: 'grain-advice/1', repo: '.', at: 'abc1234', graph: '.yggdrasil',
+    items: [{
+      kind: 'relation', nodes: ['feature', 'feature'], confidence: 0.9,
+      evidence: { coChanged: 7, declared: true, declaredVia: 'relation' },
+      text: 'Feature and Feature change together. The architecture already connects them.',
+    }],
+  }, null, 1)}\n`);
+  const r = run('queue.mjs', ['quality', '--from', doc], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.json.filed, []);
+  assert.match(r.json.skipped[0].why, /already joins these components/);
+});
+
 test('an advisory is known by what it is about: counts in its text do not make it new, and a ledger from before still counts', () => {
   const relation = (n) => ({ kind: 'relation', nodes: ['api', 'web'], text: `Api and Web change together: touched in the same commit ${n} times — ${n} of 12 for one.` });
   assert.equal(advisoryKey(relation(7)), advisoryKey(relation(8)), 'a relation is its pair of nodes');
