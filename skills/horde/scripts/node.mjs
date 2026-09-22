@@ -184,12 +184,12 @@ function ygOpts(cfg, opts = {}) {
   return { timeout: ygTimeout(cfg), killSignal: 'SIGTERM', ...opts };
 }
 
-// The release line these machine documents arrived in. Checked by schema name, never by comparing
+// The oldest Yggdrasil Horde works with: 6.0.0 or newer. Checked by schema name, never by comparing
 // version numbers (`ygJson`'s own `parsed.schema === schema` test, below) — this constant names
-// nothing more than what the refusal tells a person to install. Horde tracks the family's own
-// 6.x line: an older Yggdrasil answers `--json` with something that is not the document at all,
-// and the horde says which release to pass rather than degrading into reading the graph's files
-// itself.
+// nothing more than what the refusal tells a person to install, so a newer major that keeps these
+// documents keeps working. An older Yggdrasil answers `--json` with something that is not the
+// document at all, and the horde says which release to install rather than degrading into reading
+// the graph's files itself.
 const YG_DOCUMENTS_AFTER = '6.0.0';
 
 const YG_DOCUMENTS = 'yg-node/1, yg-context/1 and yg-impact/1';
@@ -235,7 +235,7 @@ function failStaleCli(cfg, res, docs = YG_DOCUMENTS) {
     + 'read around: the alternative would be Horde reading the graph a second, fragile way — its own '
     + 'files, or a report meant to be read, parsed as data — which is exactly what these documents '
     + 'exist to remove.\n'
-    + `Upgrade to a release later than ${YG_DOCUMENTS_AFTER} (npm i -g @chrisdudek/yg), or point the `
+    + `Upgrade to ${YG_DOCUMENTS_AFTER} or newer (npm i -g @chrisdudek/yg), or point the `
     + 'horde at a newer build: horde.mjs config set ygCommand "node path/to/bin.js"',
   );
 }
@@ -893,10 +893,12 @@ function logToNodes(root, cfg, nodes, reason) {
   return { logged, missed };
 }
 
-// The release "aspects log" arrived after — the same shape as YG_DOCUMENTS_AFTER above, but for a
+// The release "aspects log" arrived in — the same shape as YG_DOCUMENTS_AFTER above, but for a
 // plain command rather than a --json document: `aspects log add` has no --json of its own, so a
-// too-old CLI is told apart by how it fails rather than by what schema it answered with.
-const ASPECT_LOG_AFTER = '5.9.0';
+// too-old CLI is told apart by how it fails rather than by what schema it answered with. The
+// refusal still points at Horde's own floor, because a CLI that has the log and not the documents
+// is refused one read later anyway.
+const ASPECT_LOG_SINCE = '5.9.0';
 
 // Commander's own two shapes for "this subcommand does not exist here": an unrecognised name, and
 // — the shape a pre-152 `aspects` prints, since it took no subcommands at all — positional
@@ -909,9 +911,9 @@ function failNoAspectLog(cfg, command, root) {
   const version = ygVersion(cfg, root);
   fail(
     `\`${command}\` did not run${root ? `, run in ${root}` : ''} — the Yggdrasil CLI at "${display}"${root ? ', as it resolves from there,' : ''}${version ? ` reports version ${version} and` : ''} `
-    + `predates its own rule log ("yg aspects log add" / "yg aspects log read"), the release-after-${ASPECT_LOG_AFTER} `
+    + `predates its own rule log ("yg aspects log add" / "yg aspects log read"), which arrived in ${ASPECT_LOG_SINCE}, the `
     + 'feature a rule\'s own history now lives in.\n'
-    + `Upgrade to a release later than ${ASPECT_LOG_AFTER} (npm i -g @chrisdudek/yg), or point the horde at a newer `
+    + `Upgrade to ${YG_DOCUMENTS_AFTER} or newer (npm i -g @chrisdudek/yg), or point the horde at a newer `
     + 'build: horde.mjs config set ygCommand "node path/to/bin.js"',
   );
 }

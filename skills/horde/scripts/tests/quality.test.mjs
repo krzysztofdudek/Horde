@@ -304,7 +304,7 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
     assert.equal(r.code, 1);
     assert.match(r.stderr, /predates its own rule log/);
     assert.match(r.stderr, /yg aspects log add.*yg aspects log read/);
-    assert.match(r.stderr, /later than 5\.9\.0/);
+    assert.match(r.stderr, /arrived in 5\.9\.0[\s\S]*Upgrade to 6\.0\.0 or newer/);
     assert.match(r.stderr, /npm i -g @chrisdudek\/yg/);
     // Nothing was left half-done: the rule file itself was already moved by the time the log call
     // ran (the same order promote always writes in), but the horde's own working still reflects

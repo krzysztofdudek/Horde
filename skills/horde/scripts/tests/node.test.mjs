@@ -54,7 +54,7 @@ test('node.mjs bind: the graph is read through the Yggdrasil CLI, and there is n
     assert.equal(r.code, 1);
     assert.match(r.stderr, /predates/);
     assert.match(r.stderr, /yg-node\/1, yg-context\/1 and yg-impact\/1/);
-    assert.match(r.stderr, /later than 6\.0\.0/);
+    assert.match(r.stderr, /Upgrade to 6\.0\.0 or newer/);
     assert.match(r.stderr, /reports version 5\.7\.3/);
     run('horde.mjs', ['config', 'set', 'ygCommand', requireYg()], dir);
   });
