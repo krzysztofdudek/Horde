@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, requireYg, git,
 } from './helpers.mjs';
+import { advisoryKey, filedAdvisoryKeys } from '../node.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -488,6 +489,24 @@ test('E17 — a quality ticket is filed and queued from a grain-advice/1 documen
     assert.equal(again.json.skipped[0].why, 'already filed as a ticket');
   });
 
+  await t.test('the same advisory with new counts in its text is still the one already filed', () => {
+    // One more file in the node and one more import moved: Grain's text says 10 and 3 of 8 now,
+    // and it is the same finer cut on the same node.
+    const doc = join(dir, 'recounted-advice.json');
+    writeFileSync(doc, `${JSON.stringify({
+      schema: 'grain-advice/1', repo: '.', at: 'def5678', graph: '.yggdrasil',
+      items: [{
+        kind: 'split', nodes: ['feature'], candidates: ['inner'],
+        evidence: { node: { files: 10, importsInside: 3, importsCrossing: 5 } },
+        text: 'Feature owns 10 files, and a finer cut beats it on its own evidence: `inner` holds 6 of them and keeps 5 of the 6 imports that touch it inside, a tighter boundary than the node\u2019s own 3 of 8. It may have outgrown one context.',
+      }],
+    }, null, 1)}\n`);
+    const recounted = run('queue.mjs', ['quality', '--from', doc], dir);
+    assert.equal(recounted.code, 0, recounted.stderr);
+    assert.deepEqual(recounted.json.filed, [], 'a changed count must not file the advisory a second time');
+    assert.equal(recounted.json.skipped[0].why, 'already filed as a ticket');
+  });
+
   await t.test('the mission\'s own work still goes first', () => {
     const work = run('tk.mjs', ['new', 'the-work', '--title', 'What the mission asked for', '--node', 'feature', '--class', 'standard', '--severity', 'low', '--evidence', 'it works'], dir);
     run('queue.mjs', ['add', work.json.id], dir);
@@ -591,3 +610,16 @@ function charterEdit(dir, text) {
     return { code: e.status ?? 1, stdout: (e.stdout || '').toString(), stderr: (e.stderr || '').toString(), json: null };
   }
 }
+
+test('an advisory is known by what it is about: counts in its text do not make it new, and a ledger from before still counts', () => {
+  const relation = (n) => ({ kind: 'relation', nodes: ['api', 'web'], text: `Api and Web change together: touched in the same commit ${n} times — ${n} of 12 for one.` });
+  assert.equal(advisoryKey(relation(7)), advisoryKey(relation(8)), 'a relation is its pair of nodes');
+  const rule = (text) => ({ kind: 'rule', nodes: ['feature'], text });
+  assert.equal(advisoryKey(rule('4 of 4 writes go through one helper')), advisoryKey(rule('5 of 5 writes go through one helper')));
+  assert.notEqual(advisoryKey(rule('4 of 4 writes go through one helper')), advisoryKey(rule('4 of 4 reads go through one cache')),
+    'two different rule advisories on one node stay two');
+  // A ledger entry written before this key: the nodes, then a hash of the whole text.
+  const filed = filedAdvisoryKeys([{ key: 'relation:api+web:1a2b3c4d' }, { key: 'split:feature:ffffffff' }]);
+  assert.ok(filed.has(advisoryKey(relation(9))), 'an old relation entry still counts as filed');
+  assert.ok(filed.has(advisoryKey({ kind: 'split', nodes: ['feature'], text: 'Feature owns 11 files' })), 'an old split entry still counts as filed');
+});
