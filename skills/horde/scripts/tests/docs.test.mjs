@@ -1154,3 +1154,15 @@ test('reference/discipline/tdd.md describes the no-new-tests declaration the way
   assert.doesNotMatch(text, /--revert\b/, 'tdd.md still names a --revert flag land.mjs never had');
   assert.match(text, /\*\*No new tests:\*\*/, 'tdd.md should describe the field land.mjs\'s noNewTestsReason actually parses');
 });
+
+// ---- issue 087: README's set-merged bullet described "Items named team:<name>" standing for a
+// sub-team's branch and skipping branch creation — dead since sub-teams were removed (same class
+// of drift as 068). No code anywhere checks a queue item's ticket for a "team:" prefix any more.
+
+test('scripts/README.md\'s set-merged bullet no longer names a sub-team\'s "team:<name>" item', () => {
+  const readme = readFileSync(join(SCRIPTS_DIR, 'README.md'), 'utf8');
+  const m = /^- `set NNN running --agent <name>`.*(?:\n {2}.*)*/m.exec(readme);
+  assert.ok(m, 'scripts/README.md no longer has the set-merged bullet — update this test\'s anchor');
+  assert.doesNotMatch(m[0], /team:<name>/, 'the bullet still names a sub-team item form the code does not check for any more');
+  assert.doesNotMatch(m[0], /sub-team/);
+});
