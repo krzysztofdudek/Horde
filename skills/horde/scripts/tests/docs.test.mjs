@@ -1098,3 +1098,16 @@ test('every constant issue 013 found has a row in scripts/README.md\'s constants
     assert.ok(matches[0].includes(String(value)), `the row for ${key} does not carry its current value (${value}):\n${matches[0]}`);
   }
 });
+
+// ---- issue 071: reference/discipline/tdd.md described a "--revert no-new-tests" flag land.mjs
+// never had (the real declaration is the **No new tests:** field on the ticket itself, which
+// land.mjs's noNewTestsReason reads from issue.md) — invisible to the doc-vs-USAGE scan above
+// because the prose never names a "land.mjs" invocation for the scanner to anchor on, and
+// "--revert" is also a substring of the real "--revert-base" flag, so even a generic flag-vs-USAGE
+// membership check would pass it by accident.
+
+test('reference/discipline/tdd.md describes the no-new-tests declaration the way land.mjs actually reads it', () => {
+  const text = readText(join(SKILL_DIR, 'reference', 'discipline', 'tdd.md'));
+  assert.doesNotMatch(text, /--revert\b/, 'tdd.md still names a --revert flag land.mjs never had');
+  assert.match(text, /\*\*No new tests:\*\*/, 'tdd.md should describe the field land.mjs\'s noNewTestsReason actually parses');
+});
