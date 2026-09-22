@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, git,
 } from './helpers.mjs';
+import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -370,4 +371,64 @@ test('ask.mjs: broken states', async (t) => {
     assert.equal(list.code, 0, list.stderr);
     assert.ok(list.json.some((d) => d.slug === `ask-${opened.json.id}`));
   });
+});
+
+function spawnAskAdd(dir, i) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), '..', 'ask.mjs'), 'add', `racing question ${i}`, '--kind', 'stop', '--json'], {
+      cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('close', (code) => {
+      let json = null;
+      try { json = JSON.parse(stdout); } catch { json = null; }
+      resolve({ code, stdout, stderr, json });
+    });
+  });
+}
+
+// issue 084: asks.json is one shared document every `ask.mjs add` reads, appends to and writes back
+// whole — a read-modify-write with no lock of its own, the same hazard queue.json and counter.json
+// already had. N real processes filing at once, with nothing serializing them, lose all but the
+// last write (or worse, a torn file mid-write) — this proves the fix the same way issue 041 proved
+// the counter one: N processes in, N items recorded, the file parses end to end.
+test('ask.mjs add: N parallel filings each land as their own item — asks.json never loses one to another', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const N = 24;
+  const results = await Promise.all(Array.from({ length: N }, (_, i) => spawnAskAdd(dir, i)));
+  const failed = results.filter((r) => r.code !== 0);
+  assert.deepEqual(failed.map((r) => r.stderr), [], 'every ask.mjs add should succeed');
+
+  const ids = results.map((r) => r.json && r.json.id);
+  assert.ok(ids.every(Boolean), `every result should carry an id: ${JSON.stringify(results.map((r) => r.json))}`);
+  assert.equal(new Set(ids).size, N, 'every filing should get its own ask, none overwriting another');
+
+  const onDisk = run('ask.mjs', ['list'], dir);
+  assert.equal(onDisk.code, 0, onDisk.stderr);
+  assert.equal(onDisk.json.length, N, 'asks.json should carry exactly the N items filed, no more and no fewer');
+});
+
+test('ask.mjs: an asks lock caught half-made is waited for, never taken for an abandoned one', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const race = await raceOneLock(dir, 'asks');
+  assert.ok(race.paused, `nothing was ever paused, so this run proves nothing:\n${describeRace(race)}`);
+  assert.equal(race.slow.code, 0, describeRace(race));
+  assert.equal(race.other.code, 0, describeRace(race));
+
+  const paused = race.slow.window;
+  const other = race.other.window;
+  assert.ok(paused && paused.ok && other && other.ok, describeRace(race));
+  assert.notEqual(paused.pid, other.pid, 'two processes, not one');
+  assert.equal(overlaps(paused, other), false,
+    'both processes held the asks lock at the same time: the one paused mid-creation had its '
+    + `lock file read as an abandoned one and taken.\n${describeRace(race)}`);
 });

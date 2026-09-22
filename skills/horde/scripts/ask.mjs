@@ -43,7 +43,7 @@
 
 import {
   hordePath, readJSON, writeJSON, allocateId, nowIso, fail, parseArgs, emit, isMain, resolveHorde,
-  runMain,
+  runMain, withAsksLock,
 } from './_lib.mjs';
 import { appendDecision } from './decide.mjs';
 
@@ -126,18 +126,20 @@ export function addAsk(horde, {
   if (typeof kind !== 'string' || !KINDS.includes(kind)) throw new Error(`kind must be one of: ${KINDS.join('|')}`);
   if (kind === 'lower' && !aspect) throw new Error('--aspect is required for kind "lower" — nothing to lower without naming it');
   if (kind !== 'lower' && aspect) throw new Error(`--aspect has no meaning for kind "${kind}" — only "lower" names something to weaken`);
-  const doc = loadAsks(horde);
-  const { id } = allocateId(horde, 'ask');
-  const item = {
-    id, kind, why, state: 'open', at: nowIso(),
-  };
-  if (ticket) item.ticket = String(ticket);
-  if (territory) item.territory = String(territory);
-  if (aspect) item.aspect = String(aspect);
-  if (log) item.log = String(log);
-  doc.items.push(item);
-  save(horde, doc);
-  return item;
+  return withAsksLock(horde, () => {
+    const doc = loadAsks(horde);
+    const { id } = allocateId(horde, 'ask');
+    const item = {
+      id, kind, why, state: 'open', at: nowIso(),
+    };
+    if (ticket) item.ticket = String(ticket);
+    if (territory) item.territory = String(territory);
+    if (aspect) item.aspect = String(aspect);
+    if (log) item.log = String(log);
+    doc.items.push(item);
+    save(horde, doc);
+    return item;
+  });
 }
 
 // The decision body land.mjs's law guard already knows how to read: one line of bold fields, the
@@ -161,28 +163,31 @@ function buildRulingBody(item, answer, answerScope) {
 // answering it and recording why must never come apart in that direction.
 export function answerAsk(horde, id, { answer, scope } = {}) {
   if (!answer) throw new Error('answer required');
-  const doc = loadAsks(horde);
-  const item = doc.items.find((x) => x.id === id);
-  if (!item) throw new Error(`no such ask: ${id}`);
-  if (item.state === 'answered') throw new Error(`already answered: ${id}`);
-  if (scope !== undefined && item.kind !== 'lower') {
-    throw new Error(`--scope is only accepted for kind "lower" (this ask is "${item.kind}")`);
-  }
-  if (scope !== undefined && scope !== 'once' && scope !== 'mission') {
-    throw new Error('--scope must be "once" or "mission"');
-  }
-  const answerScope = item.kind === 'lower' ? (scope || 'once') : undefined;
-  const ruling = buildRulingBody(item, answer, answerScope);
-  appendDecision(horde, { slug: `ask-${id}`, ruling, ticket: item.ticket });
+  return withAsksLock(horde, () => {
+    const doc = loadAsks(horde);
+    const item = doc.items.find((x) => x.id === id);
+    if (!item) throw new Error(`no such ask: ${id}`);
+    if (item.state === 'answered') throw new Error(`already answered: ${id}`);
+    if (scope !== undefined && item.kind !== 'lower') {
+      throw new Error(`--scope is only accepted for kind "lower" (this ask is "${item.kind}")`);
+    }
+    if (scope !== undefined && scope !== 'once' && scope !== 'mission') {
+      throw new Error('--scope must be "once" or "mission"');
+    }
+    const answerScope = item.kind === 'lower' ? (scope || 'once') : undefined;
+    const ruling = buildRulingBody(item, answer, answerScope);
+    appendDecision(horde, { slug: `ask-${id}`, ruling, ticket: item.ticket });
 
-  const fresh = loadAsks(horde);
-  const freshItem = fresh.items.find((x) => x.id === id);
-  freshItem.state = 'answered';
-  freshItem.answer = answer;
-  if (answerScope) freshItem.answerScope = answerScope;
-  freshItem.answeredAt = nowIso();
-  save(horde, fresh);
-  return freshItem;
+    // The lock held across the decisions-lock call above rules out anything else changing this
+    // item in between, so the item read at the top is still the one to write back — no second
+    // read needed the way an unlocked read-decide-write would have wanted one.
+    item.state = 'answered';
+    item.answer = answer;
+    if (answerScope) item.answerScope = answerScope;
+    item.answeredAt = nowIso();
+    save(horde, doc);
+    return item;
+  });
 }
 
 function cmdAdd(horde, positional, flags) {
