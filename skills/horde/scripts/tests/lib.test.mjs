@@ -938,3 +938,35 @@ test('_lib.mjs writeJSON: a reader racing a writer never sees a torn document', 
   assert.ok(reads > 20, `the reader got to look ${reads} times`);
   assert.deepEqual(torn, [], `${torn.length} of ${reads} reads saw a torn queue.json: ${torn[0]}`);
 });
+
+// A lock judged abandoned may have been released the normal way and re-taken by another process
+// before the judge gets round to removing it. Removing the path blindly then deleted a live lock and
+// let two writers in — 24 parallel proposals left 23 in graph.json. Replayed here deterministically:
+// the lock is read while a dead pid holds it, then a live process takes the path, then the takeover
+// runs on what it read earlier.
+test('removeStaleLock takes over only the lock it judged, never a fresh one taken since', async (t) => {
+  const { readLockText, removeStaleLock, createLockFile } = await import('../_lib.mjs');
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const path = join(dir, 'graph.json.lock');
+
+  const dead = `${JSON.stringify({ pid: 2 ** 22 + 7, at: '2026-01-01T00:00:00Z' })}\n`;
+  createLockFile(path, dead);
+  const seen = readLockText(path);
+  assert.equal(seen, dead);
+
+  // the dead holder's lock is gone and a live process holds the path now
+  rmSync(path);
+  const fresh = `${JSON.stringify({ pid: process.pid, at: '2026-01-01T00:00:01Z' })}\n`;
+  createLockFile(path, fresh);
+
+  removeStaleLock(path, seen);
+  assert.equal(readLockText(path), fresh, 'the fresh lock must survive a takeover judged on the old one');
+
+  // the lock that was judged, still in place, is taken over
+  removeStaleLock(path, fresh);
+  assert.equal(existsSync(path), false);
+  // and a lock already gone is not an error
+  removeStaleLock(path, fresh);
+  assert.equal(readLockText(path), null);
+});

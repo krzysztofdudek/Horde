@@ -299,6 +299,23 @@ export function processAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
 
+// readLockText(path) / removeStaleLock(path, seen) — taking over a lock judged abandoned, safely.
+// Between reading a lock and finding its holder gone, that holder may have released it the normal
+// way and another process taken a fresh lock at the same path. Removing the path then deletes a
+// live lock and lets two writers in, and one of their writes is lost — measured: 24 parallel
+// `node.mjs propose` under load left 23 proposals in graph.json. So a lock is removed only while it
+// still reads exactly as it did when it was judged. One narrow window stays open: two processes
+// taking over the same genuinely abandoned lock at once can still, between one's second read and
+// its remove, lose the other's fresh lock — a crash-recovery corner, not the everyday release.
+export function readLockText(path) {
+  try { return readFileSync(path, 'utf8'); } catch { return null; }
+}
+
+export function removeStaleLock(path, seen) {
+  if (readLockText(path) !== seen) return;
+  try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
+}
+
 export function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -353,12 +370,14 @@ function withTreeLock(treePath, fn, { waitMs = TREE_LOCK_WAIT_MS } = {}) {
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
     }
+    const seen = readLockText(path);
+    if (seen === null) continue; // released between the failed create and this read: try again
     let held = null;
-    try { held = JSON.parse(readFileSync(path, 'utf8')); } catch { held = null; }
+    try { held = JSON.parse(seen); } catch { held = null; }
     // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
     // like a dead one: taken over rather than waited on.
     if (!held || !processAlive(held.pid)) {
-      try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
+      removeStaleLock(path, seen);
       continue;
     }
     if (Date.now() > deadline) {
@@ -770,12 +789,14 @@ function withFileLock(path, meta, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
     }
+    const seen = readLockText(path);
+    if (seen === null) continue; // released between the failed create and this read: try again
     let held = null;
-    try { held = JSON.parse(readFileSync(path, 'utf8')); } catch { held = null; }
+    try { held = JSON.parse(seen); } catch { held = null; }
     // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
     // like a dead one: taken over rather than waited on.
     if (!held || !processAlive(held.pid)) {
-      try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
+      removeStaleLock(path, seen);
       continue;
     }
     if (Date.now() > deadline) {
@@ -1279,12 +1300,14 @@ export function withQueueLock(horde, team, fn, { waitMs = QUEUE_LOCK_WAIT_MS } =
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
     }
+    const seen = readLockText(path);
+    if (seen === null) continue; // released between the failed create and this read: try again
     let held = null;
-    try { held = JSON.parse(readFileSync(path, 'utf8')); } catch { held = null; }
+    try { held = JSON.parse(seen); } catch { held = null; }
     // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
     // like a dead one: taken over rather than waited on.
     if (!held || !processAlive(held.pid)) {
-      try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
+      removeStaleLock(path, seen);
       continue;
     }
     if (Date.now() > deadline) {
