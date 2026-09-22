@@ -27,7 +27,7 @@ import {
 import { noteMerged, parsePrototypeArtifacts } from './wave.mjs';
 import { loadAsks } from './ask.mjs';
 import {
-  consumersOf, portExists, globToRegExp, nodeExists, nodeBoundary, advisoryKey, readAdvisoryLedger,
+  consumersOf, portExists, globToRegExp, nodeExists, nodeBoundary, advisoryKey, filedAdvisoryKeys, readAdvisoryLedger,
   recordAdvisory,
 } from './node.mjs';
 
@@ -342,8 +342,8 @@ export function newQueueItem(ticket, dependsOn = [], state = 'queued') {
 // without a ruling and worked in whatever parallelism is free after the mission's own tickets.
 //
 // Three things keep this from turning into noise. It never files the same advisory twice (what has
-// been filed is remembered by what the item says, not by where it sat in a list that is recomputed
-// every run). Every ticket it files is `--kind quality`, which `next` ranks after every work ticket
+// been filed is remembered by what the item is about, not by where it sat in a list that is
+// recomputed every run, nor by the counts its text quotes). Every ticket it files is `--kind quality`, which `next` ranks after every work ticket
 // whatever its severity. And nothing it files changes the architecture by itself — an advisory is
 // evidence, so each ticket's acceptance is "the graph answered this, or the node's log says why it
 // stands", which is a proposal to the architect either way.
@@ -496,7 +496,7 @@ function cmdQuality(horde, positional, flags) {
   }
   const doc = parseAdvice(source, text, !!flags.from);
 
-  const already = new Set(readAdvisoryLedger(horde).map((a) => a.key));
+  const already = filedAdvisoryKeys(readAdvisoryLedger(horde));
   const filed = [];
   const skipped = [];
   for (const item of asArray(doc.items)) {

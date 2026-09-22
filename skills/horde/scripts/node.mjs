@@ -1367,15 +1367,36 @@ export function markPromotionsReported(horde, promotions) {
 // ---- the advisories a quality ticket is filed from --------------------------------------------
 //
 // `grain-advice/1` items the horde has already turned into a ticket, so a second pass over the same
-// document does not file the same improvement twice. Keyed by what the item actually says, not by
-// its position in a list that is recomputed every run.
+// document does not file the same improvement twice. Keyed by what the item is about, not by its
+// position in a list that is recomputed every run, and not by the counts its text quotes: Grain
+// writes "touched in the same commit 7 times — 7 of 12 for one" and "owns 9 files", and one more
+// commit or one more file changes those numbers without changing the advisory. A relation is one
+// pair of nodes and a split is one node, so for those two kinds the nodes are the whole identity;
+// any other kind can say several things about one node, so its text stays in the key with every
+// number in it read as the same number.
+const ADVISORIES_NAMED_BY_NODES = new Set(['relation', 'split']);
 
 export function advisoryKey(item) {
+  const kind = (item && item.kind) || 'item';
   const nodes = asArray(item && item.nodes).join('+');
-  const text = String((item && item.text) || '');
+  if (ADVISORIES_NAMED_BY_NODES.has(kind)) return `${kind}:${nodes}`;
+  const text = String((item && item.text) || '').replace(/\d+/g, '#');
   let hash = 0;
   for (let i = 0; i < text.length; i++) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0;
-  return `${(item && item.kind) || 'item'}:${nodes}:${(hash >>> 0).toString(16)}`;
+  return `${kind}:${nodes}:${(hash >>> 0).toString(16)}`;
+}
+
+// The keys already filed, read so a ledger written before the key above still counts: a relation or
+// split entry from then carries a hash of its text after the nodes, and its advisory is the same one.
+export function filedAdvisoryKeys(ledger) {
+  const keys = new Set();
+  for (const entry of asArray(ledger)) {
+    if (!entry || !entry.key) continue;
+    keys.add(entry.key);
+    const legacy = /^(relation|split):(.*):[0-9a-f]{1,8}$/.exec(entry.key);
+    if (legacy) keys.add(`${legacy[1]}:${legacy[2]}`);
+  }
+  return keys;
 }
 
 export function readAdvisoryLedger(horde) {
