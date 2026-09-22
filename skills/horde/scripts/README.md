@@ -325,7 +325,11 @@ earning no row at all claims nothing — neither is a mismatch.
   written by hand, on the ticket's `**Depends on:**` field and on its queue item. It then reports:
   the layers (topological antichains), the critical path in tickets and in class weight, the
   connected components with the tickets that hang loose on their own, tickets with no order
-  between them that claim the same file, files three or more tickets claim, the extra approvals a
+  between them that claim the same file, files three or more tickets claim, the tickets with no
+  `**Files:**` (`filesBlockingNode` — legal, but no other ticket on their node runs beside them) and, among
+  those, the ones whose nodes map no code at all (`noCodeToLandOn` — their scope is the node's graph
+  files, so no source file can land until they declare Files or the node is mapped; a node the graph
+  does not know is left out), the extra approvals a
   port change owes (who consumes it: `node.mjs`'s `consumersOf`), consumed ports nothing produces,
   the charter evidence rows no ticket names, how big each started ticket's change has grown (lines
   and files, against the branch it was cut from) with its rank among the others of this same plan
