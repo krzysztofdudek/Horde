@@ -85,6 +85,11 @@ plan/quality, tick.mjs, land.mjs and horde.mjs done already read it.
 A "taste" item leaves one line in its component's own log through \`yg log add\` and goes nowhere
 else. An item already logged by an earlier run is never logged twice.
 
+retro.mjs --second --aspect <id> --node <path>|--file <path> --by <name> --verdict pass|refused
+  --hash <sha> [--report "<what is wrong and where>"] records a second judgement on a pair whose first
+  was a pass still in force: the graph will not take a second verdict over it, so it is kept beside
+  the first in this horde's own copy. The document prints this command for exactly those pairs.
+
 options: --json  --help`;
 
 // ---- where things live ------------------------------------------------------------------
@@ -503,10 +508,44 @@ function measureJudge(horde, root, cfg, tickets, landed) {
       const unitFlag = v.unit.kind === 'node' ? '--node' : '--file';
       const held = samples[key] || null;
 
+      // Both opinions in hand, the second one kept here rather than in the graph. A pair whose first
+      // judgement is a pass still in force can be packaged for a second judge, but `yg verdict
+      // record` still refuses to write a second verdict over it — the lock holds one verdict per
+      // pair, and replacing one that still applies would erase it with no evidence anything
+      // changed. So that second judgement is written into the same slot as the first, by
+      // `retro.mjs --second`, bound to a hash the first's package named, and read back here.
+      if (held && held.second) {
+        const s = held.second;
+        const bound = held.hashes ? held.hashes[s.verdict] : null;
+        if (!bound || bound !== s.hash) {
+          skipped.push({
+            ticket: p.ticket,
+            aspect: v.aspect,
+            unit,
+            why: `${held.judge} and ${s.judge} both judged this pair, and not the same code — the second judgement `
+              + `is not bound to the hash the package named when ${held.judge}'s was written down`,
+          });
+          continue;
+        }
+        const agrees = held.verdict === s.verdict;
+        if (!agrees) disagreements += 1;
+        pairs.push({
+          ticket: p.ticket,
+          aspect: v.aspect,
+          unit,
+          held: held.verdict,
+          heldBy: held.judge,
+          heldAt: held.at || null,
+          second: s.verdict,
+          secondBy: s.judge,
+          agrees,
+        });
+        continue;
+      }
+
       // Both opinions in hand: one on file from an earlier run, the other in the slot now. Nothing
-      // is packaged on this path — a pair whose verdict is a pass still in force is one
-      // `yg verdict package` refuses outright, and packaging here would throw away the very
-      // comparison this run came back for.
+      // is packaged on this path — packaging here would throw away the very comparison this run
+      // came back for.
       if (held && tier && v.judge === tier) {
         if (held.judge === v.judge) {
           skipped.push({
@@ -560,33 +599,28 @@ function measureJudge(horde, root, cfg, tickets, landed) {
           });
           continue;
         }
-        // A pass still in force is the one shape Yggdrasil's own `resolvePair` refuses outright,
-        // on both halves of putting a pair to a second judge: "already holds a verdict for
-        // exactly these inputs... recording a second one over it would replace a judgement that
-        // still applies with no evidence that anything changed." That is a structural fact about
-        // this pair, known from the inventory already in hand — not a command that merely failed
-        // this once — so it is never worth spending the call to find out, and it is counted apart
-        // from `skipped`'s other reasons: every pair this measurement can ever compare, or even
-        // offer to a second judge, is one whose first judge REFUSED, or whose pass had already
-        // gone stale — never one that passed and still holds. `passInForce` is how many of the
-        // sample fell here, so the count and the interval above are read against the right
-        // denominator instead of silently over the whole sample.
-        if (v.verdict === 'pass' && v.inForce) {
-          passInForce.push({
-            ticket: p.ticket,
-            aspect: v.aspect,
-            unit,
-            why: `${v.judge || 'the first judge'} passed this pair and that pass still holds — a verdict still `
-              + 'in force is one `yg verdict package` refuses outright, so this pair can never reach a second judge',
-          });
-          continue;
-        }
         // Packaging is both halves of a first run: it is what proves the pair can still be handed
         // to a judge at all, and it is where the two hashes that say whether the code moved
-        // afterwards come from.
+        // afterwards come from. A pass still in force is packaged too — Yggdrasil 6.1.0 and newer
+        // hands its package over marked `inForce: true` — so the measurement is not drawn only
+        // from pairs whose first judge refused. A Yggdrasil before that refuses to package such a
+        // pair at all; that pair is counted apart from `skipped`, on `passInForce`, so the count
+        // and the interval are read against the population they actually cover.
+        const passHolds = v.verdict === 'pass' && !!v.inForce;
         const args = ['verdict', 'package', '--aspect', v.aspect, unitFlag, v.unit.path];
         const pkg = ygJson(root, cfg, args, 'yg-review/1');
         if (pkg.state !== 'ok') {
+          if (passHolds) {
+            passInForce.push({
+              ticket: p.ticket,
+              aspect: v.aspect,
+              unit,
+              why: `${v.judge || 'the first judge'} passed this pair and that pass still holds, and \`${pkg.command}\` `
+                + 'refused to package it — a Yggdrasil before 6.1.0 will not package a pair whose verdict is in force, '
+                + 'so on this CLI the pair cannot reach a second judge',
+            });
+            continue;
+          }
           skipped.push({
             ticket: p.ticket, aspect: v.aspect, unit, why: `\`${pkg.command}\` refused — ${ygWhy(pkg)}`,
           });
@@ -598,6 +632,7 @@ function measureJudge(horde, root, cfg, tickets, landed) {
           unit: { kind: v.unit.kind, path: v.unit.path },
           judge: v.judge === undefined ? null : v.judge,
           verdict: v.verdict,
+          inForce: passHolds,
           hash: v.hash === undefined ? null : v.hash,
           hashes: hashes && typeof hashes === 'object'
             ? { pass: hashes.pass || null, refused: hashes.refused || null }
@@ -610,15 +645,20 @@ function measureJudge(horde, root, cfg, tickets, landed) {
       // Written down and waiting. The command is the same one it has always been — running it
       // replaces what is in the slot, which is exactly why the copy above is taken first.
       const first = samples[key] || held;
+      const judgeFlags = `--aspect ${v.aspect} ${unitFlag} ${v.unit.path} --by ${tier || '<the second judge>'} `
+        // A refusal is recorded with its report on both channels, so the command carries the flag.
+        + '--verdict pass|refused --hash <hashes.pass or hashes.refused from the package> [--report "<what is wrong and where> — required with refused"]';
       pending.push({
         ticket: p.ticket,
         aspect: v.aspect,
         unit,
         held: first ? first.verdict : v.verdict,
         heldBy: first ? first.judge : (v.judge === undefined ? null : v.judge),
-        record: `${yg.display} verdict record --aspect ${v.aspect} ${unitFlag} ${v.unit.path} --by ${tier || '<the second judge>'} `
-          // Yggdrasil refuses a refusal recorded without its report, so the command carries the flag.
-          + '--verdict pass|refused --hash <hashes.pass or hashes.refused from the package> [--report "<what is wrong and where> — required with refused"]',
+        // A pass still in force cannot be recorded over in the graph, so its second judgement is
+        // written into this horde's own copy instead.
+        record: first && first.inForce
+          ? `retro.mjs --second --horde ${horde} ${judgeFlags}`
+          : `${yg.display} verdict record ${judgeFlags}`,
       });
     }
   }
@@ -631,10 +671,12 @@ function measureJudge(horde, root, cfg, tickets, landed) {
   // nothing to show yet: still waiting on a second judgement where one is on `pending`, or, where
   // nothing in it could reach that stage at all this run, a pointer to why each one couldn't.
   const note = pairs.length > 0
-    ? 'the count and interval above cover only pairs whose first judge REFUSED, or whose pass had already '
-      + 'gone stale — never one that PASSED and still holds: a verdict still in force is one `yg verdict '
-      + `package\` refuses outright, so that pair can never reach a second judge at all. ${passInForce.length} `
-      + `of this sample's pair(s) were out of reach for exactly that reason; see \`passInForce\`.`
+    ? (passInForce.length > 0
+      ? `the count and interval above leave out ${passInForce.length} pair(s) whose first judge PASSED and whose `
+        + 'pass still holds: the Yggdrasil CLI here will not package a pair in force (6.1.0 and newer does), so those '
+        + 'could not reach a second judge; see `passInForce`.'
+      : 'the count and interval above cover every pair in this sample that has two judgements; a pair still on '
+        + '`pending` is not in them yet.')
     : pending.length > 0
       ? 'the sample was drawn and no pair in it has two judgements to put side by side yet — every pair on '
         + '`pending` has its first written down here, and is waiting for the command beside it to leave a second.'
@@ -887,9 +929,54 @@ function cmdRetro(flags) {
   }
 }
 
+// The second judgement on a pair whose first was a pass still in force. The graph will not take a
+// second verdict over one that still applies, so it is kept beside the first in this horde's own
+// copy, bound to a hash that pair's package named when the first was written down: a hash for other
+// code, or for the other verdict word, is refused, because a comparison between judgements of two
+// different things means nothing.
+function cmdSecond(flags) {
+  const horde = resolveHorde(flags);
+  const aspect = typeof flags.aspect === 'string' ? flags.aspect.trim() : '';
+  const node = typeof flags.node === 'string' ? flags.node.trim() : '';
+  const file = typeof flags.file === 'string' ? flags.file.trim() : '';
+  const by = typeof flags.by === 'string' ? flags.by.trim() : '';
+  const verdict = typeof flags.verdict === 'string' ? flags.verdict.trim() : '';
+  const hash = typeof flags.hash === 'string' ? flags.hash.trim() : '';
+  const report = typeof flags.report === 'string' ? flags.report.trim() : '';
+  if (!aspect || (!node === !file) || !by || !hash) {
+    fail('usage: retro.mjs --second --aspect <id> --node <path>|--file <path> --by <name> --verdict pass|refused --hash <sha> [--report "<what is wrong and where>"]');
+  }
+  if (verdict !== 'pass' && verdict !== 'refused') fail(`'${verdict}' is not a verdict — use --verdict pass or --verdict refused`);
+  if (verdict === 'refused' && !report) fail('a refusal is recorded with its report: pass --report "<what is wrong and where>"');
+  const unit = node ? { kind: 'node', path: node } : { kind: 'file', path: file };
+  const key = pairKey(aspect, unit);
+  const lock = acquireRetroLock(horde);
+  try {
+    const samplesFile = judgeSamplesPath(horde);
+    const samples = readJSON(samplesFile, {}) || {};
+    const held = samples[key];
+    if (!held) {
+      fail(`no first judgement is written down for ${aspect} on ${unit.kind}:${unit.path} — run retro.mjs first; it `
+        + 'writes the first one down and prints this command for the pairs that need it');
+    }
+    const bound = held.hashes ? held.hashes[verdict] : null;
+    if (!bound || bound !== hash) {
+      fail(`${hash} is not the hash the package named for "${verdict}" when ${held.judge || 'the first judge'}'s judgement was `
+        + 'written down — either the code moved since, or the hash is the one for the other verdict');
+    }
+    held.second = { judge: by, verdict, hash, report: report || null, at: nowIso() };
+    writeJSON(samplesFile, samples);
+    emit({ horde, aspect, unit, second: held.second }, flags, () => `${by} judged ${aspect} on ${unit.kind}:${unit.path}: ${verdict}. `
+      + 'Kept beside the first judgement; the next retro.mjs run puts the two side by side.');
+  } finally {
+    lock.release();
+  }
+}
+
 function main() {
   const { flags } = parseArgs(process.argv.slice(2));
   if (flags.help) { console.log(USAGE); process.exit(0); }
+  if (flags.second) { cmdSecond(flags); return; }
   cmdRetro(flags);
 }
 
