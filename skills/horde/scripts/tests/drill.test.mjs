@@ -414,7 +414,8 @@ test('drill.mjs check scope: the files the ticket declared bound it, tighter tha
   land(m.dir, m.worktree);
   const green = run('drill.mjs', ['check', 'scope', '--repo', m.dir, '--ticket', '001'], m.dir);
   assert.equal(green.code, 0, green.stdout + green.stderr);
-  assert.match(green.json.checks.find((c) => c.name === 'scope declared').note, /2 file\(s\) declared/);
+  // 2 declared, plus the node's own log.md tk.mjs new writes into the list (issue 042).
+  assert.match(green.json.checks.find((c) => c.name === 'scope declared').note, /3 file\(s\) declared/);
 
   // src/extra.mjs is inside the node's boundary and outside what the ticket said it would touch
   const red = missionRepo(t, { files: 'src/retry.mjs,src/retry.test.mjs' });

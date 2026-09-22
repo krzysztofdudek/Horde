@@ -308,11 +308,12 @@ export function ygJson(root, cfg, args, schema) {
   }
   if (/does not exist in the graph/.test(err)) return { state: 'absent', command };
   if (/unknown option|unknown command/i.test(err)) return { state: 'stale', command, root, saw: 'it does not know that option' };
-  // Exit 0 and nothing to read is not an old CLI — an old one refuses the option, which is the branch
-  // above. It is a CLI that does not work from this directory: a relative command that resolves to
-  // nothing here, or a tree with no install of its own. Told apart so the refusal names the tree and
-  // the way out, instead of sending someone to upgrade a CLI that is at the right version.
-  if (code === 0) {
+  // Exit 0 and an EMPTY body — not merely "not the document" — is not an old CLI — an old one still
+  // answers something, in whatever format it knows, which the fallback below reads as stale. It is a
+  // CLI that does not work from this directory at all: a relative command that resolves to nothing
+  // here, or a tree with no install of its own. Told apart so the refusal names the tree and the way
+  // out, instead of sending someone to upgrade a CLI that answered fine, just not with the document.
+  if (code === 0 && body === '') {
     return {
       state: 'silent',
       command,
@@ -324,6 +325,7 @@ export function ygJson(root, cfg, args, schema) {
         + 'horde.mjs config set ygCommand "node /path/to/bin.js"',
     };
   }
+  if (code === 0) return { state: 'stale', command, root, saw: 'it answered no document at all' };
   return { state: 'error', command, code, detail: (err || body).trim() };
 }
 

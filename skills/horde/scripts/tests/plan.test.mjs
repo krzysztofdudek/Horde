@@ -358,23 +358,32 @@ test('queue.mjs plan: a ticket with no Files is named as holding its node, and o
   const declared = tk(dir, ['declared', '--title', 'declared', '--node', 'core', '--class', 'standard', '--files', 'src/core/a.ts']);
   const bare = tk(dir, ['bare-core', '--title', 'bare core', '--node', 'core', '--class', 'standard']);
   const unmapped = tk(dir, ['bare-docs', '--title', 'bare docs', '--node', 'docs', '--class', 'standard']);
-  const withFilesOnUnmapped = tk(dir, ['docs-with-files', '--title', 'docs with files', '--node', 'docs', '--class', 'standard', '--files', '.yggdrasil/model/docs/log.md']);
-  for (const id of [declared, bare, unmapped, withFilesOnUnmapped]) run('queue.mjs', ['add', id], dir);
+  // A node's own log.md is not a work file (queue.mjs's ticketWorkFiles strips it, see issue 042) —
+  // declaring only the log counts as declaring nothing, same as `unmapped`. A real file beside it,
+  // even one that also lies under the node's own graph directory, is what actually narrows scope.
+  const logOnly = tk(dir, ['docs-log-only', '--title', 'docs log only', '--node', 'docs', '--class', 'standard', '--files', '.yggdrasil/model/docs/log.md']);
+  const withFilesOnUnmapped = tk(dir, ['docs-with-files', '--title', 'docs with files', '--node', 'docs', '--class', 'standard', '--files', '.yggdrasil/model/docs/log.md,.yggdrasil/model/docs/decisions.md']);
+  for (const id of [declared, bare, unmapped, logOnly, withFilesOnUnmapped]) run('queue.mjs', ['add', id], dir);
 
   const plan = run('queue.mjs', ['plan'], dir).json;
   assert.deepEqual(plan.filesBlockingNode, [
     { ticket: bare, nodes: ['core'] },
     { ticket: unmapped, nodes: ['docs'] },
+    { ticket: logOnly, nodes: ['docs'] },
   ]);
-  assert.deepEqual(plan.noCodeToLandOn, [{ ticket: unmapped, nodes: ['docs'] }]);
+  assert.deepEqual(plan.noCodeToLandOn, [
+    { ticket: unmapped, nodes: ['docs'] },
+    { ticket: logOnly, nodes: ['docs'] },
+  ]);
 
   const human = run('queue.mjs', ['plan'], dir, { json: false }).stdout;
-  assert.match(human, new RegExp(`no Files, holding their whole node: ${bare} \\(core\\) · ${unmapped} \\(docs\\)`));
-  assert.match(human, new RegExp(`no Files on a node that maps no code, so no source file can land: ${unmapped} \\(docs\\)`));
+  assert.match(human, new RegExp(`no Files, holding their whole node: ${bare} \\(core\\) · ${unmapped} \\(docs\\) · ${logOnly} \\(docs\\)`));
+  assert.match(human, new RegExp(`no Files on a node that maps no code, so no source file can land: ${unmapped} \\(docs\\) · ${logOnly} \\(docs\\)`));
 
   await t.test('a plan where every ticket names its Files says none, twice', () => {
     run('tk.mjs', ['edit', bare, '--by', 'owner', '--files', 'src/core/b.ts'], dir);
     run('tk.mjs', ['edit', unmapped, '--by', 'owner', '--files', '.yggdrasil/model/docs/yg-node.yaml'], dir);
+    run('tk.mjs', ['edit', logOnly, '--by', 'owner', '--files', '.yggdrasil/model/docs/log.md,.yggdrasil/model/docs/yg-node.yaml'], dir);
     const clean = run('queue.mjs', ['plan'], dir).json;
     assert.deepEqual(clean.filesBlockingNode, []);
     assert.deepEqual(clean.noCodeToLandOn, []);
