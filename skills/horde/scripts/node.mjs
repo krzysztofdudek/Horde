@@ -430,7 +430,9 @@ export function ygImpact(root, cfg, node) {
 }
 
 // Runs `yg check` in one worktree and reports what it found. Never approves anything (that fills
-// the lock and can cost money); `check` alone is read-only and keyless. `available: false` means
+// the lock and can cost money): a bare `check` is read-only only until a repository sets
+// `auto_approve` in its yg-config.yaml, and then it fills verdicts on its own, the paid reviewer's
+// included, so every read here says `--no-approve` itself (READ_ONLY_CHECK). `available: false` means
 // the CLI itself could not be started — a different failure from a graph that refuses the tree,
 // and the caller says so in those words.
 // True when the configured Yggdrasil CLI starts and answers --version. The merge checklist
@@ -446,9 +448,11 @@ export function ygAvailable(cfg, cwd) {
 // it simply never came back) and not ok, with the stop as its summary. Never as unavailable: the
 // caller's words for that are "install the CLI", which would send somebody to fix the one thing
 // that is not wrong.
+const READ_ONLY_CHECK = ['check', '--no-approve'];
+
 export function runYgCheck(cfg, cwd, extra = []) {
   const { cmd, prefix, display } = ygCommand(cfg);
-  const args = ['check', ...extra];
+  const args = [...READ_ONLY_CHECK, ...extra];
   const command = `${display} ${args.join(' ')}`;
   const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
   if (run.timedOut) {
@@ -610,10 +614,10 @@ const YG_QUALITY_DOCUMENTS = 'yg-check/1 and yg-aspects/1';
 // ygQualityIndex(cfg, cwd) — the reading above, taken on the tree at `cwd`. `available: false`
 // means the CLI could not be started at all, which is a different answer from a graph that
 // refuses the tree: a red check still yields a perfectly good index (that is what a baseline of
-// blocking findings IS). Never approves anything — `check --json` and `aspects --json` are both
-// read-only and keyless, so this costs nothing and needs no key.
+// blocking findings IS). Never approves anything — `check --no-approve --json` and `aspects --json`
+// are both read-only and keyless, so this costs nothing and needs no key.
 export function ygQualityIndex(cfg, cwd) {
-  const checkRes = ygJson(cwd, cfg, ['check', '--json'], 'yg-check/1');
+  const checkRes = ygJson(cwd, cfg, [...READ_ONLY_CHECK, '--json'], 'yg-check/1');
   if (checkRes.state === 'no-cli') {
     return { available: false, command: checkRes.command, why: 'the Yggdrasil CLI could not be started' };
   }
@@ -709,7 +713,7 @@ export function ygAspectsDoc(root, cfg) {
 // prints the document, which is exactly the case this is wanted for, so the answer is read from
 // what it printed and never from its exit code.
 export function ygCheckDoc(root, cfg) {
-  return ygDoc(root, cfg, ['check', '--json'], 'yg-check/1');
+  return ygDoc(root, cfg, [...READ_ONLY_CHECK, '--json'], 'yg-check/1');
 }
 
 // The same two documents, read softly: `null` when the CLI could not answer, whatever the reason.
@@ -717,7 +721,7 @@ export function ygCheckDoc(root, cfg) {
 // could see and says so plainly when it could see nothing, and a brief that refused to render
 // because a CLI was momentarily unreadable would stop a pass that has other things to read.
 export function ygCheckJson(root, cfg) {
-  const res = ygJson(root, cfg, ['check', '--json'], 'yg-check/1');
+  const res = ygJson(root, cfg, [...READ_ONLY_CHECK, '--json'], 'yg-check/1');
   return res.state === 'ok' ? res.doc : null;
 }
 

@@ -37,7 +37,7 @@ this brief. Every proposal, contract and cut you rule on is read against it.
   then `node.mjs apply <id>`, which prints the exact edit). Approved changes you file into the graph
   yourself, as Yggdrasil prescribes: you edit the node's `yg-node.yaml` (mapping, relations, ports,
   aspects, description) and aspect files by hand, record the why with `yg log add --reason` in English,
-  and run `yg check` to see the graph accept it; you never
+  and run `yg check --no-approve` to see the graph accept it; you never
   touch a lock file, never run `yg check --approve` for anything but deterministic pairs of files the
   change touched, never write a `yg-suppress`, and never change `yg-architecture.yaml` — those two need
   the user's explicit confirmation, requested through the director. The horde writes nothing into the
