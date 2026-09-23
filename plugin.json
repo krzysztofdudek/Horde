@@ -1,0 +1,32 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "horde",
+  "version": "6.0.0",
+  "description": "Run a mission too big for one agent: turns your coding agent into a director that raises a horde — workers in worktrees, one ticket each, a one-shot review of every change that can send work back but never approve it, an architect subagent with a veto over the graph, legislate that writes each territory's law down, and a retrospective that closes the mission out.",
+  "author": {
+    "name": "Krzysztof Dudek",
+    "url": "https://github.com/krzysztofdudek"
+  },
+  "homepage": "https://github.com/krzysztofdudek/Horde",
+  "repository": "https://github.com/krzysztofdudek/Horde.git",
+  "license": "MIT",
+  "keywords": [
+    "horde",
+    "claude-code",
+    "claude-code-plugin",
+    "claude-skill",
+    "multi-agent",
+    "agent-orchestration",
+    "subagents",
+    "director-agent",
+    "evidence-based-verification",
+    "agentic-guardrails"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "horde"
+      }
+    }
+  }
+}
