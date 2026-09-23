@@ -523,7 +523,9 @@ function sweepGrain(horde, cfg, trunkTree) {
   const res = readGrainAdvice(trunkTree, cfg);
   if (res.configured === false) return { configured: false };
   if (!res.read) return { configured: true, read: false, why: res.why };
-  const items = asArray(res.doc.items);
+  // A relation the graph already declares is data, not advice: `queue.mjs quality` skips it, so it is
+  // left out of the count that tells the wave report what that pass will file.
+  const items = asArray(res.doc.items).filter((item) => !(item && item.kind === 'relation' && item.evidence && item.evidence.declared === true));
   const mine = [];
   const elsewhere = [];
   for (const item of items) {

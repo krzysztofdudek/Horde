@@ -307,6 +307,34 @@ test('refine.mjs: a territory is leased across every live horde on the repositor
   });
 });
 
+// A mapping entry can name one file. A new file goes beside it, so Grain is asked about a new file in
+// that file's directory — never about '<file>/new-file.<ext>', a class no file can ever belong to.
+test('refine.mjs --step consult: a component mapping a single file asks Grain about a new file beside it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  addNode(dir, 'reporting', { description: 'Numbers for the month.', mapping: ['src/reporting/month.mjs'] });
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'reporting maps one file'], dir);
+  git(['branch', '-f', 'develop', 'HEAD'], dir);
+  initHorde(dir, 'm1');
+  seedCharter(dir, 'm1', [
+    { id: 'E1', evidence: 'a signed-in user reaches /me', node: 'auth' },
+    { id: 'E2', evidence: 'the month figures match the ledger', node: 'reporting' },
+  ]);
+  writeTerritories(dir, 'm1', TWO_TERRITORIES);
+  assert.equal(run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).code, 0);
+  const stub = join(dir, 'grain-stub.mjs');
+  writeFileSync(stub, GRAIN_STUB);
+  assert.equal(run('horde.mjs', ['config', 'set', 'grainCommand', `node ${stub}`], dir).code, 0);
+
+  const r = run('refine.mjs', ['--step', 'consult', '--horde', 'm1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const numbers = r.json.spawns.find((s) => s.territory === 'numbers').brief;
+  assert.match(numbers, /grain-stub answering: obligation src\/reporting\/new-file\.mjs/);
+  assert.doesNotMatch(numbers, /month\.mjs\/new-file/);
+});
+
 test('refine.mjs --step consult: one spawn per territory, each seeing only its own', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

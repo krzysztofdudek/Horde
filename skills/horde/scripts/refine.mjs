@@ -672,6 +672,12 @@ function obligationPath(root, cfg, node) {
     if (cut) { dir = cut; break; }
   }
   if (!dir) dir = `.yggdrasil/model/${node}`;
+  // A mapping entry can name one file rather than a directory (`src/main.ts`). A new file does not
+  // go INSIDE that file: it goes beside it, so the class asked about is the file's own directory.
+  const tracked = git(['ls-files', '--error-unmatch', '--', dir], root);
+  if (tracked !== null && tracked.split('\n').filter(Boolean).length === 1 && tracked.trim() === dir) {
+    dir = dir.includes('/') ? dir.slice(0, dir.lastIndexOf('/')) : '.';
+  }
   const listed = git(['ls-files', '--cached', '--others', '--exclude-standard', '--', dir], root) || '';
   const counts = new Map();
   for (const file of listed.split('\n').filter(Boolean)) {
@@ -679,7 +685,7 @@ function obligationPath(root, cfg, node) {
     if (m) counts.set(m[1], (counts.get(m[1]) || 0) + 1);
   }
   const ext = [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0] || null;
-  return { path: `${dir}/new-file${ext ? `.${ext}` : ''}`, ext };
+  return { path: `${dir === '.' ? '' : `${dir}/`}new-file${ext ? `.${ext}` : ''}`, ext };
 }
 
 // The consultant is a spawned agent, and a spawned agent is not guaranteed the plugin variable, so the

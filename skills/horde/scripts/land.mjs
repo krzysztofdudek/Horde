@@ -34,7 +34,7 @@ import {
   hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, git, gitBlob, gitError, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine,
   withProvenance, nowIso, parseDecisionEntries, decisionField, diffSize, sizeRanks, sizeLine,
-  noEvidenceLayerNote, createLockFile, processAlive, sleepSync, HordeError,
+  noEvidenceLayerNote, createLockFile, processAlive, readLockText, removeStaleLock, sleepSync, HordeError,
   runMain,
 } from './_lib.mjs';
 import {
@@ -299,15 +299,22 @@ export function acquireGateLock(ticket, branch, { waitMs = LOCK_WAIT_MS } = {}) 
     } catch (e) {
       if (e.code !== 'EEXIST') throw e;
     }
+    // Read once, and removed only while it still reads exactly that way — the same guard every
+    // other lock loop uses (removeStaleLock): between the failed create and this read the holder
+    // may have released the lock the normal way and another landing taken a fresh one, and a plain
+    // remove would delete that live lock and let two landings merge onto trunk at once. A lock
+    // that vanished was released, not abandoned: that is a retry, never a take-over to report.
+    const seen = readLockText(path);
+    if (seen === null && !existsSync(path)) continue;
     let held = null;
-    try { held = JSON.parse(readFileSync(path, 'utf8')); } catch { held = null; }
+    try { held = JSON.parse(seen); } catch { held = null; }
     // An unreadable or half-written lock file names no pid to wait on, so it is treated exactly
     // like a dead one: taken over, with the take-over said out loud.
     if (!held || !processAlive(held.pid)) {
       notes.push(held
         ? `took over the gate lock left by pid ${held.pid} (ticket ${held.ticket || '?'}, taken ${held.at || 'at an unrecorded time'}) — that process is gone`
         : 'took over an unreadable gate lock file — nothing in it named a process still running');
-      try { rmSync(path, { force: true }); } catch { /* someone else got there first */ }
+      removeStaleLock(path, seen);
       continue;
     }
     if (Date.now() >= deadline) {

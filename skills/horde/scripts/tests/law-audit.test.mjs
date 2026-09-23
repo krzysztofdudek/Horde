@@ -295,7 +295,10 @@ test('the law audit: the Grain sweep reads the leased territories, down the same
     'console.log(JSON.stringify({',
     "  schema: 'grain-advice/1', repo: '.', at: 'abc1234', graph: '.yggdrasil',",
     "  items: [{ kind: 'split', nodes: ['feature'], candidates: ['inner'], evidence: { node: { files: 9 } },",
-    "    text: 'Feature owns 9 files, and a finer cut beats it on its own evidence.' }],",
+    "    text: 'Feature owns 9 files, and a finer cut beats it on its own evidence.' },",
+    // A relation the graph already declares is data, not advice: neither sweep counts it.
+    "  { kind: 'relation', nodes: ['feature', 'feature'], evidence: { coChanged: 7, declared: true, declaredVia: 'relation' },",
+    "    text: 'Feature and Feature change together. The architecture already connects them.' }],",
     '}, null, 1));',
     '',
   ].join('\n'));

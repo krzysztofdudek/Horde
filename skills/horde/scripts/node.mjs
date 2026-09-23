@@ -203,6 +203,26 @@ function ygVersion(cfg, cwd) {
   }
 }
 
+// A CLI older than the floor, even one that already answers these documents: Horde requires
+// Yggdrasil 6.0.0 or newer, and a document name that happens to exist in an older release is not
+// that. Asked once per CLI and directory; a version that cannot be read or parsed is not held
+// against the CLI, because the documents themselves are still checked by schema on every call.
+const versionCache = new Map();
+function tooOldCli(cfg, root) {
+  const key = `${ygCommand(cfg).display}\u0000${root || ''}`;
+  if (!versionCache.has(key)) versionCache.set(key, ygVersion(cfg, root));
+  const reported = versionCache.get(key);
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(reported || '');
+  if (!m) return null;
+  const floor = YG_DOCUMENTS_AFTER.split('.').map(Number);
+  const have = m.slice(1, 4).map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (have[i] > floor[i]) return null;
+    if (have[i] < floor[i]) return m[0];
+  }
+  return null;
+}
+
 // The refusal for a CLI that cannot be started at all. Horde requires Yggdrasil: there is no
 // second graph to fall back to, so this is a stop, not a degraded mode.
 function failNoCli(cfg, command) {
@@ -329,7 +349,11 @@ export function ygJson(root, cfg, args, schema) {
   if (body.startsWith('{')) {
     let parsed = null;
     try { parsed = JSON.parse(body); } catch { parsed = null; }
-    if (parsed && parsed.schema === schema) return { state: 'ok', command, doc: parsed };
+    if (parsed && parsed.schema === schema) {
+      const old = tooOldCli(cfg, root);
+      if (old) return { state: 'stale', command, root, saw: `it reports version ${old}, and Horde needs ${YG_DOCUMENTS_AFTER} or newer` };
+      return { state: 'ok', command, doc: parsed };
+    }
     if (parsed) return { state: 'stale', command, root, saw: `it answered a "${parsed.schema || 'nameless'}" document, not ${schema}` };
   }
   if (/does not exist in the graph/.test(err)) return { state: 'absent', command };
