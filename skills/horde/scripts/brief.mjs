@@ -516,7 +516,10 @@ function deadRulesFor(root, cfg) {
   if (declared.length && !declared.some((a) => a.reach)) {
     return '(not measured — the Yggdrasil CLI answered without `--reach`, so it cannot say what reaches nothing)';
   }
-  const dead = declared.filter((a) => asArray(a.reach && a.reach.units).length === 0);
+  // An aggregate rule is a bundle: it has no reviewer and no verdict of its own, so Yggdrasil always
+  // reports it reaching no unit, while the rules it implies reach everything it is attached to.
+  // Deleting one unhooks those rules, a lowering the law guard refuses, so it is never listed here.
+  const dead = declared.filter((a) => a.kind !== 'aggregate' && asArray(a.reach && a.reach.units).length === 0);
   if (dead.length === 0) return '(none — every rule the graph declares reaches something here)';
   return dead.map((a) => `- **${a.id}** [${a.status}] — ${a.description || 'no description'}`).join('\n');
 }

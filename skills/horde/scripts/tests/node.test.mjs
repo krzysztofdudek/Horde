@@ -58,6 +58,26 @@ test('node.mjs bind: the graph is read through the Yggdrasil CLI, and there is n
     assert.match(r.stderr, /reports version 5\.7\.3/);
     run('horde.mjs', ['config', 'set', 'ygCommand', requireYg()], dir);
   });
+
+  await t.test('a CLI older than 6.0.0 is refused even when it already answers the documents', () => {
+    // The real CLI for every document, reporting a 5.9.0 version: the documents Horde reads already
+    // existed in 5.9, so only the version tells this CLI apart from a supported one.
+    const [cmd, ...pre] = requireYg().split(/\s+/);
+    const old = join(dir, 'old-yg.mjs');
+    writeFileSync(old, [
+      "import { spawnSync } from 'node:child_process';",
+      "if (process.argv.includes('--version')) { console.log('5.9.0'); process.exit(0); }",
+      `const r = spawnSync(${JSON.stringify(cmd)}, [...${JSON.stringify(pre)}, ...process.argv.slice(2)], { stdio: 'inherit' });`,
+      'process.exit(r.status === null ? 1 : r.status);',
+      '',
+    ].join('\n'));
+    run('horde.mjs', ['config', 'set', 'ygCommand', `node ${old}`], dir);
+    const r = run('node.mjs', ['bind'], dir);
+    assert.equal(r.code, 1, r.stdout);
+    assert.match(r.stderr, /reports version 5\.9\.0, and Horde needs 6\.0\.0 or newer/);
+    assert.match(r.stderr, /Upgrade to 6\.0\.0 or newer/);
+    run('horde.mjs', ['config', 'set', 'ygCommand', requireYg()], dir);
+  });
 });
 
 // ---- show ------------------------------------------------------------------------------

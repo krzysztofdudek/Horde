@@ -642,3 +642,25 @@ test('brief.mjs legislate: a draft rule attached to a component is not listed as
   assert.match(section, /\*\*attached-nowhere\*\*/, 'a rule no component carries reaches nothing');
   assert.doesNotMatch(section, /still-drafting/, 'a draft rule on a component still reaches its files');
 });
+
+// An aggregate rule has no verdict of its own, so Yggdrasil reports it reaching no unit — while the
+// rules it implies reach everything it is attached to. Listing it would send the legislator to
+// delete it, which unhooks those rules and is refused at landing as a lowering.
+test('brief.mjs legislate: an aggregate rule is not listed as reaching nothing', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addAspect(dir, 'no-marker', { status: 'enforced', check: MARKER_CHECK });
+  const bundle = join(dir, '.yggdrasil', 'aspects', 'house-style');
+  mkdirSync(bundle, { recursive: true });
+  writeFileSync(join(bundle, 'yg-aspect.yaml'), 'name: house-style\ndescription: The house style, as one bundle.\nstatus: enforced\nreview_by: 2099-01-01\nimplies:\n  - no-marker\n');
+  addNode(dir, 'nodeA', { mapping: ['src/a/**'], aspects: ['house-style'] });
+  mkdirSync(join(dir, 'src', 'a'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'a', 'one.mjs'), 'export const one = 1;\n');
+  seedTerritories(dir, 'mission1', { heart: { nodes: ['nodeA'], class: 'standard', why: 'the middle of it' } });
+
+  const r = run('brief.mjs', ['legislate', 'heart', '--name', 'mission1-legislate-heart-1'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const section = r.json.brief.split('### Rules that reach nothing')[1].split('\n### ')[0];
+  assert.doesNotMatch(section, /house-style/, 'a bundle reaches what the rules it implies reach');
+});
