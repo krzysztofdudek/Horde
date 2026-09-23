@@ -376,46 +376,6 @@ test('tick.mjs dispatch: two tickets reaching for the same file never go out tog
   });
 });
 
-test('tick.mjs dispatch: the judge list is empty under judge "tier" and carries the pairs the gate handed back under "one-shot"', async (t) => {
-  const dir = makeRepo();
-  t.after(() => quietRm(dir));
-  initHorde(dir);
-
-  const id = mkTicket(dir, 'left-pairs', { files: 'src/pairs.ts' });
-  run('queue.mjs', ['add', id], dir);
-  const running = run('queue.mjs', ['set', id, 'running', '--agent', 'w'], dir);
-  git(['-C', running.json.worktree, 'commit', '--allow-empty', '-qm', 'work'], dir);
-  const sha = git(['-C', running.json.worktree, 'rev-parse', 'HEAD'], dir);
-  // The item stays running here on purpose: tick's judge list reads the gate's own record, and the
-  // record is about a branch, not about what the queue happens to say this minute.
-  writeLandResult(dir, id, {
-    ticket: id,
-    branch: running.json.branch,
-    sha,
-    ok: false,
-    checks: [{ name: 'judge', ok: false, note: 'one prose rule waits on a judge' }],
-    pairs: [{ aspect: 'plain-language', unitKind: 'node', unit: 'core' }],
-    brief: 'judge this pair',
-    landed: null,
-  });
-
-  await t.test('under judge "one-shot" the pairs go on the list with their brief', () => {
-    const r = tick(dir);
-    assert.equal(r.code, 0, r.stderr);
-    const entry = r.json.judge.find((j) => j.ticket === id);
-    assert.ok(entry, 'the ticket the gate left pairs on is on the judge list');
-    assert.equal(entry.pairs.length, 1);
-    assert.equal(entry.brief, 'judge this pair');
-  });
-
-  await t.test('under judge "tier" the list is empty — an unjudged pair is a finding about the reviewer, not work to hand out', () => {
-    run('horde.mjs', ['config', 'set', 'judge', 'tier'], dir);
-    const r = tick(dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.deepEqual(r.json.judge, []);
-  });
-});
-
 test('tick.mjs close: an empty queue raises the flag and names the command; one queued item does not', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
@@ -876,7 +836,6 @@ test('tick.mjs gate results: unparsable is absent, stale is ignored, and a green
 function setupTickBatchLandable(dir, n) {
   initHorde(dir);
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
-  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
   git(['checkout', 'mission1/trunk'], dir);
   mkdirSync(join(dir, '.yggdrasil', 'model'), { recursive: true });
   writeFileSync(join(dir, '.yggdrasil', 'model', '.gitkeep'), '');

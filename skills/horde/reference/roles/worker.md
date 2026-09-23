@@ -86,8 +86,10 @@ at the end of this brief; read them before your first commit.
 - The repository's own instructions (its CLAUDE.md and AGENTS.md) apply to you in full. Run
   `yg check --approve --only-deterministic` in your worktree first — the deterministic cache is not
   committed and starts empty here, and rebuilding it is free and needs no key. Follow the `yg prime`
-  protocol for anything else. What is left after that free run is the prose rules, which a judge
-  decides: never approve a nondeterministic pair yourself, never write a suppression.
+  protocol for anything else. What is left after that free run is the prose rules, and only this
+  repository's Yggdrasil reviewer judges them: `yg check --approve` calls it, and you commit what it
+  records. Never decide a prose rule yourself, never record a verdict any other way, never write a
+  suppression.
 - **Never weaken a rule to get past it.** Deleting a rule, lowering its status, moving its review
   date, narrowing what it reaches, unhooking it from a component, or writing a `yg-suppress` marker
   all refuse at landing, by name. So does sharpening a rule in the same change as the code that rule

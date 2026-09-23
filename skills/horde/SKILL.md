@@ -348,9 +348,7 @@ what the law gained, the other what it still cannot say. **The retrospective han
 sentences**: the ticket, the source and the words that were actually written. You write the sentence
 they read, the same way you do for `ask`.
 
-`config.retro.judgeSampleRate` (0 by default) puts a sample of landed tickets' already-judged prose
-pairs to a second judge and reports the disagreement with a Wilson interval. It is a measurement:
-nothing is ever refused over it. `config.retro.inexpressibleThreshold` is the bar the "will not say"
+`config.retro.inexpressibleThreshold` is the bar the "will not say"
 pile is held against — set it before a mission runs, never after its number is known.
 
 A charter rewrite that drops an evidence row outright is free before the mission's wave 1 starts; after

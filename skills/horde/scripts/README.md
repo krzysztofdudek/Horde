@@ -647,14 +647,6 @@ several users.
   `--pending` shows only the proposals. `contract approve|veto <id> ["why"] --by architect` rules on
   one, and an approval prints the filing the architect makes by hand: the `yg-node.yaml` edit, the
   `yg log add`, and the free run that records the contract baseline.
-- `verdicts [--at <path>] [--by <name>]` — the prose rules over a
-  tree that no judge has answered yet, each with the exact `yg verdict package` and
-  `yg verdict record` commands that answer it. `--at` names the worktree to read (default: this
-  one). Read-only. Which pending pairs are prose is the graph's own word — each unit's context
-  document names the reviewer kind of every rule reaching it — never "whatever is left over", which
-  would call a script rule a prose one on any tree where the free run had not happened and send a
-  reviewer off to judge what a command answers for nothing. Script rules still without a verdict are
-  reported separately, with the free command that settles them.
 - `propose <kind> "…" --by <name> [--node n] [--boundary <glob>[,glob…]]` (kinds: new-node,
   move-boundary, rename, rule; move-boundary requires --node and --boundary, so apply can name
   the exact edit later, not just record that it happened), `proposals [--open]`,
@@ -1013,13 +1005,11 @@ the JSON, and every item below is measured against it:
    was, and the landing stops here — `ok: false`, `stale: true`, base freshness the only item, no
    gate run and no fix round counted (`tick.mjs` sends the ticket back to be brought up to date).
    `--no-gate` never writes to a branch, so it reports the staleness as it stands;
-2. judge — every prose rule on this tree carries a judgement. `config.judge` says who makes it:
-   `tier` means this repository has a Yggdrasil reviewer, which fills the pairs during the graph
-   item's own run, so the only thing left to check is that none came back unjudged; `one-shot` means
-   it has none, and the pending pairs are handed back on the result (`pairs`, each with the exact
-   `verdict package` / `verdict record` commands, plus a `brief`) with the landing reported not
-   ready. There is no default — `horde init` works it out from the graph's own reviewer
-   configuration, and a gate that guessed would either invent a reviewer or pay for one twice;
+2. judge — every prose rule on this tree carries a verdict from Yggdrasil's own reviewer, the only
+   judge a prose rule has. A worker runs `yg check --approve` before committing (so does the commit
+   hook, where there is one), and this item only checks that nothing came back unjudged. A pair still
+   waiting is a refusal that names it and the one way out: `yg check --approve` on the branch, or,
+   in a repository with no reviewer, configuring one (`yg init --provider … --model …`);
 3. scope — the diff stays inside the files the ticket declared in `**Files:**`; a ticket that
    declared none falls back to the union of its node boundaries (from `node.mjs`). Either way it
    touches no protected path, and Yggdrasil's committed lock files (`.yggdrasil/yg-lock.*.json`) are
@@ -1498,35 +1488,6 @@ writes that, the same way it does for `ask`. `threshold` compares the `inexpress
 `config.retro.inexpressibleThreshold` and prints both, so a bar set after the number is known is
 visible as one.
 
-`judge` is a measurement and never a gate. At `config.retro.judgeSampleRate` above 0 a sample of
-LANDED tickets has the verdicts already recorded on its own files and components re-packaged through
-`yg verdict package`, and a second judgement by `config.retro.judgeTier` is put beside the first; the
-disagreement comes back with `wilson(k, n)` at that sample size. At a rate of 0 no `yg verdict`
-command runs at all.
-
-Reaching a comparison takes two runs, because a graph holds ONE verdict per (rule, unit) pair and
-every write replaces it: recording the second judgement is what destroys the first, and no single
-`yg verdict read` can ever answer with both. So the first run writes the first judgement down — who
-judged, what they said, and the two hashes the package binds a pass and a refusal to, in
-`hordes/<h>/cache/judge-samples.json` — and hands the pair back on `pending` with the command that
-puts it to the second judge. The second run reads the slot again, now holding that judge's answer,
-and puts the two side by side. Whether the code moved in between is answered by those two hashes and
-never by the recorded verdict's own: a verdict binds to a hash with its verdict word folded in, so
-two judges who disagree about code that never moved always record two different hashes, and reading
-that as a change would drop every disagreement there is. A pair the CLI will not package is a skip
-with its reason; so is one whose two judgements turn out to be about different code, and that one
-counts neither way. None of it refuses anything.
-
-A pair whose first judgement is a PASS that still holds is packaged like any other — Yggdrasil 6.1.0
-and newer hands its package over marked `inForce: true` — but `yg verdict record` still refuses to
-write a second verdict over it, because that would replace a judgement that still applies with no
-evidence anything changed. So its `pending` entry carries a different command, `retro.mjs --second`,
-which keeps the second judgement beside the first in `judge-samples.json`, bound to a hash that
-pair's package named when the first was written down (a hash for other code, or for the other
-verdict word, is refused), and the next run compares the two like any other pair. On a Yggdrasil
-before 6.1.0, which refuses to package such a pair at all, it is out of reach, on `passInForce`
-rather than `skipped`, and the document says how many fell there whenever there is a figure to read.
-
 `horde.mjs done` requires this document, and requires it to have been taken over the mission's landed
 tickets as they now stand — `state` is how it tells a current retrospective from one taken before the
 last thing landed.
@@ -1601,8 +1562,7 @@ inherits whatever tree the session's shell is already in.
    worktree off the ticket's queue item, and its graph reads (the node's ports) go to the horde's trunk,
    because nothing has run in a worktree that was just cut and a CLI that works from the trunk may
    not work from there; `model` is the ticket's own class. A stacked entry carries the
-   separate line `STACKED, parent t-NNN unmerged`. `judge` carries the prose pairs the gate handed
-   back, and only under `config.judge: one-shot`. `askClient` is the open items of `asks.json` — an
+   separate line `STACKED, parent t-NNN unmerged`. `askClient` is the open items of `asks.json` — an
    absent file is an empty in-tray, never a refusal. `landing` is how loaded the landing gate is:
    `{ready, measured, lastMs, meanMs, maxMs, forecastMs}`. Landings are serial — one gate at a time
    whatever the number of workers — so this puts the branches waiting for it (`ready`, the queue

@@ -6,6 +6,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode, addAspect, yg, requireYg, MARKER_CHECK, git,
@@ -118,12 +119,13 @@ function makeTicketBranch(dir, id, { fromRef = 'mission1/trunk', extraFiles = {}
 // promises and the tests keeping them actually sit. `gate` is the repository's own gate command;
 // the default runs nothing and exits 0, as it always has.
 function setupLandable(dir, id, {
-  marker = false, prose = false, reviewer = false, judge = 'one-shot', files = null, extraFiles = {}, mapping = null,
+  marker = false, prose = false, reviewer = false, files = null, extraFiles = {}, mapping = null,
   evidence = null, kind = null, cutPrototypeBranch = false, fromRef = 'mission1/trunk',
   trunkFiles = {}, gate = 'true',
 } = {}) {
   initHorde(dir);
-  if (reviewer) assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
+  if (reviewer === true) assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
+  else if (reviewer) assert.equal(yg(dir, ['init', '--provider', 'ollama', '--model', 'mock', '--endpoint', reviewer]).code, 0);
   if (prose) {
     addAspect(dir, 'reads-well', {
       description: 'Every exported name reads as a sentence a stranger understands.',
@@ -139,7 +141,6 @@ function setupLandable(dir, id, {
     aspects: prose ? ['no-marker', 'reads-well'] : ['no-marker'],
   });
   run('horde.mjs', ['config', 'set', 'gates.team', gate], dir);
-  run('horde.mjs', ['config', 'set', 'judge', judge], dir);
   if (Object.keys(trunkFiles).length) {
     git(['checkout', '-q', 'mission1/trunk'], dir);
     for (const [path, content] of Object.entries(trunkFiles)) {
@@ -285,56 +286,79 @@ test('land.mjs: a prototype cut from the prototype branch lands there, and only 
 
 // ---- the judge ------------------------------------------------------------------------
 
-test('land.mjs: config.judge one-shot hands back the pending pairs and the commands that judge them', async (t) => {
+// A stand-in for the configured reviewer, speaking the Ollama protocol Yggdrasil's `ollama`
+// provider calls: it answers every pair "satisfied". What is under test is Horde's gate reading
+// the reviewer's verdicts off the branch, never a model's judgement.
+async function startMockReviewer() {
+  const server = createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      let body = {};
+      try { body = JSON.parse(raw); } catch { body = {}; }
+      res.setHeader('content-type', 'application/json');
+      if (req.url.startsWith('/api/tags')) return res.end(JSON.stringify({ models: [{ name: body.model || 'mock', model: 'mock' }, { name: 'mock:latest', model: 'mock:latest' }] }));
+      if (req.url.startsWith('/api/show')) return res.end(JSON.stringify({ model_info: { 'mock.context_length': 32768 } }));
+      if (req.url.startsWith('/api/chat')) return res.end(JSON.stringify({ message: { role: 'assistant', content: JSON.stringify({ satisfied: true, reason: 'mock reviewer' }) }, done: true }));
+      res.statusCode = 404; return res.end('{}');
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return { endpoint: `http://127.0.0.1:${server.address().port}`, close: () => new Promise((r) => server.close(r)) };
+}
+
+// The real CLI, run without blocking this process, so the stand-in reviewer above can answer it.
+function ygAsync(cwd, args) {
+  const [cmd, ...pre] = requireYg().split(/\s+/);
+  return new Promise((resolveRun) => {
+    const child = spawn(cmd, [...pre, ...args], { cwd });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { out += d; });
+    child.on('close', (code) => resolveRun({ code, out }));
+  });
+}
+
+test('land.mjs: a prose rule the reviewer has not judged is refused, naming the pairs and `yg check --approve`', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  const { branch } = setupLandable(dir, '003', { prose: true, reviewer: true, judge: 'one-shot' });
+  const { branch } = setupLandable(dir, '003', { prose: true, reviewer: true });
 
   const r = run('land.mjs', [branch], dir);
   assert.equal(r.code, 1);
-  const items = byName(r);
-  assert.equal(items.judge.ok, false, items.judge.note);
-  assert.match(items.judge.note, /one-shot/);
-  assert.ok(r.json.pairs.length > 0, 'the pairs a judge still owes a verdict on');
+  const judge = byName(r).judge;
+  assert.equal(judge.ok, false, judge.note);
+  assert.match(judge.note, /no verdict from this repository's reviewer: reads-well on /);
+  assert.match(judge.note, /check --approve/);
+  assert.ok(r.json.pairs.length > 0);
   for (const pair of r.json.pairs) {
     assert.equal(pair.aspect, 'reads-well');
-    assert.match(pair.commands.package, /verdict package --aspect reads-well/);
-    assert.match(pair.commands.record, /verdict record --aspect reads-well/);
+    assert.equal(pair.commands, undefined, 'nobody but the reviewer judges a prose rule, so no command to judge it is handed out');
   }
-  assert.match(r.json.brief, /cannot land until every prose rule below carries a judgement/);
-  assert.match(r.json.brief, /verdict package --aspect reads-well/);
+  assert.equal(r.json.brief, undefined);
   assert.equal(r.json.landed, null);
 });
 
-test('land.mjs: config.judge tier says the reviewer left them unjudged, and goes green once they are', async (t) => {
+test('land.mjs: once the reviewer has judged the pairs on the branch, the judge item is green and it lands', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  const { branch } = setupLandable(dir, '004', { prose: true, reviewer: true, judge: 'tier' });
+  const mock = await startMockReviewer();
+  t.after(() => mock.close());
+  const { branch } = setupLandable(dir, '004', { prose: true, reviewer: mock.endpoint });
 
   const red = run('land.mjs', [branch], dir);
   assert.equal(red.code, 1);
-  assert.match(byName(red).judge.note, /config.judge is "tier".*came back unjudged/s);
+  assert.match(byName(red).judge.note, /no verdict from this repository's reviewer/);
 
-  // The judge answers, through Yggdrasil's own external-judge channel, in a tree at the branch tip.
-  // Attached to the branch, not detached: the judgement has to end up ON the branch, and a commit
-  // in a detached tree moves nothing.
-  const wt = join(dir, 'judge-tree');
+  // The worker's step: `yg check --approve` in a tree on the branch, and the verdicts committed.
+  const wt = join(dir, 'approve-tree');
   git(['worktree', 'add', wt, branch], dir);
-  for (const pair of red.json.pairs) {
-    const pkg = yg(wt, ['verdict', 'package', '--aspect', pair.aspect, `--${pair.unitKind}`, pair.unit]);
-    assert.equal(pkg.code, 0, pkg.out);
-    const hash = JSON.parse(pkg.out).hashes.pass;
-    const rec = yg(wt, ['verdict', 'record', '--aspect', pair.aspect, `--${pair.unitKind}`, pair.unit, '--by', 'judge1', '--verdict', 'pass', '--hash', hash]);
-    assert.equal(rec.code, 0, rec.out);
-  }
-  // The verdicts have to be COMMITTED to count. The gate reads a fresh tree at the branch's tip,
-  // not whatever worktree someone happens to have open, so a judgement sitting uncommitted in
-  // somebody's checkout is a judgement this branch does not carry — which is the whole reason the
-  // gate stopped reading other people's trees.
+  const approved = await ygAsync(wt, ['check', '--approve']);
+  assert.equal(approved.code, 0, approved.out);
   git(['add', '.yggdrasil'], wt);
-  git(['commit', '-qm', 'graph: verdicts recorded'], wt);
+  git(['commit', '-qm', 'graph: the reviewer judged the prose rules'], wt);
   git(['worktree', 'remove', '--force', wt], dir);
-  run('tk.mjs', ['log', '004', 'verdicts recorded on the branch'], dir);
+  run('tk.mjs', ['log', '004', 'the reviewer judged the prose rules on the branch'], dir);
 
   const green = run('land.mjs', [branch], dir);
   if (green.code !== 0) console.error(green.stdout, green.stderr);
@@ -344,40 +368,21 @@ test('land.mjs: config.judge tier says the reviewer left them unjudged, and goes
   assert.ok(green.json.landed, 'it landed');
 });
 
-test('land.mjs: config.judge unset refuses rather than guessing who judges', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  const { branch } = setupLandable(dir, '005');
-  // Unset it the way a config written before the policy existed would read.
-  const cfgPath = join(dir, '.horde', 'config.json');
-  const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
-  delete cfg.judge;
-  writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
-
-  const r = run('land.mjs', [branch], dir);
-  assert.equal(r.code, 1);
-  const judge = byName(r).judge;
-  assert.equal(judge.ok, false);
-  assert.match(judge.note, /config.judge is unset/);
-  assert.match(judge.note, /config set judge tier\|one-shot/);
-  assert.equal(r.json.landed, null);
-});
-
-test('horde.mjs init works out the judge policy and says so', async (t) => {
+test('horde.mjs init says whether the repository has a reviewer, and keeps no judge policy', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
   assert.equal(r.code, 0, r.stderr);
-  // A fresh `yg init` with no --provider leaves no reviewer, so there is no tier to judge with.
-  assert.match(r.stdout, /judge: one-shot/);
-  assert.equal(JSON.parse(readFileSync(join(dir, '.horde', 'config.json'), 'utf8')).judge, 'one-shot');
+  // A fresh `yg init` with no --provider leaves no reviewer, and nothing else may judge a prose rule.
+  assert.match(r.stdout, /has no Yggdrasil reviewer, and prose rules are judged by no one else/);
+  assert.equal(JSON.parse(readFileSync(join(dir, '.horde', 'config.json'), 'utf8')).judge, undefined);
 });
 
 // A config whose `reviewer:` block is its LAST top-level key — Yggdrasil's own repository ends its
-// yg-config.yaml that way, and a reviewer added to an existing config lands there too. The judge
+// yg-config.yaml that way, and a reviewer added to an existing config lands there too. The
 // detection used to need another top-level key after the block, so it read such a config as having
 // no reviewer at all.
-test('horde.mjs init finds a reviewer block that ends the config file, and judges with the tier', async (t) => {
+test('horde.mjs init finds a reviewer block that ends the config file', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
@@ -393,11 +398,10 @@ test('horde.mjs init finds a reviewer block that ends the config file, and judge
 
   const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /judge: tier/);
-  assert.equal(JSON.parse(readFileSync(join(dir, '.horde', 'config.json'), 'utf8')).judge, 'tier');
+  assert.match(r.stdout, /prose rules are judged by the reviewer configured in this repository's graph/);
 });
 
-test('horde.mjs init refuses a commit hook that needs a judge this repository has not got', async (t) => {
+test('horde.mjs init refuses a commit hook that runs a full check in a repository with no reviewer', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   assert.equal(yg(dir, ['init']).code, 0);
@@ -406,7 +410,7 @@ test('horde.mjs init refuses a commit hook that needs a judge this repository ha
   const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir);
   assert.equal(r.code, 1);
   assert.match(r.stderr, /runs a full `yg check` on every commit, and this repository has no Yggdrasil reviewer/);
-  assert.match(r.stderr, /--only-deterministic/);
+  assert.match(r.stderr, /Prose rules are judged only by that reviewer/);
   assert.match(r.stderr, /yg init --provider/);
   assert.doesNotMatch(r.stderr, /--no-verify is fine|use --no-verify/);
   assert.equal(existsSync(join(dir, '.horde', 'hordes')), false, 'nothing of the horde was created');
@@ -578,7 +582,6 @@ function makeModifiedTestFixture(dir, id) {
   git(['add', `feature-${id}.mjs`, `feature-${id}.test.mjs`], dir);
   git(['commit', '-qm', 'existing feature and test'], dir);
   initHorde(dir); // mission1/trunk branches off this develop tip — inherits both files
-  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
   addAspect(dir, 'no-marker', {
     description: 'Source files must not carry an unfinished-work marker.',
     check: MARKER_CHECK,
@@ -625,7 +628,6 @@ function makeContractRevertFixture(dir, id) {
   git(['add', `surface-${id}.mjs`], dir);
   git(['commit', '-qm', 'old surface'], dir);
   initHorde(dir); // mission1/trunk branches off this develop tip — inherits getValue() === 0
-  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
   addNode(dir, 'feature', { mapping: [`surface-${id}.mjs`, `surface-${id}.test.mjs`] });
   commitGraph(dir);
 
@@ -2485,7 +2487,6 @@ function findIssueDir(dir, team, id) {
 function chainOfTwo(dir, { parentLine = 5, childLine = 30 } = {}) {
   initHorde(dir);
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
-  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
   git(['checkout', 'mission1/trunk'], dir);
   writeFileSync(join(dir, 'lib.mjs'), `${LIB_LINES.join('\n')}\n`);
   writeFileSync(join(dir, 'other.mjs'), 'export const other = 0;\n');
@@ -2564,7 +2565,6 @@ test('land.mjs: a red gate puts the ticket on "changes" with the gate\'s own wor
   t.after(() => rmRepo(dir));
   initHorde(dir);
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
-  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
   addAspect(dir, 'no-marker', { description: 'No unfinished-work markers.', check: MARKER_CHECK });
   addNode(dir, 'feature', { mapping: ['lib.mjs', 'lib.test.mjs'], aspects: ['no-marker'] });
   commitGraph(dir);
@@ -3167,14 +3167,13 @@ test('land.mjs --fate: --horde written out resolves to that horde\'s own trunk t
 // `baseFiles` is content every ticket branches FROM rather than content any of them adds: a
 // commit hook, a gate script, a suite already there — whatever a test needs the base tree to hold
 // before the branches are cut, so a branch can be seen taking it away.
-function setupBatchLandable(dir, ids, { judge = 'one-shot', perTicket = {}, baseFiles = {} } = {}) {
+function setupBatchLandable(dir, ids, { perTicket = {}, baseFiles = {} } = {}) {
   initHorde(dir);
   addAspect(dir, 'no-marker', {
     description: 'Source files must not carry an unfinished-work marker.',
     check: MARKER_CHECK,
   });
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
-  run('horde.mjs', ['config', 'set', 'judge', judge], dir);
   git(['checkout', '-q', 'mission1/trunk'], dir);
   mkdirSync(join(dir, '.yggdrasil', 'model'), { recursive: true });
   writeFileSync(join(dir, '.yggdrasil', 'model', '.gitkeep'), '');

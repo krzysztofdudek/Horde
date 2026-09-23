@@ -27,7 +27,7 @@ import {
 } from './wave.mjs';
 import { writeLawDiff } from './law.mjs';
 import { RETRO_SCHEMA, collectRetroInput, missionState } from './retro.mjs';
-import { ygJson } from './node.mjs';
+import { ygJson, hasReviewer } from './node.mjs';
 
 const USAGE = `usage: horde.mjs <command> [options]
 
@@ -358,31 +358,6 @@ export function renderEvidenceJudgement(layer, { date = today() } = {}) {
   return `No evidence layer found — this repository has no test suite, no promises directory, and no file named like a test, so nothing here can be pointed at as proof. Every row in the catalogue below has to name its own way of being reproduced, in full, on its own line. ${PROMISES_OFFER} ${judged}`;
 }
 
-// ---- who judges this repository's prose rules ------------------------------------------
-//
-// Yggdrasil's rules come in two kinds. A script rule answers for itself, free, in any worktree.
-// A prose rule needs a reader, and there are only two ways a repository gets one: it has a
-// reviewer configured inside Yggdrasil (a "tier"), or it has none and somebody answers out of band
-// one pair at a time. Which of the two it is decides what a worker is told to do before committing
-// and what the landing gate does with a rule still waiting on a judgement, so it is worked out
-// here, once, rather than guessed at every landing.
-//
-// The evidence is Yggdrasil's own config: a `reviewer:` block with a provider under it. Read as
-// text because Horde has no YAML parser and does not want one — this decides a default that `init`
-// prints and `horde.mjs config set judge` overrides, never something that silently gates a merge.
-const YG_CONFIG_FILES = ['yg-config.yaml', 'yg-secrets.yaml'];
-function detectJudge(root) {
-  for (const name of YG_CONFIG_FILES) {
-    let text = '';
-    try { text = readFileSync(join(root, '.yggdrasil', name), 'utf8'); } catch { continue; }
-    // The block runs to the next top-level key or to the end of the file — `yg init` writes
-    // `reviewer:` as the last key, and JavaScript has no `\Z` (it would match a literal Z).
-    const block = /^reviewer:\s*$([\s\S]*?)(?=^\S|(?![\s\S]))/m.exec(text);
-    if (block && /^\s+provider:\s*\S/m.test(block[1])) return 'tier';
-  }
-  return 'one-shot';
-}
-
 // The adopter's own commit hook, and what it runs. A repository with no reviewer cannot pass a
 // hook that demands a full `yg check`: the prose rules have nobody to judge them, so every commit
 // refuses, and the only thing a worker learns is to reach for `--no-verify`. That is worth
@@ -414,12 +389,6 @@ function defaultConfig(root) {
     ygCommand: 'yg',
     grainCommand: null,
     testGlobs: detectTestGlobs(root),
-    // Who judges this repository's prose rules — "tier" (Yggdrasil's own reviewer) or "one-shot"
-    // (no reviewer here; a judge answers a pair at a time and the landing gate hands them over).
-    // Worked out from the graph's own reviewer configuration, never defaulted blindly: the landing
-    // gate refuses rather than guess, because guessing wrong either invents a reviewer that does
-    // not exist or pays for one twice.
-    judge: detectJudge(root),
     protectedPaths: [],
     classes: { ...DEFAULT_CLASSES },
     parallelism: 6,
@@ -458,14 +427,11 @@ function defaultConfig(root) {
     // line in the wave's own report. Neither is ever about how much a rule runs: a rule is retired
     // for not being used, never for what running it takes.
     law: { retireAfterWaves: 2, qualityDropAsk: 0.1 },
-    // The mission's retrospective (retro.mjs). `judgeSampleRate` is the fraction of landed
-    // tickets whose already-judged prose pairs are put to a second judge — 0, so nothing is
-    // re-judged and no reviewer is paid twice until somebody asks for the measurement;
-    // `judgeTier` names that second judge. `inexpressibleThreshold` is the share of a mission's
+    // The mission's retrospective (retro.mjs). `inexpressibleThreshold` is the share of a mission's
     // refusals and remarks the law may turn out unable to express before the number becomes a
     // question for whoever is asking for the work — set it BEFORE a mission runs, never after
     // its number is known, or it measures nothing.
-    retro: { judgeSampleRate: 0, judgeTier: null, inexpressibleThreshold: null },
+    retro: { inexpressibleThreshold: null },
   };
 }
 
@@ -592,20 +558,18 @@ function cmdInit(positional, flags) {
   // to make one is refused here, leaving nothing of this horde behind to clean up.
   const graph = ensureGraph(root, readConfig(), flags);
 
-  // Who will judge the prose rules, and whether this repository's own commit hook can be satisfied
-  // at all. A hook that demands a full `yg check` in a repository with no reviewer refuses every
-  // commit a worker makes, and the only thing anyone learns from that is `--no-verify`. Refused
-  // here, before a single file of this horde exists, with the two ways out named.
-  const judge = detectJudge(root);
+  // Whether this repository's own commit hook can be satisfied at all. A hook that demands a full
+  // `yg check` in a repository with no reviewer refuses every commit a worker makes, because the
+  // prose rules have nobody to judge them, and the only thing anyone learns from that is
+  // `--no-verify`. Refused here, before a single file of this horde exists.
+  const reviewer = hasReviewer(root);
   const hook = detectCommitHook(root);
-  if (judge === 'one-shot' && hook && !hook.deterministicOnly) {
+  if (!reviewer && hook && !hook.deterministicOnly) {
     fail(
       `${hook.file} runs a full \`yg check\` on every commit, and this repository has no Yggdrasil reviewer configured.\n`
-      + 'Every prose rule would then be waiting on a judge nobody can call, so every commit a worker makes would refuse — '
+      + 'Prose rules are judged only by that reviewer, so every commit a worker makes would refuse — '
       + 'and the only thing that teaches is --no-verify, which switches off the gate this whole tool exists to keep.\n'
-      + 'Two ways out, either is fine:\n'
-      + `  - narrow the hook to the free half: \`yg check --approve --only-deterministic\` in ${hook.file}. The prose rules are then judged at landing, once, instead of at every commit.\n`
-      + '  - give the repository a reviewer: yg init --provider <claude-code|codex|…> --model <model>',
+      + 'Give the repository a reviewer: yg init --provider <claude-code|codex|copilot-cli|…> --model <model>',
     );
   }
 
@@ -626,10 +590,6 @@ function cmdInit(positional, flags) {
     if (flags.yg) cfg.ygCommand = flags.yg;
     if (flags.grain) cfg.grainCommand = flags.grain;
   }
-  // A config written before the judge policy existed carries no answer to it, and the landing gate
-  // refuses rather than guess — so a second horde on such a repository fills it in here from the
-  // same evidence a first one would have used.
-  if (!cfg.judge) cfg.judge = judge;
   writeConfig(cfg);
 
   // --nodes binds the charter's touched nodes the moment this horde exists (node-lease-across-
@@ -693,9 +653,9 @@ function cmdInit(positional, flags) {
 
   // Said out loud at the one moment somebody is reading, because it changes what a worker is told
   // to run before committing and what the landing gate does with an unjudged rule.
-  const judgeNote = cfg.judge === 'tier'
-    ? 'prose rules are judged by the reviewer configured in this repository\'s graph (judge: tier) — a worker runs `yg check --approve` before committing, and landing only checks that it came back green.'
-    : 'this repository has no Yggdrasil reviewer (judge: one-shot) — the commit hook runs the free half only, and landing hands back each prose rule with the two commands that judge it. Change it with: horde.mjs config set judge tier|one-shot';
+  const judgeNote = reviewer
+    ? 'prose rules are judged by the reviewer configured in this repository\'s graph — a worker runs `yg check --approve` before committing, and landing only checks that nothing came back unjudged.'
+    : 'this repository has no Yggdrasil reviewer, and prose rules are judged by no one else — a ticket whose tree carries a prose rule without a verdict will not land. Give it one: yg init --provider <claude-code|codex|copilot-cli|…> --model <model>';
   const hookNote = hook
     ? `commit hook: ${hook.file} runs \`yg check\`${hook.deterministicOnly ? ' --only-deterministic (the free half — right for this repository)' : ' in full'}`
     : 'no commit hook runs `yg check` here — nothing checks the graph until landing does';
@@ -714,7 +674,7 @@ function cmdInit(positional, flags) {
       ecosystems,
       gates: cfg.gates,
       testGlobs: cfg.testGlobs,
-      judge: cfg.judge,
+      reviewer,
       commitHook: hook,
       leased,
     },

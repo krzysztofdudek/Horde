@@ -38,7 +38,7 @@ import {
   runMain,
 } from './_lib.mjs';
 import {
-  ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, verdictCommandsFor,
+  ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, hasReviewer,
   globToRegExp, pathInBoundary, ticketBoundary, proposalBoundaryOf, ygFileContext, ygAvailable, ygJson,
 } from './node.mjs';
 import {
@@ -60,8 +60,8 @@ for either way.
   1. base freshness — branch rooted at its parent branch's tip; a branch the parent moved past is
                       brought up to date first (the parent merged into it), or, when that conflicts,
                       refused as stale before any gate, with no fix round
-  2. judge          — every prose rule on this tree has a judgement (config.judge says who makes
-                      it: "tier" is Yggdrasil's own reviewer, "one-shot" hands the pairs back)
+  2. judge          — every prose rule on this tree has a verdict from Yggdrasil's own reviewer
+                      (the only judge of a prose rule)
   3. scope          — diff stays inside the files the ticket declared, or its node boundaries when
                       it declared none; no protected path touched
   4. revert test    — new or changed test files (named by config.testGlobs), extracted onto the
@@ -973,9 +973,9 @@ function recordGateCache(horde, level, cache, ticketId, branch, cfg) {
 // The item runs in two halves, because the two costs are different. The free half —
 // `yg check --approve --only-deterministic` — records every verdict a script can reach, in any
 // worktree, with no key and no judgement, and is always allowed. What it leaves is the prose
-// rules, which a reader has to judge. So the item names those pairs rather than approving them,
-// and it is ✓ only when a full `yg check` is green. Who that reader is — Yggdrasil's own reviewer,
-// or a judge this command hands the pairs to — is config.judge's answer, read by the judge item.
+// rules, which only Yggdrasil's configured reviewer judges. So the item names those pairs rather
+// than approving them, and it is ✓ only when a full `yg check` is green; the judge item says who
+// owes them.
 function checkGraph(cfg, worktree, noGate) {
   const display = ygCommand(cfg).display;
   if (noGate) return { ok: true, note: `skipped (--no-gate) — \`${display} check\` was not run` };
@@ -1022,75 +1022,27 @@ function checkGraph(cfg, worktree, noGate) {
   };
 }
 
-// Who judges the prose rules, and whether they have. The graph item already found the pairs still
-// waiting — that answer reaches `--json` through it, so this item reads it rather than opening a
-// second, separately-paid channel to the same question.
-//
-//   tier      — this repository has a Yggdrasil reviewer configured. It fills the prose pairs
-//               itself during the graph item's own run, so the only thing left to check is that
-//               nothing came back unjudged.
-//   one-shot  — this repository has no reviewer. The pairs are handed back with the two commands
-//               that judge each one, the landing reports itself not ready, and it is run again
-//               once the judge has answered.
-//
-// There is no default, on purpose: `horde init` decides it by looking at the repository, and a
-// guessed answer here would either invent a reviewer that does not exist or pay for one twice.
-function checkJudge(cfg, ticketId, graphItem, noGate) {
-  const policy = cfg.judge;
-  if (noGate) return { ok: true, note: 'skipped (--no-gate) — no prose rule was judged' };
-  if (policy !== 'tier' && policy !== 'one-shot') {
-    return {
-      ok: false,
-      note: `config.judge is ${policy === undefined ? 'unset' : `"${policy}"`} — who judges this repository's prose rules is not something this gate guesses. `
-        + 'Set it to "tier" if the repository has a Yggdrasil reviewer configured, or "one-shot" if it has none and a judge answers out of band: '
-        + 'horde.mjs config set judge tier|one-shot (horde.mjs init works it out for a new repository)',
-    };
-  }
+// Whether the prose rules are judged. They have one judge: the reviewer configured inside
+// Yggdrasil, through `yg check --approve`, which a worker runs before committing (and the commit
+// hook, where there is one). The graph item already found any pair still waiting — that answer
+// reaches `--json` through it — so this item reads it and names the one way out: the reviewer,
+// or configuring one where the repository has none. Nothing else may judge a prose rule.
+function checkJudge(cfg, worktree, graphItem, noGate) {
+  if (noGate) return { ok: true, note: 'skipped (--no-gate) — no prose rule was checked' };
   const pending = asArray(graphItem && graphItem.pending);
   if (pending.length === 0) {
-    return {
-      ok: true,
-      pairs: [],
-      note: policy === 'tier'
-        ? 'every prose rule on this tree is judged — Yggdrasil\'s own reviewer answered them during the graph check'
-        : 'no prose rule on this tree is waiting on a judgement',
-    };
+    return { ok: true, pairs: [], note: 'no prose rule on this tree is waiting on the reviewer' };
   }
-  const pairs = pending.map((p) => ({ ...p, commands: verdictCommandsFor(cfg, p, '<judge>') }));
-  if (policy === 'tier') {
-    return {
-      ok: false,
-      pairs,
-      note: `config.judge is "tier", so Yggdrasil's own reviewer was expected to judge these, and ${pairs.length} came back unjudged: `
-        + `${pairs.map((p) => `${p.aspect} on ${p.unitKind}:${p.unit}`).join(' · ')}. Check the reviewer this repository has configured (yg init --provider …), or set config.judge to "one-shot" if it has none`,
-    };
-  }
+  const named = pending.map((p) => `${p.aspect} on ${p.unitKind}:${p.unit}`).join(' · ');
+  const display = ygCommand(cfg).display;
   return {
     ok: false,
-    pairs,
-    brief: judgeBrief(ticketId, pairs),
-    note: `${pairs.length} prose rule(s) wait on a judge, and this repository has none configured (config.judge: one-shot): `
-      + `${pairs.map((p) => `${p.aspect} on ${p.unitKind}:${p.unit}`).join(' · ')}. The pairs and the exact commands that judge them are on this result; land again once they are answered`,
+    pairs: pending,
+    note: hasReviewer(worktree)
+      ? `${pending.length} prose rule(s) have no verdict from this repository's reviewer: ${named}. Run \`${display} check --approve\` on the branch and commit what it records, then land again`
+      : `${pending.length} prose rule(s) have no verdict, and this repository has no Yggdrasil reviewer to give one: ${named}. `
+        + 'Prose rules are judged by that reviewer only — configure one (yg init --provider <claude-code|codex|copilot-cli|…> --model <model>), run `yg check --approve`, then land again',
   };
-}
-
-// What a judge is handed: the pairs, and for each the two commands in the order they are run —
-// the package names the hash, the record is bound to it. Written out in full so a judge copies
-// rather than composes, since the hash is the one field it cannot invent.
-function judgeBrief(ticketId, pairs) {
-  return [
-    `Ticket ${ticketId} cannot land until every prose rule below carries a judgement.`,
-    '',
-    'For each pair: read the rule, read the unit, decide pass or refused, then run the two commands.',
-    'The package prints the hash; the record binds your verdict to it.',
-    '',
-    ...pairs.flatMap((p) => [
-      `${p.aspect} on ${p.unitKind}:${p.unit}`,
-      `  ${p.commands.package}`,
-      `  ${p.commands.record}`,
-      '',
-    ]),
-  ].join('\n');
 }
 
 // The graph is plan-agnostic: a node's charter and log say what the node is and what must stay
@@ -3213,7 +3165,7 @@ function runSharedGate(cfg, level, worktreePath, addedFiles) {
   const gate = checkGate(cfg, level, worktreePath, null, false);
   const graph = checkGraph(cfg, worktreePath, false);
   const mapping = checkMapping(cfg, worktreePath, addedFiles, false);
-  const judge = checkJudge(cfg, 'batch', graph, false);
+  const judge = checkJudge(cfg, worktreePath, graph, false);
   return {
     gate, graph, mapping, judge,
   };
@@ -3239,7 +3191,6 @@ function finishBatchMember(horde, ctx, outcome, provenanceInfo, flags, group, le
       ok: outcome.ok,
       checks: outcome.checks,
       pairs: [],
-      brief: null,
       landed: outcome.landed,
       lock: lockNotes,
       size: ctx.size,
@@ -3621,7 +3572,6 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
         stale: true,
         checks: [{ name: 'base freshness', ok: false, note: why }],
         pairs: [],
-        brief: null,
         landed: null,
         lock: lockNotes,
         size,
@@ -3669,7 +3619,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     }
     const gateMs = noGate ? null : Date.now() - gateStart;
     const timing = () => ({ gateMs, landingMs: Date.now() - landingStart, sharedBy: 1 });
-    results.judge = checkJudge(cfg, ticketId, results.graph, noGate);
+    results.judge = checkJudge(cfg, head.path, results.graph, noGate);
 
     const checks = CHECK_ORDER.map((name) => ({ name, ok: !!results[name].ok, note: results[name].note }));
     const allOk = checks.every((c) => c.ok);
@@ -3686,7 +3636,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
         checks.push({ name: 'merge', ok: false, note: merged.note });
         recordChanges(horde, ticketId, checks);
         return finish(horde, ticketId, {
-          ticket: ticketId, branch, sha: branchSha, ok: false, checks, pairs: [], brief: null, landed: null, lock: lockNotes, size, timing: timing(),
+          ticket: ticketId, branch, sha: branchSha, ok: false, checks, pairs: [], landed: null, lock: lockNotes, size, timing: timing(),
         }, head, flags, parent, level);
       }
       landed = { ticket: ticketId, sha: merged.sha, at: nowIso() };
@@ -3708,7 +3658,6 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       ok: allOk,
       checks,
       pairs: asArray(judge.pairs),
-      brief: judge.brief || null,
       landed,
       lock: lockNotes,
       size,
