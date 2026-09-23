@@ -70,7 +70,7 @@ as queue.mjs plan/quality already read it. A bare tick.mjs call — the boot seq
 neither flag, so it inherits whatever tree the session is already in.
 
 --json prints {tree, branch, sha, spawn: [{ticket, model, brief}], review: [{ticket, model, name,
-brief}], judge: [{ticket, pairs, brief}], askClient: [{id, kind, why}], held: [{ticket, ask, kind,
+brief}], askClient: [{id, kind, why}], held: [{ticket, ask, kind,
 holds, note}], close: <bool>}. Everything on "spawn" has had its branch and worktree cut already, so
 the brief command on it renders against a tree that exists; tick does not start the agent, because
 the caller is what starts agents.
@@ -746,20 +746,6 @@ function dispatch(horde, cfg, root, flags, holds) {
   return { out, held };
 }
 
-// Every prose pair the landing gate handed back rather than judged. Only under `config.judge:
-// one-shot` — under "tier" the repository has a reviewer of its own and an unjudged pair is a
-// finding about that reviewer, not work to hand somebody.
-function judgeList(horde, cfg, doc) {
-  if (cfg.judge !== 'one-shot') return [];
-  const out = [];
-  for (const item of doc.items) {
-    const result = readLandResult(horde, item.ticket);
-    if (!result || !Array.isArray(result.pairs) || result.pairs.length === 0) continue;
-    out.push({ ticket: item.ticket, pairs: result.pairs, brief: result.brief || null });
-  }
-  return out;
-}
-
 // ---- 4. close ------------------------------------------------------------------------------
 //
 // Tick raises the flag and names the command; closing the wave is that command's own job. The
@@ -847,7 +833,6 @@ function runOnce(horde, cfg, flags, runner) {
     const spawn = dispatch(horde, cfg, root, flags, holds);
 
     const doc = readQueue(horde);
-    const judge = judgeList(horde, cfg, doc);
 
     // A queue holding nothing unmerged is a wave that CAN close — and a "stop" holds that too,
     // being the kind that holds everything. Without this, a mission whose last ticket merged just
@@ -872,7 +857,6 @@ function runOnce(horde, cfg, flags, runner) {
       review: landed.reviews.map((r) => ({
         ticket: r.ticket, model: r.model, name: r.name, brief: r.brief,
       })),
-      judge,
       askClient: openAsks(horde),
       landing: landingLoad(horde, doc.items),
       close,
@@ -904,7 +888,6 @@ function render(out) {
     lines.push(`review (${out.review.length}):`);
     for (const r of out.review) lines.push(`  ${r.ticket} (${r.model}) — ${r.brief}`);
   }
-  for (const j of out.judge) lines.push(`judge ${j.ticket}: ${j.pairs.length} prose pair(s) waiting`);
   for (const a of out.askClient) lines.push(`ask client ${a.id} (${a.kind}): ${a.why}`);
   for (const e of out.external) lines.push(`started ${e.ticket} (${e.role}): ${e.started ? e.command : e.note}`);
   lines.push(landingLine(out.landing));

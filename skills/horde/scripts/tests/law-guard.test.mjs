@@ -58,7 +58,6 @@ function lawFixture(dir, id, mutate, {
 } = {}) {
   initHorde(dir);
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
-  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
 
   git(['checkout', '-q', 'mission1/trunk'], dir);
   write(dir, 'src/a.mjs', 'export const a = 1;\n');
@@ -735,7 +734,6 @@ function protectionFixture(dir, id, mutate, { declared = PROTECTED_DECLARED } = 
   // A gate command that names a file this repository actually tracks — which is the only kind a
   // two-tree guard can say anything about, and the only kind a branch can quietly rewrite.
   run('horde.mjs', ['config', 'set', 'gates.team', 'sh gate.sh'], dir);
-  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
 
   git(['checkout', '-q', 'mission1/trunk'], dir);
   write(dir, 'src/a.mjs', 'export const a = 1;\n');
@@ -1001,7 +999,6 @@ function hasEvidenceAspectYaml(pin) {
 function pinnedEvidenceFixture(dir, id, pin) {
   initHorde(dir);
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
-  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
 
   git(['checkout', '-q', 'mission1/trunk'], dir);
   write(dir, 'src/a.mjs', 'export const a = 1;\n');

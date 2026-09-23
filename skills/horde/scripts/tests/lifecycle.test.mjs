@@ -37,7 +37,6 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     // The gate this repository is held to for the rest of the walk, and the judge policy, said
     // once here rather than at each step that needs them.
     assert.equal(run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir).code, 0);
-    assert.equal(run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir).code, 0);
     assert.equal(existsSync(join(dir, '.horde')), true);
     // horde-requires-yggdrasil: a repository with no graph gets one, made by the real CLI.
     assert.equal(existsSync(join(dir, '.yggdrasil', 'yg-architecture.yaml')), true);

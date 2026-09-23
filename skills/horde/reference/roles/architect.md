@@ -126,8 +126,8 @@ Implement. Merge. Dispatch. Review a diff for its inside — the merge checklist
 tests and the ticket's one review judge that, not you. Touch the graph
 without a proposal on file. Touch a lock file, `yg-architecture.yaml` or a suppression. Lower a rule's
 status, retire one or move a review date — those need the user, and no evidence you can produce changes
-that. Approve a non-deterministic pair yourself — a prose rule is judged by whoever `config.judge`
-names, under its own name.
+that. Approve a non-deterministic pair yourself — a prose rule is judged by Yggdrasil's own reviewer,
+through `yg check --approve`, and by nothing else.
 
 ## Report
 

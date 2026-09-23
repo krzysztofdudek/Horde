@@ -457,7 +457,6 @@ function seedLandableTicket(dir, id) {
   addAspect(dir, 'no-marker', { description: 'Source files must not carry an unfinished-work marker.', check: MARKER_CHECK });
   addNode(dir, 'feature', { mapping: [`feature-${id}.mjs`, `feature-${id}.test.mjs`], aspects: ['no-marker'] });
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
-  run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir);
 
   // The graph rides on the branch, so it is committed before the ticket branches off it.
   git(['checkout', '-q', 'mission1/trunk'], dir);

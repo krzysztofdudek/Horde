@@ -866,7 +866,6 @@ function buildContractTicket(t, {
   git(['checkout', '-q', '-B', 'develop', 'mission1/trunk'], dir);
 
   assert.equal(run('horde.mjs', ['config', 'set', 'gates.team', gate], dir).code, 0);
-  assert.equal(run('horde.mjs', ['config', 'set', 'judge', 'one-shot'], dir).code, 0);
 
   const charter = stdinRun('horde.mjs', ['charter', 'edit'], dir, contractCharter(title));
   assert.equal(charter.code, 0, charter.stderr);

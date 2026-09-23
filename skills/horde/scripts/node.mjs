@@ -17,7 +17,7 @@
 // process state — port proposals and graph-change proposals, uncommitted, per horde, in
 // hordes/<horde>/graph.json — until an approval turns one into a filing the architect makes.
 
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
@@ -59,10 +59,6 @@ commands:
   contracts [--pending] [--node n] [--horde h]
       the ports of this mission's nodes as the graph declares them (name, description), plus
       every port proposal this horde has open.
-  verdicts [--at <path>] [--by <name>] [--horde h]
-      the prose rules still waiting on a judgement in a tree, each with the exact
-      "yg verdict package" and "yg verdict record" commands that judge it. --at names the
-      worktree to read (default: this one).
   propose <kind> "<text>" --by <name> [--node n] [--boundary <glob>[,glob…]] [--horde h]
       kinds: new-node, move-boundary, rename, rule. move-boundary requires --node and --boundary
       so apply can name the exact edit later, not just record that it happened. A ticket on a node
@@ -484,6 +480,28 @@ export function runYgCheck(cfg, cwd, extra = []) {
   };
 }
 
+// ---- whether this repository has a reviewer ----------------------------------------------
+//
+// Yggdrasil's rules come in two kinds. A script rule answers for itself, free, in any worktree. A
+// prose rule is judged by one reader only: the reviewer configured inside Yggdrasil, through
+// `yg check --approve`. A repository without one cannot have its prose rules judged at all, and
+// that decides what the commit hook may demand and what init says out loud.
+//
+// The evidence is Yggdrasil's own config: a `reviewer:` block with a provider under it. Read as
+// text because Horde has no YAML parser and does not want one.
+const YG_CONFIG_FILES = ['yg-config.yaml', 'yg-secrets.yaml'];
+export function hasReviewer(root) {
+  for (const name of YG_CONFIG_FILES) {
+    let text = '';
+    try { text = readFileSync(join(root, '.yggdrasil', name), 'utf8'); } catch { continue; }
+    // The block runs to the next top-level key or to the end of the file — `yg init` writes
+    // `reviewer:` as the last key, and JavaScript has no `\Z` (it would match a literal Z).
+    const block = /^reviewer:\s*$([\s\S]*?)(?=^\S|(?![\s\S]))/m.exec(text);
+    if (block && /^\s+provider:\s*\S/m.test(block[1])) return true;
+  }
+  return false;
+}
+
 // ---- the prose rules a judge still owes a verdict on -----------------------------------------
 //
 // verifier-is-yggdrasil-reviewer: the free half of a graph gate is `yg check --approve
@@ -575,19 +593,6 @@ export function pendingProsePairs(cfg, cwd) {
   };
 }
 
-// The two commands that judge one pending pair, in the order they are run: the package names the
-// hash, and the record is bound to it. Written out in full so a verifier copies rather than
-// composes — the hash is the one field it cannot invent.
-export function verdictCommandsFor(cfg, pair, judge) {
-  const { display } = ygCommand(cfg);
-  const unit = `--${pair.unitKind} ${pair.unit}`;
-  return {
-    package: `${display} verdict package --aspect ${pair.aspect} ${unit}`,
-    record: `${display} verdict record --aspect ${pair.aspect} ${unit} --by ${judge || '<your name>'} `
-      + '--verdict pass|refused --hash <hashes.pass or hashes.refused from the package> '
-      + '[--report "<what it breaks, with file:line>"]',
-  };
-}
 
 // ---- the quality index ----------------------------------------------------------------------
 //
@@ -2068,38 +2073,6 @@ function cmdContracts(horde, root, cfg, flags) {
   });
 }
 
-// ---- the prose rules waiting on a judge --------------------------------------
-
-function cmdVerdicts(horde, root, cfg, flags) {
-  const cwd = flags.at ? resolve(root, flags.at) : root;
-  const res = pendingProsePairs(cfg, cwd);
-  if (!res.available) failNoCli(cfg, res.command);
-  const rows = res.pairs.map((p) => ({ ...p, ...verdictCommandsFor(cfg, p, flags.by) }));
-  const free = res.scriptPending.length
-    ? `${res.scriptPending.length} script rule(s) here have no verdict yet either — nobody has to read `
-      + `those: run \`${ygCommand(cfg).display} check --approve --only-deterministic\` first, it is free `
-      + 'and needs no key.'
-    : null;
-  emit({ at: cwd, green: res.green, pending: rows, scriptPending: res.scriptPending }, flags, () => {
-    const lines = [];
-    if (rows.length === 0) {
-      lines.push(res.green
-        ? `no prose rule is waiting — ${res.command} is green on this tree`
-        : `no prose rule is waiting on a judgement; ${res.command} is still red for another reason — read it`);
-    } else {
-      lines.push(
-        `${rows.length} prose rule(s) waiting on a judgement in ${cwd}:`,
-        ...rows.flatMap((r) => [
-          `- ${r.aspect} on ${r.unitKind}:${r.unit}`,
-          `    ${r.package}`,
-          `    ${r.record}`,
-        ]),
-      );
-    }
-    if (free) lines.push('', free);
-    return lines.join('\n');
-  });
-}
 
 // ---- graph-change proposals ---------------------------------------------------
 
@@ -2227,7 +2200,6 @@ function main() {
     fail('contract requires "propose", "approve" or "veto"');
   }
   if (cmd === 'contracts') return cmdContracts(horde, root, cfg, flags);
-  if (cmd === 'verdicts') return cmdVerdicts(horde, root, cfg, flags);
   if (cmd === 'propose') return withGraphLock(horde, () => cmdPropose(horde, rest, flags));
   if (cmd === 'proposals') return cmdProposals(horde, flags);
   if (cmd === 'approve') return withGraphLock(horde, () => cmdProposalRule(horde, rest, flags, 'approved'));

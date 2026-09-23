@@ -536,54 +536,6 @@ test('node.mjs map: the mission\'s components with owner, ports and open port pr
   assert.equal('stamp' in row, false);
 });
 
-// ---- the prose rules a judge still owes a verdict on ----------------------------------------
-
-test('node.mjs verdicts: the prose rules waiting on a judgement, with the commands that answer them', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-  // A reviewer tier, so the graph has an identity a verdict can bind to. No key, no judge: this is
-  // exactly the state the external-judge channel exists for.
-  assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
-  mkdirSync(join(dir, 'src'), { recursive: true });
-  writeFileSync(join(dir, 'src', 'thing.mjs'), 'export const thing = 1;\n');
-  addAspect(dir, 'reads-well', {
-    description: 'Every exported name reads as a sentence a stranger understands.',
-    content: '# Reads well\n\nAn exported name must read as something a stranger understands.\n',
-  });
-  addAspect(dir, 'no-marker', {
-    description: 'Source files must not carry an unfinished-work marker.',
-    check: MARKER_CHECK,
-  });
-  addNode(dir, 'core', { mapping: ['src/**'], aspects: ['reads-well', 'no-marker'] });
-
-  await t.test('after the free run, what is left is judgement — and it is named with its commands', () => {
-    assert.equal(yg(dir, ['check', '--approve', '--only-deterministic']).code, 1);
-    const r = run('node.mjs', ['verdicts'], dir);
-    assert.equal(r.code, 0, r.stderr);
-    assert.deepEqual(r.json.pending.map((p) => `${p.aspect} ${p.unitKind}:${p.unit}`), ['reads-well node:core']);
-    assert.match(r.json.pending[0].package, /verdict package --aspect reads-well --node core$/);
-    assert.match(r.json.pending[0].record, /verdict record --aspect reads-well --node core --by/);
-    assert.match(r.json.pending[0].record, /--hash <hashes\.pass or hashes\.refused from the package>/);
-  });
-
-  await t.test('the commands it prints are the ones that actually record the verdict', () => {
-    const pending = run('node.mjs', ['verdicts', '--by', 'verifier-1'], dir).json.pending[0];
-    const pkg = JSON.parse(yg(dir, ['verdict', 'package', '--aspect', 'reads-well', '--node', 'core']).out);
-    assert.equal(pkg.schema, 'yg-review/1');
-    assert.match(pending.record, /--by verifier-1/);
-
-    const recorded = yg(dir, ['verdict', 'record', '--aspect', 'reads-well', '--node', 'core',
-      '--by', 'verifier-1', '--verdict', 'pass', '--hash', pkg.hashes.pass]);
-    assert.equal(recorded.code, 0, recorded.out);
-
-    const after = run('node.mjs', ['verdicts'], dir);
-    assert.deepEqual(after.json.pending, []);
-    assert.equal(after.json.green, true);
-    assert.match(run('node.mjs', ['verdicts'], dir, { json: false }).stdout, /no prose rule is waiting/);
-  });
-});
-
 // ---- E16: node ownership is exclusive across live hordes on one repository --------------------
 
 test('node.mjs bind: node-lease-across-hordes — exclusive across live hordes, --take needs an answered ask', async (t) => {
