@@ -27,7 +27,8 @@ test('every yg check Horde runs to read the graph passes --no-approve', (t) => {
   ygCheckDoc(dir, cfg);
   ygCheckJson(dir, cfg);
 
-  const calls = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  // The version check Horde makes once per CLI (6.0.0 or newer) is not a read of the graph.
+  const calls = readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((argv) => argv[0] !== '--version');
   assert.equal(calls.length, 4);
   for (const argv of calls) {
     assert.equal(argv[0], 'check');
