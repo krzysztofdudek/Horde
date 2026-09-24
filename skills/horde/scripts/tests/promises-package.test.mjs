@@ -769,10 +769,10 @@ test('frontmatter that does not read names the file and the line, and the rest o
   try {
     const r = checked(dir);
     assert.notEqual(r.code, 0, r.out);
-    assert.match(r.out, /promises\/orders-are-confirmed\.md:3:/, `the file and line were not named:\n${r.out}`);
+    assert.match(r.out, /promises\/orders-are-confirmed\.md:3\b/, `the file and line were not named:\n${r.out}`);
     assert.match(r.out, /could not be read at line 3/);
     // The run kept going: the second promise was judged rather than lost behind the first.
-    assert.doesNotMatch(r.out, /orders-are-paid\.md:\d+:/, `the sound promise was dragged down too:\n${r.out}`);
+    assert.doesNotMatch(r.out, /orders-are-paid\.md:\d+\b/, `the sound promise was dragged down too:\n${r.out}`);
   } finally {
     rmRepo(dir);
   }
