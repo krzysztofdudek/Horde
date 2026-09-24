@@ -5,6 +5,12 @@
 // CLI; everything below that builds a real repository, installs the package into it with the real
 // `yg pack add`, and reads what the real `yg check` says. Nothing here stands in for Yggdrasil.
 //
+// The package is installed the way an adopter meets it: from a git source that publishes it under a
+// `pack/promises@<version>` tag. Yggdrasil installs a git source only at such a tag, and this
+// checkout has none (the release process creates it), so the suite builds that source once — a
+// temporary repository holding this checkout's package and marketplace manifest, committed and
+// tagged at the version `yg-package.yaml` declares — and every repository below installs from it.
+//
 // One thing the corpus cannot do, and it shapes the split: `yg drill` runs a check over ONE case
 // file at a time (core/drill-runner.ts, discoverDrillCases — `files: [relToRoot]`) with no graph
 // and therefore no settings, and it skips every `.md` file in a corpus. So a rule about the pairing
@@ -12,20 +18,22 @@
 // could express it, and is measured here against a real repository instead. The coverage test at
 // the bottom holds that split to an exact accounting rather than letting it drift.
 
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { addNode, makeRepo, rmRepo, requireYg, yg, ygInit } from './helpers.mjs';
+import { addNode, git, makeRepo, rmRepo, requireYg, yg, ygInit } from './helpers.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const HORDE_ROOT = resolve(HERE, '..', '..', '..', '..');
 const PACKAGE_DIR = join(HORDE_ROOT, 'packages', 'promises');
 const OWNER = 'krzysztofdudek/Horde';
 const INSTALLED = `packages/${OWNER}/promises`;
+const VERSION = /^version:\s*(\S+)\s*$/m.exec(readFileSync(join(PACKAGE_DIR, 'yg-package.yaml'), 'utf8'))[1];
+const TAG = `pack/promises@${VERSION}`;
 
 const DETERMINISTIC = ['doc-shape', 'product-language', 'has-evidence', 'evidence-is-live'];
 const ALL_ASPECTS = [...DETERMINISTIC, 'evidence-matches-promise'];
@@ -114,6 +122,25 @@ const REFUSALS = [
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
 /**
+ * The package as a release publishes it: a git repository with this checkout's marketplace manifest
+ * and `packages/promises`, one commit, and the `pack/promises@<version>` tag on it. Built once per
+ * run, from the working tree, so an uncommitted change to a rule is what the suite measures.
+ */
+let published = null;
+function publishedSource() {
+  if (published) return published;
+  const dir = makeRepo();
+  cpSync(join(HORDE_ROOT, 'yg-marketplace.yaml'), join(dir, 'yg-marketplace.yaml'));
+  cpSync(PACKAGE_DIR, join(dir, 'packages', 'promises'), { recursive: true });
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', `promises ${VERSION}`], dir);
+  git(['-c', 'tag.gpgSign=false', 'tag', TAG], dir);
+  published = { dir, commit: git(['rev-parse', 'HEAD'], dir) };
+  return published;
+}
+after(() => { if (published) rmRepo(published.dir); });
+
+/**
  * A real repository with the real package installed, promises and a suite written, and the rules
  * attached to one component that maps both.
  *
@@ -124,7 +151,7 @@ const REFUSALS = [
 function promisesRepo({ promises = {}, suite = {}, aspects = DETERMINISTIC, config = {} } = {}) {
   const dir = makeRepo();
   ygInit(dir);
-  const added = yg(dir, ['pack', 'add', `${HORDE_ROOT}#promises`, '--as', OWNER]);
+  const added = yg(dir, ['pack', 'add', `${publishedSource().dir}#promises`, '--as', OWNER]);
   assert.equal(added.code, 0, `yg pack add failed:\n${added.out}`);
 
   write(dir, promises, 'promises');
@@ -208,9 +235,34 @@ test('installing the package copies five rules under the publisher and records w
     const lock = readFileSync(join(dir, '.yggdrasil', 'yg-packages.yaml'), 'utf8');
     assert.match(lock, /"promises":/);
     assert.match(lock, new RegExp(`packages/${OWNER}/promises/doc-shape/check\\.mjs`));
+    assert.match(lock, new RegExp(`version: "${VERSION.replace(/\./g, '\\.')}"`), 'the version the manifest declares');
+    assert.match(lock, /requested: "latest"/, 'installed with no version named, it follows the newest tag');
+    assert.match(lock, new RegExp(`tag: "${TAG.replace(/\./g, '\\.')}"`), 'the tag it was taken from');
+    assert.match(lock, new RegExp(`commit: "${publishedSource().commit}"`), 'the commit that tag pointed at');
   } finally {
     rmRepo(dir);
   }
+});
+
+test('installing the package at a named version pins it to that tag', () => {
+  const dir = makeRepo();
+  try {
+    ygInit(dir);
+    const added = yg(dir, ['pack', 'add', `${publishedSource().dir}#promises@${VERSION}`, '--as', OWNER]);
+    assert.equal(added.code, 0, `yg pack add failed:\n${added.out}`);
+    const lock = readFileSync(join(dir, '.yggdrasil', 'yg-packages.yaml'), 'utf8');
+    assert.match(lock, new RegExp(`requested: "${VERSION.replace(/\./g, '\\.')}"`));
+    assert.match(lock, new RegExp(`tag: "${TAG.replace(/\./g, '\\.')}"`));
+  } finally {
+    rmRepo(dir);
+  }
+});
+
+test('the version a release tags is the one the package and the marketplace both declare', () => {
+  const market = readFileSync(join(HORDE_ROOT, 'yg-marketplace.yaml'), 'utf8');
+  const entry = /-\s*name:\s*promises\s*\n\s*path:\s*packages\/promises\s*\n\s*version:\s*(\S+)/.exec(market);
+  assert.ok(entry, 'yg-marketplace.yaml lists promises with a path and a version');
+  assert.equal(entry[1], VERSION, `yg-marketplace.yaml says ${entry[1]}, yg-package.yaml says ${VERSION}: tag ${TAG} would be refused`);
 });
 
 test('no rule in the package reaches outside the package', () => {
@@ -774,7 +826,8 @@ test('no vocabulary set means no exceptions, not a crash', () => {
     const r = checked(dir);
     assert.notEqual(r.code, 0, r.out);
     assert.match(r.out, /contains 'PostgreSQL' — a code identifier/);
-    assert.doesNotMatch(r.out, /threw an exception|TypeError|undefined/);
+    // `undefined` on its own, as a crash prints it — not inside a finding's name such as `type-undefined-pending`.
+    assert.doesNotMatch(r.out, /threw an exception|TypeError|(?<![\w-])undefined(?![\w-])/);
   } finally {
     rmRepo(dir);
   }
