@@ -677,8 +677,15 @@ export function ygQualityIndex(cfg, cwd) {
     advisoryClean,
     baseline: check.totals.errors,
     noiseFloor: check.totals.warnings,
-    coveredFiles: check.coverage.covered,
-    totalFiles: check.coverage.files,
+    // coverage.covered also counts excluded files, so a repository whose init excluded its own
+    // plumbing (Yggdrasil 6.1.0+) would read as covered by files no node owns. With the split
+    // present, covered is what a node or a type answers for, out of the files not excluded.
+    coveredFiles: check.coverage.nodeOwned != null
+      ? check.coverage.nodeOwned + (check.coverage.typeCovered ?? 0)
+      : check.coverage.covered,
+    totalFiles: check.coverage.nodeOwned != null
+      ? check.coverage.files - (check.coverage.excluded ?? 0)
+      : check.coverage.files,
     nodes: check.project.nodes,
     aspects: check.project.aspects,
     judges: check.judges.length,

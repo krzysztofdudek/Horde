@@ -69,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The wave quality index counts coverage as the files a node or a type answers for, out of the files not excluded. `coverage.covered` in `yg-check/1` also counts excluded files, so since Yggdrasil 6.1.0 excludes its own files at init the index read coverage no component provided.
 - A `--json` read that Yggdrasil 6.1.0 answers with a `yg-error/1` document is no longer taken for an old CLI. A missing node (`node-not-found`, or `yg context --node`'s `command-error` naming it) is read as absent again, and any other refusal is reported with Yggdrasil's own what, why and next. Before this, asking about a node the graph does not have told you to upgrade a CLI that was new enough.
 - The landing's gate lock, the one that serialises merges onto trunk, now takes over a stale lock the way every other lock does: only while it still reads as it did when judged abandoned, and a lock that vanished (released the normal way) is simply retried. It still had the plain remove the other five loops lost earlier in this release, so an ordinary release could delete a fresh lock another landing had just taken and let two landings merge at once.
 - The legislator's brief no longer lists aggregate rules under "Rules that reach nothing". Yggdrasil reports a bundle reaching no unit because it has no verdict of its own, while the rules it implies reach everything it is attached to; deleting one, as the brief invited, unhooks those rules and is refused at landing.
