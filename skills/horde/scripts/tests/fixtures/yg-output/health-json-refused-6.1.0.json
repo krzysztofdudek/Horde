@@ -1,0 +1,10 @@
+{
+  "schema": "yg-error/1",
+  "code": "command-error",
+  "what": "--health cannot be combined with --json.",
+  "why": "--health is a separate projection with its own columns — signals, rule age, suppress coverage, attributed incidents — and it costs a whole verification pass to compute. The machine document is the rule INVENTORY; folding a different, far more expensive report into it under the same schema would make one name mean two things.",
+  "next": {
+    "command": null,
+    "text": "Run: yg aspects --json (the inventory), or yg aspects --health (the health projection)."
+  }
+}

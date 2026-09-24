@@ -161,13 +161,15 @@ function readGrainAdvice(root, cfg) {
 // `--health` is refused alongside `--json` by Yggdrasil itself, on purpose: the machine document
 // is the rule INVENTORY, and the health projection costs a whole verification pass, so folding one
 // into the other would make one schema name mean two things. There is therefore no machine form of
-// this reading to ask for, and the only honest options are to parse the table it does print or to
-// go without the label. Going without would mean Horde inventing its own word for "a rule nothing
-// has hit", which is the one thing this whole line exists NOT to do — the word belongs to the tool
-// that measured it. So: parse the table, take only the two columns that are contract-fixed
-// (`aspect` first, `signal` by header name), take the plain-words note verbatim when there is one,
-// and treat anything that does not look like that table as an unreadable answer rather than a
-// guess.
+// this reading to ask for (as of Yggdrasil 6.1.0), and the only honest options are to parse the
+// table it does print or to go without the label. Going without would mean Horde inventing its own
+// word for "a rule nothing has hit", which is the one thing this whole line exists NOT to do — the
+// word belongs to the tool that measured it. So the table is read, and read tolerantly, because its
+// layout is Yggdrasil's to change: the header row is found by the two column NAMES it must carry
+// (`aspect` and `signal`, anywhere in the row, any case, any indentation), each cell is taken by
+// that header's position, colour codes are stripped, and the plain-words note is taken verbatim from
+// the block whose heading starts "signal detail". Anything that does not carry both column names is
+// an unreadable answer, never a guess — the close then says it could not read it.
 
 function runHealth(tree, cfg) {
   const { cmd, prefix, display } = ygCommand(cfg);
@@ -189,27 +191,33 @@ function runHealth(tree, cfg) {
 // ('active', 'decorative?', 'quiet', or the em-dash for a rule with no recorded exposure);
 // `reading` is the plain-words line Yggdrasil prints under the table for that rule, verbatim and
 // unparaphrased. Null when the text is not that table at all.
+const cellsOf = (line) => line.trim().split(/\s{2,}|\t+/);
 export function parseHealth(text) {
-  const lines = String(text || '').split('\n');
-  const headerIdx = lines.findIndex((l) => /^aspect\s{2,}/.test(l) && /\bsignal\b/.test(l));
+  const lines = String(text || '').replace(/\x1b\[[0-9;]*m/g, '').split('\n');
+  let headerIdx = -1;
+  let aspectCol = -1;
+  let signalCol = -1;
+  for (let i = 0; i < lines.length && headerIdx === -1; i++) {
+    const names = cellsOf(lines[i]).map((c) => c.toLowerCase());
+    const a = names.indexOf('aspect');
+    const sg = names.indexOf('signal');
+    if (a !== -1 && sg !== -1) { headerIdx = i; aspectCol = a; signalCol = sg; }
+  }
   if (headerIdx === -1) return null;
-  const headers = lines[headerIdx].trim().split(/\s{2,}/);
-  const signalCol = headers.indexOf('signal');
-  if (headers[0] !== 'aspect' || signalCol === -1) return null;
   const out = new Map();
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim() === '') break;
-    const cells = line.trim().split(/\s{2,}/);
-    if (cells.length <= signalCol) continue;
-    out.set(cells[0], { signal: cells[signalCol], reading: null });
+    const cells = cellsOf(line);
+    if (cells.length <= Math.max(aspectCol, signalCol)) continue;
+    out.set(cells[aspectCol], { signal: cells[signalCol], reading: null });
   }
   // "Signal detail (…):" then one indented "<aspect>: <plain words>" per rule that earned one.
-  const detailIdx = lines.findIndex((l) => l.startsWith('Signal detail'));
+  const detailIdx = lines.findIndex((l) => /^\s*(?:note:\s*)?signal detail/i.test(l));
   if (detailIdx !== -1) {
     for (let i = detailIdx + 1; i < lines.length; i++) {
       if (lines[i].trim() === '') break;
-      const m = /^\s+(\S+):\s+(.*)$/.exec(lines[i]);
+      const m = /^\s*(\S+?):\s+(.*)$/.exec(lines[i]);
       if (!m) continue;
       const entry = out.get(m[1]);
       if (entry) entry.reading = m[2].trim();

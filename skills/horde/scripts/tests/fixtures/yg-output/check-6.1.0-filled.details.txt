@@ -1,0 +1,34 @@
+yg check: FAIL  1 node · 6/7 files (2 node-owned, 0 type-covered, 4 excluded) · 2 aspects · 0 flows
+
+Type-level coverage is on, but no type in yg-architecture.yaml declares 'when:' — no file can be type-covered until you add classifying types.
+
+Nothing is required to be covered, so the 1 uncovered file this run lists can never fail a check — only ever be listed. Name a path under coverage.required in .yggdrasil/yg-config.yaml to make files under it block until a component owns them.
+
+Errors (1):
+
+  enforced  feature  Aspect 'no-marker' is refused on node:feature by a deterministic check.
+            Violations:
+            other.mjs:1: unfinished-work marker left behind.
+            Why: A deterministic check recorded these violations. The result is cached — the same inputs reproduce the same verdict, so the check is not re-run.
+            Fix: Fix the listed violations, then: yg check --approve
+
+Warnings (4):
+
+  reviewer-missing  feature  Judgment aspect 'plain-names' on node:feature has no reviewer to judge it.
+            Why: yg-config.yaml has no reviewer: section, so nothing can read this content.md rule. Re-running --approve cannot change that; it stays unverified until a reviewer is configured or the rule is set to status: draft.
+            Fix: yg init --provider <name> [--model <m>] — the user's decision, since it sends code to that provider — or set the judgment aspect to status: draft  (advisory — not blocking)
+
+  config-reviewer-missing  A judgment rule has no judge: yg-config.yaml has no reviewer: section.
+            Why: Script rules run locally for free (yg check --approve --only-deterministic still fills them), but a judgment rule (content.md) needs a configured model to read it — until then its pairs stay unverified. Configuring a reviewer is the user's decision: it sends code to that provider, on their account.
+            Fix: yg init --provider <name> [--model <m>] (an installed agent CLI — claude-code, codex, gemini-cli, copilot-cli — needs no API key), or set the judgment rule to status: draft until a reviewer is chosen.
+
+  type-undefined-pending  feature  Node type 'module' is not defined — yg-architecture.yaml declares no node types yet.
+            Why: While node_types is empty, node types are not checked. Once any type is declared, every node whose type is missing becomes a blocking type-undefined error, and a type whose nodes map files must declare when:.
+            Fix: Define 'module' under node_types in yg-architecture.yaml with a when: predicate matching its files (an architecture change — confirm it first). yg type-suggest --file <path> can help design it.
+
+  uncovered (1)
+            package.json
+            Why: Not under a coverage.required root — visible but non-blocking. Bring an area under graph coverage to enforce it. Your architecture has no type for this file yet.
+            Fix: Map these files to a node, or add their root to coverage.required to make this an error. Or design an architecture type that covers files like it: yg type-suggest --file <path>.
+
+Next: Fix the listed violations, then: yg check --approve

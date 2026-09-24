@@ -13,15 +13,16 @@ test('node.mjs runYgCheck: reads a yg document larger than the default child-pro
   const dir = mkdtempSync(join(tmpdir(), 'horde-large-verdict-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const fake = join(dir, 'fake-yg.mjs');
-  // 3 MB of output, then the verdict line a real run ends with.
+  // A 3 MB yg-check/1 document: three thousand pairs, each carrying a 1 KB refusal report.
   writeFileSync(fake, [
-    "const line = 'x'.repeat(1023) + '\\n';",
-    'for (let i = 0; i < 3072; i++) process.stdout.write(line);',
-    "process.stdout.write('yg check: PASS  1 nodes\\n');",
+    "if (process.argv[2] === '--version') { console.log('6.0.0'); process.exit(0); }",
+    "const pairs = Array.from({ length: 3072 }, (_, i) => ({ aspect: 'no-marker', unit: { kind: 'file', path: `f${i}.mjs` }, node: 'feature', kind: 'deterministic', status: 'advisory', verdict: 'refused', report: 'x'.repeat(1000) }));",
+    "process.stdout.write(JSON.stringify({ schema: 'yg-check/1', exit: { code: 0, status: 'pass', reason: 'Nothing blocks this run.' }, pairs }));",
   ].join('\n'));
   const res = runYgCheck({ ygCommand: `node ${fake}` }, dir);
   assert.equal(res.available, true);
   assert.equal(res.ok, true, res.summary);
-  assert.ok(res.out.length > 3 * 1024 * 1024, `read ${res.out.length} bytes`);
+  assert.equal(res.doc.pairs.length, 3072);
+  assert.ok(JSON.stringify(res.doc).length > 3 * 1024 * 1024, 'read whole');
   assert.match(res.summary, /^yg check: PASS/);
 });

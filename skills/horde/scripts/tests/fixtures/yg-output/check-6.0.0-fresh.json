@@ -1,0 +1,108 @@
+{
+  "schema": "yg-check/1",
+  "project": {
+    "name": "h190-600",
+    "nodes": 1,
+    "aspects": 2,
+    "flows": 0
+  },
+  "exit": {
+    "code": 1,
+    "status": "fail",
+    "reason": "2 blocking findings and 2 warnings."
+  },
+  "coverage": {
+    "files": 7,
+    "covered": 6,
+    "nodeOwned": 2,
+    "typeCovered": 0,
+    "excluded": 4,
+    "requiresNothing": true
+  },
+  "totals": {
+    "errors": 2,
+    "warnings": 2,
+    "draftSkipped": 0,
+    "verdicts": {
+      "approved": 0,
+      "refused": 0,
+      "unverified": 2,
+      "stale": 0,
+      "prompt-too-large": 0,
+      "companion-error": 0
+    },
+    "verified": {
+      "deterministic": 0,
+      "llm": 0
+    }
+  },
+  "pairs": [
+    {
+      "aspect": "no-marker",
+      "unit": {
+        "kind": "node",
+        "path": "feature"
+      },
+      "node": "feature",
+      "kind": "deterministic",
+      "status": "enforced",
+      "verdict": "unverified",
+      "reviewer": "deterministic",
+      "hash": null,
+      "filled": null
+    },
+    {
+      "aspect": "plain-names",
+      "unit": {
+        "kind": "node",
+        "path": "feature"
+      },
+      "node": "feature",
+      "kind": "llm",
+      "status": "advisory",
+      "verdict": "unverified",
+      "reviewer": null,
+      "hash": null,
+      "filled": null
+    }
+  ],
+  "issues": [
+    {
+      "code": "unverified",
+      "severity": "error",
+      "what": "No valid verdict for aspect 'no-marker' on node:feature.",
+      "why": "The lock holds no entry for this pair, or its inputs changed since the verdict was recorded (source edit, aspect edit, or a fill that did not complete). A verdict is valid only while its inputs hash to the stored value.",
+      "next": "yg check --approve",
+      "aspect": "no-marker",
+      "node": "feature",
+      "unit": "node:feature"
+    },
+    {
+      "code": "unverified",
+      "severity": "warning",
+      "what": "No valid verdict for aspect 'plain-names' on node:feature.",
+      "why": "The lock holds no entry for this pair, or its inputs changed since the verdict was recorded (source edit, aspect edit, or a fill that did not complete). A verdict is valid only while its inputs hash to the stored value.",
+      "next": "yg check --approve",
+      "aspect": "plain-names",
+      "node": "feature",
+      "unit": "node:feature"
+    },
+    {
+      "code": "config-reviewer-missing",
+      "severity": "error",
+      "what": "A judgment rule has no judge: yg-config.yaml has no reviewer: section.",
+      "why": "Script rules run locally for free, but a judgment rule (content.md) needs a configured model to read it — until then its pairs stay unverified.",
+      "next": "Run yg init and pick 'Configure reviewer' (an installed agent CLI needs no API key), or add reviewer.tiers to .yggdrasil/yg-config.yaml — see yg knowledge read configuration."
+    },
+    {
+      "code": "uncovered-advisory",
+      "severity": "warning",
+      "what": "1 coverage-visible file outside any required coverage root.\n  package.json",
+      "why": "Not under a coverage.required root — visible but non-blocking. Bring an area under graph coverage to enforce it. Your architecture has no type for this file yet.",
+      "next": "Map these files to a node, or add their root to coverage.required to make this an error. yg type-suggest --file <path> can help design one before you decide where it belongs."
+    }
+  ],
+  "judges": [],
+  "progressive": null,
+  "suggestedNext": "yg check --approve"
+}

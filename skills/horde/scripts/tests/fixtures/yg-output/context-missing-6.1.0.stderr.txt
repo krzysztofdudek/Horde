@@ -1,0 +1,3 @@
+Error: Node 'nope' does not exist in the graph.
+The --node path must name an existing node — a directory under .yggdrasil/model/, written without the model/ prefix.
+Browse the graph with 'yg tree', or locate one with 'yg find "<keywords>"', then retry with a valid --node path.

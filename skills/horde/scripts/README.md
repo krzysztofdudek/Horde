@@ -665,7 +665,10 @@ several users.
   `promote <aspect> [--by <name>] [--node <path>] [--with-reviewer]` grants the next rung when the
   evidence carries it, and refuses naming exactly what is missing when it does not:
   - *draft → advisory* — `yg drill --aspect <id>` runs clean over a corpus that actually has cases
-    (an empty corpus is never a pass: nothing has been run against that rule). The move records the
+    (an empty corpus is never a pass: nothing has been run against that rule). `yg drill` has no
+    `--json`, so its summary line is read by what each count's word means, in any order or case, and
+    checked against the drill's own exit code; a count Horde does not recognise, or a line the exit
+    code contradicts, is unread — never green. The move records the
     **baseline** — the refusals `yg check --json` reports for that rule once the rung makes its pairs
     exist, after the free keyless fill — so a later reading above it is a new violation and a reading
     at or below it is not.
@@ -771,7 +774,9 @@ useless": a rule that is never violated may be deterring the very violations it 
 never coins a word for it — it prints Yggdrasil's `signal` cell and the plain-words line under the
 table verbatim, or it prints nothing. (`--health` is refused alongside `--json` by Yggdrasil on
 purpose, so there is no machine form to ask for; the alternative to parsing that table is inventing a
-label, which is the one thing this line exists not to do.)
+label, which is the one thing this line exists not to do. The table is read by its column names —
+`aspect` and `signal`, in any position, case or indentation — so a re-laid table still reads, and one
+without both names is reported as unread, never guessed at.)
 
 Both ledgers live in the horde's own `graph.json`, under `audits`, keyed by what the finding IS
 (`review-by:<rule>`, or the attention item's own stable id) — a rule stays overdue until somebody

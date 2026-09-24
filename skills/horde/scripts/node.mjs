@@ -324,6 +324,27 @@ function timedOutDetail(ms) {
 // Exported because the landing gate reads the same documents on two trees at once and must not go
 // through the readers below: every one of them caches by node or by file alone, which is right for
 // a command looking at one tree and exactly wrong for a comparison of two.
+// A command that answers in JSON and fails writes a `yg-error/1` document on stdout (Yggdrasil 6.1.0
+// and newer): `code` names the failure, `what` / `why` / `next` say it. It is an answer, not a
+// stranger's document, so it is never read as an old CLI — which is what a schema mismatch otherwise
+// means above. A node the graph does not have is `absent` by its code, `node-not-found`. The text
+// test on `what` stays for the one command that still reports a missing node under the generic
+// `command-error` code (`yg context --node`, as of 6.1.0) and for 6.0.x, which writes no document and
+// only says it on stderr (the test below the JSON branch).
+const YG_ERROR_SCHEMA = 'yg-error/1';
+const NODE_MISSING_TEXT = /does not exist in the graph/;
+function ygErrorState(doc, { command, root, code, err }) {
+  if (doc.code === 'node-not-found' || NODE_MISSING_TEXT.test(String(doc.what || ''))) return { state: 'absent', command };
+  if (/unknown option|unknown command/i.test(`${err || ''}\n${doc.what || ''}`)) {
+    return { state: 'stale', command, root, saw: 'it does not know that option' };
+  }
+  const nextText = doc.next && typeof doc.next === 'object' ? doc.next.text : doc.next;
+  const detail = [doc.what, doc.why, nextText].filter((s) => typeof s === 'string' && s.trim()).join('\n');
+  return {
+    state: 'error', command, code: code ?? 1, errorCode: doc.code || null, detail: detail || (err || '').trim(),
+  };
+}
+
 export function ygJson(root, cfg, args, schema) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const command = `${display} ${args.join(' ')}`;
@@ -332,7 +353,9 @@ export function ygJson(root, cfg, args, schema) {
   }));
   if (run.missing) return { state: 'no-cli', command };
   if (run.timedOut) {
-    return { state: 'error', command, code: null, detail: timedOutDetail(run.ms) };
+    return {
+      state: 'error', command, code: null, timedOut: true, detail: timedOutDetail(run.ms),
+    };
   }
   if (run.spawnFailed) {
     return {
@@ -354,9 +377,10 @@ export function ygJson(root, cfg, args, schema) {
       if (old) return { state: 'stale', command, root, saw: `it reports version ${old}, and Horde needs ${YG_DOCUMENTS_AFTER} or newer` };
       return { state: 'ok', command, doc: parsed };
     }
+    if (parsed && parsed.schema === YG_ERROR_SCHEMA) return ygErrorState(parsed, { command, root, code, err });
     if (parsed) return { state: 'stale', command, root, saw: `it answered a "${parsed.schema || 'nameless'}" document, not ${schema}` };
   }
-  if (/does not exist in the graph/.test(err)) return { state: 'absent', command };
+  if (NODE_MISSING_TEXT.test(err)) return { state: 'absent', command };
   if (/unknown option|unknown command/i.test(err)) return { state: 'stale', command, root, saw: 'it does not know that option' };
   // Exit 0 and an EMPTY body — not merely "not the document" — is not an old CLI — an old one still
   // answers something, in whatever format it knows, which the fallback below reads as stale. It is a
@@ -449,12 +473,12 @@ export function ygImpact(root, cfg, node) {
   return doc;
 }
 
-// Runs `yg check` in one worktree and reports what it found. Never approves anything (that fills
-// the lock and can cost money): a bare `check` is read-only only until a repository sets
-// `auto_approve` in its yg-config.yaml, and then it fills verdicts on its own, the paid reviewer's
-// included, so every read here says `--no-approve` itself (READ_ONLY_CHECK). `available: false` means
-// the CLI itself could not be started — a different failure from a graph that refuses the tree,
-// and the caller says so in those words.
+// Every `yg check` Horde runs to READ the graph says `--no-approve` itself (READ_ONLY_CHECK): a bare
+// `check` is read-only only until a repository sets `auto_approve` in its yg-config.yaml, and then it
+// fills verdicts on its own, the paid reviewer's included. And every such read asks for `--json`
+// (yg-check/1) — the report is written for a person, and its wording is Yggdrasil's to change.
+const READ_ONLY_CHECK = ['check', '--no-approve'];
+
 // True when the configured Yggdrasil CLI starts and answers --version. The merge checklist
 // asks this before an item that must read the graph, so a missing CLI is a red item with a
 // reason, never a checklist that stops halfway.
@@ -462,46 +486,6 @@ export function ygAvailable(cfg, cwd) {
   const { cmd, prefix } = ygCommand(cfg);
   const run = startCli(cmd, [...prefix, '--version'], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
   return !(run.missing || run.spawnFailed || run.timedOut) && run.code === 0;
-}
-
-// A `check` that was stopped at the ceiling is reported as available (the CLI is there, it started,
-// it simply never came back) and not ok, with the stop as its summary. Never as unavailable: the
-// caller's words for that are "install the CLI", which would send somebody to fix the one thing
-// that is not wrong.
-const READ_ONLY_CHECK = ['check', '--no-approve'];
-
-export function runYgCheck(cfg, cwd, extra = []) {
-  const { cmd, prefix, display } = ygCommand(cfg);
-  const args = [...READ_ONLY_CHECK, ...extra];
-  const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
-  if (run.timedOut) {
-    return {
-      available: true,
-      ok: false,
-      timedOut: true,
-      exit: null,
-      command,
-      out: run.out + run.err,
-      summary: timedOutDetail(run.ms),
-    };
-  }
-  if (run.missing || run.spawnFailed) {
-    return { available: false, ok: false, command, summary: null, out: '' };
-  }
-  const status = run.code;
-  const out = run.out + run.err;
-  const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
-  const verdictLine = lines.find((l) => /^yg check:/.test(l));
-  const errorLine = lines.find((l) => /^(enforced|Errors)\b/.test(l));
-  return {
-    available: true,
-    ok: status === 0,
-    exit: status,
-    command,
-    out,
-    summary: verdictLine || errorLine || lines[lines.length - 1] || null,
-  };
 }
 
 // ---- whether this repository has a reviewer ----------------------------------------------
@@ -526,16 +510,12 @@ export function hasReviewer(root) {
   return false;
 }
 
-// ---- the prose rules a judge still owes a verdict on -----------------------------------------
+// ---- the free half of a graph gate -----------------------------------------------------------
 //
-// verifier-is-yggdrasil-reviewer: the free half of a graph gate is `yg check --approve
-// --only-deterministic`, which records every verdict a script can reach, costs nothing and needs
-// no key. What it leaves behind is the prose rules — the pairs a reader has to judge — and in a
-// horde the reader is the verifier, judging under its own name through Yggdrasil's external-judge
-// channel. These two functions are how the tools name that work: run the free half, then list
-// exactly what is left.
-
-// The free half. Always allowed, in any worktree, before any gate is judged.
+// `yg check --approve --only-deterministic` records every verdict a script can reach, costs nothing
+// and needs no key. Always allowed, in any worktree, before any gate is judged. Which pairs are left
+// after it — and which of those a reader has to judge — is read off `yg check --json` (yg-check/1):
+// each pair carries its `verdict` and the `kind` of rule it is, so nothing here parses a report.
 export function fillDeterministic(cfg, cwd) {
   const { cmd, prefix, display } = ygCommand(cfg);
   const args = ['check', '--approve', '--only-deterministic'];
@@ -552,68 +532,72 @@ export function fillDeterministic(cfg, cwd) {
   };
 }
 
-// `unverified  <node>  No valid verdict for aspect '<id>' on <kind>:<path>.` — the line
-// `yg check --details` prints, one block per pair, for a pair the lock holds no valid verdict for.
-const PENDING_RE = /No valid verdict for aspect '([^']+)' on (file|node):(.+?)\.\s*$/;
-
-// Which pairs are prose is not guessed from what is left over: the graph says so itself. Each
-// unit's context document names every rule reaching it and the kind of reviewer it takes, so a
-// pending pair is sorted by the graph's own word — `llm` is a judgement somebody has to make, and
-// anything else is a script that has simply not been run yet. Sorting by elimination instead would
-// call a script rule a prose one on any tree where the free run had not happened, and send a
-// verifier off to judge what a command answers for nothing.
-export function pendingProsePairs(cfg, cwd) {
-  const res = runYgCheck(cfg, cwd, ['--details']);
-  // A run that was stopped listed nothing, which is not the same as "nothing is pending" — reading
-  // its truncated output as an empty list would hand a caller a confident "no prose rule waits" off
-  // a command that never got to the end of the graph.
-  if (!res.available || res.timedOut) {
+// One read-only `yg check`, as its yg-check/1 document, for the landing's graph item. `ok` is the
+// document's own exit code; `summary` is one line Horde composes from the document's fields
+// (`exit.status`, `exit.reason`, the `banner`, the first blocking finding's `what`) — never a line
+// cut out of the report. `available: false` means the CLI could not be started, which the caller
+// words as "install the CLI"; a run stopped at the ceiling is available, not ok, with the stop as its
+// summary, because sending somebody to install a CLI that simply never came back fixes nothing.
+export function runYgCheck(cfg, cwd) {
+  const res = ygJson(cwd, cfg, [...READ_ONLY_CHECK, '--json'], 'yg-check/1');
+  const { command } = res;
+  if (res.state === 'no-cli') return { available: false, ok: false, command, summary: null };
+  if (res.state === 'ok') {
+    const { doc } = res;
+    const exit = doc.exit && Number.isInteger(doc.exit.code) ? doc.exit.code : null;
     return {
-      available: false, timedOut: !!res.timedOut, command: res.command, pairs: [], scriptPending: [],
+      available: true, ok: exit === 0, exit, command, doc, summary: checkSummary(doc),
     };
   }
-  const candidates = [];
-  const seen = new Set();
-  for (const raw of (res.out || '').split('\n')) {
-    const m = PENDING_RE.exec(raw.trim());
-    if (!m) continue;
-    const key = `${m[1]} ${m[2]} ${m[3]}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    candidates.push({ aspect: m[1], unitKind: m[2], unit: m[3] });
+  if (res.timedOut) {
+    return {
+      available: true, ok: false, timedOut: true, exit: null, command, summary: res.detail,
+    };
   }
-
-  const docs = new Map();
-  const kindOf = (pair) => {
-    const key = `${pair.unitKind}:${pair.unit}`;
-    if (!docs.has(key)) {
-      const args = pair.unitKind === 'node'
-        ? ['context', '--node', pair.unit, '--json']
-        : ['context', '--file', pair.unit, '--json'];
-      const answer = ygJson(cwd, cfg, args, 'yg-context/1');
-      // Only a unit the graph does not know has no kind to read. An older CLI, or a call that failed,
-      // is not "not a prose rule": read that way, the pair went to `scriptPending` and no verifier was
-      // ever sent to judge it.
-      if (answer.state === 'stale') failStaleCli(cfg, answer);
-      if (answer.state !== 'ok' && answer.state !== 'absent') {
-        fail(`\`${answer.command}\` could not say which kind of rule ${pair.aspect} is on ${key}: ${answer.detail || answer.state}`);
-      }
-      docs.set(key, answer.state === 'ok' ? answer.doc : null);
-    }
-    const doc = docs.get(key);
-    if (!doc) return null;
-    const found = asArray(doc.aspects).find((a) => a && a.id === pair.aspect);
-    return found ? found.kind : null;
+  const summary = res.state === 'stale'
+    ? `the CLI did not answer the yg-check/1 document (${res.saw}); Horde needs Yggdrasil ${YG_DOCUMENTS_AFTER} or newer`
+    : (res.detail || null);
+  return {
+    available: true, ok: false, exit: res.code ?? null, command, summary,
   };
+}
 
+function checkSummary(doc) {
+  const exit = doc.exit || {};
+  const parts = [`yg check: ${String(exit.status || '?').toUpperCase()}${exit.reason ? ` — ${exit.reason}` : ''}`];
+  if (typeof doc.banner === 'string' && doc.banner) parts.push(doc.banner);
+  const first = asArray(doc.issues).find((i) => i && i.severity === 'error');
+  if (first && exit.code !== 0 && typeof first.what === 'string') parts.push(`first: ${first.what.split('\n')[0]}`);
+  return parts.join('; ');
+}
+
+// The pairs a verdict is still owed on, sorted by the kind of rule each one is. Read off the same
+// yg-check/1 document — every pair names its `verdict` (`unverified` never judged, `stale` judged over
+// code that has since moved) and its `kind` (`llm`: a judgement somebody has to make; anything else
+// a script that has simply not been run yet). Both fields are in the document since 6.0.0, the
+// oldest Yggdrasil Horde runs with. Pass the `runYgCheck` answer already in hand to read it once.
+export function pendingProsePairs(cfg, cwd, checked = runYgCheck(cfg, cwd)) {
+  // A run that was stopped, or never started, listed nothing, which is not the same as "nothing is
+  // pending" — reading it as an empty list would hand a caller a confident "no prose rule waits" off
+  // a command that never got to the end of the graph.
+  if (!checked.available || checked.timedOut || !checked.doc) {
+    return {
+      available: false, timedOut: !!checked.timedOut, command: checked.command, pairs: [], scriptPending: [],
+    };
+  }
   const pairs = [];
   const scriptPending = [];
-  for (const pair of candidates) {
-    if (kindOf(pair) === 'llm') pairs.push(pair);
-    else scriptPending.push(pair);
+  const seen = new Set();
+  for (const p of asArray(checked.doc.pairs)) {
+    if (!p || (p.verdict !== 'unverified' && p.verdict !== 'stale') || !p.unit) continue;
+    const pair = { aspect: p.aspect, unitKind: p.unit.kind, unit: p.unit.path };
+    const key = `${pair.aspect} ${pair.unitKind} ${pair.unit}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    (p.kind === 'llm' ? pairs : scriptPending).push(pair);
   }
   return {
-    available: true, command: res.command, green: res.ok, pairs, scriptPending,
+    available: true, command: checked.command, green: checked.ok, pairs, scriptPending,
   };
 }
 
@@ -736,7 +720,42 @@ export function ygQualityIndex(cfg, cwd) {
 const ASPECT_RUNGS = ['draft', 'advisory', 'enforced'];
 const WAVES_CLEAN_FOR_ENFORCED = 2;
 
-const DRILL_SUMMARY_RE = /(\d+) pass · (\d+) MISS · (\d+) FALSE-ALARM · (\d+) unrun · (\d+) unsupported/;
+// `yg drill` has no machine form (no `--json`, as of Yggdrasil 6.1.0), so its summary line is the one
+// text Horde still reads — tolerantly, because its wording is Yggdrasil's to change. The line is the
+// one that counts cases (`<n> pass`); on it every `<n> <word>` is read by what the word means, in
+// any order, any case, any separator (`2 pass · 0 MISS`, `2 passed, 0 missed`, `0 false alarms`).
+// A count the line leaves out is zero — a grammar that drops zero segments says nothing about them —
+// but only when every count the line DOES carry is one of the five outcomes: a word Horde does not
+// know may be a renamed outcome, and reading its absence as zero would be a guess. Such a line is
+// unread, never green. The drill's own exit code is the second witness: any MISS or FALSE-ALARM
+// exits 1 and any unrun exits 2 whatever the text says, so a line that disagrees with it is unread too.
+const DRILL_OUTCOMES = [
+  ['pass', /^pass(?:ed|es)?$/],
+  ['miss', /^miss(?:ed|es)?$/],
+  ['falseAlarm', /^false[- ]?alarms?$/],
+  ['unrun', /^unrun$/],
+  ['unsupported', /^unsupported$/],
+];
+const DRILL_COUNT_RE = /(\d+)\s+(false[- ]alarms?|[a-z]+(?:-[a-z]+)*)/gi;
+
+export function parseDrillSummary(out, exit = null) {
+  const lines = String(out || '').replace(/\x1b\[[0-9;]*m/g, '').split('\n').map((l) => l.trim());
+  const line = lines.find((l) => /\b\d+\s+pass(?:ed|es)?\b/i.test(l));
+  if (!line) return null;
+  const counts = {
+    pass: 0, miss: 0, falseAlarm: 0, unrun: 0, unsupported: 0,
+  };
+  for (const [, n, word] of line.matchAll(DRILL_COUNT_RE)) {
+    const outcome = DRILL_OUTCOMES.find(([, re]) => re.test(word.toLowerCase()));
+    if (!outcome) return null;
+    counts[outcome[0]] = Number(n);
+  }
+  if (exit !== null && exit !== undefined) {
+    const expected = counts.miss > 0 || counts.falseAlarm > 0 ? 1 : counts.unrun > 0 ? 2 : 0;
+    if (exit !== expected) return null;
+  }
+  return { ...counts, line };
+}
 
 // `yg aspects --json` — every rule the graph declares, with the rung it sits on and the reviewer
 // kind it takes. The one answer to "what status is this rule on", asked of the graph rather than
@@ -805,13 +824,15 @@ export function runDrill(root, cfg, aspect) {
   }
   if (run.missing || run.spawnFailed) return { available: false, command };
   const out = `${run.out || ''}${run.err || ''}`;
-  const m = DRILL_SUMMARY_RE.exec(out);
-  if (!m) {
+  const parsed = parseDrillSummary(out, run.code);
+  if (!parsed) {
     return {
       available: true, command, read: false, out: out.trim(), cases: 0, green: false,
     };
   }
-  const [, pass, miss, falseAlarm, unrun, unsupported] = m.map(Number);
+  const {
+    pass, miss, falseAlarm, unrun, unsupported,
+  } = parsed;
   const cases = pass + miss + falseAlarm + unrun + unsupported;
   return {
     available: true,
@@ -828,7 +849,7 @@ export function runDrill(root, cfg, aspect) {
     // empty corpus exits 0 saying so, and reading that as a pass would promote a rule nothing has
     // ever been run against.
     green: cases > 0 && miss === 0 && falseAlarm === 0 && unrun === 0 && unsupported === 0,
-    line: (out.split('\n').map((l) => l.trim()).find((l) => DRILL_SUMMARY_RE.test(l)) || '').trim(),
+    line: parsed.line,
     out: out.trim(),
   };
 }

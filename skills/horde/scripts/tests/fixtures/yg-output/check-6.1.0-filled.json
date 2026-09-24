@@ -1,0 +1,199 @@
+{
+  "schema": "yg-check/1",
+  "project": {
+    "name": "h190",
+    "nodes": 1,
+    "aspects": 2,
+    "flows": 0
+  },
+  "exit": {
+    "code": 1,
+    "status": "fail",
+    "reason": "1 blocking finding and 4 warnings."
+  },
+  "coverage": {
+    "files": 7,
+    "covered": 6,
+    "nodeOwned": 2,
+    "typeCovered": 0,
+    "excluded": 4,
+    "requiresNothing": true
+  },
+  "totals": {
+    "errors": 1,
+    "warnings": 4,
+    "draftSkipped": 0,
+    "verdicts": {
+      "approved": 0,
+      "refused": 1,
+      "unverified": 1,
+      "stale": 0,
+      "prompt-too-large": 0,
+      "companion-error": 0
+    },
+    "verified": {
+      "deterministic": 0,
+      "llm": 0
+    }
+  },
+  "pairs": [
+    {
+      "aspect": "no-marker",
+      "unit": {
+        "kind": "node",
+        "path": "feature"
+      },
+      "node": "feature",
+      "kind": "deterministic",
+      "status": "enforced",
+      "verdict": "refused",
+      "reviewer": "deterministic",
+      "hash": "2a32d048bfe548bccef6060098cb7d4bb86f5d94ce813338fd1907636fbe4d26",
+      "filled": null,
+      "report": "other.mjs:1: unfinished-work marker left behind."
+    },
+    {
+      "aspect": "plain-names",
+      "unit": {
+        "kind": "node",
+        "path": "feature"
+      },
+      "node": "feature",
+      "kind": "llm",
+      "status": "advisory",
+      "verdict": "unverified",
+      "reviewer": null,
+      "hash": null,
+      "filled": null
+    }
+  ],
+  "issues": [
+    {
+      "code": "aspect-violation-enforced",
+      "severity": "error",
+      "what": "Aspect 'no-marker' is refused on node:feature by a deterministic check.\nViolations:\nother.mjs:1: unfinished-work marker left behind.",
+      "why": "A deterministic check recorded these violations. The result is cached — the same inputs reproduce the same verdict, so the check is not re-run.",
+      "next": "Fix the listed violations, then: yg check --approve",
+      "aspect": "no-marker",
+      "node": "feature",
+      "unit": "node:feature",
+      "unitRef": {
+        "kind": "node",
+        "path": "feature"
+      },
+      "violations": [
+        {
+          "file": "other.mjs",
+          "line": 1,
+          "message": "unfinished-work marker left behind."
+        }
+      ],
+      "label": "enforced"
+    },
+    {
+      "code": "unverified",
+      "severity": "warning",
+      "what": "Judgment aspect 'plain-names' on node:feature has no reviewer to judge it.",
+      "why": "yg-config.yaml has no reviewer: section, so nothing can read this content.md rule. Re-running --approve cannot change that; it stays unverified until a reviewer is configured or the rule is set to status: draft.",
+      "next": "yg init --provider <name> [--model <m>] — the user's decision, since it sends code to that provider — or set the judgment aspect to status: draft",
+      "aspect": "plain-names",
+      "node": "feature",
+      "unit": "node:feature",
+      "cause": "reviewer-missing",
+      "unitRef": {
+        "kind": "node",
+        "path": "feature"
+      },
+      "label": "reviewer-missing"
+    },
+    {
+      "code": "config-reviewer-missing",
+      "severity": "warning",
+      "what": "A judgment rule has no judge: yg-config.yaml has no reviewer: section.",
+      "why": "Script rules run locally for free (yg check --approve --only-deterministic still fills them), but a judgment rule (content.md) needs a configured model to read it — until then its pairs stay unverified. Configuring a reviewer is the user's decision: it sends code to that provider, on their account.",
+      "next": "yg init --provider <name> [--model <m>] (an installed agent CLI — claude-code, codex, gemini-cli, copilot-cli — needs no API key), or set the judgment rule to status: draft until a reviewer is chosen.",
+      "label": "config-reviewer-missing"
+    },
+    {
+      "code": "type-undefined-pending",
+      "severity": "warning",
+      "what": "Node type 'module' is not defined — yg-architecture.yaml declares no node types yet.",
+      "why": "While node_types is empty, node types are not checked. Once any type is declared, every node whose type is missing becomes a blocking type-undefined error, and a type whose nodes map files must declare when:.",
+      "next": "Define 'module' under node_types in yg-architecture.yaml with a when: predicate matching its files (an architecture change — confirm it first). yg type-suggest --file <path> can help design it.",
+      "node": "feature",
+      "label": "type-undefined-pending"
+    },
+    {
+      "code": "uncovered-advisory",
+      "severity": "warning",
+      "what": "1 coverage-visible file outside any required coverage root.\n  package.json",
+      "why": "Not under a coverage.required root — visible but non-blocking. Bring an area under graph coverage to enforce it. Your architecture has no type for this file yet.",
+      "next": "Map these files to a node, or add their root to coverage.required to make this an error. Or design an architecture type that covers files like it: yg type-suggest --file <path>.",
+      "files": [
+        "package.json"
+      ],
+      "label": "uncovered"
+    }
+  ],
+  "judges": [],
+  "progressive": null,
+  "suggestedNext": "Fix the listed violations, then: yg check --approve",
+  "groups": [
+    {
+      "code": "aspect-violation-enforced",
+      "label": "enforced",
+      "aspect": "no-marker",
+      "severity": "error",
+      "why": "A deterministic check recorded these violations. The result is cached — the same inputs reproduce the same verdict, so the check is not re-run.",
+      "next": "Fix the listed violations, then: yg check --approve",
+      "members": [
+        0
+      ]
+    },
+    {
+      "code": "config-reviewer-missing",
+      "label": "config-reviewer-missing",
+      "aspect": null,
+      "severity": "warning",
+      "why": "Script rules run locally for free (yg check --approve --only-deterministic still fills them), but a judgment rule (content.md) needs a configured model to read it — until then its pairs stay unverified. Configuring a reviewer is the user's decision: it sends code to that provider, on their account.",
+      "next": "yg init --provider <name> [--model <m>] (an installed agent CLI — claude-code, codex, gemini-cli, copilot-cli — needs no API key), or set the judgment rule to status: draft until a reviewer is chosen.",
+      "members": [
+        2
+      ]
+    },
+    {
+      "code": "unverified",
+      "label": "reviewer-missing",
+      "aspect": null,
+      "severity": "warning",
+      "why": "yg-config.yaml has no reviewer: section, so nothing can read this content.md rule. Re-running --approve cannot change that; it stays unverified until a reviewer is configured or the rule is set to status: draft.",
+      "next": "yg init --provider <name> [--model <m>] — the user's decision, since it sends code to that provider — or set the judgment aspect to status: draft",
+      "members": [
+        1
+      ]
+    },
+    {
+      "code": "type-undefined-pending",
+      "label": "type-undefined-pending",
+      "aspect": null,
+      "severity": "warning",
+      "why": "While node_types is empty, node types are not checked. Once any type is declared, every node whose type is missing becomes a blocking type-undefined error, and a type whose nodes map files must declare when:.",
+      "next": "Define 'module' under node_types in yg-architecture.yaml with a when: predicate matching its files (an architecture change — confirm it first). yg type-suggest --file <path> can help design it.",
+      "members": [
+        3
+      ]
+    },
+    {
+      "code": "uncovered-advisory",
+      "label": "uncovered",
+      "aspect": null,
+      "severity": "warning",
+      "why": "Not under a coverage.required root — visible but non-blocking. Bring an area under graph coverage to enforce it. Your architecture has no type for this file yet.",
+      "next": "Map these files to a node, or add their root to coverage.required to make this an error. Or design an architecture type that covers files like it: yg type-suggest --file <path>.",
+      "members": [
+        4
+      ]
+    }
+  ],
+  "banner": null
+}

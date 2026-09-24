@@ -1,0 +1,28 @@
+yg check: FAIL  1 nodes · 6/7 files (2 node-owned, 0 type-covered, 4 excluded) · 2 aspects · 0 flows
+
+Type-level coverage is on, but no type in yg-architecture.yaml declares 'when:' — no file can be type-covered until you add classifying types.
+
+Nothing is required to be covered, so the 1 uncovered file this run lists can never fail a check — only ever be listed. Name a path under coverage.required in .yggdrasil/yg-config.yaml to make files under it block until a component owns them.
+
+Errors (2):
+
+  unverified  feature  No valid verdict for aspect 'no-marker' on node:feature.
+            Why: The lock holds no entry for this pair, or its inputs changed since the verdict was recorded (source edit, aspect edit, or a fill that did not complete). A verdict is valid only while its inputs hash to the stored value.
+            Fix: yg check --approve
+
+  config-reviewer-missing  A judgment rule has no judge: yg-config.yaml has no reviewer: section.
+            Why: Script rules run locally for free, but a judgment rule (content.md) needs a configured model to read it — until then its pairs stay unverified.
+            Fix: Run yg init and pick 'Configure reviewer' (an installed agent CLI needs no API key), or add reviewer.tiers to .yggdrasil/yg-config.yaml — see yg knowledge read configuration.
+
+Warnings (2):
+
+  unverified  feature  No valid verdict for aspect 'plain-names' on node:feature.
+            Why: The lock holds no entry for this pair, or its inputs changed since the verdict was recorded (source edit, aspect edit, or a fill that did not complete). A verdict is valid only while its inputs hash to the stored value.
+            Fix: yg check --approve  (advisory — not blocking)
+
+  uncovered (1)
+            package.json
+            Why: Not under a coverage.required root — visible but non-blocking. Bring an area under graph coverage to enforce it. Your architecture has no type for this file yet.
+            Fix: Map these files to a node, or add their root to coverage.required to make this an error. yg type-suggest --file <path> can help design one before you decide where it belongs.
+
+Next: yg check --approve  (fills 1 unverified; 1 error remain — need code/graph fixes)
