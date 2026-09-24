@@ -2,7 +2,10 @@
 // person — that report's grammar is Yggdrasil's to change, and 6.1.0 changes it. Every fixture under
 // fixtures/yg-output/ is real CLI output, captured from one scratch project (one component, one
 // enforced script rule with a two-case drill corpus, one advisory prose rule, no reviewer):
-//   *-6.1.0.*  Yggdrasil release/6.1.0 at 865c140b, built in the dev container
+//   *-6.1.0.*  Yggdrasil release/6.1.0 at 865c140b, built in the dev container; the documents that
+//              arrived with issue 212 (drill-6.1.0.json, drill-empty-6.1.0.json, health-6.1.0.json,
+//              and context-missing-6.1.0.* now carrying node-not-found) from the issue-212 build,
+//              Yggdrasil jarl/191-grammar, commit "feat(json): yg drill --json …" (212), over the same project rebuilt from scratch
 //   *-6.0.0.*  the released 6.0.0 from npm, over a copy of the same project
 // A variant with a changed text grammar is written here by hand, beside the real line it rewords,
 // so the test says exactly what moved.
@@ -14,9 +17,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  aspectStanding, parseDrillSummary, pendingProsePairs, runYgCheck, ygJson,
+  aspectStanding, drillFromDoc, parseDrillSummary, pendingProsePairs, runDrill, runYgCheck, ygJson,
 } from '../node.mjs';
-import { parseHealth } from '../audit.mjs';
+import { healthFromDoc, parseHealth, readHealth } from '../audit.mjs';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'yg-output');
 const fixture = (name) => readFileSync(join(FIXTURES, name), 'utf8');
@@ -119,9 +122,25 @@ test('yg-error/1: a node the graph does not have is absent, not an old CLI', (t)
   // yg-node/1 and called the CLI too old to use.
   const node = stubCli(t, 'node-missing-6.1.0.json', 'node-missing-6.1.0.stderr.txt');
   assert.equal(ygJson(node.dir, node.cfg, ['node', 'nope', '--json'], 'yg-node/1').state, 'absent');
-  // `yg context --node nope --json` on 6.1.0 says the same under the generic command-error code.
+  // `yg context --node nope --json` answers the same code since 212.
   const ctx = stubCli(t, 'context-missing-6.1.0.json', 'context-missing-6.1.0.stderr.txt');
+  assert.equal(JSON.parse(fixture('context-missing-6.1.0.json')).code, 'node-not-found');
   assert.equal(ygJson(ctx.dir, ctx.cfg, ['context', '--node', 'nope', '--json'], 'yg-context/1').state, 'absent');
+});
+
+test('yg-error/1: absence is read off the code, never off the sentence', (t) => {
+  // What `yg context` answered before 212: the missing node under the generic code. The sentence is
+  // Yggdrasil's to reword, so a document that does not say node-not-found is an error, not absence.
+  const dir = mkdtempSync(join(tmpdir(), 'horde-yg-code-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const doc = { ...JSON.parse(fixture('context-missing-6.1.0.json')), code: 'command-error' };
+  const body = join(dir, 'doc.json');
+  writeFileSync(body, JSON.stringify(doc));
+  const stub = join(dir, 'yg-stub.mjs');
+  writeFileSync(stub, `import { readFileSync } from 'node:fs';\nprocess.stdout.write(readFileSync(${JSON.stringify(body)}, 'utf8'));\nprocess.exit(1);\n`);
+  const res = ygJson(dir, { ygCommand: `${process.execPath} ${stub}` }, ['context', '--node', 'nope', '--json'], 'yg-context/1');
+  assert.equal(res.state, 'error');
+  assert.equal(res.errorCode, 'command-error');
 });
 
 test('yg-error/1: any other refusal is an error with its own words, never "upgrade the CLI"', (t) => {
@@ -132,7 +151,74 @@ test('yg-error/1: any other refusal is an error with its own words, never "upgra
   assert.match(res.detail, /^--health cannot be combined with --json\./);
 });
 
-// ---- yg drill (no --json in Yggdrasil: the summary line, read tolerantly) --------------------
+// ---- yg drill: the yg-drill/1 document, and the summary line only for 6.0.x --------------------
+
+// A CLI that answers `yg drill` like one real release: 6.1.0 prints its document for `--json`,
+// 6.0.x refuses `--json` by name and prints its case lines and summary otherwise.
+function drillCli(t, { json, jsonExit = 0, refuseJson = false, text = 'drill-6.1.0.txt', textExit = 0 }) {
+  const dir = mkdtempSync(join(tmpdir(), 'horde-yg-drill-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stub = join(dir, 'yg-stub.mjs');
+  const calls = join(dir, 'calls.log');
+  writeFileSync(stub, [
+    "import { appendFileSync, readFileSync } from 'node:fs';",
+    'const argv = process.argv.slice(2);',
+    `appendFileSync(${JSON.stringify(calls)}, argv.join(' ') + '\\n');`,
+    "if (argv.includes('--json')) {",
+    refuseJson
+      ? "  process.stderr.write(\"error: unknown option '--json'\\n\"); process.exit(1);"
+      : `  process.stdout.write(readFileSync(${JSON.stringify(join(FIXTURES, json || 'drill-6.1.0.json'))}, 'utf8')); process.exit(${jsonExit});`,
+    '}',
+    `process.stdout.write(readFileSync(${JSON.stringify(join(FIXTURES, text))}, 'utf8'));`,
+    `process.exit(${textExit});`,
+    '',
+  ].join('\n'));
+  return { dir, cfg: { ygCommand: `${process.execPath} ${stub}` }, calls: () => readFileSync(calls, 'utf8').trim().split('\n') };
+}
+
+test('yg drill: the counts are read off yg-drill/1', (t) => {
+  const doc = JSON.parse(fixture('drill-6.1.0.json'));
+  assert.equal(doc.schema, 'yg-drill/1');
+  assert.deepEqual(
+    { ...drillFromDoc(doc, 0), line: undefined },
+    { pass: 2, miss: 0, falseAlarm: 0, unrun: 0, unsupported: 0, line: undefined },
+  );
+  const cli = drillCli(t, {});
+  const res = runDrill(cli.dir, cli.cfg, 'no-marker');
+  assert.equal(res.read, true);
+  assert.equal(res.cases, 2);
+  assert.equal(res.green, true);
+  assert.equal(res.command.endsWith('drill --aspect no-marker --json'), true);
+  assert.deepEqual(cli.calls(), ['drill --aspect no-marker --json'], 'one run, the document — never the text as well');
+});
+
+test('yg drill: an empty corpus reads as no cases, never as green', (t) => {
+  const cli = drillCli(t, { json: 'drill-empty-6.1.0.json' });
+  const res = runDrill(cli.dir, cli.cfg, 'plain-names');
+  assert.equal(res.read, true);
+  assert.equal(res.cases, 0);
+  assert.equal(res.green, false);
+});
+
+test('yg drill: a document the exit code contradicts is unread — never green', (t) => {
+  // Counts say clean; the drill exited 1, which Yggdrasil uses for a MISS or a FALSE-ALARM.
+  const cli = drillCli(t, { jsonExit: 1 });
+  const res = runDrill(cli.dir, cli.cfg, 'no-marker');
+  assert.equal(res.read, false);
+  assert.equal(res.green, false);
+  assert.equal(drillFromDoc({ schema: 'yg-drill/1', aspect: 'x', counts: { pass: 2 } }, 0), null, 'a count missing from the document is not zero');
+  assert.equal(drillFromDoc({ schema: 'yg-drill/2', aspect: 'x', counts: { pass: 2, miss: 0, falseAlarm: 0, unrun: 0, unsupported: 0 } }, 0), null, 'another version is not this one');
+});
+
+test('yg drill: a 6.0.x CLI that refuses --json is asked again and its summary line read', (t) => {
+  const cli = drillCli(t, { refuseJson: true });
+  const res = runDrill(cli.dir, cli.cfg, 'no-marker');
+  assert.equal(res.read, true);
+  assert.equal(res.cases, 2);
+  assert.equal(res.green, true);
+  assert.equal(res.command.endsWith('drill --aspect no-marker'), true);
+  assert.deepEqual(cli.calls(), ['drill --aspect no-marker --json', 'drill --aspect no-marker']);
+});
 
 test('yg drill: the real summary line reads', () => {
   const real = fixture('drill-6.1.0.txt');
@@ -171,7 +257,57 @@ test('yg drill: a count Horde does not recognise, or a line the exit code contra
   assert.equal(parseDrillSummary("yg drill 'no-marker': no case corpus found under x — nothing to run.", 0), null);
 });
 
-// ---- yg aspects --health (refused with --json by Yggdrasil: the table, read tolerantly) -------
+// ---- yg aspects --health: yg-aspects-health/1, and the table only for 6.0.x ------------------
+
+// A CLI that answers `yg aspects --health` like one real release: the document for `--json`, or a
+// refusal of `--json` (6.0.x on stderr, a 6.1.0 build from before the document as yg-error/1), and
+// the table otherwise.
+function healthCli(t, { json = null, refusal = null }) {
+  const dir = mkdtempSync(join(tmpdir(), 'horde-yg-health-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const stub = join(dir, 'yg-stub.mjs');
+  const lines = [
+    "import { readFileSync } from 'node:fs';",
+    'const argv = process.argv.slice(2);',
+    "if (argv[0] === '--version') { console.log('6.1.0'); process.exit(0); }",
+    "if (argv.includes('--json')) {",
+  ];
+  if (json) lines.push(`  process.stdout.write(readFileSync(${JSON.stringify(join(FIXTURES, json))}, 'utf8')); process.exit(0);`);
+  else if (refusal === 'stderr') lines.push("  process.stderr.write('Error: --health cannot be combined with --json.\\n'); process.exit(1);");
+  else lines.push(`  process.stdout.write(readFileSync(${JSON.stringify(join(FIXTURES, 'health-json-refused-6.1.0.json'))}, 'utf8')); process.exit(1);`);
+  lines.push('}', `process.stdout.write(readFileSync(${JSON.stringify(join(FIXTURES, 'health-6.1.0.txt'))}, 'utf8'));`, '');
+  writeFileSync(stub, lines.join('\n'));
+  return { dir, cfg: { ygCommand: `${process.execPath} ${stub}` } };
+}
+
+test('yg aspects --health: the signal and the reading are read off yg-aspects-health/1', (t) => {
+  const doc = JSON.parse(fixture('health-6.1.0.json'));
+  assert.equal(doc.schema, 'yg-aspects-health/1');
+  const got = healthFromDoc(doc);
+  assert.deepEqual(got.get('no-marker'), {
+    signal: 'active',
+    reading: 'estimated catch rate ~100% — uncertainty range is wide (few observations).',
+  });
+  // A rule the tool never judged: its null signal reads as the table's own em-dash, not a word Horde coins.
+  assert.deepEqual(got.get('plain-names'), { signal: '—', reading: null });
+  // The same reading the table gives, rule for rule.
+  assert.deepEqual([...got], [...parseHealth(fixture('health-6.1.0.txt'))]);
+  assert.equal(healthFromDoc(JSON.parse(fixture('check-6.1.0-filled.json'))), null, 'another document is not this one');
+
+  const cli = healthCli(t, { json: 'health-6.1.0.json' });
+  const read = readHealth(cli.dir, cli.cfg);
+  assert.equal(read.read, true);
+  assert.equal(read.health.get('no-marker').signal, 'active');
+});
+
+test('yg aspects --health: a CLI with no document is read by its table — 6.0.x and a pre-212 6.1.0 alike', (t) => {
+  for (const refusal of ['stderr', 'yg-error']) {
+    const cli = healthCli(t, { refusal });
+    const read = readHealth(cli.dir, cli.cfg);
+    assert.equal(read.read, true, refusal);
+    assert.equal(read.health.get('no-marker').signal, 'active', refusal);
+  }
+});
 
 test('yg aspects --health: the real tables read, on 6.1.0 and on the 6.0.0 floor', () => {
   const v61 = parseHealth(fixture('health-6.1.0.txt'));
