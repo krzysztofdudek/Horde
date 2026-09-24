@@ -44,3 +44,25 @@ jobs:
             --title "v${VERSION}" \
             --notes-file /tmp/release-notes.md \
             --latest
+
+      # The `promises` rule package keeps its own version, apart from Horde's. Yggdrasil installs a
+      # package from a git source only at a tag `pack/<name>@<version>`, so a version of the package
+      # exists for adopters only once that tag does. This step publishes it: it reads the version
+      # from packages/promises/yg-package.yaml, refuses when yg-marketplace.yaml disagrees (a
+      # consumer would be refused that version), and creates the tag if it is not there yet. A tag
+      # that already exists is never moved — a changed package ships under a new version.
+      - name: Tag the promises package version
+        run: |
+          PKG_VERSION=$(awk '/^version:/{print $2; exit}' packages/promises/yg-package.yaml)
+          MARKET_VERSION=$(awk '/- name: promises/{f=1} f && /version:/{print $2; exit}' yg-marketplace.yaml)
+          if [ -z "$PKG_VERSION" ] || [ "$PKG_VERSION" != "$MARKET_VERSION" ]; then
+            echo "packages/promises/yg-package.yaml says '${PKG_VERSION}', yg-marketplace.yaml says '${MARKET_VERSION}': they must agree before the package can be tagged." >&2
+            exit 1
+          fi
+          TAG="pack/promises@${PKG_VERSION}"
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "${TAG} already published; nothing to tag."
+          else
+            git tag "${TAG}"
+            git push origin "refs/tags/${TAG}"
+          fi

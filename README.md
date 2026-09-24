@@ -157,6 +157,17 @@ directory to a node of its own, if you want the graph to hold your tooling to ru
 exclude it in `yg-config.yaml` if you don't. Either is a deliberate answer; leaving it is a number
 that quietly reads worse than the repository deserves.
 
+### The `promises` rule package
+
+This repository also publishes one set of Yggdrasil rules, `promises`: an evidence layer for a repository that has none. Horde never installs it for you; it offers it in one sentence when it finds nothing in your repository that proves anything. Installing it takes Yggdrasil 6.1.0 or later:
+
+```bash
+yg pack add https://github.com/krzysztofdudek/Horde#promises          # the newest published version
+yg pack add https://github.com/krzysztofdudek/Horde#promises@0.1.0    # this version, pinned
+```
+
+A version is published as the tag `pack/promises@<version>`. What is on `main` after the last such tag is not installed.
+
 ---
 
 ## What it doesn't claim

@@ -38,6 +38,10 @@ When the user says "bump version":
 
 Do not create or push tags manually. The `.github/workflows/release.yml` workflow runs on every push to `main`, reads the top version from `CHANGELOG.md`, and if `v<version>` does not already exist it creates the tag, pushes it, and publishes a GitHub Release with notes extracted from the matching changelog section.
 
+### The `promises` package's own version
+
+`packages/promises` keeps its own version, apart from Horde's, in `packages/promises/yg-package.yaml` and in its entry in `yg-marketplace.yaml` — the two MUST agree. Yggdrasil (6.1.0 and later) installs a package from a git source only at a tag `pack/promises@<version>`, taking the highest one when the adopter names no version; the default branch is never read. So a version exists for adopters only once its tag does. The same `release.yml` run creates that tag on `main` when it is missing (and fails when the two versions disagree). Any change to a file under `packages/promises/` that should reach adopters bumps both versions together in the same release; a published tag is never moved. Do not create the tag by hand. The test suite never needs the tag: `tests/promises-package.test.mjs` builds its own tagged copy of the package in a temporary repository.
+
 ### Changelog register
 
 `CHANGELOG.md` is written for the adopter, not the developer. Plain language, zero jargon, zero narration, facts only — no file names, no internal mechanics, no reasoning about why a change was made. State only what changed, the way someone deciding whether to install this would want to read it. Every entry gets the plain-language discipline from Ratatoskr, Krzysztof's own voice, and the stop-slop pass before it ships.

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The `promises` rule package is published as a tagged version, `pack/promises@0.1.0`, which is what Yggdrasil 6.1.0 installs. Install it with `yg pack add https://github.com/krzysztofdudek/Horde#promises`, or add `@0.1.0` to pin that version. Every Horde release publishes the package's current version if it is new.
 - A portable Agent Plugins 1.0 manifest, `plugin.json` at the repository root, which Copilot and Codex read before any host-specific manifest. The host manifests stay for Claude Code, Cursor and older Copilot and Codex, with the same name, version and description.
 - `asks.json` and `graph.json` are now locked for their whole read-modify-write, the same hazard `queue.json` and `counter.json` already had fixed: two processes filing an ask, proposing a rule, promoting or demoting an aspect, or ruling on a contract at the same instant could lose one's write to the other's, or leave a torn file. Every write-side command in `ask.mjs` and `node.mjs` now runs under a per-file lock (`withAsksLock`/`withGraphLock`, generalized in `_lib.mjs` as `withFileLock`), proven with the same real-process race tests issue 041 proved the counter lock with.
 - `charter edit` warns when a rewrite keeps a row's stamp (`reproduced by`) but changes its evidence text or its class — the stamp survived a wording it no longer necessarily proves. Wiping the stamp outright was already warned about; rewording it while it stays was not.
@@ -68,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The wave quality index counts coverage as the files a node or a type answers for, out of the files not excluded. `coverage.covered` in `yg-check/1` also counts excluded files, so since Yggdrasil 6.1.0 excludes its own files at init the index read coverage no component provided.
 - A `--json` read that Yggdrasil 6.1.0 answers with a `yg-error/1` document is no longer taken for an old CLI. A missing node (`node-not-found`, or `yg context --node`'s `command-error` naming it) is read as absent again, and any other refusal is reported with Yggdrasil's own what, why and next. Before this, asking about a node the graph does not have told you to upgrade a CLI that was new enough.
 - The landing's gate lock, the one that serialises merges onto trunk, now takes over a stale lock the way every other lock does: only while it still reads as it did when judged abandoned, and a lock that vanished (released the normal way) is simply retried. It still had the plain remove the other five loops lost earlier in this release, so an ordinary release could delete a fresh lock another landing had just taken and let two landings merge at once.
 - The legislator's brief no longer lists aggregate rules under "Rules that reach nothing". Yggdrasil reports a bundle reaching no unit because it has no verdict of its own, while the rules it implies reach everything it is attached to; deleting one, as the brief invited, unhooks those rules and is refused at landing.
