@@ -1,0 +1,50 @@
+{
+  "schema": "yg-aspects-health/1",
+  "rules": [
+    {
+      "aspect": "no-marker",
+      "kind": "deterministic",
+      "status": "enforced",
+      "nodes": 1,
+      "files": null,
+      "pairs": 1,
+      "refused": 1,
+      "unverified": 0,
+      "suppresses": 0,
+      "errs": "under",
+      "age": "<1d",
+      "catch": 1,
+      "exposure": 1,
+      "signal": "active",
+      "reading": "estimated catch rate ~100% — uncertainty range is wide (few observations).",
+      "falseBlocks": {
+        "count": 0,
+        "blocks": 1,
+        "thinData": true,
+        "reading": null
+      },
+      "wrongRuleIncidents": 0
+    },
+    {
+      "aspect": "plain-names",
+      "kind": "llm",
+      "status": "advisory",
+      "nodes": 1,
+      "files": null,
+      "pairs": 1,
+      "refused": 0,
+      "unverified": 1,
+      "suppresses": 0,
+      "errs": null,
+      "age": "<1d",
+      "catch": null,
+      "exposure": null,
+      "signal": null,
+      "reading": null,
+      "falseBlocks": null,
+      "wrongRuleIncidents": 0
+    }
+  ],
+  "wildcardMarkers": 0,
+  "telemetry": "Local telemetry since 2026-09-24T06:18:38.932Z."
+}

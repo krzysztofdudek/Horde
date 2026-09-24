@@ -327,14 +327,14 @@ function timedOutDetail(ms) {
 // A command that answers in JSON and fails writes a `yg-error/1` document on stdout (Yggdrasil 6.1.0
 // and newer): `code` names the failure, `what` / `why` / `next` say it. It is an answer, not a
 // stranger's document, so it is never read as an old CLI — which is what a schema mismatch otherwise
-// means above. A node the graph does not have is `absent` by its code, `node-not-found`. The text
-// test on `what` stays for the one command that still reports a missing node under the generic
-// `command-error` code (`yg context --node`, as of 6.1.0) and for 6.0.x, which writes no document and
-// only says it on stderr (the test below the JSON branch).
+// means above. A node the graph does not have is `absent` by its code, `node-not-found`, which every
+// command that takes a node answers with (`yg node`, `yg impact`, `yg context --node`), and by
+// nothing else: the sentence in `what` is Yggdrasil's to reword. The text test survives only for
+// 6.0.x, which writes no document and says it on stderr alone (the test below the JSON branch).
 const YG_ERROR_SCHEMA = 'yg-error/1';
 const NODE_MISSING_TEXT = /does not exist in the graph/;
 function ygErrorState(doc, { command, root, code, err }) {
-  if (doc.code === 'node-not-found' || NODE_MISSING_TEXT.test(String(doc.what || ''))) return { state: 'absent', command };
+  if (doc.code === 'node-not-found') return { state: 'absent', command };
   if (/unknown option|unknown command/i.test(`${err || ''}\n${doc.what || ''}`)) {
     return { state: 'stale', command, root, saw: 'it does not know that option' };
   }
@@ -720,8 +720,10 @@ export function ygQualityIndex(cfg, cwd) {
 const ASPECT_RUNGS = ['draft', 'advisory', 'enforced'];
 const WAVES_CLEAN_FOR_ENFORCED = 2;
 
-// `yg drill` has no machine form (no `--json`, as of Yggdrasil 6.1.0), so its summary line is the one
-// text Horde still reads — tolerantly, because its wording is Yggdrasil's to change. The line is the
+// `yg drill --json` answers `yg-drill/1` (Yggdrasil 6.1.0 and newer), and that document is what is
+// read (drillFromDoc below). Yggdrasil 6.0.x, which the version floor still allows, has no `--json`
+// on drill, so for that CLI alone its summary line is read — tolerantly, because its wording is
+// Yggdrasil's to change. The line is the
 // one that counts cases (`<n> pass`); on it every `<n> <word>` is read by what the word means, in
 // any order, any case, any separator (`2 pass · 0 MISS`, `2 passed, 0 missed`, `0 false alarms`).
 // A count the line leaves out is zero — a grammar that drops zero segments says nothing about them —
@@ -754,6 +756,25 @@ export function parseDrillSummary(out, exit = null) {
     const expected = counts.miss > 0 || counts.falseAlarm > 0 ? 1 : counts.unrun > 0 ? 2 : 0;
     if (exit !== expected) return null;
   }
+  return { ...counts, line };
+}
+
+// The five counts off a `yg-drill/1` document, the same shape parseDrillSummary returns (its `line`
+// is the document's own counts written out, for a report that quotes it). The exit code is the
+// second witness here as well: a document whose counts disagree with how the drill exited is unread,
+// never green. Null when the document is not one, or carries a count that is not a whole number.
+const DRILL_SCHEMA = 'yg-drill/1';
+const DRILL_COUNT_KEYS = ['pass', 'miss', 'falseAlarm', 'unrun', 'unsupported'];
+export function drillFromDoc(doc, exit = null) {
+  if (!doc || doc.schema !== DRILL_SCHEMA || !doc.counts || typeof doc.counts !== 'object') return null;
+  if (!DRILL_COUNT_KEYS.every((k) => Number.isInteger(doc.counts[k]) && doc.counts[k] >= 0)) return null;
+  const counts = Object.fromEntries(DRILL_COUNT_KEYS.map((k) => [k, doc.counts[k]]));
+  if (exit !== null && exit !== undefined) {
+    const expected = counts.miss > 0 || counts.falseAlarm > 0 ? 1 : counts.unrun > 0 ? 2 : 0;
+    if (exit !== expected) return null;
+  }
+  const line = `yg drill '${doc.aspect}': ${counts.pass} pass · ${counts.miss} MISS · ${counts.falseAlarm} FALSE-ALARM · `
+    + `${counts.unrun} unrun · ${counts.unsupported} unsupported`;
   return { ...counts, line };
 }
 
@@ -809,22 +830,48 @@ export function aspectStanding(checkDoc, aspect) {
   };
 }
 
-// `yg drill --aspect <id>` — the rule over its own case corpus. Text, not a document: the CLI has
-// no --json here (checked against its own --help), so the summary line it always prints is what is
-// read, and a run whose summary cannot be found is reported as unread rather than as green.
+// `yg drill --aspect <id>` — the rule over its own case corpus, read as its `yg-drill/1` document.
+// A CLI that does not know `--json` there (6.0.x: `unknown option '--json'`, refused before any case
+// runs, so nothing is run or billed twice) is asked again without it and its summary line is read.
+// A run whose counts cannot be read either way is reported as unread rather than as green.
+function startDrill(cfg, root, args) {
+  const { cmd, prefix } = ygCommand(cfg);
+  return startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
+}
+
+function readDrillRun(run, asJson) {
+  const out = `${run.out || ''}${run.err || ''}`;
+  if (!asJson) return { parsed: parseDrillSummary(out, run.code), out };
+  const body = String(run.out || '').trim();
+  let doc = null;
+  if (body.startsWith('{')) {
+    try { doc = JSON.parse(body); } catch { doc = null; }
+  }
+  if (doc && doc.schema === YG_ERROR_SCHEMA) {
+    const nextText = doc.next && typeof doc.next === 'object' ? doc.next.text : doc.next;
+    return { parsed: null, out: [doc.what, doc.why, nextText].filter((x) => typeof x === 'string' && x.trim()).join('\n') };
+  }
+  return { parsed: drillFromDoc(doc, run.code), out: body || out };
+}
+
 export function runDrill(root, cfg, aspect) {
-  const { cmd, prefix, display } = ygCommand(cfg);
-  const args = ['drill', '--aspect', aspect];
+  const { display } = ygCommand(cfg);
+  let args = ['drill', '--aspect', aspect, '--json'];
+  let run = startDrill(cfg, root, args);
+  let asJson = true;
+  if (!run.timedOut && !run.missing && !run.spawnFailed && run.code !== 0 && /unknown option '--json'/.test(run.err || '')) {
+    args = ['drill', '--aspect', aspect];
+    run = startDrill(cfg, root, args);
+    asJson = false;
+  }
   const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
   if (run.timedOut) {
     return {
       available: true, command, read: false, timedOut: true, out: timedOutDetail(run.ms), cases: 0, green: false,
     };
   }
   if (run.missing || run.spawnFailed) return { available: false, command };
-  const out = `${run.out || ''}${run.err || ''}`;
-  const parsed = parseDrillSummary(out, run.code);
+  const { parsed, out } = readDrillRun(run, asJson);
   if (!parsed) {
     return {
       available: true, command, read: false, out: out.trim(), cases: 0, green: false,

@@ -1,0 +1,19 @@
+{
+  "schema": "yg-drill/1",
+  "aspect": "plain-names",
+  "corpus": {
+    "label": "dev",
+    "source": "dev",
+    "path": ".yggdrasil/aspects/plain-names/drills/"
+  },
+  "counts": {
+    "pass": 0,
+    "miss": 0,
+    "falseAlarm": 0,
+    "unrun": 0,
+    "unsupported": 0
+  },
+  "total": 0,
+  "cases": [],
+  "exitCode": 0
+}

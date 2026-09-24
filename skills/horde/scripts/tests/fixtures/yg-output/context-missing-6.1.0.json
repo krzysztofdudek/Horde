@@ -1,6 +1,6 @@
 {
   "schema": "yg-error/1",
-  "code": "command-error",
+  "code": "node-not-found",
   "what": "Node 'nope' does not exist in the graph.",
   "why": "The --node path must name an existing node — a directory under .yggdrasil/model/, written without the model/ prefix.",
   "next": {

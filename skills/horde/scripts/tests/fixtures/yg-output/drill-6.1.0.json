@@ -1,0 +1,44 @@
+{
+  "schema": "yg-drill/1",
+  "aspect": "no-marker",
+  "corpus": {
+    "label": "dev",
+    "source": "dev",
+    "path": ".yggdrasil/aspects/no-marker/drills/"
+  },
+  "counts": {
+    "pass": 2,
+    "miss": 0,
+    "falseAlarm": 0,
+    "unrun": 0,
+    "unsupported": 0
+  },
+  "total": 2,
+  "cases": [
+    {
+      "case": "satisfies-clean/case",
+      "expect": "satisfied",
+      "got": "satisfied",
+      "outcome": "pass",
+      "kind": "deterministic",
+      "caseHash": "b5d546753d33709dff508a6f2c2e547f432267fbb05b68d3da74fa5f7bda9f7a",
+      "ruleHash": "b04c3619768aeefbd5c329bb70783fa8b5d99fbfc4ba7ba01073fa5d8b94d0dd",
+      "tier": null,
+      "votes": null,
+      "detail": null
+    },
+    {
+      "case": "violates-marker/case",
+      "expect": "refused",
+      "got": "refused",
+      "outcome": "pass",
+      "kind": "deterministic",
+      "caseHash": "431983e78fc2531cf2275e8e1c378f6f2f08cae770ffba273f77fef37d3c2410",
+      "ruleHash": "b04c3619768aeefbd5c329bb70783fa8b5d99fbfc4ba7ba01073fa5d8b94d0dd",
+      "tier": null,
+      "votes": null,
+      "detail": null
+    }
+  ],
+  "exitCode": 0
+}
