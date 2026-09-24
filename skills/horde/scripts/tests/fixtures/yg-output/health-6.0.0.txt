@@ -1,0 +1,5 @@
+aspect       kind           status    nodes  pairs  refused     suppresses  errs   age  catch  exposure  signal  fp  wrong-rule  files
+no-marker    deterministic  enforced  1      1      unverified  0           under  <1d  —      —         —       —   —           0
+plain-names  llm            advisory  1      1      unverified  0           —      <1d  —      —         —       —   —           0
+
+"unverified" = not yet checked; run `yg check --approve` to resolve.

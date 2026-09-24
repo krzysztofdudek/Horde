@@ -7,9 +7,11 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runYgCheck, ygCheckDoc, ygCheckJson } from '../node.mjs';
+import {
+  pendingProsePairs, runYgCheck, ygCheckDoc, ygCheckJson,
+} from '../node.mjs';
 
-test('every yg check Horde runs to read the graph passes --no-approve', (t) => {
+test('every yg check Horde runs to read the graph passes --no-approve and asks for the yg-check/1 document', (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'horde-no-approve-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const log = join(dir, 'argv.log');
@@ -23,7 +25,7 @@ test('every yg check Horde runs to read the graph passes --no-approve', (t) => {
   const cfg = { ygCommand: `${process.execPath} ${stub}` };
 
   runYgCheck(cfg, dir);
-  runYgCheck(cfg, dir, ['--details']);
+  pendingProsePairs(cfg, dir);
   ygCheckDoc(dir, cfg);
   ygCheckJson(dir, cfg);
 
@@ -33,5 +35,7 @@ test('every yg check Horde runs to read the graph passes --no-approve', (t) => {
   for (const argv of calls) {
     assert.equal(argv[0], 'check');
     assert.ok(argv.includes('--no-approve'), `\`yg ${argv.join(' ')}\` would approve under auto_approve`);
+    // The report is written for a person and its grammar is Yggdrasil's to change; Horde reads the document.
+    assert.ok(argv.includes('--json'), `\`yg ${argv.join(' ')}\` reads the text report`);
   }
 });

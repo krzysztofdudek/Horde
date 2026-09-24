@@ -995,7 +995,7 @@ function checkGraph(cfg, worktree, noGate) {
     };
   }
   // A half that was stopped at its ceiling ends the item here, rather than falling through to ask
-  // the same wedged command the same question twice more (the full check, then `--details`) and
+  // the same wedged command the same question again (the full check, read as its document) and
   // spending a ceiling on each. One stop is the answer; a red graph is a red gate.
   if (filled.timedOut) return { ok: false, note: `\`${filled.command}\` — ${filled.out}` };
 
@@ -1003,7 +1003,7 @@ function checkGraph(cfg, worktree, noGate) {
   if (res.ok) return { ok: true, note: `${res.command} green${res.summary ? ` — ${res.summary}` : ''}` };
   if (res.timedOut) return { ok: false, note: `\`${res.command}\` — ${res.summary}` };
 
-  const pending = pendingProsePairs(cfg, worktree);
+  const pending = pendingProsePairs(cfg, worktree, res);
   if (pending.scriptPending.length) {
     // The free half did not take — a graph the CLI refuses to fill at all, most often because a
     // judgement rule has no judge configured. Nobody should be sent to read a script rule, so the

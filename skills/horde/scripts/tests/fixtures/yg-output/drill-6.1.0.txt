@@ -1,0 +1,3 @@
+pass         satisfies-clean/case  [expected satisfied, got satisfied]  (case b40dedde · rule ea461563)
+pass         violates-marker/case  [expected refused, got refused]  (case 28ce800f · rule ea461563)
+yg drill 'no-marker': 2 pass · 0 MISS · 0 FALSE-ALARM · 0 unrun · 0 unsupported (corpus 'dev', dev).

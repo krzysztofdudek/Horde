@@ -1,0 +1,10 @@
+{
+  "schema": "yg-error/1",
+  "code": "command-error",
+  "what": "Node 'nope' does not exist in the graph.",
+  "why": "The --node path must name an existing node — a directory under .yggdrasil/model/, written without the model/ prefix.",
+  "next": {
+    "command": null,
+    "text": "Browse the graph with 'yg tree', or locate one with 'yg find \"<keywords>\"', then retry with a valid --node path."
+  }
+}

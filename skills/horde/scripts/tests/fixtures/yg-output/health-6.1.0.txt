@@ -1,0 +1,11 @@
+aspect       kind           status    nodes  pairs  refused     suppresses  errs   age  catch  exposure  signal  fp             wrong-rule  files
+no-marker    deterministic  enforced  1      1      1           0           under  <1d  1      1         active  0 (thin data)  —           0
+plain-names  llm            advisory  1      1      unverified  0           —      <1d  —      —         —       —              —           0
+
+"unverified" = not yet checked; run `yg check --approve` to resolve.
+
+Signal detail (catch = violations caught; exposure = times the reviewer judged):
+  no-marker: estimated catch rate ~100% — uncertainty range is wide (few observations).
+
+False-block signal (fp = refusals a human later waived or overturned; a read for a human retirement ritual, never a gate):
+  Local telemetry since 2026-09-23T23:31:56.974Z.
