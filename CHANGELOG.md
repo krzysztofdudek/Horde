@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.0] - 2026-09-25
+
 Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to install. Installing the `promises` package as a tagged version needs Yggdrasil 6.1.0.
 
 **A minor number with breaking changes.** Semantic Versioning would number this release 7.0.0; it is 6.1.0 because Horde ships under the family's one number with Yggdrasil and Grain (the reasoning is in Yggdrasil's docs/family-contracts.md, under "One number for the family"). What breaks: every judge of a prose rule other than Yggdrasil's own reviewer is gone, with `config.judge`, `node.mjs verdicts` and the retrospective's two-judge measurement, so a repository with no reviewer can no longer land a tree whose prose rules lack a verdict; `tk.mjs review-request`, `list --review-pending`, cost tracking and the charter's cost limit are gone; the conflict-of-interest guard can no longer be waived; and the `promises` package moves to `6.1.0`. All of it is under **Removed** and **Changed** below. Read those before you upgrade, and pin the exact versions of the family tools your pipeline runs.
@@ -278,7 +280,8 @@ Experimental. This version needs a Yggdrasil newer than 5.8.0 — the first one 
 ### Added
 - First version. A prototype, expect rough edges.
 
-[Unreleased]: https://github.com/krzysztofdudek/Horde/compare/v6.0.0...HEAD
+[Unreleased]: https://github.com/krzysztofdudek/Horde/compare/v6.1.0...HEAD
+[6.1.0]: https://github.com/krzysztofdudek/Horde/compare/v6.0.0...v6.1.0
 [6.0.0]: https://github.com/krzysztofdudek/Horde/compare/v0.4.0...v6.0.0
 [0.4.0]: https://github.com/krzysztofdudek/Horde/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/krzysztofdudek/Horde/compare/v0.2.0...v0.3.0
