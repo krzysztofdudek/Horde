@@ -12,4 +12,4 @@ schema: yg-marketplace/1
 packages:
   - name: promises
     path: packages/promises
-    version: 0.2.0
+    version: 6.1.0

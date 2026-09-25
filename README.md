@@ -163,7 +163,7 @@ This repository also publishes one set of Yggdrasil rules, `promises`: an eviden
 
 ```bash
 yg pack add https://github.com/krzysztofdudek/Horde#promises          # the newest published version
-yg pack add https://github.com/krzysztofdudek/Horde#promises@0.2.0    # this version, pinned
+yg pack add https://github.com/krzysztofdudek/Horde#promises@6.1.0    # this version, pinned
 ```
 
 A version is published as the tag `pack/promises@<version>`. What is on `main` after the last such tag is not installed.

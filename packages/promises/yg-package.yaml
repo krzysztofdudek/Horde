@@ -11,7 +11,7 @@
 # 6.x CLI satisfies the range too.
 schema: yg-package/1
 name: promises
-version: 0.2.0
+version: 6.1.0
 requires:
   yg: ">=5.9.0"
 aspects:
