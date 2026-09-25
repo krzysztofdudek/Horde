@@ -24,23 +24,24 @@ No `hooks/` directory: unlike Ratatoskr, horde does not need forced every-turn a
 
 **Script paths inside the skill body** (`SKILL.md`, `reference/roles/*.md`) are written as `${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/…` rather than a bare relative path. Claude Code and Codex CLI set `CLAUDE_PLUGIN_ROOT` for an installed plugin, so a marketplace install resolves correctly wherever the plugin cache actually lives; the `:-.claude/skills/horde` fallback keeps the older manual drop-in (copying `skills/horde/` straight into a target repo's `.claude/skills/horde/`) working unchanged for whoever still does that. Observed on a real mission: a subagent is not guaranteed to receive `CLAUDE_PLUGIN_ROOT`, and in a repository that installed the plugin the `.claude/skills/horde` fallback does not exist, so a brief handed to a subagent carries the absolute path instead: `brief.mjs` replaces every `${CLAUDE_PLUGIN_ROOT:-…}` token in the role and discipline text with the skill's own directory (`absolutizePluginRoot`), and the consultant briefs `refine.mjs` writes take the scripts directory from the same function. Nothing is exported at the top of a brief, and a brief has no variable left in it for the agent to resolve.
 
-When bumping version, update the `version` in all of `.claude-plugin/plugin.json`, `.github/plugin/marketplace.json` (plugin entry), `.codex-plugin/plugin.json`, and `.cursor-plugin/plugin.json` in lockstep with the CHANGELOG section header.
+When bumping version, update the `version` in all five manifests — the root `plugin.json` (the portable Agent Plugins manifest), `.claude-plugin/plugin.json`, `.github/plugin/marketplace.json` (plugin entry), `.codex-plugin/plugin.json`, and `.cursor-plugin/plugin.json` — in lockstep with the CHANGELOG section header.
 
 ## Versioning
 
-This project uses [Semantic Versioning](https://semver.org/) and maintains a [CHANGELOG.md](CHANGELOG.md) following the [Keep a Changelog](https://keepachangelog.com/) format.
+This project maintains a [CHANGELOG.md](CHANGELOG.md) following the [Keep a Changelog](https://keepachangelog.com/) format. Its version numbers follow the Yggdrasil family's one-number policy, not Semantic Versioning: the core (Yggdrasil, Grain and Horde) ships together under one number, so a release may carry breaking changes under a minor number, and its CHANGELOG section says so and names them.
 
 When the user says "bump version":
-1. Move `[Unreleased]` entries in `CHANGELOG.md` into a new version section with today's date
+1. Move `[Unreleased]` entries in `CHANGELOG.md` into a new version section with today's date, and keep an empty `## [Unreleased]` heading above it (the docs tests read that heading). The new section keeps its opening line naming the Yggdrasil floor as "Needs Yggdrasil <version> or newer", matching `YG_DOCUMENTS_AFTER` in `node.mjs`
 2. Update the comparison links at the bottom of `CHANGELOG.md` (add the new `[X.Y.Z]: …compare/vA.B.C...vX.Y.Z` line and point `[Unreleased]` at the new version)
-3. Update the `version` in `.claude-plugin/plugin.json`, `.github/plugin/marketplace.json` (plugin entry), `.codex-plugin/plugin.json`, and `.cursor-plugin/plugin.json` to match
-4. Commit the bump and push to `main` — that's it.
+3. Update the `version` in all five manifests to match: the root `plugin.json`, `.claude-plugin/plugin.json`, `.github/plugin/marketplace.json` (plugin entry), `.codex-plugin/plugin.json`, and `.cursor-plugin/plugin.json`
+4. Set the `promises` package to the same number in `packages/promises/yg-package.yaml` and in its `yg-marketplace.yaml` entry (see below)
+5. Commit the bump and push to `main` — that's it.
 
-Do not create or push tags manually. The `.github/workflows/release.yml` workflow runs on every push to `main`, reads the top version from `CHANGELOG.md`, and if `v<version>` does not already exist it creates the tag, pushes it, and publishes a GitHub Release with notes extracted from the matching changelog section.
+Do not create or push tags manually. The `.github/workflows/release.yml` workflow runs once the `ci` workflow has finished green on a push to `main` (or by hand, with `workflow_dispatch`, which refuses a commit without a green `ci` run). It reads the top version from `CHANGELOG.md`, and if `v<version>` does not already exist it creates the tag on the commit CI tested, pushes it, and publishes a GitHub Release with notes extracted from the matching changelog section. A red or cancelled CI run releases nothing.
 
-### The `promises` package's own version
+### The `promises` package's version
 
-`packages/promises` keeps its own version, apart from Horde's, in `packages/promises/yg-package.yaml` and in its entry in `yg-marketplace.yaml` — the two MUST agree. Yggdrasil (6.1.0 and later) installs a package from a git source only at a tag `pack/promises@<version>`, taking the highest one when the adopter names no version; the default branch is never read. So a version exists for adopters only once its tag does. The same `release.yml` run creates that tag on `main` when it is missing (and fails when the two versions disagree). Any change to a file under `packages/promises/` that should reach adopters bumps both versions together in the same release; a published tag is never moved. Do not create the tag by hand. The test suite never needs the tag: `tests/promises-package.test.mjs` builds its own tagged copy of the package in a temporary repository.
+`packages/promises` carries the family's release number: it ships with Horde, and Horde ships with the core, so `6.1.0` says which release it came with. The number lives in `packages/promises/yg-package.yaml` and in the package's entry in `yg-marketplace.yaml` — the two MUST agree, and every Horde bump sets both to the release's number (step 4 above). Yggdrasil (6.1.0 and later) installs a package from a git source only at a tag `pack/promises@<version>`, taking the highest one when the adopter names no version; the default branch is never read. So a version exists for adopters only once its tag does. The same `release.yml` run that makes `v<version>` creates `pack/promises@<version>` on the commit CI tested when it is missing (and fails when the two versions disagree). A published tag is never moved. Do not create the tag by hand. The test suite never needs the tag: `tests/promises-package.test.mjs` builds its own tagged copy of the package in a temporary repository.
 
 ### Changelog register
 

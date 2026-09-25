@@ -2,10 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version numbers follow the Yggdrasil family's one-number policy, not Semantic Versioning: the core of the family (Yggdrasil, Grain and Horde) ships together under one number, so a release may carry breaking changes under a minor number. Read a release's **Removed** and **Changed** sections before you upgrade.
 
 ## [Unreleased]
+
+Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to install. Installing the `promises` package as a tagged version needs Yggdrasil 6.1.0.
+
+**A minor number with breaking changes.** Semantic Versioning would number this release 7.0.0; it is 6.1.0 because Horde ships under the family's one number with Yggdrasil and Grain (the reasoning is in Yggdrasil's docs/family-contracts.md, under "One number for the family"). What breaks: every judge of a prose rule other than Yggdrasil's own reviewer is gone, with `config.judge`, `node.mjs verdicts` and the retrospective's two-judge measurement, so a repository with no reviewer can no longer land a tree whose prose rules lack a verdict; `tk.mjs review-request`, `list --review-pending`, cost tracking and the charter's cost limit are gone; the conflict-of-interest guard can no longer be waived; and the `promises` package moves to `6.1.0`. All of it is under **Removed** and **Changed** below. Read those before you upgrade, and pin the exact versions of the family tools your pipeline runs.
 
 ### Added
 
