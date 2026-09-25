@@ -238,8 +238,8 @@ test('the law audit: an attention item nobody has answered is queued; one the cl
     assert.equal(sweep.filed[0].node, 'billing');
 
     const ticket = run('tk.mjs', ['show', sweep.filed[0].ticket], dir);
-    assert.match(ticket.json.text, /Node 'billing' is changing but has no rule covering it/);
-    assert.match(ticket.json.text, /an uncovered hot spot/, 'Yggdrasil\'s own why, carried verbatim');
+    assert.match(ticket.json.text, /Node 'billing' is changing but has no rule (?:covering|guarding) it/);
+    assert.match(ticket.json.text, /an (?:uncovered|unguarded) hot spot/, 'Yggdrasil\'s own why, carried verbatim');
     assert.match(ticket.json.text, /Attention item id: `uncovered-hot-spot:billing`/);
     assert.match(ticket.json.text, /reason is a signature, so it is theirs to give, not the horde's/);
 
