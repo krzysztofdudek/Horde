@@ -1,20 +1,53 @@
 name: Release
 
+# Releases only a commit CI has tested. The workflow runs when the `ci` workflow finishes on a push
+# to `main`, and only if that run succeeded, so a red or cancelled `main` is never tagged or
+# released. Everything below works on the commit CI tested (`head_sha`), not on whatever `main`
+# points at by the time this run starts. `workflow_dispatch` is the fallback for a run GitHub never
+# started; it refuses a commit that has no successful `ci` run of its own.
 on:
-  push:
-    branches:
-      - main
+  workflow_run:
+    workflows: ['ci']
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
+  actions: read
+
+# One release run at a time: two runs for commits close together must not race each other to
+# create the same tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
+          fetch-tags: true
+
+      - name: Refuse a commit without a green CI run (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+        run: |
+          GREEN=$(gh run list --repo "${GITHUB_REPOSITORY}" --workflow ci --commit "${SHA}" --status success --json databaseId --jq 'length')
+          if [ "${GREEN:-0}" -eq 0 ]; then
+            echo "No successful ci run for ${SHA}; nothing is released from an untested commit." >&2
+            exit 1
+          fi
 
       - name: Extract current version from CHANGELOG
         id: version
@@ -45,12 +78,13 @@ jobs:
             --notes-file /tmp/release-notes.md \
             --latest
 
-      # The `promises` rule package keeps its own version, apart from Horde's. Yggdrasil installs a
-      # package from a git source only at a tag `pack/<name>@<version>`, so a version of the package
-      # exists for adopters only once that tag does. This step publishes it: it reads the version
-      # from packages/promises/yg-package.yaml, refuses when yg-marketplace.yaml disagrees (a
-      # consumer would be refused that version), and creates the tag if it is not there yet. A tag
-      # that already exists is never moved — a changed package ships under a new version.
+      # The `promises` rule package carries the family's release number, set in the same bump as
+      # Horde's own. Yggdrasil installs a package from a git source only at a tag
+      # `pack/<name>@<version>`, so a version of the package exists for adopters only once that tag
+      # does. This step publishes it: it reads the version from packages/promises/yg-package.yaml,
+      # refuses when yg-marketplace.yaml disagrees (a consumer would be refused that version), and
+      # creates the tag if it is not there yet. A tag that already exists is never moved — a changed
+      # package ships under a new version.
       - name: Tag the promises package version
         run: |
           PKG_VERSION=$(awk '/^version:/{print $2; exit}' packages/promises/yg-package.yaml)
