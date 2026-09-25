@@ -105,8 +105,9 @@ at the end of this brief; read them before your first commit.
   `node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tk.mjs log {{ticketId}} "landed <sha> — <one line>"` after the
   commit; the landing gate requires a log entry newer than the last commit, and the loop reads that
   line as the end of your run — until it is there the ticket is yours and nothing touches your
-  worktree. Stopping without landing, log why (`tk.mjs log {{ticketId}} "stopped: <why>"`; the director
-  reclaims the ticket from there) and never write a `landed` line you did not commit. Your final report
+  worktree. Stopping without landing, your last action is instead
+  `tk.mjs log {{ticketId}} "stopped: <why>"` — the loop reads that line as your end too, and settles
+  what you left — and never write a `landed` line you did not commit. Your final report
   **contains `git -C {{worktree}} log -1 --oneline`** of the landed commit; "done" with an uncommitted diff is not done.
 - If the branch already carries a commit whose message starts with `wip:` it is a previous worker's
   unfinished work, reclaimed at a cold boot: read it first, keep what is right, reset what is not, and

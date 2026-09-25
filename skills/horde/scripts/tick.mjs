@@ -17,7 +17,8 @@
 //
 // **Under `session` (the default), tick never spawns — the caller does.** Your own turn runs tick,
 // issues the calls on the dispatch list, and runs tick again whenever it likes: a ticket whose worker
-// has left no evidence of ending (its "landed <sha>" line, a dead pid, the director's --reclaim) is
+// has left no evidence of ending (its "landed <sha>" or "stopped: <why>" line, a dead pid, the
+// director's --reclaim) is
 // shown as working and left alone, so a run between two returns costs a worker nothing. **Under
 // `--runner external`, tick.mjs spawns each worker itself**, through the host's own headless CLI
 // (`config.runner.spawn`), because nobody outside any agent is there to take a dispatch list and
@@ -67,7 +68,8 @@ what to start now, and say whether the queue has emptied. Then it exits — noth
 runs.
 
 A ticket handed out is held by its worker until there is evidence the worker ended: its last line,
-tk.mjs log NNN "landed <sha> — …", in the ticket's log since it started; the process this tick
+tk.mjs log NNN "landed <sha> — …" (or "stopped: <why>" when it stops without landing), in the
+ticket's log since it started; the process this tick
 started for it gone (--runner external); or --reclaim NNN, the director saying a worker came back
 without that line. Until then the ticket is listed on "working" and nothing is committed, removed
 or handed out again for it — so tick can run while workers are still working.

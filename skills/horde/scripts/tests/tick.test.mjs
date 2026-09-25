@@ -2079,3 +2079,27 @@ test('tick.mjs: a "rejudge" result goes back with no round and a brief to refres
   assert.equal(counted.round, 1, JSON.stringify(counted));
   assert.match(readFileSync(ticketLogPath(dir, id), 'utf8'), /round 1\//);
 });
+
+test('tick.mjs lease: a worker\'s own "stopped: <why>" line ends it too, and what it left is settled with no reclaim', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const id = mkTicket(dir, 'cannot-do-it', { files: 'src/cannot.ts' });
+  run('queue.mjs', ['add', id], dir);
+  const first = tick(dir);
+  const { worktree } = first.json.spawn.find((s) => s.ticket === id);
+  writeFileSync(join(worktree, 'notes.txt'), 'what I found before stopping\n');
+
+  const working = tick(dir);
+  assert.ok(workingOf(working, id), 'still working before it says it stopped');
+
+  logOn(dir, id, 'stopped: the ticket needs a port the node does not have');
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(!workingOf(r, id), 'no longer working');
+  const settled = r.json.reconciled.find((x) => x.ticket === id);
+  assert.ok(settled, JSON.stringify(r.json));
+  assert.equal(settled.state, 'queued');
+  assert.match(settled.note, /logged "stopped: the ticket needs a port the node does not have"/);
+  assert.equal(git(['-C', worktree, 'log', '-1', '--format=%s'], dir), 'wip: reclaimed', 'what it left is kept for the next worker');
+});

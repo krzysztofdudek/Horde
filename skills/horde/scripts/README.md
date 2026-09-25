@@ -1533,7 +1533,8 @@ sitting in a different horde's own tree entirely) reconciles, gates and dispatch
 inherits whatever tree the session's shell is already in.
 
 1. **Reconcile.** Every `running` item whose worker has ended, settled from its branch. Ended means
-   evidence, never a clock: the worker's own `landed <sha>` line in the ticket's log since the
+   evidence, never a clock: the worker's own `landed <sha>` or `stopped: <why>` line in the
+   ticket's log since the
    lease was recorded (`worker: {name, startedAt, pid, log}` on the queue item, written by every
    start), the process tick started for it under `external` gone, or `--reclaim NNN[,MMM]` — the
    director saying a worker came back without that line (refused, naming it, for a ticket that is

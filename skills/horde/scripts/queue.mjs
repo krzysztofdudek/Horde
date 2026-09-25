@@ -156,8 +156,8 @@ commands:
   rm <ticket> [--team t] [--horde h]
   render [--team t] [--horde h]
   reconcile [--reclaim NNN[,MMM]] [--team t] [--horde h]
-      every "running" item whose worker has ended — its "landed <sha>" line is in the ticket's log
-      since it started, the process tick started for it is gone, or --reclaim names it — is
+      every "running" item whose worker has ended — its "landed <sha>" or "stopped: <why>" line is
+      in the ticket's log since it started, the process tick started for it is gone, or --reclaim names it — is
       settled: a commit beyond its parent's tip (the team's branch, or the ticket it is stacked on)
       -> "landed"; a dirty worktree -> commits it as "wip: reclaimed" on the ticket branch and goes
       to "queued" (worktree kept, noted); a clean worktree with no commit -> "queued", worktree
@@ -777,7 +777,8 @@ export function startRunning(horde, team, key, { tree, on, agent } = {}) {
 // {name, startedAt, pid, log}`, the pid and the log only when tick started the process itself under
 // the external runner — and reconcile settles the item only on evidence that the worker ended:
 //
-//   - its last line, `tk.mjs log NNN "landed <sha> — …"`, logged since it started;
+//   - its last line, `tk.mjs log NNN "landed <sha> — …"`, logged since it started — or, for a worker
+//     that stops without landing, `tk.mjs log NNN "stopped: <why>"`;
 //   - the process tick started for it is gone (external runner);
 //   - the director says so: `tick.mjs --reclaim NNN` (or `queue.mjs reconcile --reclaim NNN`), for a
 //     worker that came back without that line — stopped, reported it could not, or died.
@@ -786,6 +787,7 @@ export function startRunning(horde, team, key, { tree, on, agent } = {}) {
 // again. There is still no clock anywhere: the signal is a line in a file or a pid, never a time.
 // An item with no lease at all was started before leases existed, and settles the old way.
 const LANDED_LINE = /^landed\s+([0-9a-f]{7,40})\b/i;
+const STOPPED_LINE = /^stopped:\s*(.*)$/i;
 
 export function workerLease(name) {
   return {
@@ -793,15 +795,19 @@ export function workerLease(name) {
   };
 }
 
-// The worker's own "landed <sha>" line, logged at or after `since`, or null.
-export function landedLineSince(logText, since) {
+// The worker's own last line — "landed <sha>" or "stopped: <why>" — logged at or after `since`, or
+// null: {kind: 'landed', sha, stamp} or {kind: 'stopped', why, stamp}, the latest of them.
+export function endLineSince(logText, since) {
   let found = null;
   for (const entry of parseLogEntries(logText)) {
     if (entry.isStatus) continue;
     const stamp = entry.text.split(/\s/)[0];
     if (!stamp || stamp < since) continue;
-    const m = LANDED_LINE.exec(entry.text.slice(stamp.length).trim());
-    if (m) found = { sha: m[1], stamp };
+    const said = entry.text.slice(stamp.length).trim();
+    const landed = LANDED_LINE.exec(said);
+    if (landed) { found = { kind: 'landed', sha: landed[1], stamp }; continue; }
+    const stopped = STOPPED_LINE.exec(said);
+    if (stopped) found = { kind: 'stopped', why: stopped[1].trim(), stamp };
   }
   return found;
 }
@@ -813,8 +819,9 @@ export function workerEnded(horde, item) {
   if (!w || !w.startedAt) return { ended: true, how: 'no-lease', note: 'no worker lease was recorded for it' };
   if (w.reclaimedAt) return { ended: true, how: 'reclaimed', note: `reclaimed by the director at ${w.reclaimedAt}` };
   const ticket = findTicket(horde, item.ticket);
-  const landed = ticket ? landedLineSince(readText(ticket.logPath) || '', w.startedAt) : null;
-  if (landed) return { ended: true, how: 'landed-line', note: `its worker logged "landed ${landed.sha}" at ${landed.stamp}` };
+  const last = ticket ? endLineSince(readText(ticket.logPath) || '', w.startedAt) : null;
+  if (last && last.kind === 'landed') return { ended: true, how: 'landed-line', note: `its worker logged "landed ${last.sha}" at ${last.stamp}` };
+  if (last) return { ended: true, how: 'stopped-line', note: `its worker logged "stopped: ${last.why}" at ${last.stamp}` };
   if (Number.isInteger(w.pid) && w.pid > 0 && !processAlive(w.pid)) {
     return { ended: true, how: 'pid-gone', note: `the process started for its worker (pid ${w.pid}) is gone` };
   }
@@ -822,7 +829,7 @@ export function workerEnded(horde, item) {
   return {
     ended: false,
     how: null,
-    note: `${who} has held it since ${w.startedAt}${w.pid ? ` as pid ${w.pid}, still alive` : ''}, and its ticket log has no "landed <sha>" line since then — `
+    note: `${who} has held it since ${w.startedAt}${w.pid ? ` as pid ${w.pid}, still alive` : ''}, and its ticket log has no "landed <sha>" or "stopped: <why>" line since then — `
       + `nothing is committed, removed or handed out again until it ends; if it has stopped without that line, tick.mjs --reclaim ${item.ticket} settles it now`,
   };
 }

@@ -377,7 +377,8 @@ waiting on every run, and deciding it never will is the director's call, made ou
 Anything the review logs after the line that ended it is not acted on.
 
 A worker holds its ticket the same way under both, on evidence and never on a clock: until the
-ticket's log carries the worker's own `landed <sha>` line (logged since it was handed the ticket),
+ticket's log carries the worker's own `landed <sha>` or `stopped: <why>` line (logged since it was
+handed the ticket),
 the process tick started for it under `external` is gone, or the director reclaims it (`tick.mjs
 --reclaim NNN`), reconcile lists the ticket as `working` and leaves its branch and worktree alone.
 Every start records the lease on the queue item — `worker: {name, startedAt, pid, log}` — and under

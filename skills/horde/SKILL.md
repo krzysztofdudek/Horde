@@ -245,11 +245,12 @@ without one, the loop advances while the user is present, and you say so.
 
 **Tick never takes a ticket from a worker that is still working.** A ticket handed out is held by
 its worker until there is evidence the worker ended: its last line, `tk.mjs log NNN "landed <sha> —
-…"`; under the external runner, the process tick started for it being gone; or you saying so. Until
-then `tick.mjs` lists it under `working` and touches nothing of it — so workers can run in the
-background while you tick, and a landing does not wait for the slowest worker of its batch. When a
-worker comes back without that line (it stopped, reported it could not, or died), say so with
-`tick.mjs --reclaim NNN`: that run settles what it left behind as usual.
+…"`, or `tk.mjs log NNN "stopped: <why>"` when it stops without landing; under the external runner,
+the process tick started for it being gone; or you saying so. Until then `tick.mjs` lists it under
+`working` and touches nothing of it — so workers can run in the background while you tick, and a
+landing does not wait for the slowest worker of its batch. When a worker comes back with neither
+line (it died, or forgot), say so with `tick.mjs --reclaim NNN`: that run settles what it left
+behind as usual.
 
 **A catch-up that conflicts is not a loop.** When a sibling's landing moves the parent, the landing
 merges the parent into the branch first, and the conflicts the family meets every day are resolved
