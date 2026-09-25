@@ -1613,6 +1613,50 @@ export function globToRegExp(glob) {
   return new RegExp(`^${out}$`);
 }
 
+// ---- files two parallel tickets may both change ------------------------------------------------
+//
+// Three kinds of file are touched by nearly every ticket and still merge by rule, not by judgement:
+// a node's own `log.md` (entries are appended, and `yg log merge-resolve` writes the union of two
+// sides), Yggdrasil's committed lock files (`yg-lock.*.json`, where one side is taken whole and the
+// verdicts the other side held are simply judged again), and whatever the repository lists in
+// `config.appendOnly` (a CHANGELOG, most often), where each side only ever adds lines. None of them
+// says anything about which ticket owns which piece of work, so none of them serializes two tickets
+// in the plan, and a merge that conflicts only in them is resolved mechanically.
+export const NODE_LOG_FILE = /^\.yggdrasil\/model\/(?:.+\/)?log\.md$/;
+export const YG_LOCK_FILE = /^\.yggdrasil\/yg-lock\.[^/]+\.json$/;
+
+export function appendOnlyGlobs(cfg) {
+  return asArray(cfg && cfg.appendOnly).map((g) => String(g).trim()).filter(Boolean);
+}
+
+export function isAppendOnly(path, cfg) {
+  return appendOnlyGlobs(cfg).some((g) => (g.includes('*') ? globToRegExp(g).test(path) : path === g));
+}
+
+// A file whose conflicts the landing resolves by rule — one of the three kinds above.
+export function mergesByRule(path, cfg) {
+  return NODE_LOG_FILE.test(path) || YG_LOCK_FILE.test(path) || isAppendOnly(path, cfg);
+}
+
+// The node a `log.md` belongs to, as `yg log --node` names it (relative to `.yggdrasil/model/`).
+export function nodeOfLogFile(path) {
+  const m = /^\.yggdrasil\/model\/(.+)\/log\.md$/.exec(path);
+  return m ? m[1] : null;
+}
+
+// `yg log merge-resolve --node <n>`, run in a tree stopped mid-merge on that node's log: it writes
+// the union of both sides and records the node's baseline in `yg-lock.logs.json`. Yggdrasil's own
+// resolution, never a hand-stitched one.
+export function ygLogMergeResolve(cfg, cwd, node) {
+  const { cmd, prefix, display } = ygCommand(cfg);
+  const args = ['log', 'merge-resolve', '--node', node];
+  const command = `${display} ${args.join(' ')}`;
+  const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+  if (run.missing || run.spawnFailed) return { ok: false, command, out: `could not start \`${command}\`` };
+  if (run.timedOut) return { ok: false, command, out: timedOutDetail(run.ms) };
+  return { ok: run.code === 0, command, out: `${run.out || ''}${run.err || ''}`.trim() };
+}
+
 export function pathInBoundary(path, boundary) {
   return boundary.some((pat) => {
     if (pat.includes('*')) return globToRegExp(pat).test(path);

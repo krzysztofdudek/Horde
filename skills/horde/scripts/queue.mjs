@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 import {
   hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, leaseHolderForNode,
   resolveTree, provisionTree, provenanceLine, withProvenance, firstClass, withQueueLock, appendText,
-  parseEvidenceRows, diffSize, sizeRanks,
+  parseEvidenceRows, diffSize, sizeRanks, parseLogEntries, processAlive,
   runMain,
 } from './_lib.mjs';
 import {
@@ -28,7 +28,7 @@ import { noteMerged, parsePrototypeArtifacts } from './wave.mjs';
 import { loadAsks } from './ask.mjs';
 import {
   consumersOf, portExists, globToRegExp, nodeExists, nodeBoundary, advisoryKey, filedAdvisoryKeys, readAdvisoryLedger,
-  recordAdvisory,
+  recordAdvisory, isAppendOnly,
 } from './node.mjs';
 
 // "proposed" is the state a ticket nobody has ruled on sits in: in the queue, listed and counted,
@@ -155,12 +155,15 @@ commands:
       without filing anything.
   rm <ticket> [--team t] [--horde h]
   render [--team t] [--horde h]
-  reconcile [--team t] [--horde h]
-      every "running" item: a commit beyond its parent's tip (the team's branch, or the ticket it
-      is stacked on) -> "landed"; a dirty worktree -> commits it as "wip: reclaimed" on the
-      ticket branch and goes to "queued" (worktree kept, noted);
-      a clean worktree with no commit -> "queued", worktree removed. A "waiting" item is left
-      untouched — it has nothing running to reconcile.
+  reconcile [--reclaim NNN[,MMM]] [--team t] [--horde h]
+      every "running" item whose worker has ended — its "landed <sha>" line is in the ticket's log
+      since it started, the process tick started for it is gone, or --reclaim names it — is
+      settled: a commit beyond its parent's tip (the team's branch, or the ticket it is stacked on)
+      -> "landed"; a dirty worktree -> commits it as "wip: reclaimed" on the ticket branch and goes
+      to "queued" (worktree kept, noted); a clean worktree with no commit -> "queued", worktree
+      removed. A worker that stopped mid-merge has that merge aborted first. An item whose worker
+      has not ended is answered "working" and left as it is. A "waiting" item is left untouched —
+      it has nothing running to reconcile.
 
 plan and quality also take --tree <path>: read the graph there instead of the tip of trunk —
 --horde alone (no --tree) means trunk for both, which is why "plan --horde h" reads what trunk
@@ -758,8 +761,82 @@ export function startRunning(horde, team, key, { tree, on, agent } = {}) {
     provisionRunning(horde, team, key, item, { tree, on });
     item.state = 'running';
     if (agent) item.agent = agent;
+    item.worker = workerLease(agent || item.agent);
     save(horde, team, doc);
     return item;
+  });
+}
+
+// ---- the worker's lease ------------------------------------------------------------------------
+//
+// A `running` item is a ticket somebody's worker holds. Read as a call that has come back while the
+// worker is still typing, it would have its half-written tree committed as "wip: reclaimed", be handed
+// to a second worker, or send a branch with one stage commit on it to review — and tick runs every
+// interval under --watch and at every wake-up of a session. So each start records who holds the ticket
+// and since when — `worker:
+// {name, startedAt, pid, log}`, the pid and the log only when tick started the process itself under
+// the external runner — and reconcile settles the item only on evidence that the worker ended:
+//
+//   - its last line, `tk.mjs log NNN "landed <sha> — …"`, logged since it started;
+//   - the process tick started for it is gone (external runner);
+//   - the director says so: `tick.mjs --reclaim NNN` (or `queue.mjs reconcile --reclaim NNN`), for a
+//     worker that came back without that line — stopped, reported it could not, or died.
+//
+// Until one of those holds, the item is `working` and nothing is committed, removed or handed out
+// again. There is still no clock anywhere: the signal is a line in a file or a pid, never a time.
+// An item with no lease at all was started before leases existed, and settles the old way.
+const LANDED_LINE = /^landed\s+([0-9a-f]{7,40})\b/i;
+
+export function workerLease(name) {
+  return {
+    name: name || null, startedAt: nowIso(), pid: null, log: null,
+  };
+}
+
+// The worker's own "landed <sha>" line, logged at or after `since`, or null.
+export function landedLineSince(logText, since) {
+  let found = null;
+  for (const entry of parseLogEntries(logText)) {
+    if (entry.isStatus) continue;
+    const stamp = entry.text.split(/\s/)[0];
+    if (!stamp || stamp < since) continue;
+    const m = LANDED_LINE.exec(entry.text.slice(stamp.length).trim());
+    if (m) found = { sha: m[1], stamp };
+  }
+  return found;
+}
+
+// workerEnded(horde, item) — {ended, how, note}: whether the worker holding a running item has ended,
+// and the evidence it ended on.
+export function workerEnded(horde, item) {
+  const w = item.worker;
+  if (!w || !w.startedAt) return { ended: true, how: 'no-lease', note: 'no worker lease was recorded for it' };
+  if (w.reclaimedAt) return { ended: true, how: 'reclaimed', note: `reclaimed by the director at ${w.reclaimedAt}` };
+  const ticket = findTicket(horde, item.ticket);
+  const landed = ticket ? landedLineSince(readText(ticket.logPath) || '', w.startedAt) : null;
+  if (landed) return { ended: true, how: 'landed-line', note: `its worker logged "landed ${landed.sha}" at ${landed.stamp}` };
+  if (Number.isInteger(w.pid) && w.pid > 0 && !processAlive(w.pid)) {
+    return { ended: true, how: 'pid-gone', note: `the process started for its worker (pid ${w.pid}) is gone` };
+  }
+  const who = w.name || 'its worker';
+  return {
+    ended: false,
+    how: null,
+    note: `${who} has held it since ${w.startedAt}${w.pid ? ` as pid ${w.pid}, still alive` : ''}, and its ticket log has no "landed <sha>" line since then — `
+      + `nothing is committed, removed or handed out again until it ends; if it has stopped without that line, tick.mjs --reclaim ${item.ticket} settles it now`,
+  };
+}
+
+// The pid and log of the process tick started for a worker under the external runner, written the
+// moment it is started — before the run that started it lets go of the gate lock, so the next run,
+// which has to take that lock to reconcile anything, always finds it.
+export function recordWorkerRun(horde, team, key, { pid, log } = {}) {
+  return withQueueLock(horde, team, () => {
+    const { doc, item } = findItem(horde, team, key);
+    if (!item || item.state !== 'running') return null;
+    item.worker = { ...(item.worker || workerLease(item.agent)), pid: Number.isInteger(pid) ? pid : null, log: log || null };
+    save(horde, team, doc);
+    return item.worker;
   });
 }
 
@@ -783,7 +860,10 @@ function cmdSet(horde, positional, flags) {
       fail('--adopt only goes with "set <ticket> running" — it binds a branch that exists back to an item whose record lost it, and nothing else starts work');
     }
 
-    if (state === 'running') provisionRunning(horde, team, key, found.item, { tree: flags.tree, on: flags.on, adopt: !!flags.adopt });
+    if (state === 'running') {
+      provisionRunning(horde, team, key, found.item, { tree: flags.tree, on: flags.on, adopt: !!flags.adopt });
+      found.item.worker = workerLease(flags.agent || found.item.agent);
+    }
 
     if (state === 'merged') {
       if (!flags.sha) fail('set merged requires --sha');
@@ -960,6 +1040,14 @@ function stackParentsFor(horde, doc, team, item, plan) {
   return parents;
 }
 
+// The files a ticket locks: its declared Files, less the node logs (tk.mjs's own reading) and less
+// the repository's append-only files (config.appendOnly, a CHANGELOG most often). Every ticket adds to
+// those, and a merge where two did is resolved by rule at landing, so they order nothing — counting
+// them would serialize every ticket in a repository where each change adds a CHANGELOG line.
+function lockFiles(text, cfg = readConfig() || {}) {
+  return ticketWorkFiles(text).filter((f) => !isAppendOnly(f, cfg));
+}
+
 // Every currently "running" real ticket's declared lock, in this team: its Files and its Nodes.
 // A ticket with no declared Files locks every file of every node it names — the safe degradation
 // for a ticket written (or read) before the field carried anything — so it is recorded by its
@@ -971,7 +1059,7 @@ function runningLocks(horde, doc) {
       const ticket = findTicket(horde, i.ticket);
       return {
         ticket: i.ticket,
-        files: ticket ? ticketWorkFiles(ticket.text) : [],
+        files: ticket ? lockFiles(ticket.text) : [],
         nodes: ticket ? nodesOf(ticket.text) : [],
       };
     });
@@ -981,7 +1069,7 @@ function runningLocks(horde, doc) {
 // decided by path/glob overlap alone; either side with none falls back to whole-node overlap —
 // the case a ticket without Files (or a running item whose ticket vanished) has to degrade to.
 function lockConflict(ticketText, ticketId, locks) {
-  const files = ticketWorkFiles(ticketText);
+  const files = lockFiles(ticketText);
   const nodes = nodesOf(ticketText);
   for (const running of locks) {
     if (running.ticket === ticketId) continue;
@@ -1133,7 +1221,7 @@ export function rankedCandidates(horde, team, {
       const ticket = findTicket(horde, e.item.ticket);
       const text = ticket ? ticket.text : '';
       if (lockConflict(text, e.item.ticket, held)) continue;
-      held.push({ ticket: e.item.ticket, files: ticketWorkFiles(text), nodes: nodesOf(text) });
+      held.push({ ticket: e.item.ticket, files: lockFiles(text), nodes: nodesOf(text) });
       picked.push(e);
     }
   }
@@ -1250,7 +1338,7 @@ export function buildPlan(horde, team, cfg, { tree } = {}) {
       class: parseField(t.text, 'Class') || firstClass(cfg),
       severity: parseField(t.text, 'Severity') || 'medium',
       state: item ? item.state : t.status,
-      files: ticketWorkFiles(t.text),
+      files: lockFiles(t.text, cfg),
       consumes: ticketPorts(t.text, 'Consumes').map((c) => c.ref),
       produces: produces.map((p) => p.ref),
       evidence: ticketEvidence(t.text),
@@ -1709,21 +1797,50 @@ function cmdRender(horde, positional, flags) {
   emit({ team }, flags, () => queuePath(horde, team).replace(/\.json$/, '.md'));
 }
 
-// What a spawn that never came back left behind, settled from the branch rather than from a clock.
-// Exported because tick.mjs opens every run with exactly this: an item is "running" because a call
-// was made, and once that call has returned without landing a sha, the branch is the only thing
-// that still knows what happened. Three answers, and each says out loud what was salvaged, because
-// the caller reading this is usually reading it after somebody else's crash.
-export function reconcileRunning(horde, team, { tree } = {}) {
-  return withQueueLock(horde, team, () => reconcileRunningLocked(horde, team, { tree }));
+// What a worker left behind once it ended, settled from the branch rather than from a clock.
+// Exported because tick.mjs opens every run with exactly this: an item is "running" because a worker
+// was handed it, and once that worker has ended (see "the worker's lease" above) the branch is the only
+// thing that still knows what happened. Three answers, and each says out loud what was salvaged,
+// because the caller reading this is usually reading it after somebody else's crash. A worker that has
+// not ended is answered with `working`, and its item is left exactly as it is.
+//
+// `reclaim` names tickets the director says have ended although their worker left no evidence of it:
+// recorded on the lease first, then settled like any other ended worker in the same pass.
+export function reconcileRunning(horde, team, { tree, reclaim = [] } = {}) {
+  return withQueueLock(horde, team, () => reconcileRunningLocked(horde, team, { tree, reclaim }));
 }
 
-function reconcileRunningLocked(horde, team, { tree } = {}) {
+function reconcileRunningLocked(horde, team, { tree, reclaim = [] } = {}) {
   const doc = load(horde, team);
   const root = resolveTree({ tree }).path;
   const results = [];
+  for (const raw of reclaim) {
+    const key = normalizeKey(raw);
+    const item = doc.items.find((i) => i.ticket === key);
+    if (!item || item.state !== 'running') {
+      fail(`--reclaim ${raw}: ${item ? `${key} is "${item.state}", not running` : `no queue item ${key}`} — only a ticket a worker holds can be reclaimed. Nothing was changed`);
+    }
+    item.worker = { ...(item.worker || workerLease(item.agent)), reclaimedAt: nowIso() };
+    item.notes.push({ at: nowIso(), text: `reconcile: reclaimed by the director — its worker is taken to have ended` });
+  }
   for (const item of doc.items) {
     if (item.state !== 'running' || !item.branch) continue;
+    const lease = workerEnded(horde, item);
+    if (!lease.ended) {
+      results.push({ ticket: item.ticket, state: 'working', note: lease.note });
+      continue;
+    }
+    const ended = lease.how === 'no-lease' ? '' : `${lease.note} — `;
+    // A worker that ended in the middle of a merge — most often the catch-up merge its brief opens
+    // with, stopped on a conflict — left a tree that is neither its work nor the parent's. Nothing
+    // below may read it as either: the merge is aborted first, and what was conflicted is named.
+    let midMerge = '';
+    if (item.worktree && existsSync(item.worktree) && git(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], item.worktree)) {
+      const conflicted = (git(['diff', '--name-only', '--diff-filter=U'], item.worktree) || '').split('\n').filter(Boolean);
+      git(['merge', '--abort'], item.worktree);
+      midMerge = `its worker stopped in the middle of a merge${conflicted.length ? ` conflicted in ${conflicted.join(', ')}` : ''}, and the merge was aborted — `;
+      item.notes.push({ at: nowIso(), text: `reconcile: ${midMerge.replace(/ — $/, '')}` });
+    }
     // Against the item's own parent: a stacked ticket carries its parent's commits too, and
     // counting those as its own work would call an untouched branch "landed" on the first pass.
     const parent = parentBranchOf(horde, team, item).branch;
@@ -1731,7 +1848,7 @@ function reconcileRunningLocked(horde, team, { tree } = {}) {
     const count = countOut === null ? 0 : Number(countOut);
     if (count > 0) {
       item.state = 'landed';
-      results.push({ ticket: item.ticket, state: item.state, note: `${count} commit(s) beyond ${parent} on ${item.branch} — the work is safe and the branch is ready for the gate` });
+      results.push({ ticket: item.ticket, state: item.state, note: `${ended}${midMerge}${count} commit(s) beyond ${parent} on ${item.branch} — the work is safe and the branch is ready for the gate` });
       continue;
     }
     // A worktree git still has on record but that is gone from disk is not an error to throw on:
@@ -1746,7 +1863,7 @@ function reconcileRunningLocked(horde, team, { tree } = {}) {
       const reclaimedSha = git(['rev-parse', 'HEAD'], item.worktree);
       item.state = 'queued';
       item.notes.push({ at: nowIso(), text: 'reconcile: worktree was dirty — committed as "wip: reclaimed"' });
-      results.push({ ticket: item.ticket, state: item.state, note: `worktree was dirty — committed as "wip: reclaimed" on ${item.branch}, and the worktree is kept` });
+      results.push({ ticket: item.ticket, state: item.state, note: `${ended}${midMerge}worktree was dirty — committed as "wip: reclaimed" on ${item.branch}, and the worktree is kept` });
       const ticket = findTicket(horde, item.ticket);
       if (ticket) {
         appendText(ticket.logPath, `- ${nowIso()} status: queued — reconcile: worktree was dirty, committed as "wip: reclaimed" (${reclaimedSha})\n`);
@@ -1763,9 +1880,9 @@ function reconcileRunningLocked(horde, team, { tree } = {}) {
     results.push({
       ticket: item.ticket,
       state: item.state,
-      note: worktreeGone
+      note: `${ended}${midMerge}${worktreeGone
         ? `the worktree at ${hadWorktree} is gone from disk and nothing was committed — there was nothing to salvage; ${item.branch} is left as it was and the item is queued again`
-        : `nothing was committed and the worktree was clean — worktree removed, ${item.branch} left as it was`,
+        : `nothing was committed and the worktree was clean — worktree removed, ${item.branch} left as it was`}`,
     });
   }
   save(horde, team, doc);
@@ -1774,7 +1891,8 @@ function reconcileRunningLocked(horde, team, { tree } = {}) {
 
 function cmdReconcile(horde, positional, flags) {
   const team = flags.team || 'trunk';
-  const results = reconcileRunning(horde, team, { tree: flags.tree });
+  const reclaim = flags.reclaim ? String(flags.reclaim).split(',').map((x) => x.trim()).filter(Boolean) : [];
+  const results = reconcileRunning(horde, team, { tree: flags.tree, reclaim });
   emit(results, flags, () => (results.length ? results.map((r) => `${r.ticket} -> ${r.state} · ${r.note}`).join('\n') : '(nothing running)'));
 }
 

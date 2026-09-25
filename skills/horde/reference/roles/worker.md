@@ -31,13 +31,16 @@ git -C {{worktree}} merge-base --is-ancestor {{parentBranch}} HEAD && git -C {{w
 ```
 
 `git status` must print nothing. A dirty tree after the merge is a stale base or somebody else's diff:
-**stop and report**. Then run the fast check `cd {{worktree}} && {{fastCheck}}`; the team branch last
+**stop and report** — unless a **Catch-up conflict** section below names the files it stops on, in
+which case resolving them is your first job. Then run the fast check `cd {{worktree}} && {{fastCheck}}`; the team branch last
 reported {{fastCheckCount}} — a lower count means a wrong base: stop and report. A fast check that
 fails before it runs a single test, because a module, a tool or a build output it needs is missing from
 this fresh tree, is a missing environment, not a wrong base: report it as that, name what was missing,
 and do not build it yourself.
 
 {{stackNote | }}
+
+{{returnBlock | }}
 
 ## The ticket
 
@@ -100,7 +103,10 @@ at the end of this brief; read them before your first commit.
   a fresh tree at your branch's tip, not your worktree.
 - **Your last action** is
   `node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tk.mjs log {{ticketId}} "landed <sha> — <one line>"` after the
-  commit; the landing gate requires a log entry newer than the last commit. Your final report
+  commit; the landing gate requires a log entry newer than the last commit, and the loop reads that
+  line as the end of your run — until it is there the ticket is yours and nothing touches your
+  worktree. Stopping without landing, log why (`tk.mjs log {{ticketId}} "stopped: <why>"`; the director
+  reclaims the ticket from there) and never write a `landed` line you did not commit. Your final report
   **contains `git -C {{worktree}} log -1 --oneline`** of the landed commit; "done" with an uncommitted diff is not done.
 - If the branch already carries a commit whose message starts with `wip:` it is a previous worker's
   unfinished work, reclaimed at a cold boot: read it first, keep what is right, reset what is not, and

@@ -379,6 +379,18 @@ function detectCommitHook(root) {
   return null;
 }
 
+// The repository's append-only files: a changelog at its root, whatever its spelling. Nearly every
+// change adds a line to one, so two parallel tickets both touching it is the normal case, and a
+// merge where both only added lines is resolved by keeping both (land.mjs) instead of refusing the
+// second ticket as stale — and the file orders no tickets in the plan. Only what is found is listed;
+// `config set appendOnly` names more, or none.
+const APPEND_ONLY_CANDIDATES = /^(?:CHANGELOG|CHANGES|HISTORY)(?:\.(?:md|markdown|txt|rst))?$/i;
+function detectAppendOnly(root) {
+  let names = [];
+  try { names = readdirSync(root); } catch { return []; }
+  return names.filter((n) => APPEND_ONLY_CANDIDATES.test(n)).sort();
+}
+
 function defaultConfig(root) {
   return {
     base: null,
@@ -390,6 +402,9 @@ function defaultConfig(root) {
     grainCommand: null,
     testGlobs: detectTestGlobs(root),
     protectedPaths: [],
+    // Files where every change only adds lines (a CHANGELOG): a merge where both sides only added
+    // lines keeps both, instead of refusing the landing, and the files order no tickets.
+    appendOnly: detectAppendOnly(root),
     classes: { ...DEFAULT_CLASSES },
     parallelism: 6,
     // The fix-loop breaker (tk.mjs status <ticket> changes): rounds 1..resume ask the director to
@@ -660,6 +675,10 @@ function cmdInit(positional, flags) {
     ? `commit hook: ${hook.file} runs \`yg check\`${hook.deterministicOnly ? ' --only-deterministic (the free half — right for this repository)' : ' in full'}`
     : 'no commit hook runs `yg check` here — nothing checks the graph until landing does';
 
+  const appendOnlyNote = Array.isArray(cfg.appendOnly) && cfg.appendOnly.length
+    ? `append-only: ${cfg.appendOnly.join(', ')} — two tickets that both only add lines to one land without a conflict; change it with: horde.mjs config set appendOnly "<file>,<glob>"`
+    : null;
+
   const leaseNote = leased.length
     ? `leased ${leased.length} node(s): ${leased.map((l) => l.node).join(', ')}`
     : null;
@@ -674,6 +693,7 @@ function cmdInit(positional, flags) {
       ecosystems,
       gates: cfg.gates,
       testGlobs: cfg.testGlobs,
+      appendOnly: cfg.appendOnly || [],
       reviewer,
       commitHook: hook,
       leased,
@@ -686,6 +706,7 @@ function cmdInit(positional, flags) {
       graphGate,
       gateNote,
       globsNote,
+      ...(appendOnlyNote ? [appendOnlyNote] : []),
       judgeNote,
       hookNote,
     ].join('\n'),
@@ -768,7 +789,7 @@ function parseListValue(raw) {
 // Keys whose value is a list whatever the config currently holds — a list-valued key that has
 // never been set (or was set to a string once) must still take a list, or `config set` writes the
 // string "[\"**/*Tests.java\"]" and every reader of that key breaks on it.
-const LIST_KEYS = new Set(['protectedPaths', 'testGlobs', 'copy']);
+const LIST_KEYS = new Set(['protectedPaths', 'testGlobs', 'copy', 'appendOnly']);
 
 function setPath(obj, path, rawValue) {
   const keys = path.split('.');

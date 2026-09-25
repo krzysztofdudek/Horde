@@ -16,7 +16,9 @@
 // needed tuning, not by tuning it.
 //
 // **Under `session` (the default), tick never spawns — the caller does.** Your own turn runs tick,
-// issues the calls on the dispatch list, and runs tick again once they come back. **Under
+// issues the calls on the dispatch list, and runs tick again whenever it likes: a ticket whose worker
+// has left no evidence of ending (its "landed <sha>" line, a dead pid, the director's --reclaim) is
+// shown as working and left alone, so a run between two returns costs a worker nothing. **Under
 // `--runner external`, tick.mjs spawns each worker itself**, through the host's own headless CLI
 // (`config.runner.spawn`), because nobody outside any agent is there to take a dispatch list and
 // issue the calls — so the loop survives a closed session. That is the entire difference the two
@@ -30,7 +32,9 @@
 // because two ticks on one repository must not hand the same ticket to two workers, and a second
 // lock would not stop them.
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import {
+  readFileSync, writeFileSync, mkdirSync, openSync, closeSync,
+} from 'node:fs';
 import { dirname, join } from 'node:path';
 import { execFileSync, spawn as spawnProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -40,7 +44,7 @@ import {
   runMain, appendText, parseEvidenceRows, classUp, processAlive,
 } from './_lib.mjs';
 import {
-  loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine,
+  loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine, recordWorkerRun,
 } from './queue.mjs';
 import {
   findTicket, parseField, changesRoundInfo, lastChangesRoundInfo, transitionStatus, ticketEvidence, readReview,
@@ -55,12 +59,18 @@ const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 const TEAM = 'trunk';
 const RUNNERS = ['session', 'external'];
 
-const USAGE = `usage: tick.mjs [--runner session|external] [--watch] [--stack]
+const USAGE = `usage: tick.mjs [--runner session|external] [--watch] [--stack] [--reclaim NNN[,MMM]]
                 [--tree <path>] [--horde h] [--json]
 
-One run: reconcile what a returned call left behind, put every ready branch through the gate, print
+One run: reconcile what an ended worker left behind, put every ready branch through the gate, print
 what to start now, and say whether the queue has emptied. Then it exits — nothing lives between
 runs.
+
+A ticket handed out is held by its worker until there is evidence the worker ended: its last line,
+tk.mjs log NNN "landed <sha> — …", in the ticket's log since it started; the process this tick
+started for it gone (--runner external); or --reclaim NNN, the director saying a worker came back
+without that line. Until then the ticket is listed on "working" and nothing is committed, removed
+or handed out again for it — so tick can run while workers are still working.
 
 Reconcile, the gate and the dispatch list all run in the tree --tree names; without it, cwd —
 whatever the calling shell already sits on — same as an ordinary read anywhere else in this tool
@@ -69,9 +79,9 @@ changes that: on its own (no --tree) it resolves to that horde's own trunk workt
 as queue.mjs plan/quality already read it. A bare tick.mjs call — the boot sequence's own — carries
 neither flag, so it inherits whatever tree the session is already in.
 
---json prints {tree, branch, sha, spawn: [{ticket, model, brief}], review: [{ticket, model, name,
-brief}], askClient: [{id, kind, why}], held: [{ticket, ask, kind,
-holds, note}], close: <bool>}. Everything on "spawn" has had its branch and worktree cut already, so
+--json prints {tree, branch, sha, reconciled: [{ticket, state, note}], working: [{ticket, note}],
+spawn: [{ticket, model, brief}], review: [{ticket, model, name, brief}], askClient: [{id, kind,
+why}], held: [{ticket, ask, kind, holds, note}], close: <bool>}. Everything on "spawn" has had its branch and worktree cut already, so
 the brief command on it renders against a tree that exists; tick does not start the agent, because
 the caller is what starts agents.
 
@@ -89,6 +99,13 @@ half (the revert test, the guards) before it takes the gate lock and writes no r
 done, so nothing else on disk says the branch is being landed. While that process lives and the
 branch has not moved, a later run shows the ticket on "landed" as "gate-running" and does not ask
 again; a pid that is gone with no result is a landing that died, and is asked again.
+
+A branch the landing refused as stale (the parent does not merge into it) goes back with no round
+counted, and its next worker is briefed on the files the merge stopped on. The second time the same
+files stop it, the ticket goes to "blocked" and one "stuck" ask names them: nothing in the loop has
+resolved them twice, so it is the client's question now. A landing whose only red was the prose
+verdicts its own catch-up merge made stale ("rejudge") also goes back with no round, briefed to
+refresh those verdicts; a second one in a row counts its round like any red gate.
 
 An open ask holds only what depends on its answer, and "held" says what each one held: "stop"
 everything — the dispatch list, every landing and the close — "stuck" that one ticket, "charter"
@@ -457,7 +474,16 @@ function landTheLanded(horde, cfg, root, holds) {
       continue;
     }
     plan.push({
-      ticket: item.ticket, action: 'red', source: 'gate', stale: !!result.stale, words: redWords(result), note: null,
+      ticket: item.ticket,
+      action: 'red',
+      source: 'gate',
+      stale: !!result.stale,
+      conflictFiles: Array.isArray(result.conflictFiles) ? result.conflictFiles : [],
+      rejudge: !!result.rejudge,
+      pairs: Array.isArray(result.pairs) ? result.pairs : [],
+      sha: result.sha,
+      words: redWords(result),
+      note: null,
     });
   }
 
@@ -564,8 +590,38 @@ function landTheLanded(horde, cfg, root, holds) {
         // A branch land refused as stale — the parent moved and does not merge into it — was not gated and
         // is not wrong: it goes back to be brought up to date, with no round counted, so a fix loop is
         // never spent on a merge somebody else's landing made necessary.
+        //
+        // Except that a merge nobody resolves comes back the same way every time: the worker stops at
+        // the conflict, reconcile finds its commits, the gate is stale again — forever, with no round
+        // to trip the breaker and nobody asked. So a stale return names the files the merge stopped on,
+        // the next worker's brief hands them over to resolve, and the second return on the same files
+        // stops the ticket and asks the client once, naming them.
         if (step.stale) {
           const stale = findTicket(horde, step.ticket);
+          const files = [...step.conflictFiles].sort();
+          if (files.length) {
+            const key = files.join('\n');
+            const history = Array.isArray(item.staleConflicts) ? item.staleConflicts : [];
+            const repeated = history.some((h) => Array.isArray(h.files) && [...h.files].sort().join('\n') === key);
+            item.staleConflicts = [...history, { sha: step.sha || null, files, at: nowIso() }];
+            if (repeated) {
+              const why = `The parent does not merge into ${item.branch}: the catch-up merge stopped on ${files.join(', ')} `
+                + 'twice, and neither the landing\'s rules nor the worker sent back to resolve them did. Somebody has to decide how those files come together.';
+              item.state = 'blocked';
+              item.notes.push({ at: nowIso(), text: `tick: stale on the same files twice (${files.join(', ')}) — blocked, the client is asked` });
+              if (stale) transitionStatus(stale, 'blocked', `catch-up conflict repeated — ${files.join(', ')}`);
+              const { ask, filed } = fileAsk(horde, {
+                kind: 'stuck', ticket: step.ticket, why, log: stale ? stale.logPath : null,
+              });
+              results.push({
+                ticket: step.ticket, action: 'blocked', ask: ask.id, note: `stale on the same files twice (${files.join(', ')})${filed ? ` — filed as ${ask.id} (stuck)` : ` — already filed as ${ask.id}`}`,
+              });
+              continue;
+            }
+            item.returnReason = { kind: 'catch-up-conflict', files, at: nowIso() };
+          } else {
+            delete item.returnReason;
+          }
           if (stale && parseField(stale.text, 'Status') !== 'changes') transitionStatus(stale, 'changes', step.words);
           item.state = 'queued';
           item.notes.push({ at: nowIso(), text: `tick: stale, no round counted — ${step.words}` });
@@ -574,6 +630,22 @@ function landTheLanded(horde, cfg, root, holds) {
           });
           continue;
         }
+        // A landing whose only red was the prose verdicts its own catch-up merge moved the code under:
+        // not the ticket's doing, so no round — once. A second one in a row is a worker that did not
+        // refresh them, and is counted like any red gate below.
+        const rejudgeAgain = step.rejudge && item.returnReason && item.returnReason.kind === 'rejudge';
+        if (step.rejudge && !rejudgeAgain) {
+          const ticket = findTicket(horde, step.ticket);
+          if (ticket && parseField(ticket.text, 'Status') !== 'changes') transitionStatus(ticket, 'changes', `rejudge after catch-up — ${step.words}`);
+          item.returnReason = { kind: 'rejudge', pairs: step.pairs, at: nowIso() };
+          item.state = 'queued';
+          item.notes.push({ at: nowIso(), text: `tick: prose verdicts made stale by the catch-up merge, no round counted — ${step.words}` });
+          results.push({
+            ticket: step.ticket, action: 'changes', round: null, note: `rejudge after catch-up, no round counted — ${step.words}`,
+          });
+          continue;
+        }
+        delete item.returnReason;
         const byReview = step.source === 'review';
         const said = byReview ? 'review found' : 'gate red';
         // Whatever sends a ticket back ends its review's say: the fix round the worker gets reads
@@ -584,7 +656,9 @@ function landTheLanded(horde, cfg, root, holds) {
         // ticket's "changes" line with the round number in it the moment it comes back red — read
         // ahead of roundInfo below so that reading, not a second count on top of it, is what a note
         // about this same event reports.
-        const written = byReview ? !!step.counted : (ticket && parseField(ticket.text, 'Status') === 'changes');
+        // A rejudge result is one land.mjs deliberately did not count, so nothing wrote this round yet,
+        // whatever status the ticket already carries from the return before it.
+        const written = byReview ? !!step.counted : (!step.rejudge && ticket && parseField(ticket.text, 'Status') === 'changes');
         // A review that followed the discipline to the letter wrote the status line itself, and
         // tk.mjs counted that round when it did — the round is that one, never a second on top.
         // Likewise a red gate already recorded by land.mjs: `written` reads that round back instead
@@ -791,10 +865,24 @@ function externalStart(horde, cfg, entries, root) {
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, text);
     const command = String(template).split('<class>').join(entry.model || '').split('<brief>').join(path);
-    const child = spawnProcess('sh', ['-c', command], { cwd: root, detached: true, stdio: 'ignore' });
+    // What the headless CLI prints goes to a log of its own beside the brief, not nowhere: a worker
+    // that died is otherwise a pid that vanished with no word said.
+    const log = hordePath(horde, 'runs', `${(entry.briefFile || `${entry.ticket}.md`).replace(/\.md$/, '')}.log`);
+    mkdirSync(dirname(log), { recursive: true });
+    const fd = openSync(log, 'a');
+    let child;
+    try {
+      child = spawnProcess('sh', ['-c', command], { cwd: root, detached: true, stdio: ['ignore', fd, fd] });
+    } finally {
+      closeSync(fd);
+    }
     child.unref();
+    const pid = Number.isInteger(child.pid) ? child.pid : null;
+    // The worker's lease gets the pid now, under the gate lock this run still holds: the next run's
+    // reconcile reads a dead pid as the worker having ended, and a live one as it still working.
+    if (role === 'worker') recordWorkerRun(horde, TEAM, entry.ticket, { pid, log });
     started.push({
-      ticket: entry.ticket, role, started: true, brief: path, command,
+      ticket: entry.ticket, role, started: true, brief: path, command, pid, log,
     });
   }
   return started;
@@ -828,7 +916,10 @@ function runOnce(horde, cfg, flags, runner) {
     // The holds are worked out off this same read, once, so the landing gate and the dispatch list
     // rule on one in-tray rather than on two reads of a file the client could answer between.
     const holds = askHolds(horde, readQueue(horde));
-    const reconciled = reconcileRunning(horde, TEAM, { tree: root });
+    const reclaim = flags.reclaim ? String(flags.reclaim).split(',').map((x) => x.trim()).filter(Boolean) : [];
+    const settled = reconcileRunning(horde, TEAM, { tree: root, reclaim });
+    const reconciled = settled.filter((r) => r.state !== 'working');
+    const working = settled.filter((r) => r.state === 'working').map((r) => ({ ticket: r.ticket, note: r.note }));
     const landed = landTheLanded(horde, cfg, root, holds);
     const spawn = dispatch(horde, cfg, root, flags, holds);
 
@@ -849,6 +940,7 @@ function runOnce(horde, cfg, flags, runner) {
       horde,
       runner,
       reconciled,
+      working,
       landed: landed.results,
       held: [...landed.held, ...spawn.held, ...closeHeld],
       spawn: spawn.out.map((s) => ({
@@ -871,6 +963,7 @@ function runOnce(horde, cfg, flags, runner) {
 function render(out) {
   const lines = [];
   for (const r of out.reconciled) lines.push(`reconciled ${r.ticket} -> ${r.state} · ${r.note}`);
+  for (const w of out.working || []) lines.push(`working ${w.ticket} · ${w.note}`);
   for (const l of out.landed) lines.push(`gate ${l.ticket}: ${l.action} · ${l.note}`);
   for (const h of out.held) lines.push(`held (${h.holds}): ${h.note}`);
   if (out.spawn.length) {
@@ -929,10 +1022,11 @@ async function watch(horde, cfg, flags, runner) {
   };
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
+  let pass = flags;
   for (;;) {
     let out = null;
     try {
-      out = runOnce(horde, cfg, flags, runner);
+      out = runOnce(horde, cfg, pass, runner);
     } catch (e) {
       // A refusal is not the end of the loop. One pass can be refused by something that is gone
       // by the next one — a lock another run is holding, a file being written as this read it —
@@ -945,6 +1039,9 @@ async function watch(horde, cfg, flags, runner) {
       if (!(e instanceof HordeError)) throw e;
       recordRefusal(horde, e, flags);
     }
+    // --reclaim is the director's word about one moment, so it is said once: the first pass settles
+    // those tickets, and a later pass reading it again would refuse them for no longer running.
+    pass = { ...flags, reclaim: undefined };
     if (out) {
       if (flags.json) console.log(JSON.stringify(out, null, 2));
       else console.log(render(out));

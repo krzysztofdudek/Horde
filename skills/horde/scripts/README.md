@@ -80,7 +80,10 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   than the graph was written with. Give an absolute path to a CLI at the version of the trunk's graph. A
   refusal for an old CLI names the tree it ran in and the version the CLI reports from there), `grainCommand`
   (how it invokes Grain, when it has one — default none, and `init` says what naming one would add),
-  `protectedPaths[]`, `fixRounds.resume|fresh` (the fix-loop
+  `protectedPaths[]`, `appendOnly[]` (files where every change only adds lines, such as a
+  CHANGELOG — `init` lists a changelog it finds at the root; a merge where both sides only added
+  lines to one keeps both, at catch-up and when a batch is combined, and the files hold no ticket
+  back in the plan or the dispatch list — default: what `init` found), `fixRounds.resume|fresh` (the fix-loop
   breaker `tk.mjs status <ticket> changes` reads: rounds 1..`resume` resume the same worker, the
   next `fresh` rounds spawn a fresh one a class up, beyond that the command refuses — defaults 3
   and 2), `classes` (weights: light 1, standard 3, heavy 10, max 30 — defaults, host-neutral;
@@ -92,7 +95,7 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   command has to work in one as it is checked out, so it either prepares the tree itself (e.g.
   `npm ci && npm test`) or relies on what `worktree.copy` carries in. A worker whose fast check fails
   before running a single test reports a missing environment, not a wrong base.
-  A list-valued key (`testGlobs`, `protectedPaths`) takes either a comma-separated list or a JSON
+  A list-valued key (`testGlobs`, `protectedPaths`, `appendOnly`) takes either a comma-separated list or a JSON
   array and is stored as a list either way — never as the text of one.
 - `charter show|edit [--ask id]` — the mission charter. `show` prints it; `edit` replaces it
   with what arrives on stdin, and reports how
@@ -342,10 +345,13 @@ earning no row at all claims nothing — neither is a mismatch.
   the producer's own tip when the edge is a port). The lock holds there too: the ticket it would
   start from is often the one holding the file. Without `--stack`, such an item is skipped as
   before, and `--why` says which tip it could have started from.
-  `rm NNN`, `render`, `reconcile` (every `running` item: a commit beyond its
+  `rm NNN`, `render`, `reconcile [--reclaim NNN[,MMM]]` (every `running` item whose worker has
+  ended — see tick.mjs's Reconcile below for what counts as ended — : a commit beyond its
   parent's tip → `landed`; a dirty worktree → `git add -A && git commit -m "wip: reclaimed"` on the
   ticket branch, then `queued` with a note; a clean worktree and no commit → `queued`, worktree
-  removed. A `waiting` item is left untouched — it has nothing running to reconcile).
+  removed; a worker still working → `working`, untouched. A `waiting` item is left untouched — it
+  has nothing running to reconcile). `set NNN running` records a fresh worker lease, as tick's own
+  dispatch does.
 - `plan [--team t] [--apply-order] [--out <file>]` — the team's DAG, derived from the tickets and printed, never
   dispatched. Two kinds of edge, added together and never overriding one another: a ticket that
   `**Consumes:** <node>/<port>` comes after the ticket that `**Produces:**` that same port — no
@@ -821,7 +827,7 @@ of both old sequences.
 Everything that used to travel as an escalation or a dissent goes down one channel now, and only
 four kinds travel down it: `stop` (a worker ran out of spec and wrote down the question instead of
 guessing — the ticket stays put), `stuck` (`tick.mjs` filed this one, not an agent — a ticket
-exhausted its fix rounds), `lower` (a request to weaken something that protects the work: a rule
+exhausted its fix rounds, or its catch-up merge stopped on the same files twice), `lower` (a request to weaken something that protects the work: a rule
 — demote, an added `yg-suppress` marker, a moved `review_by`, an aspect detached from a node — or
 the proof — a promise put back to planned, a test file or an assertion taken out, a skip marker
 added — or a gate — the script a gate command runs, a commit or push hook, a CI workflow. Requires
@@ -1013,12 +1019,21 @@ the JSON, and every item below is measured against it:
    goes on with it, once; with a conflict the merge is aborted, the branch is left exactly as it
    was, and the landing stops here — `ok: false`, `stale: true`, base freshness the only item, no
    gate run and no fix round counted (`tick.mjs` sends the ticket back to be brought up to date).
+   A merge that stops only on the files that merge by rule is finished instead of refused: a
+   node's `log.md` through `yg log merge-resolve --node <n>`, Yggdrasil's `yg-lock.*.json` by
+   taking the parent's side whole (the verdicts dropped are judged again), and a file
+   `config.appendOnly` names by keeping both sides' added lines — only when neither side did more
+   than add lines. A stale result carries `conflictFiles`, the files no rule resolved, sorted.
    `--no-gate` never writes to a branch, so it reports the staleness as it stands;
 2. judge — every prose rule on this tree carries a verdict from Yggdrasil's own reviewer, the only
    judge a prose rule has. A worker runs `yg check --approve` before committing (so does the commit
    hook, where there is one), and this item only checks that nothing came back unjudged. A pair still
    waiting is a refusal that names it and the one way out: `yg check --approve` on the branch, or,
-   in a repository with no reviewer, configuring one (`yg init --provider … --model …`);
+   in a repository with no reviewer, configuring one (`yg init --provider … --model …`). When item
+   1 brought the parent in cleanly and the only red items are this one and the graph's, both about
+   prose verdicts that merge left pending (a reviewer configured, nothing else refused), the result
+   carries `rejudge: true` and no round is written — the merge moved the code under the verdicts,
+   the ticket did not;
 3. scope — the diff stays inside the files the ticket declared in `**Files:**`; a ticket that
    declared none falls back to the union of its node boundaries (from `node.mjs`). Either way it
    touches no protected path, and Yggdrasil's committed lock files (`.yggdrasil/yg-lock.*.json`) are
@@ -1503,7 +1518,7 @@ last thing landed.
 
 ## tick.mjs — the loop, as one run
 
-`tick [--runner session|external] [--watch] [--stack] [--tree p] [--horde h]`. Four things in order,
+`tick [--runner session|external] [--watch] [--stack] [--reclaim NNN[,MMM]] [--tree p] [--horde h]`. Four things in order,
 then it exits — nothing lives between runs, so there is no roster and no minute count anywhere in it.
 
 The tree reconcile, the gate and the dispatch list all run in: `--tree` names it outright; short of
@@ -1517,11 +1532,19 @@ sitting in a different horde's own tree entirely) reconciles, gates and dispatch
 `--horde` says otherwise; the boot sequence's own bare `tick.mjs` call carries neither flag, so it
 inherits whatever tree the session's shell is already in.
 
-1. **Reconcile.** Every `running` item whose call has come back without landing a sha, settled from
-   its branch: a commit beyond the parent goes to `landed`; a dirty worktree is committed as
-   `wip: reclaimed` and goes back to `queued`, worktree kept; a clean one with nothing on it goes
-   back to `queued` and gives up its worktree. A `running` item with no branch is skipped. Each
-   answer says what was salvaged, because whoever reads it is usually reading it after a crash.
+1. **Reconcile.** Every `running` item whose worker has ended, settled from its branch. Ended means
+   evidence, never a clock: the worker's own `landed <sha>` line in the ticket's log since the
+   lease was recorded (`worker: {name, startedAt, pid, log}` on the queue item, written by every
+   start), the process tick started for it under `external` gone, or `--reclaim NNN[,MMM]` — the
+   director saying a worker came back without that line (refused, naming it, for a ticket that is
+   not running). An item whose worker has not ended goes on `working` with who holds it and since
+   when, and nothing of it is touched. An ended worker's tree left mid-merge has that merge aborted
+   first, and the files it was stopped on are named. Then: a commit beyond the parent goes to
+   `landed`; a dirty worktree is committed as `wip: reclaimed` and goes back to `queued`, worktree
+   kept; a clean one with nothing on it goes back to `queued` and gives up its worktree. A
+   `running` item with no branch is skipped, and one started before leases existed settles the old
+   way. Each answer says what was salvaged, because whoever reads it is usually reading it after a
+   crash.
 2. **Land what is ready.** Every `landed` item: the gate's own result file
    (`hordes/<h>/land/<ticket>.json`) is read, and when it is missing, unreadable, or about a sha the
    branch has moved past, it is added to the gate's own re-run list. Every item on that list, this
@@ -1534,6 +1557,17 @@ inherits whatever tree the session's shell is already in.
    both go to `blocked` and one `stuck` ask is filed for the client, carrying those last words and
    the path of the ticket's log. A `landed` item whose branch has vanished is a refusal naming the
    branch, with nothing touched.
+
+   **Returns that cost no round.** A stale result goes back to `queued` with no round counted; when
+   it carries `conflictFiles`, the item records them (`staleConflicts: [{sha, files, at}]`) and
+   `returnReason: {kind: "catch-up-conflict", files}`, and the next worker's brief carries a
+   *Catch-up conflict* section naming the files it is to resolve. The second stale return on the
+   same file set puts the item and the ticket on `blocked` and files one `stuck` ask naming the
+   files. A result marked `rejudge` — the landing's catch-up merge was clean, the reviewer is
+   configured, and the only red is prose verdicts that merge left pending — also goes back with no
+   round, `returnReason: {kind: "rejudge", pairs}`, and a brief whose *Refresh the verdicts* section
+   says to run `yg check --approve`, commit and log; a second `rejudge` in a row counts its round
+   like any red gate. Any counted return clears `returnReason`.
 
    **The review, once per ticket, before its first gate.** The first time an item would go on the
    gate's re-run list, it goes on `review` instead — `{ticket, model, name, brief}`, `model` the
@@ -1618,7 +1652,12 @@ the caller is, and only `external` changes what this script does: with nobody in
 tick.mjs spawns each worker itself, through `config.runner.spawn` (`<class>` and `<brief>` filled
 in), and each review on the `review` list the same way, from its own brief file
 (`hordes/<h>/briefs/NNN-review.md`, beside the worker's `NNN.md`); every `external` entry says which
-with `role`. Under `session` it starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds until the
+with `role`. Each process's output goes to its own log, `hordes/<h>/runs/NNN.log` (a review's
+`NNN-review.log`), and each `external` entry carries its `pid` and `log`; a worker's pid and log are
+written onto its lease before the run lets go of the gate lock, so the next run's reconcile reads a
+live pid as the worker still working and a gone one as the worker having ended — `--watch` can tick
+every interval under a worker that runs for an hour and never hand its ticket out twice. Under
+`session` it starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds until the
 queue empties or a signal arrives — an open `stop` holds the close, so it keeps waiting rather than
 exiting on an emptied queue the client still has a question about; a signal exits cleanly, holding no lock. A refused pass does not
 end the loop, but only when the refusal is a `HordeError` — the deliberate, named kind every `fail()`

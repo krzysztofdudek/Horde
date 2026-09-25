@@ -188,7 +188,7 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
     git(['-C', runningFourth.json.worktree, 'commit', '--allow-empty', '-qm', 'work'], dir);
     writeFileSync(`${runningEighth.json.worktree}/scratch.txt`, 'dirty work\n');
 
-    const r = run('queue.mjs', ['reconcile'], dir);
+    const r = run('queue.mjs', ['reconcile', '--reclaim', [fourth, fifth, eighth].join(',')], dir);
     assert.equal(r.code, 0);
     const results = Object.fromEntries(r.json.map((x) => [x.ticket, x.state]));
     assert.equal(results[fourth], 'landed');
@@ -633,7 +633,7 @@ test('queue.mjs reconcile: a stacked ticket carrying only its parent\'s commits 
   // Two commits beyond the team branch, both the parent's. Measured against the team branch this
   // reads as work done; measured against the branch it was actually cut from, as the empty start
   // it is — so the ticket goes back on the queue instead of being reported landed.
-  const r = run('queue.mjs', ['reconcile'], dir);
+  const r = run('queue.mjs', ['reconcile', '--reclaim', `${first},${second}`], dir);
   assert.equal(r.code, 0, r.stderr);
   const states = Object.fromEntries(r.json.map((x) => [x.ticket, x.state]));
   assert.equal(states[first], 'landed');
@@ -643,7 +643,7 @@ test('queue.mjs reconcile: a stacked ticket carrying only its parent\'s commits 
   const back = run('queue.mjs', ['set', second, 'running', '--agent', 'w2', '--on', first], dir);
   assert.equal(back.code, 0, back.stderr);
   git(['-C', back.json.worktree, 'commit', '--allow-empty', '-qm', 'the stack works'], dir);
-  const after = run('queue.mjs', ['reconcile'], dir);
+  const after = run('queue.mjs', ['reconcile', '--reclaim', second], dir);
   assert.equal(after.json.find((x) => x.ticket === second).state, 'landed');
 });
 

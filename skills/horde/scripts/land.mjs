@@ -40,6 +40,7 @@ import {
 import {
   ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, hasReviewer,
   globToRegExp, pathInBoundary, ticketBoundary, proposalBoundaryOf, ygFileContext, ygAvailable, ygJson,
+  NODE_LOG_FILE, YG_LOCK_FILE, mergesByRule, nodeOfLogFile, ygLogMergeResolve,
 } from './node.mjs';
 import {
   ticketFiles, ticketEvidence, ticketKind, prototypeBranchOf, ticketReopens, findTicket,
@@ -58,8 +59,10 @@ merged into its parent here and now, and a single ✗ means it is not — nobody
 for either way.
 
   1. base freshness — branch rooted at its parent branch's tip; a branch the parent moved past is
-                      brought up to date first (the parent merged into it), or, when that conflicts,
-                      refused as stale before any gate, with no fix round
+                      brought up to date first (the parent merged into it; conflicts only in a node's
+                      log.md, Yggdrasil's lock files or config.appendOnly files are resolved by rule),
+                      or, when anything else conflicts, refused as stale before any gate, with no fix
+                      round and the files named as conflictFiles
   2. judge          — every prose rule on this tree has a verdict from Yggdrasil's own reviewer
                       (the only judge of a prose rule)
   3. scope          — diff stays inside the files the ticket declared, or its node boundaries when
@@ -89,7 +92,8 @@ for either way.
                       language (wave, ticket NNN, mission, horde, E<n>, .temp/)
 
 Two or more tickets, comma-separated, land under ONE shared run of items 5-7 (gate, graph, mapping)
-when they are eligible to: the same parent branch at the same tip, and no changed file in common.
+when they are eligible to: the same parent branch at the same tip, and no changed file in common
+(the files that merge by rule are not counted, and are resolved by that rule when combined).
 Items 1-4, 8 and 9, and every guard below, still run per ticket, individually, exactly as for one.
 A ticket that is not eligible — a different parent, an overlapping file, or a conflict once its
 branch is actually combined with the rest for the shared run — lands on its own instead, in this
@@ -128,6 +132,9 @@ gate a ticket branch lands through. --level trunk runs config.gates.trunk, for a
 directly on <horde>/trunk. "team" here is the name of a config key kept from before 6.0.0, not a
 team you can name: passing --level team is refused outright rather than read as the default.
 --no-gate skips items 5, 6 and 7 (informational: pass) and never merges.
+A landing whose parent was brought in cleanly and whose only red is prose verdicts left pending by
+that merge (the reviewer configured, and nothing else the graph refuses) writes no round and says
+"rejudge": true in its result — the ticket goes back to refresh the verdicts, not for a fix.
 --background starts the run and prints the path of the result file it will write, immediately.
 
 Everything above — the scope check's own graph read included — runs against the tree --tree
@@ -1016,9 +1023,17 @@ function checkGraph(cfg, worktree, noGate) {
   }
   if (pending.pairs.length) {
     const named = pending.pairs.map((p) => `${p.aspect} on ${p.unitKind}:${p.unit}`);
+    // Whether the pending judgements are ALL this graph says is wrong: every blocking finding is one
+    // of those pairs, and none of them is waiting on a reviewer that does not exist. Only then is a
+    // red graph nothing but verdicts to refresh — what a catch-up merge leaves behind when it moves
+    // the code a verdict was recorded over (see run()'s "rejudge").
+    const errors = asArray(res.doc && res.doc.issues).filter((i) => i && i.severity === 'error');
+    const onlyProsePending = errors.length > 0 && errors.every((i) => i.aspect && i.cause !== 'reviewer-missing'
+      && pending.pairs.some((p) => p.aspect === i.aspect && `${p.unitKind}:${p.unit}` === i.unit));
     return {
       ok: false,
       pending: pending.pairs,
+      onlyProsePending,
       note: `${res.command} exited ${res.exit} — the script rules are recorded (free, no key), and `
         + `${named.length} prose rule(s) still wait on a judgement: ${named.join(' · ')}`,
     };
@@ -2562,17 +2577,168 @@ function conflictingFiles(tree) {
   return diffPaths(['diff', '--name-only', '--diff-filter=U'], tree);
 }
 
+// ---- the family's known conflicts, resolved by rule ----------------------------------------------
+//
+// Parallel tickets on one node collide in the same few files every time: the node's own `log.md`
+// (both appended an entry), Yggdrasil's committed lock files (both recorded verdicts), and the
+// repository's append-only files such as a CHANGELOG (both added a line under the same heading).
+// None of those collisions is a question anybody has to answer, and refusing them as stale sends a
+// ticket round a loop no role can end. So a merge that stops on nothing but these is finished here,
+// by the rule for each kind, in the order Yggdrasil documents for its own files:
+//
+//   yg-lock.*.json   the parent's side, whole. A verdict the other side held is judged again by
+//                    whatever next runs `yg check --approve`; a lock is never stitched by hand.
+//   node log.md      `yg log merge-resolve --node <n>`: the union of both sides, verified, with the
+//                    node's baseline recorded in `yg-lock.logs.json`.
+//   config.appendOnly  accepted only when both sides did nothing but add lines to the common base;
+//                    the result is the base with the parent's additions and then the branch's at
+//                    each place lines were added. A deletion or an edit on either side is refused.
+//
+// Anything else in conflict leaves the merge to be refused exactly as before. Nothing here weakens
+// a rule, a proof or a gate: entries are appended and a lock is re-judged, never edited.
+
+function stageText(tree, stage, path) {
+  try {
+    return execFileSync('git', ['show', `:${stage}:${path}`], { cwd: tree, stdio: ['ignore', 'pipe', 'pipe'] }).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+// The lines `side` adds to `base`, keyed by the base line they are inserted before (base.length for
+// the end), or null when `side` also removed or changed a base line. One insertion is read off the
+// common prefix and suffix; several fall back to matching the base in order through the side.
+function insertionsOver(base, side) {
+  let p = 0;
+  while (p < base.length && p < side.length && base[p] === side[p]) p += 1;
+  let s = 0;
+  while (s < base.length - p && s < side.length - p && base[base.length - 1 - s] === side[side.length - 1 - s]) s += 1;
+  if (p + s === base.length) {
+    return new Map(side.length > base.length ? [[p, side.slice(p, side.length - s)]] : []);
+  }
+  const added = new Map();
+  let j = 0;
+  for (let i = 0; i <= base.length; i += 1) {
+    const from = j;
+    if (i < base.length) {
+      while (j < side.length && side[j] !== base[i]) j += 1;
+      if (j === side.length) return null;
+    } else {
+      j = side.length;
+    }
+    if (j > from) added.set(i, side.slice(from, j));
+    if (i < base.length) j += 1;
+  }
+  return added;
+}
+
+// The pure-addition merge of one append-only file: null when either side did more than add lines.
+export function appendOnlyMerge(baseText, parentText, branchText) {
+  const base = String(baseText || '').split('\n');
+  const parent = insertionsOver(base, String(parentText).split('\n'));
+  const branch = insertionsOver(base, String(branchText).split('\n'));
+  if (!parent || !branch) return null;
+  const out = [];
+  for (let i = 0; i <= base.length; i += 1) {
+    out.push(...(parent.get(i) || []), ...(branch.get(i) || []));
+    if (i < base.length) out.push(base[i]);
+  }
+  return out.join('\n');
+}
+
+// resolveKnownConflicts(tree, cfg, parentSide) — in a tree stopped mid-merge, resolve every
+// conflicted file by the rule for its kind and stage it. `parentSide` names which side of this
+// merge is the parent branch: 'theirs' when the parent is being brought into a ticket's branch,
+// 'ours' when a ticket's branch is being merged onto the parent. Returns {ok: true, resolved} with
+// the index ready to commit, or {ok: false, left, note} naming the files no rule covers (or the
+// one a rule refused) — the caller aborts the merge, so nothing written here survives a refusal.
+function resolveKnownConflicts(tree, cfg, parentSide) {
+  const files = conflictingFiles(tree);
+  if (!files.length) return { ok: false, left: [], note: 'git named no conflicted file' };
+  const left = files.filter((f) => !mergesByRule(f, cfg));
+  if (left.length) return { ok: false, left, note: null };
+  const resolved = [];
+  const branchStage = parentSide === 'theirs' ? 2 : 3;
+  const parentStage = parentSide === 'theirs' ? 3 : 2;
+  for (const f of files.filter((x) => YG_LOCK_FILE.test(x))) {
+    if (git(['checkout', `--${parentSide}`, '--', f], tree) === null || git(['add', '--', f], tree) === null) {
+      return { ok: false, left: [f], note: `could not take the parent's side of ${f}: ${gitError()}` };
+    }
+    resolved.push({ file: f, how: 'lock: the parent\'s side, whole' });
+  }
+  for (const f of files.filter((x) => !YG_LOCK_FILE.test(x) && !NODE_LOG_FILE.test(x))) {
+    const parentText = stageText(tree, parentStage, f);
+    const branchText = stageText(tree, branchStage, f);
+    const merged = parentText === null || branchText === null ? null : appendOnlyMerge(stageText(tree, 1, f) || '', parentText, branchText);
+    if (merged === null) return { ok: false, left: [f], note: `${f} is append-only, and one side did more than add lines to it` };
+    writeFileSync(join(tree, f), merged);
+    if (git(['add', '--', f], tree) === null) return { ok: false, left: [f], note: `could not stage ${f}: ${gitError()}` };
+    resolved.push({ file: f, how: 'append-only: both sides\' additions kept' });
+  }
+  const logs = files.filter((x) => NODE_LOG_FILE.test(x));
+  for (const f of logs) {
+    const node = nodeOfLogFile(f);
+    const res = node ? ygLogMergeResolve(cfg, tree, node) : { ok: false, out: 'not a node log' };
+    if (!res.ok || git(['add', '--', f], tree) === null) {
+      return { ok: false, left: [f], note: `\`yg log merge-resolve --node ${node}\` did not resolve ${f}${res.out ? `: ${res.out.split('\n')[0]}` : ''}` };
+    }
+    resolved.push({ file: f, how: 'node log: yg log merge-resolve' });
+  }
+  if (logs.length && existsSync(join(tree, '.yggdrasil', 'yg-lock.logs.json'))) git(['add', '--', '.yggdrasil/yg-lock.logs.json'], tree);
+  if (conflictingFiles(tree).length) return { ok: false, left: conflictingFiles(tree), note: 'files still in conflict after the rules ran' };
+  return { ok: true, resolved };
+}
+
+function resolvedLine(resolved) {
+  return resolved.map((r) => `${r.file} (${r.how})`).join(', ');
+}
+
+// mergeResolving(tree, cfg, ref, message, parentSide) — `git merge --no-ff -m <message> <ref>` in
+// `tree`, finishing it by rule when it stops only on the known kinds of conflict. On a refusal the
+// merge is aborted and the tree is back where it was: {ok: false, files} names what no rule covers.
+function mergeResolving(tree, cfg, ref, message, parentSide, { byRule = true, expectTree = null } = {}) {
+  try {
+    execFileSync('git', ['merge', '--no-ff', '-m', message, ref], { cwd: tree, stdio: 'pipe' });
+    return { ok: true, resolved: [] };
+  } catch (e) {
+    let outcome;
+    try {
+      outcome = byRule ? resolveKnownConflicts(tree, cfg, parentSide) : { ok: false, left: [], note: null };
+      if (outcome.ok && expectTree) {
+        const written = git(['write-tree'], tree);
+        if (written !== expectTree) {
+          outcome = { ok: false, left: outcome.resolved.map((r) => r.file), note: 'resolved differently from the tree the shared gate measured' };
+        }
+      }
+      if (outcome.ok && git(['commit', '-m', message], tree) === null) {
+        outcome = { ok: false, left: outcome.resolved.map((r) => r.file), note: `the resolved merge could not be committed: ${gitError()}` };
+      }
+    } catch (err) {
+      outcome = { ok: false, left: [], note: String((err && err.message) || err) };
+    }
+    if (!outcome.ok) {
+      let files = outcome.left && outcome.left.length ? outcome.left : [];
+      try { if (!files.length) files = conflictingFiles(tree); } finally { git(['merge', '--abort'], tree); }
+      return {
+        ok: false, files, note: outcome.note, out: ((e.stdout && e.stdout.toString()) || '').trim(),
+      };
+    }
+    return { ok: true, resolved: outcome.resolved };
+  }
+}
+
 // A branch whose parent moved while it waited to land — a sibling landed first — is not wrong, only
 // behind. Landing used to run the whole gate on it anyway, come back red on base freshness alone and
 // hand the ticket a fix round for work nothing was wrong with. So the parent is merged into the
-// branch first: cleanly, the branch is brought up to date and this landing goes on with it, once;
-// with a conflict the merge is aborted, the branch is left exactly as it was, and the caller
+// branch first: cleanly, or with conflicts only in the files that merge by rule (see "the family's
+// known conflicts" above), the branch is brought up to date and this landing goes on with it, once;
+// with any other conflict the merge is aborted, the branch is left exactly as it was, and the caller
 // refuses it as stale — before any gate, and with nobody to blame for a round.
 //
 // Done where the branch is checked out when it is (a landed ticket's worktree, refused when it holds
 // uncommitted changes to tracked files), and in a scratch tree otherwise, moving the branch only if
 // it still stands where this started.
-function pullParentIntoBranch(root, branch, parentBranch, branchSha) {
+function pullParentIntoBranch(root, cfg, branch, parentBranch, branchSha) {
   const message = `Merge ${parentBranch} into ${branch}\n\nThe parent moved while this ticket waited to land; it is brought in so the gate measures what will merge.`;
   const refuse = (files, extra) => ({
     ok: false,
@@ -2580,31 +2746,26 @@ function pullParentIntoBranch(root, branch, parentBranch, branchSha) {
     files,
     note: `merging ${parentBranch} into ${branch} ${files.length ? `conflicts in ${files.join(', ')}` : 'could not be done'}${extra ? ` — ${extra}` : ''}; ${branch} is untouched`,
   });
+  const byRule = (merged) => (merged.resolved.length ? ` — conflicts resolved by rule: ${resolvedLine(merged.resolved)}` : ' — a conflict-free merge');
   const checkout = worktreeOn(root, branch);
   if (checkout) {
     const dirty = git(['status', '--porcelain', '--untracked-files=no'], checkout);
     if (dirty === null || dirty !== '') return refuse([], `${branch} is checked out at ${checkout} with uncommitted changes to tracked files, so the parent was not brought in there`);
-    try {
-      execFileSync('git', ['merge', '--no-ff', '-m', message, parentBranch], { cwd: checkout, stdio: 'pipe' });
-    } catch {
-      let files = [];
-      try { files = conflictingFiles(checkout); } finally { git(['merge', '--abort'], checkout); }
-      return refuse(files);
-    }
-    return { ok: true, sha: git(['rev-parse', '--verify', branch], root), note: `brought ${parentBranch} into ${branch} — a conflict-free merge, made at ${checkout}` };
+    const merged = mergeResolving(checkout, cfg, parentBranch, message, 'theirs');
+    if (!merged.ok) return refuse(merged.files, merged.note);
+    return {
+      ok: true, sha: git(['rev-parse', '--verify', branch], root), resolved: merged.resolved, note: `brought ${parentBranch} into ${branch}${byRule(merged)}, made at ${checkout}`,
+    };
   }
   const info = resolveTree({ scratch: branchSha }, { cwd: root });
   try {
-    try {
-      execFileSync('git', ['merge', '--no-ff', '-m', message, parentBranch], { cwd: info.path, stdio: 'pipe' });
-    } catch {
-      let files = [];
-      try { files = conflictingFiles(info.path); } finally { git(['merge', '--abort'], info.path); }
-      return refuse(files);
-    }
+    const merged = mergeResolving(info.path, cfg, parentBranch, message, 'theirs');
+    if (!merged.ok) return refuse(merged.files, merged.note);
     const sha = git(['rev-parse', 'HEAD'], info.path);
     if (git(['update-ref', `refs/heads/${branch}`, sha, branchSha], root) === null) return refuse([], `${branch} moved while the parent was being brought in`);
-    return { ok: true, sha, note: `brought ${parentBranch} into ${branch} — a conflict-free merge` };
+    return {
+      ok: true, sha, resolved: merged.resolved, note: `brought ${parentBranch} into ${branch}${byRule(merged)}`,
+    };
   } finally {
     cleanupTree(info, root);
   }
@@ -2674,12 +2835,26 @@ function mergeMessage(root, horde, branch, parentBranch, ticketId) {
   return `merge ${ticketId}: ${branch}\n\n${trailers.join('\n')}\n`;
 }
 
-function mergeIntoParent(root, cfg, branch, parentBranch, parentTip, ticketId, cleaner, horde) {
+// `resolve` (a batch member only): the shared gate measured a preview tree where this member's
+// conflicts in the files that merge by rule were resolved by rule, so the real merge resolves them the
+// same way — and refuses unless the result is byte for byte the tree that gate measured
+// (`expectTree`). A single ticket never needs it: its parent was brought in before it was measured.
+function mergeIntoParent(root, cfg, branch, parentBranch, parentTip, ticketId, cleaner, horde, { resolve = false, expectTree = null } = {}) {
   // Derived from the ticket and from the diff, and from nothing about this run — so a merge an
   // adopter's commit hook rejects costs the commit nothing: the next landing builds the same
   // trailers, byte for byte, rather than a shorter message the second time round.
   const message = mergeMessage(root, horde, branch, parentBranch, ticketId);
   const checkout = worktreeOn(root, parentBranch);
+  // A refused merge is aborted inside mergeResolving — `checkout` is a real tree this landing did not
+  // make (unlike the scratch tree below, nothing here throws it away), so leaving it mid-merge on top
+  // of the conflict would strand it for whoever works there next.
+  const refused = (merged) => ({
+    ok: false,
+    conflict: true,
+    files: merged.files,
+    note: `the merge into ${parentBranch} conflicts and was aborted — ${parentBranch} is untouched at ${short(parentTip)}. In conflict: ${merged.files.length ? merged.files.join(', ') : merged.out}${merged.note ? ` (${merged.note})` : ''}. Catch the branch up with ${parentBranch}, resolve it there, and land again`,
+  });
+  const byRule = (merged) => (merged.resolved.length ? ` — resolved by rule: ${resolvedLine(merged.resolved)}` : '');
 
   if (checkout) {
     // Only what git is tracking counts. An adopter's root is full of untracked files nobody
@@ -2693,53 +2868,25 @@ function mergeIntoParent(root, cfg, branch, parentBranch, parentTip, ticketId, c
         note: `${parentBranch} is checked out at ${checkout} with uncommitted changes to ${dirty.split('\n').length} tracked file(s), and the merge has to happen there — a landing will not move a branch out from under a working tree that has work in it. Commit or stash what is in ${checkout}, then land again`,
       };
     }
-    try {
-      execFileSync('git', ['merge', '--no-ff', '-m', message, branch], { cwd: checkout, stdio: 'pipe' });
-    } catch (e) {
-      // conflictingFiles can itself now refuse — a git failure independent of the conflict, hit
-      // while listing it. The abort still has to run either way: `checkout` is a real tree this
-      // landing did not make (unlike the scratch branch below, nothing here throws it away), so
-      // leaving it mid-merge on top of the conflict would strand it for whoever works there next.
-      let files;
-      try {
-        files = conflictingFiles(checkout);
-      } finally {
-        git(['merge', '--abort'], checkout);
-      }
-      return {
-        ok: false,
-        conflict: true,
-        files,
-        note: `the merge into ${parentBranch} conflicts and was aborted — ${parentBranch} is untouched at ${short(parentTip)}. In conflict: ${files.length ? files.join(', ') : ((e.stdout && e.stdout.toString()) || '').trim()}. Catch the branch up with ${parentBranch}, resolve it there, and land again`,
-      };
-    }
-    return { ok: true, sha: git(['rev-parse', parentBranch], root), note: `merged --no-ff into ${parentBranch} at ${checkout}` };
+    const merged = mergeResolving(checkout, cfg, branch, message, 'ours', { byRule: resolve, expectTree });
+    if (!merged.ok) return refused(merged);
+    return { ok: true, sha: git(['rev-parse', parentBranch], root), note: `merged --no-ff into ${parentBranch} at ${checkout}${byRule(merged)}` };
   }
 
   const info = resolveTree({ scratch: parentTip }, { cwd: root });
   cleaner.add(() => cleanupTree(info, root));
-  try {
-    execFileSync('git', ['merge', '--no-ff', '-m', message, branch], { cwd: info.path, stdio: 'pipe' });
-  } catch (e) {
-    const files = conflictingFiles(info.path);
-    git(['merge', '--abort'], info.path);
-    return {
-      ok: false,
-      conflict: true,
-      files,
-      note: `the merge into ${parentBranch} conflicts and was aborted — ${parentBranch} is untouched at ${short(parentTip)}. In conflict: ${files.length ? files.join(', ') : ((e.stdout && e.stdout.toString()) || '').trim()}. Catch the branch up with ${parentBranch}, resolve it there, and land again`,
-    };
-  }
-  const merged = git(['rev-parse', 'HEAD'], info.path);
+  const merged = mergeResolving(info.path, cfg, branch, message, 'ours', { byRule: resolve, expectTree });
+  if (!merged.ok) return refused(merged);
+  const sha = git(['rev-parse', 'HEAD'], info.path);
   // The old value is named, so a parent that moved while this ran refuses here instead of
   // silently discarding whatever landed on it in the meantime.
-  if (git(['update-ref', `refs/heads/${parentBranch}`, merged, parentTip], root) === null) {
+  if (git(['update-ref', `refs/heads/${parentBranch}`, sha, parentTip], root) === null) {
     return {
       ok: false,
       note: `${parentBranch} moved while this landing ran — it is no longer at ${short(parentTip)}, so the merge built on that tip was not applied. Nothing was changed; land again against the branch as it stands now`,
     };
   }
-  return { ok: true, sha: merged, note: `merged --no-ff into ${parentBranch}` };
+  return { ok: true, sha, note: `merged --no-ff into ${parentBranch}${byRule(merged)}` };
 }
 
 // ---- the background result file -------------------------------------------------------
@@ -3065,15 +3212,15 @@ function changedFilesOverlap(a, b) {
   return b.some((f) => set.has(f));
 }
 
-// groupBatchCandidates(candidates) — the batching precondition, applied before a single scratch
+// groupBatchCandidates(candidates, cfg) — the batching precondition, applied before a single scratch
 // tree is built for any of it: only candidates sharing one (parentBranch, parentTip) pair mean
 // anything by "non-overlapping" — two tickets against different bases are not landing onto the
-// same tree, whatever their files say. Within one such pair, a candidate whose changed files (the
-// same DERIVED_LOCK-filtered reading checkScope already uses to set aside Yggdrasil's own derived
-// lock files) collide with one already accepted falls to the overflow list — greedy, in the order
+// same tree, whatever their files say. Within one such pair, a candidate whose changed files —
+// leaving out the files that merge by rule (Yggdrasil's lock files, a node's log, config.appendOnly),
+// which the combine step resolves — collide with one already accepted falls to the overflow list — greedy, in the order
 // handed in, so which of two colliding tickets keeps its place is simply whichever came first. A
 // pair with fewer than two survivors is not a batch either: nothing is shared with nobody.
-function groupBatchCandidates(candidates) {
+function groupBatchCandidates(candidates, cfg) {
   const byKey = new Map();
   for (const ctx of candidates) {
     const key = `${ctx.parentBranch} ${ctx.parentTip}`;
@@ -3086,7 +3233,7 @@ function groupBatchCandidates(candidates) {
     const accepted = [];
     let acceptedFiles = [];
     for (const ctx of g.candidates) {
-      const files = ctx.changedFiles.filter((f) => !DERIVED_LOCK.test(f));
+      const files = ctx.changedFiles.filter((f) => !mergesByRule(f, cfg));
       if (changedFilesOverlap(files, acceptedFiles)) { overflow.push(ctx); continue; }
       accepted.push(ctx);
       acceptedFiles = acceptedFiles.concat(files);
@@ -3134,13 +3281,14 @@ function screenBatchMember(root, cfg, horde, ctx, basePath, cleaner) {
   return { ok: true, results, answersUsed: [...law.used, ...protection.used] };
 }
 
-// combineBatchGroup(root, group, cleaner) — step 3 of the design: one throwaway worktree at the
+// combineBatchGroup(root, cfg, group, cleaner) — step 3 of the design: one throwaway worktree at the
 // group's own parent tip, each surviving member's branch merged on in sequence, `--no-ff` like
 // every other merge this tool writes. Expected to be conflict-free by construction (the tickets
-// were pre-filtered as non-overlapping); a merge that conflicts anyway drops that one ticket and
+// were pre-filtered as non-overlapping) except in the files that merge by rule, which are resolved
+// by that rule; a merge that conflicts anywhere else drops that one ticket and
 // continues combining the rest, exactly as the design calls for. Nothing here is committed to any
 // branch — the tree is discarded the moment this run ends, win or lose.
-function combineBatchGroup(root, group, cleaner) {
+function combineBatchGroup(root, cfg, group, cleaner) {
   const info = resolveTree({ scratch: group.parentTip }, { cwd: root });
   cleaner.add(() => cleanupTree(info, root));
   const surviving = [];
@@ -3148,15 +3296,17 @@ function combineBatchGroup(root, group, cleaner) {
   for (const ctx of group.members) {
     const message = `combine ${ctx.ticketId}: preview merge of ${ctx.branch} for a shared landing gate\n\n`
       + 'Discarded the moment the gate has run; never referenced by any branch.\n';
-    try {
-      execFileSync('git', ['merge', '--no-ff', '-m', message, ctx.branch], { cwd: info.path, stdio: 'pipe' });
+    // Members may share the files that merge by rule (a node's log, the lock files, a CHANGELOG):
+    // those are resolved here exactly as the real merge will resolve them, and the tree each merge
+    // produced is kept, so the real merge can be held to it.
+    const merged = mergeResolving(info.path, cfg, ctx.branch, message, 'ours');
+    if (merged.ok) {
+      ctx.combined = { tree: git(['rev-parse', 'HEAD^{tree}'], info.path), resolved: merged.resolved };
       surviving.push(ctx);
-    } catch {
-      let files = [];
-      try { files = conflictingFiles(info.path); } finally { git(['merge', '--abort'], info.path); }
+    } else {
       dropped.push({
         ctx,
-        note: `combine conflict against the batch's shared preview tree — excluded from the batch and landed on its own: ${files.length ? files.join(', ') : '(git named no file)'}`,
+        note: `combine conflict against the batch's shared preview tree — excluded from the batch and landed on its own: ${merged.files.length ? merged.files.join(', ') : '(git named no file)'}`,
       });
     }
   }
@@ -3246,7 +3396,10 @@ function landBatchGreen(root, cfg, horde, level, group, provenanceInfo, shared, 
       continue;
     }
 
-    const merged = mergeIntoParent(root, cfg, ctx.branch, group.parentBranch, currentTip, ctx.ticketId, cleaner, horde);
+    const resolved = !!(ctx.combined && ctx.combined.resolved.length);
+    const merged = mergeIntoParent(root, cfg, ctx.branch, group.parentBranch, currentTip, ctx.ticketId, cleaner, horde, {
+      resolve: resolved, expectTree: resolved ? ctx.combined.tree : null,
+    });
     if (!merged.ok) {
       checks.push({ name: 'merge', ok: false, note: merged.note });
       recordChanges(horde, ctx.ticketId, checks);
@@ -3404,7 +3557,7 @@ function runMany(horde, root, cfg, tickets, level, noGate, flags) {
     for (const c of candidates) if (!c.ok) standalone.push(c.arg);
     const resolvable = candidates.filter((c) => c.ok);
 
-    const { groups, overflow } = groupBatchCandidates(resolvable);
+    const { groups, overflow } = groupBatchCandidates(resolvable, cfg);
     for (const c of overflow) standalone.push(c.arg);
 
     for (const group of groups) {
@@ -3423,7 +3576,7 @@ function runMany(horde, root, cfg, tickets, level, noGate, flags) {
         continue;
       }
 
-      const combined = combineBatchGroup(root, { ...group, members: survivors }, cleaner);
+      const combined = combineBatchGroup(root, cfg, { ...group, members: survivors }, cleaner);
       for (const d of combined.dropped) standalone.push(d.ctx.arg);
       if (combined.surviving.length < 2) {
         for (const ctx of combined.surviving) standalone.push(ctx.arg);
@@ -3522,7 +3675,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
   // writes to a branch, so it measures and reports the staleness as it stands.
   let pulled = null;
   if (!noGate && !checkBaseFreshness(branch, parentBranch).ok) {
-    pulled = pullParentIntoBranch(root, branch, parentBranch, branchSha);
+    pulled = pullParentIntoBranch(root, cfg, branch, parentBranch, branchSha);
     if (pulled.ok) {
       branchSha = pulled.sha;
       const ticket = findTicket(horde, ticketId);
@@ -3577,6 +3730,9 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
         sha: branchSha,
         ok: false,
         stale: true,
+        // The files the parent's merge stopped on that no rule resolves, sorted — what tick counts a
+        // repeat by, and what the next worker's brief names as its to resolve.
+        conflictFiles: pulled && !pulled.ok ? [...asArray(pulled.files)].sort() : [],
         checks: [{ name: 'base freshness', ok: false, note: why }],
         pairs: [],
         landed: null,
@@ -3630,6 +3786,14 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
 
     const checks = CHECK_ORDER.map((name) => ({ name, ok: !!results[name].ok, note: results[name].note }));
     const allOk = checks.every((c) => c.ok);
+    // A catch-up merge moves the code the branch's prose verdicts were recorded over, so a tree that is
+    // red only because those verdicts are now pending was made red by somebody else's landing, not by
+    // this ticket — the same reason a stale branch costs no round. The result says "rejudge" and no
+    // round is written; tick sends the ticket back with a narrow brief to refresh the verdicts.
+    const redNames = checks.filter((c) => !c.ok).map((c) => c.name);
+    const rejudge = !allOk && !noGate && !!(pulled && pulled.ok)
+      && redNames.includes('judge') && redNames.every((n) => n === 'judge' || n === 'graph')
+      && !!(results.graph && results.graph.onlyProsePending) && hasReviewer(head.path);
 
     if (allOk && !noGate) {
       // The sha the items were measured against has to be the sha that lands. A branch that moved
@@ -3653,7 +3817,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       // a sha `done` and `close` can actually find on the branch they read. See checkGate's comment.
       if (results.gate.cache) recordGateCache(horde, level, { ...results.gate.cache, sha: merged.sha }, ticketId, branch, cfg);
       checks.push({ name: 'merge', ok: true, note: `${merged.note} — ${short(merged.sha)}` });
-    } else if (!allOk && !noGate) {
+    } else if (!allOk && !noGate && !rejudge) {
       recordChanges(horde, ticketId, checks);
     }
 
@@ -3663,6 +3827,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       branch,
       sha: branchSha,
       ok: allOk,
+      ...(rejudge ? { rejudge: true } : {}),
       checks,
       pairs: asArray(judge.pairs),
       landed,

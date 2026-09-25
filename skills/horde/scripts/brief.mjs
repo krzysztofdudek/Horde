@@ -25,7 +25,7 @@ import {
   runMain,
 } from './_lib.mjs';
 import {
-  nodeExists, readNodePortsText, ticketNodes, ygAspectsReachJson,
+  nodeExists, readNodePortsText, ticketNodes, ygAspectsReachJson, ygCommand,
 } from './node.mjs';
 import { collectRetroInput, classesPath } from './retro.mjs';
 
@@ -365,6 +365,52 @@ function takeoverBlockFor(horde, t) {
   ].join('\n');
 }
 
+// Why this ticket came back to a worker without a round counted, when it did — rendered only then.
+// tick records it on the queue item when it sends a ticket back: a catch-up merge that stopped on
+// files no rule resolves, or prose verdicts that catch-up made stale. Each gets the one thing that
+// is the worker's to do about it, and nothing else.
+function returnBlockFor(t, parentBranch, cfg) {
+  const reason = t.queueItem && t.queueItem.returnReason;
+  if (!reason) return '';
+  const display = ygCommand(cfg).display;
+  if (reason.kind === 'catch-up-conflict' && Array.isArray(reason.files) && reason.files.length) {
+    return [
+      '## Catch-up conflict',
+      '',
+      `This ticket came back because \`${parentBranch}\` does not merge into your branch: the merge stops on`,
+      ...reason.files.map((f) => `- \`${f}\``),
+      '',
+      'No round was counted — the conflict is the parent\'s moving, not your work. This time the merge in your',
+      'first action is expected to stop on those files, and resolving them is yours: keep what both sides meant,',
+      'resolve each file by the rule for its kind, and commit the merge.',
+      '',
+      `- A node's \`log.md\`: \`${display} log merge-resolve --node <node>\`, with the merge still in progress; never stitch the markers by hand.`,
+      '- `.yggdrasil/yg-lock.*.json`: take the parent\'s side whole (`git checkout --theirs -- <file>`), resolve the logs after it, and run `yg check --approve` once the merge is committed.',
+      '- Anything else: by hand, reading both sides — and when the two cannot both be right, that is a report, not a choice you make: `tk.mjs log` it and stop.',
+      '',
+      `Then \`git -C {{worktree}} status --porcelain\` must print nothing, the fast check runs as below, and the log line`,
+      'names the files you resolved. A tree you leave mid-merge is aborted when you stop, and the same conflict',
+      'coming back a second time goes to the client.',
+      '',
+    ].join('\n').split('{{worktree}}').join(t.queueItem.worktree || '');
+  }
+  if (reason.kind === 'rejudge') {
+    const pairs = Array.isArray(reason.pairs) ? reason.pairs : [];
+    return [
+      '## Refresh the verdicts',
+      '',
+      'This ticket came back with no round counted: the landing brought the parent into your branch, and that',
+      'moved code your prose verdicts were recorded over, so they are waiting on a judgement again.',
+      ...(pairs.length ? ['', ...pairs.map((p) => `- ${p.aspect} on ${p.unitKind}:${p.unit}`)] : []),
+      '',
+      `That is the whole of this round: run \`${display} check --approve\` in your worktree, commit what it records,`,
+      'and log `landed <sha>` as always. Change no code for it. A second return for the same reason counts a round.',
+      '',
+    ].join('\n');
+  }
+  return '';
+}
+
 function cmdArchitect(horde, cfg, flags) {
   const name = requireName(flags);
   // No --tree: cwd, same as an ordinary read anywhere else in this tool set — NOT this horde's
@@ -445,6 +491,7 @@ function cmdWorker(horde, cfg, positional, flags) {
     issueDir: `teams/${t.team}/issues/${t.issueDirName}`,
     reportsTo: reportsToFor('worker', horde, { team: t.team, name }),
     takeoverBlock: flags.takeover ? takeoverBlockFor(horde, t) : '',
+    returnBlock: returnBlockFor(t, parent.branch, cfg),
   };
   const brief = renderRole('worker', vars);
   emitBrief({

@@ -234,14 +234,31 @@ architect is never resumed, only replaced; the fresh one rebuilds its context fr
 ## Ticking — the one loop
 
 `tick.mjs` is the whole of "while the horde runs": one run, four things in order, then it exits —
-reconcile every `running` item against its actual branch, land what its result file already says is
+reconcile every `running` item whose worker has ended against its actual branch, land what its result file already says is
 ready (raising a ticket's one review before its first gate, and calling `land.mjs` itself where a
 fresh check is needed), print the dispatch list at
 `config.parallelism`, and say when the queue holds nothing but `merged` items so you know to close
 the wave. Nothing lives between runs, because nothing has to: a run that starts cold reads the same
 state a run that never stopped would have. If the harness gives you a wake-up mechanism (a loop with
 `ScheduleWakeup`, or a scheduled run), use it at 20–30 minute intervals to call `tick.mjs` again;
-without one, the loop advances while the user is present, and you say so. `reference/model.md`'s
+without one, the loop advances while the user is present, and you say so.
+
+**Tick never takes a ticket from a worker that is still working.** A ticket handed out is held by
+its worker until there is evidence the worker ended: its last line, `tk.mjs log NNN "landed <sha> —
+…"`; under the external runner, the process tick started for it being gone; or you saying so. Until
+then `tick.mjs` lists it under `working` and touches nothing of it — so workers can run in the
+background while you tick, and a landing does not wait for the slowest worker of its batch. When a
+worker comes back without that line (it stopped, reported it could not, or died), say so with
+`tick.mjs --reclaim NNN`: that run settles what it left behind as usual.
+
+**A catch-up that conflicts is not a loop.** When a sibling's landing moves the parent, the landing
+merges the parent into the branch first, and the conflicts the family meets every day are resolved
+there by rule: a node's `log.md` through `yg log merge-resolve`, Yggdrasil's lock files by taking the
+parent's side, and the files `config.appendOnly` names (a CHANGELOG, as `horde.mjs init` finds it)
+by keeping both sides' added lines. Any other conflict sends the ticket back with no round counted
+and a brief naming the files to resolve; the second time the same files stop it, one `stuck` ask
+names them to the client. A landing red only because that catch-up left prose verdicts to refresh
+comes back with no round counted too, briefed to run `yg check --approve` and nothing else. `reference/model.md`'s
 **Runner** section has the whole of who drives that loop and what changes when it runs outside a
 session altogether.
 
@@ -264,7 +281,7 @@ whether that belongs to `ask.mjs` too is still open (see the CHANGELOG).
 
 **What travels to the client, and what does not.** `ask.mjs` carries exactly four kinds: `stop` (a
 worker ran out of spec and wrote down the question instead of guessing — the ticket stays put),
-`stuck` (a ticket exhausted its fix rounds — `tick.mjs` files this one, not an agent), `lower` (a
+`stuck` (a ticket exhausted its fix rounds, or its catch-up merge stopped on the same files twice — `tick.mjs` files this one, not an agent), `lower` (a
 request to weaken something that protects the work: a rule — demote, an added `yg-suppress` marker,
 a moved `review_by`, an aspect detached from a node — or the proof — a promise put back to planned,
 a test file or an assertion taken out, a skip marker added — or a gate — the script a gate command
