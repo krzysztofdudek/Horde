@@ -995,7 +995,14 @@ function recordGateCache(horde, level, cache, ticketId, branch, cfg) {
 // rules, which only Yggdrasil's configured reviewer judges. So the item names those pairs rather
 // than approving them, and it is ✓ only when a full `yg check` is green; the judge item says who
 // owes them.
-function checkGraph(cfg, worktree, noGate) {
+//
+// One warning is read as a refusal here: `log-cycle-open` on a component this branch changed. The
+// free half never records a component's source baseline, so on a `log_required` component whose
+// only fills are free the first log entry goes on answering for every later edit, and the log gate
+// never asks for another why. A full `yg check --approve` closes the cycle — free when no reviewer
+// pair is pending — and a branch that changed such a component owes it: record why, run it, commit
+// the lock it writes. `changedFiles` is the branch's own diff (the whole batch's, for a shared gate).
+function checkGraph(cfg, worktree, noGate, changedFiles = []) {
   const display = ygCommand(cfg).display;
   if (noGate) return { ok: true, note: `skipped (--no-gate) — \`${display} check\` was not run` };
 
@@ -1012,15 +1019,27 @@ function checkGraph(cfg, worktree, noGate) {
   if (filled.timedOut) return { ok: false, note: `\`${filled.command}\` — ${filled.out}` };
 
   const res = runYgCheck(cfg, worktree);
-  if (res.ok) return { ok: true, note: `${res.command} green${res.summary ? ` — ${res.summary}` : ''}` };
   if (res.timedOut) return { ok: false, note: `\`${res.command}\` — ${res.summary}` };
+  const cycles = openLogCycles(cfg, worktree, res.doc, changedFiles);
+  const cycleNote = cycles.length
+    ? ` — and the log requirement is not measuring ${cycles.map((c) => `"${c}"`).join(', ')}, which this branch changed (log-cycle-open): `
+      + `record why (\`${display} log add --node <node> --reason "…"\`), run the full \`${display} check --approve\` (free while no reviewer pair is pending), and commit the lock it writes`
+    : '';
+  if (res.ok && !cycles.length) return { ok: true, note: `${res.command} green${res.summary ? ` — ${res.summary}` : ''}` };
+  if (res.ok) return { ok: false, logCycleOpen: cycles, note: `${res.command} green${cycleNote}` };
 
   // Whether what is red here is a decision only the user can make — no reviewer configured, or one
   // that could not be reached — read off the graph's own buckets and causes. Carried on every red
   // answer below: a refusal like that is nobody's fix round (see run()).
   const userOnly = userOnlyRefusal(res.doc);
   const reviewerMissing = reviewerMissingIn(res.doc);
-  const red = (item) => ({ ...item, ...(userOnly ? { userOnly } : {}), reviewerMissing });
+  const red = (item) => ({
+    ...item,
+    note: `${item.note}${cycleNote}`,
+    ...(userOnly ? { userOnly } : {}),
+    ...(cycles.length ? { logCycleOpen: cycles } : {}),
+    reviewerMissing,
+  });
 
   const pending = pendingProsePairs(cfg, worktree, res);
   if (pending.scriptPending.length) {
@@ -1056,6 +1075,24 @@ function checkGraph(cfg, worktree, noGate) {
     note: `${res.command} exited ${res.exit} — the graph refuses this tree${res.summary ? `: ${res.summary}` : ''}; a red graph is a red gate, whatever the level's gate command said`
       + (userOnly ? ` — waiting on a user decision: ${userOnly.text}` : ''),
   });
+}
+
+// The `log_required` components this branch changed whose log cycle is open on its tree: the graph's
+// own `log-cycle-open` warnings, each kept only when a changed file is owned by that component
+// (Yggdrasil's own answer, `yg context --file`). Asked only when there is such a warning at all.
+function openLogCycles(cfg, worktree, doc, changedFiles) {
+  const open = new Set(asArray(doc && doc.issues)
+    .filter((i) => i && i.code === 'log-cycle-open' && i.node).map((i) => i.node));
+  if (!open.size) return [];
+  const hit = new Set();
+  for (const f of changedFiles) {
+    if (f.startsWith('.yggdrasil/') || !existsSync(join(worktree, f))) continue;
+    const res = ygJson(worktree, cfg, ['context', '--file', f, '--json'], 'yg-context/1');
+    const owner = res.state === 'ok' && res.doc.owner && res.doc.owner.kind === 'node' ? res.doc.owner.path : null;
+    if (owner && open.has(owner)) hit.add(owner);
+    if (hit.size === open.size) break;
+  }
+  return [...hit].sort();
 }
 
 // Whether the prose rules are judged. They have one judge: the reviewer configured inside
@@ -3452,9 +3489,9 @@ function combineBatchGroup(root, cfg, group, cleaner) {
 // The caller holds the gate lock around this call and only this call, mirroring run()'s own
 // lock-around-the-expensive-half shape, now paid once for the whole group rather than once per
 // member.
-function runSharedGate(cfg, level, worktreePath, addedFiles) {
+function runSharedGate(cfg, level, worktreePath, addedFiles, changedFiles = []) {
   const gate = checkGate(cfg, level, worktreePath, null, false);
-  const graph = checkGraph(cfg, worktreePath, false);
+  const graph = checkGraph(cfg, worktreePath, false, changedFiles);
   const mapping = checkMapping(cfg, worktreePath, addedFiles, false);
   const judge = checkJudge(cfg, worktreePath, graph, false);
   return {
@@ -3731,7 +3768,8 @@ function runMany(horde, root, cfg, tickets, level, noGate, flags) {
       let shared;
       const sharedStart = Date.now();
       try {
-        shared = runSharedGate(cfg, level, combined.info.path, addedFiles);
+        const changedFiles = diffPaths(['diff', '--name-only', `${group.parentTip}...HEAD`], combined.info.path);
+        shared = runSharedGate(cfg, level, combined.info.path, addedFiles, changedFiles);
       } finally {
         lock.release();
       }
@@ -3909,7 +3947,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     const gateStart = Date.now();
     try {
       results.gate = checkGate(cfg, level, head.path, branchSha, noGate);
-      results.graph = checkGraph(cfg, head.path, noGate);
+      results.graph = checkGraph(cfg, head.path, noGate, changedFiles);
       results.mapping = checkMapping(cfg, head.path, addedFiles, noGate);
     } finally {
       lock.release();

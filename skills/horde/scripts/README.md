@@ -1093,7 +1093,13 @@ the JSON, and every item below is measured against it:
    item is ✓ only when a full `yg check` is green. A red graph is a red gate. When the CLI cannot be
    started the item is ✗ (never a quiet ✓) and names `config.ygCommand`; when the free run itself
    did not take — a judgement rule with no judge configured refuses it outright — the item hands
-   over the CLI's own words rather than naming pairs it cannot classify;
+   over the CLI's own words rather than naming pairs it cannot classify. One warning is read as a
+   refusal: `log-cycle-open` on a `log_required` component that owns a file the branch changed
+   (asked of `yg context --file`, only when there is such a warning). The free half never records a
+   component's source baseline, so its first log entry would otherwise answer for every later edit
+   and the log gate would never ask for another why; the item names the component and the way out —
+   record why, run the full `yg check --approve` (free while no reviewer pair is pending), commit the
+   lock it writes. A shared batch gate reads it against the whole batch's diff;
 7. mapping — every file the branch added is owned by a node on the branch's own tree; skipped with
    `--no-gate`;
 8. journal — `tk log` has an entry newer than the last commit a worker made (a merge of the parent

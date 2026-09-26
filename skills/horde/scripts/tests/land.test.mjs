@@ -515,6 +515,58 @@ test('land + tick: two tickets on a prose-ruled node with no reviewer wait on on
   }
 });
 
+// ---- the log gate that went quiet (issue 293) -------------------------------------------
+//
+// On a `log_required` component the free fill never records a source baseline, so the first log
+// entry goes on answering for every later edit and Yggdrasil only warns (`log-cycle-open`). A
+// branch that changed such a component is refused until the cycle is closed: a full
+// `yg check --approve` — free here, with no prose rule — and its lock committed.
+test('land.mjs: a changed log_required component whose log cycle is open is refused until the full fill closes it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const architecture = [
+    'node_types:',
+    '  module:',
+    '    description: A unit of the product.',
+    '    log_required: true',
+    '    when:',
+    '      path: "feature-*.mjs"',
+    '',
+  ].join('\n');
+  const files = ['feature-321.mjs', 'feature-321.test.mjs', '.yggdrasil/model/feature/log.md'];
+  const { branch, issueDir: dst } = setupLandable(dir, '321', {
+    mapping: ['feature-*.mjs'], files, trunkFiles: { '.yggdrasil/yg-architecture.yaml': architecture },
+  });
+  // The worker's own why, recorded the way the log gate asks for it — and nothing but the free fill.
+  git(['checkout', '-q', branch], dir);
+  assert.equal(yg(dir, ['log', 'add', '--node', 'feature', '--reason', 'Adding two numbers is the first thing the product does.']).code, 0);
+  yg(dir, ['check', '--approve', '--only-deterministic']);
+  git(['add', '.yggdrasil/model/feature/log.md'], dir);
+  git(['commit', '-qm', 'why the feature exists'], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  writeTicketLog(dst);
+
+  const red = run('land.mjs', [branch], dir);
+  assert.equal(red.code, 1, `${red.stdout}${red.stderr}`);
+  const graph = byName(red).graph;
+  assert.equal(graph.ok, false, graph.note);
+  assert.match(graph.note, /log-cycle-open/);
+  assert.match(graph.note, /"feature"/);
+  assert.match(graph.note, /check --approve/);
+
+  // The full fill, free here, records the baseline in the committed lock; committed, it lands.
+  git(['checkout', '-q', branch], dir);
+  const full = yg(dir, ['check', '--approve']);
+  assert.equal(full.code, 0, full.out);
+  git(['add', '.yggdrasil'], dir);
+  git(['commit', '-qm', 'the full fill recorded the baseline'], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  writeTicketLog(dst);
+  const green = run('land.mjs', [branch], dir);
+  assert.equal(green.code, 0, `${green.stdout}${green.stderr}`);
+  assert.ok(green.json.landed, 'it landed once the cycle was closed');
+});
+
 // ---- the items, one refusal each -------------------------------------------------------
 
 test('land.mjs: base freshness fails — the branch is not rooted at the current parent tip', async (t) => {
