@@ -769,7 +769,11 @@ Three sweeps and one line.
   re-raised — a dismissal takes a human-signed `--reason`, which is what makes it a decision. Two
   classes are skipped by name: an overdue review date (the first sweep files it, with the rule's
   history beside it) and an `imported:` proposal (`queue.mjs quality` files those, from the
-  producer's own document, against its own ledger).
+  producer's own document, against its own ledger). An item counts as already filed under its current
+  id, under any former id the feed lists in its `aliases`, and under the other name of a class
+  Yggdrasil renamed (`uncovered-hot-spot` ↔ `unguarded-hot-spot`, `dead-attach` ↔
+  `aspect-effective-nowhere`), so a rename never files the same finding twice. New filings are recorded
+  under the current id.
 - **What the repository says about itself.** `grain advise --json` from the trunk, down the same path
   `queue.mjs quality` walks — same command, same `grain-advice/1` schema, same lease filter. It
   **reports and files nothing**: one filer, one ledger. The close says how many advisories stand on

@@ -516,8 +516,9 @@ function sweepAdvise(horde, cfg, team, { advise, trunkReach, allNodes }) {
       skipped.push({ key, why: 'an imported proposal is filed from the producer\'s own document by `queue.mjs quality`' });
       continue;
     }
-    if (already.has(key)) {
-      skipped.push({ key, why: 'already filed as a ticket' });
+    const filedAs = adviseKeys(item).find((k) => already.has(k));
+    if (filedAs) {
+      skipped.push({ key, why: filedAs === key ? 'already filed as a ticket' : `already filed as a ticket under its former id (${filedAs})` });
       continue;
     }
     const owner = ownerFor(horde, subjectNodes(item, trunkReach, allNodes));
@@ -549,6 +550,35 @@ function sweepAdvise(horde, cfg, team, { advise, trunkReach, allNodes }) {
     filed,
     skipped,
   };
+}
+
+// Yggdrasil renames an attention class now and then, and the item's id changes with it. The ledger
+// holds whatever id the item carried when it was filed, so an item counts as filed under its current
+// id, under any former id the feed lists in its own `aliases` (each either a bare id or
+// `{ id, evidenceHash }`), and — for a feed that predates `aliases`, or a ledger written by a newer
+// one — under the other name of a class this file knows was renamed. New filings are recorded under
+// the current id only.
+export const RENAMED_ADVISE_CLASSES = [
+  ['uncovered-hot-spot', 'unguarded-hot-spot'],
+  ['dead-attach', 'aspect-effective-nowhere'],
+];
+
+export function adviseKeys(item) {
+  const ids = [String(item.id)];
+  for (const alias of asArray(item.aliases)) {
+    const id = alias && typeof alias === 'object' ? alias.id : alias;
+    if (typeof id === 'string' && id) ids.push(id);
+  }
+  for (const id of [...ids]) {
+    const at = id.indexOf(':');
+    if (at === -1) continue;
+    const cls = id.slice(0, at);
+    for (const pair of RENAMED_ADVISE_CLASSES) {
+      if (!pair.includes(cls)) continue;
+      for (const other of pair) if (other !== cls) ids.push(`${other}${id.slice(at)}`);
+    }
+  }
+  return [...new Set(ids)].map((id) => `advise:${id}`);
 }
 
 // The components an attention item is about. Its id is `<class>:<subject>` by Yggdrasil's own
