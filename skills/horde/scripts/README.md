@@ -1847,8 +1847,9 @@ and refuses to run with none of those — Horde requires Yggdrasil, and a suite 
 instead would be proving something no adopter ever runs. Only a CLI at Horde's floor (6.1.0) or
 newer counts: an older `yg` on `PATH` is passed over for a sibling build that meets it, and when the
 only one found is older, every test file stops as it loads with one message naming that CLI, its
-version and what to install, instead of failing test by test. `tests/yg-floor.mjs`, which `npm test`
-runs first, asks the same once for the whole suite and prints which CLI it will run against. Rules, ports, refusals and the verdicts
+version and what to install, instead of failing test by test. `npm test` asks the same once for the
+whole suite before any test file runs (a preflight in `tests/`, also run by CI), and prints which CLI
+the suite will run against. Rules, ports, refusals and the verdicts
 that clear a prose rule are all the CLI's own; nothing about the graph is stood in for.
 
 ### the family's contract test — `tests/family.e2e.test.mjs`
