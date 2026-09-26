@@ -535,11 +535,12 @@ test('land.mjs --background: the run is let go of, but not forgotten — the res
 
 // The same contract, with the thing that actually wedged in the wild: a `yg check` that never comes
 // back. A stand-in CLI hands every call to the real Yggdrasil build except the landing gate's own
-// two — `check` and `check --approve --only-deterministic` — which it never answers at all. That is
+// fill — `check --approve --only-deterministic --json`, the one run the graph item makes — which it
+// never answers at all. That is
 // the shape of the live incident: not a CLI that is broken, but one particular run of it hanging on
 // one tree, because the worktree was deleted under it, or the disk is a network mount, or the graph
-// is large enough to thrash. The document reads (`check --json`) are deliberately left working, so
-// the landing gets all the way to the item whose answer this test is about.
+// is large enough to thrash. Every read-only call is deliberately left working, so the landing gets
+// all the way to the item whose answer this test is about.
 //
 // Without a ceiling on the CLI call this test cannot pass: the detached landing blocks inside
 // `execFileSync` forever, the result file is never written, and the poll below runs out. (The same
@@ -559,7 +560,7 @@ function writeHangingYgStub(realYg) {
     "import { spawnSync } from 'node:child_process';",
     'const argv = process.argv.slice(2);',
     `const real = ${JSON.stringify(realYg.split(/\s+/).filter(Boolean))};`,
-    "if (argv[0] === 'check' && !argv.includes('--json')) {",
+    "if (argv[0] === 'check' && argv.includes('--approve')) {",
     '  // Never answers, never exits. Whatever stops this process, it is not this process.',
     '  setInterval(() => {}, 1000);',
     '} else {',

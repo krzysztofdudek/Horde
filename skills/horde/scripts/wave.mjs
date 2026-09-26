@@ -13,11 +13,12 @@
 
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import {
   hordePath, teamPath, readText, writeText, appendText, readJSON, writeJSON, readConfig, today,
   nowIso, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy, resolveTree,
   markdownSection, markdownTableCells, parseEvidenceRows, parseVerdictBlocks, diffSize, sizeRanks,
-  noEvidenceLayerNote, EVIDENCE_CLASSES,
+  noEvidenceLayerNote, EVIDENCE_CLASSES, git, runGateAt, GATE_RAN, GATE_ASSERTED,
   runMain,
 } from './_lib.mjs';
 // The charter section's heading lives with the readers of it, and is handed on from here because
@@ -59,10 +60,14 @@ commands:
       this itself, so this is only for a merge the queue never saw; it never records one twice.
   close [--gate green|red] [--sha <sha>] [--evidence E5[,E6]] [--team t] [--horde h]
       renders templates/wave-close.md — counts from the team's queue.json — and appends it.
-      --gate with --sha records that gate for the team's level (trunk for the
-      trunk team) in cache/last-gate.json — the branch tip the gate ran on, so status can show it.
-      --evidence names catalogue rows the wave gate itself proves (a green gate on the trunk is
-      the usual one); they are filled with "wave <n> gate on <sha>" — refused when the gate is red.
+      --gate green --sha runs the level's gate command (config.gates.trunk for the trunk team)
+      at that commit — which must be on the trunk — here, before anything is written, and refuses the close when it does not
+      pass; what it records in cache/last-gate.json is that run (kind "ran"), the only kind of
+      entry "horde.mjs done" trusts. --gate red --sha is recorded as said (kind "asserted").
+      --gate without --sha only names the gate in the report, and records nothing.
+      --evidence names catalogue rows the wave gate itself proves — only with --gate green --sha,
+      and never a "client testimony" or "artifact" row; they are filled with "wave <n> gate
+      passed at <sha>".
       Also states, from the wave's own record: what came back after landing (merges reverted and
       tickets reopened, counted beside the merges and never folded into them), planned against
       achieved parallelism, the keys that carried over without a second reading, human decisions
@@ -87,9 +92,19 @@ commands:
       what Grain says about this mission's own territories, and the rules nothing has hit — that last
       one in Yggdrasil's own words from "yg aspects --health", or not at all. Every read it
       cannot make is a note in the report; none of them stops the close.
-  evidence <id> --by "<who/what>" [--horde h]
-      fills one catalogue row's "reproduced by" cell by hand — for a row no ticket verdict can
-      fill, such as the mission gate; the director's call. A row in the charter's evidence
+  evidence <id> (--ask <id> | --artifact <path> | --run "<command>") [--horde h]
+      fills one catalogue row's "reproduced by" cell — for a row no ticket verdict can fill — with
+      something this tool checks, never with what is typed; which flag a row takes is its kind
+      of proof (the charter's fifth column). "client testimony": --ask names an answered ask that
+      names the row's id, and the cell records what the client said and when. "artifact":
+      --artifact names a file that exists at the trunk tip, and the cell records the commit and the
+      file's object id. Any other kind: --run names one of the commands the row itself states in
+      backticks, this tool runs it at the trunk tip, and the cell is filled only when it passes,
+      with the commit it passed on; a row that states no command cannot be filled this way until
+      the charter names one. The wrong flag for the row, or --by, is refused. What each cell was
+      proved by is recorded in hordes/<h>/evidence.json, and "horde.mjs done" checks every filled
+      cell against it again.
+      A row in the charter's evidence
       catalogue counts green when its "reproduced by" cell is filled, or (on a ticket logged
       before this migration) when a ticket merged this wave names the row's id in its own
       acceptance checklist and carries a "reproduced" verdict — in which case that verifier's
@@ -489,6 +504,87 @@ function setReproducedBy(charterText, id, name) {
   return charterText;
 }
 
+// ---- what each filled cell rests on ----------------------------------------------------------
+//
+// A "reproduced by" cell is a claim; hordes/<horde>/evidence.json is what the claim was checked
+// against when it was written, one record per row: the words written, and the proof — the ticket
+// whose reproduced verdict it is, the gate run and the commit it passed at, the command run and the
+// commit, the file and its object id at a commit, or the answered ask. Every tool that fills a cell
+// writes both, together (stampRow). `horde.mjs done` checks each filled cell against its record
+// again (verifyEvidence), and a cell with no record — typed into the charter by hand — proves
+// nothing, whatever it says.
+function proofsPath(horde) {
+  return hordePath(horde, 'evidence.json');
+}
+
+export function readProofs(horde) {
+  const doc = readJSON(proofsPath(horde), null);
+  return doc && doc.rows && typeof doc.rows === 'object' ? doc.rows : {};
+}
+
+function stampRow(horde, charterText, id, by, proof) {
+  const rows = readProofs(horde);
+  rows[id] = { by, ...proof, at: nowIso() };
+  writeJSON(proofsPath(horde), { rows });
+  return setReproducedBy(charterText, id, by);
+}
+
+// The commands a row states itself, each written in backticks in its evidence cell. A row is
+// reproduced by running one of them — never a command somebody chose at the moment of filling it.
+export function rowCommands(row) {
+  return [...String((row && row.evidence) || '').matchAll(/`([^`]+)`/g)].map((m) => m[1].trim()).filter(Boolean);
+}
+
+function askNamesRow(ask, id) {
+  return mentionsEvidenceId(`${ask.why || ''}\n${ask.answer || ''}`, id);
+}
+
+function reachableFrom(root, sha, branch) {
+  if (!sha) return false;
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', sha, branch], { cwd: root, stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Every filled cell checked against what was recorded when it was filled. One line per row that
+// does not hold, naming why and the way to fill it again; empty when every filled cell holds.
+export function verifyEvidence(horde, root) {
+  const rows = parseEvidenceRows(readText(hordePath(horde, 'charter.md')) || '');
+  const proofs = readProofs(horde);
+  const trunk = `${horde}/trunk`;
+  const tickets = allHordeTickets(horde);
+  const out = [];
+  for (const row of rows) {
+    if (!row.reproducedBy) continue;
+    const proof = proofs[row.id];
+    const again = `fill it again: wave.mjs evidence ${row.id} ${evidenceWay(row.evidenceClass).flag}`;
+    if (!proof) { out.push(`${row.id} says "${row.reproducedBy}", and nothing recorded proves it — a cell filled by hand is a claim, not a proof; ${again}`); continue; }
+    if (proof.by !== row.reproducedBy) { out.push(`${row.id} says "${row.reproducedBy}", but what was proved is "${proof.by}" — the cell was changed by hand; ${again}`); continue; }
+    if (proof.kind === 'ticket') {
+      const t = tickets.find((x) => x.id === proof.ticket);
+      const verdict = t ? latestVerdict(t.logText) : null;
+      if (!verdict || verdict.result !== 'reproduced' || verdict.verifier !== proof.by) {
+        out.push(`${row.id} rests on ticket ${proof.ticket}'s reproduced verdict by ${proof.by}, which its log no longer carries; ${again}`);
+      }
+    } else if (proof.kind === 'run' || proof.kind === 'gate') {
+      if (!reachableFrom(root, proof.sha, trunk)) out.push(`${row.id} was proved at ${String(proof.sha).slice(0, 7)}, which is not on ${trunk}; ${again}`);
+      else if (proof.kind === 'run' && !rowCommands(row).includes(proof.run)) out.push(`${row.id} was proved by \`${proof.run}\`, which the row no longer states; ${again}`);
+    } else if (proof.kind === 'artifact') {
+      const now = git(['rev-parse', '--verify', '--quiet', `${trunk}:${proof.artifact}`], root);
+      if (now !== proof.object) out.push(`${row.id} rests on ${proof.artifact} as it was at ${String(proof.sha).slice(0, 7)}, and the trunk tip ${now ? 'carries a different file' : 'no longer carries it'}; ${again}`);
+    } else if (proof.kind === 'ask') {
+      const ask = loadAsks(horde).items.find((a) => a && a.id === proof.ask);
+      if (!ask || ask.state !== 'answered' || !askNamesRow(ask, row.id)) out.push(`${row.id} rests on ask ${proof.ask}, which is no longer an answered ask naming the row; ${again}`);
+    } else {
+      out.push(`${row.id} rests on a record this tool does not know (${proof.kind}); ${again}`);
+    }
+  }
+  return out;
+}
+
 // ---- the prototype artifact -------------------------------------------------------------------
 //
 // A prototype earns no verdict and never fills a "reproduced by" cell: what it is for is to be
@@ -565,17 +661,18 @@ function computeEvidence(horde, team, mergedTickets) {
   for (const row of rows) {
     if (row.reproducedBy) { green++; continue; }
     let verifier = null;
+    let by = null;
     for (const ticket of mergedTickets) {
       const dir = findTicketDir(horde, team, ticket);
       if (!dir) continue;
       const issueText = readText(join(dir, 'issue.md')) || '';
       if (!mentionsEvidenceId(acceptanceSection(issueText), row.id)) continue;
       const verdict = latestVerdict(readText(join(dir, 'log.md')));
-      if (verdict && verdict.result === 'reproduced') { verifier = verdict.verifier; break; }
+      if (verdict && verdict.result === 'reproduced') { verifier = verdict.verifier; by = ticket; break; }
     }
     if (verifier) {
       green++;
-      charterText = setReproducedBy(charterText, row.id, verifier);
+      charterText = stampRow(horde, charterText, row.id, verifier, { kind: 'ticket', ticket: by });
       changed = true;
     }
   }
@@ -750,9 +847,9 @@ export function stampMissionEvidence(horde) {
   let changed = false;
   for (const row of rows) {
     if (row.reproducedBy) continue;
-    const { state, verifier } = deriveRowState(row, tickets);
+    const { state, verifier, ticket } = deriveRowState(row, tickets);
     if (state === 'merged' && verifier) {
-      charterText = setReproducedBy(charterText, row.id, verifier);
+      charterText = stampRow(horde, charterText, row.id, verifier, { kind: 'ticket', ticket });
       changed = true;
     }
   }
@@ -760,14 +857,95 @@ export function stampMissionEvidence(horde) {
   return evidenceCoverage(horde);
 }
 
+// A row is filled by something this tool can check, never by what somebody typed — the director is
+// an agent too, and its word is a report, not evidence. What checks it is the row's kind of proof
+// (the charter's fifth column):
+//   client testimony  an answered ask (`--ask <id>`): what the client said, and when
+//   artifact          a file that exists at the trunk tip (`--artifact <path>`), recorded with the
+//                     commit and the file's own object id, so the cell names exactly what was there
+//   anything else     a command this tool runs at the trunk tip (`--run "<command>"`), recorded only
+//                     when it passes, with the commit it passed on
+const TESTIMONY = 'client testimony';
+const ARTIFACT = 'artifact';
+const GATE_TIMEOUT_MS = 15 * 60 * 1000;
+
+function gateTimeoutOf(cfg) {
+  const asked = Number(cfg && cfg.gateTimeoutMs);
+  return Number.isFinite(asked) && asked > 0 ? asked : GATE_TIMEOUT_MS;
+}
+
+export function evidenceWay(evidenceClass) {
+  const c = String(evidenceClass || '').trim().toLowerCase();
+  if (c === TESTIMONY) return { flag: '--ask <id>', what: 'an answered ask' };
+  if (c === ARTIFACT) return { flag: '--artifact <path>', what: 'a file that exists at the trunk tip' };
+  return { flag: '--run "<command the row states>"', what: 'the command the row states, run by this tool at the trunk tip' };
+}
+
+// A table cell holds one line and no column separator.
+function cellText(text) {
+  return String(text).replace(/\s+/g, ' ').replace(/\|/g, '/').trim();
+}
+
 function cmdEvidence(horde, positional, flags) {
   const [id] = positional;
-  if (!id || !flags.by) fail('evidence requires <id> --by "<who/what>"');
+  if (!id) fail('evidence requires <id> and one of --ask <id>, --artifact <path> or --run "<command>"');
   const charterPath = hordePath(horde, 'charter.md');
   const charterText = readText(charterPath) || '';
-  if (!parseEvidenceRows(charterText).some((r) => r.id === id)) fail(`evidence id ${id} is not in the charter's catalogue`);
-  writeText(charterPath, setReproducedBy(charterText, id, String(flags.by)));
-  emit({ id, by: flags.by }, flags, () => `evidence ${id} reproduced by: ${flags.by}`);
+  const row = parseEvidenceRows(charterText).find((r) => r.id === id);
+  if (!row) fail(`evidence id ${id} is not in the charter's catalogue`);
+  const kind = String(row.evidenceClass || '').trim().toLowerCase();
+  const way = evidenceWay(kind);
+  const given = ['ask', 'artifact', 'run'].filter((f) => flags[f] !== undefined && flags[f] !== true);
+  const expected = kind === TESTIMONY ? 'ask' : kind === ARTIFACT ? 'artifact' : 'run';
+  if (flags.by !== undefined && !given.length) {
+    fail(`evidence ${id} is not filled by what is typed — "--by" names nobody's proof. `
+      + `Row ${id} is ${kind ? `"${kind}"` : 'of no named kind'} evidence, so it is filled by ${way.what}: wave.mjs evidence ${id} ${way.flag}`);
+  }
+  if (given.length !== 1 || given[0] !== expected) {
+    fail(`row ${id} is ${kind ? `"${kind}"` : 'of no named kind'} evidence, so it is filled by ${way.what} and nothing else: wave.mjs evidence ${id} ${way.flag}`);
+  }
+
+  let by;
+  let detail;
+  if (expected === 'ask') {
+    const askId = String(flags.ask);
+    const ask = loadAsks(horde).items.find((a) => a && a.id === askId);
+    if (!ask) fail(`no ask ${askId} in this horde — client testimony is an answered ask: ask.mjs list`);
+    if (ask.state !== 'answered') fail(`ask ${askId} is not answered yet — client testimony is what the client said, and they have not said it`);
+    if (!askNamesRow(ask, id)) fail(`ask ${askId} does not name ${id} — testimony counts for the row it was asked about; ask the client about ${id} by its id`);
+    by = `client testimony — ${ask.id}, answered ${String(ask.answeredAt || '').slice(0, 10)}: "${cellText(ask.answer || '').slice(0, 120)}"`;
+    detail = { kind: 'ask', ask: ask.id, answeredAt: ask.answeredAt || null };
+  } else {
+    const root = resolveTree({}).path;
+    const trunkBranch = `${horde}/trunk`;
+    const trunkSha = git(['rev-parse', '--verify', '--quiet', trunkBranch], root);
+    if (!trunkSha) fail(`no such branch: ${trunkBranch} — the row is checked at the trunk tip`);
+    if (expected === 'artifact') {
+      const path = String(flags.artifact).replace(/^\.\//, '');
+      const blob = git(['rev-parse', '--verify', '--quiet', `${trunkSha}:${path}`], root);
+      if (!blob) fail(`${path} does not exist at the trunk tip (${trunkSha.slice(0, 7)}) — an artifact row names a file the trunk carries`);
+      by = `artifact ${cellText(path)} at ${trunkSha.slice(0, 7)} (object ${blob.slice(0, 12)})`;
+      detail = { kind: 'artifact', artifact: path, sha: trunkSha, object: blob };
+    } else {
+      const cmd = String(flags.run).trim();
+      const stated = rowCommands(row);
+      if (!stated.length) {
+        fail(`row ${id} states no command of its own, so nothing run now can be its proof. Name the command in the row's evidence, in backticks, with horde.mjs charter edit — the client reads the charter — and run it: wave.mjs evidence ${id} --run "<that command>"`);
+      }
+      if (!stated.includes(cmd)) {
+        fail(`row ${id} is reproduced by the command it states — ${stated.map((c) => `\`${c}\``).join(' or ')} — and \`${cmd}\` is not it`);
+      }
+      const cfg = readConfig() || {};
+      const ran = runGateAt(root, cmd, trunkSha, gateTimeoutOf(cfg));
+      if (!ran.ok) {
+        fail(`\`${cmd}\` ${ran.timedOut ? 'did not finish in time and was stopped' : 'failed'} at the trunk tip (${trunkSha.slice(0, 7)}) — row ${id} is filled only by a run that passes`);
+      }
+      by = `\`${cellText(cmd)}\` passed at ${trunkSha.slice(0, 7)}`;
+      detail = { kind: 'run', run: cmd, sha: trunkSha };
+    }
+  }
+  writeText(charterPath, stampRow(horde, charterText, id, by, detail));
+  emit({ id, by, ...detail }, flags, () => `evidence ${id} reproduced by: ${by}`);
 }
 
 function previousGreen(journalText) {
@@ -889,7 +1067,13 @@ function qualityLine(now, prev) {
   const coverage = now.totalFiles === null ? '0/0' : `${now.coveredFiles}/${now.totalFiles}`;
   const base = `enforced ${now.enforced} · advisory clean ${now.advisoryClean}/${now.advisoryTotal}`
     + ` · baseline ${now.baseline} · noise floor ${now.noiseFloor} · coverage ${coverage} · judges ${now.judges}`;
-  if (!prev) return `${base} (first reading)`;
+  // Pairs with no verdict yet and open log cycles are the state of a cache and of the horde's own
+  // process, not of the graph: said beside the index, never part of it or of what "fell" means.
+  const unfilled = now.unfilled || now.logCyclesOpen
+    ? ` — beside it, not counted: ${now.unfilled || 0} pair(s) with no verdict yet${now.unfilledScript ? ` (${now.unfilledScript} script, free to fill)` : ''}`
+      + `${now.logCyclesOpen ? `, ${now.logCyclesOpen} log cycle(s) open` : ''}`
+    : '';
+  if (!prev) return `${base} (first reading)${unfilled}`;
   const sign = (d) => (d >= 0 ? `+${d}` : String(d));
   const deltas = [
     `enforced ${sign(now.enforced - prev.enforced)}`,
@@ -899,7 +1083,7 @@ function qualityLine(now, prev) {
     `coverage ${sign((now.coveredFiles || 0) - prev.coveredFiles)}`,
   ];
   if (prev.judges !== null && prev.judges !== undefined) deltas.push(`judges ${sign(now.judges - prev.judges)}`);
-  return `${base} (Δ ${deltas.join(' · ')})`;
+  return `${base} (Δ ${deltas.join(' · ')})${unfilled}`;
 }
 
 // ---- what the horde raised on its own, and how the chairman undoes it -------------------------
@@ -1026,20 +1210,61 @@ function cmdClose(horde, positional, flags) {
   const levelGate = lastGate && lastGate[team === 'trunk' ? 'trunk' : 'team'];
   const gate = flags.gate || (levelGate && levelGate.result) || 'unrecorded';
   const level = team === 'trunk' ? 'trunk' : 'team';
-  if (flags.gate && flags.sha) {
-    const cache = lastGate || {};
-    cache[level] = { result: flags.gate, sha: String(flags.sha), count: null, at: new Date().toISOString(), by: `wave ${n} close` };
-    writeJSON(hordePath(horde, 'cache', 'last-gate.json'), cache);
-  }
   const gateEvidence = flags.evidence ? String(flags.evidence).split(',').map((x) => x.trim()).filter(Boolean) : [];
   if (gateEvidence.length && gate !== 'green') fail('--evidence names rows the wave gate proves; the gate is not green');
+  if (gateEvidence.length && !(flags.gate === 'green' && flags.sha)) {
+    fail('--evidence names rows the wave gate proves, and only a gate run here proves anything: --gate green --sha <sha> runs it');
+  }
+  const catalogue = parseEvidenceRows(readText(hordePath(horde, 'charter.md')) || '');
+  for (const id of gateEvidence) {
+    const row = catalogue.find((r) => r.id === id);
+    if (!row) fail(`evidence id ${id} is not in the charter's catalogue`);
+    const kind = String(row.evidenceClass || '').trim().toLowerCase();
+    if (kind === TESTIMONY || kind === ARTIFACT) {
+      fail(`row ${id} is "${kind}" evidence — a gate run does not prove it; it is filled by ${evidenceWay(kind).what}: wave.mjs evidence ${id} ${evidenceWay(kind).flag}`);
+    }
+  }
+  // "--gate green --sha" is checked, not taken: the level's own gate command is run at that commit
+  // here, and a close that says green over a gate that is not is refused before anything is
+  // written. What it records is `kind: 'ran'`, the only kind `horde.mjs done` trusts. A red one is
+  // recorded as said (`kind: 'asserted'`) — it can only hold the mission back, never let it through.
+  let gateSha = flags.sha ? String(flags.sha) : null;
+  if (flags.gate && flags.sha) {
+    const cache = lastGate || {};
+    if (flags.gate === 'green') {
+      const cfgNow = readConfig() || {};
+      const cmd = cfgNow.gates && cfgNow.gates[level];
+      if (!cmd) {
+        fail(`--gate green --sha is checked by running config.gates.${level} at that commit, and none is configured — set it: horde.mjs config set gates.${level} "<command>"`);
+      }
+      const here = resolveTree({}).path;
+      const levelBranch = level === 'trunk' ? `${horde}/trunk` : null;
+      const resolved = git(['rev-parse', '--verify', '--quiet', `${gateSha}^{commit}`], here);
+      if (!resolved) fail(`--sha ${gateSha} names no commit in this repository — the gate is checked by running it there`);
+      if (levelBranch && !reachableFrom(here, resolved, levelBranch)) {
+        fail(`--sha ${gateSha} is not on ${levelBranch} — a wave's gate is the trunk's, run at a commit the trunk carries`);
+      }
+      const ran = runGateAt(here, cmd, resolved, gateTimeoutOf(cfgNow));
+      if (!ran.sha) fail(`--sha ${gateSha} names no commit in this repository — the gate is checked by running it there`);
+      if (!ran.ok) {
+        fail(`the ${level} gate (${cmd}) ${ran.timedOut ? 'did not finish in time and was stopped' : 'is red'} at ${ran.sha.slice(0, 7)} — "--gate green" is checked by running it, and it did not pass; the wave is still open`);
+      }
+      gateSha = ran.sha;
+      cache[level] = {
+        result: 'green', sha: ran.sha, count: null, kind: GATE_RAN, at: nowIso(), by: `wave ${n} close`,
+      };
+    } else {
+      cache[level] = {
+        result: flags.gate, sha: gateSha, count: null, kind: GATE_ASSERTED, at: nowIso(), by: `wave ${n} close`,
+      };
+    }
+    writeJSON(hordePath(horde, 'cache', 'last-gate.json'), cache);
+  }
   if (gateEvidence.length) {
     const charterPath = hordePath(horde, 'charter.md');
     let charterText = readText(charterPath) || '';
-    const ids = new Set(parseEvidenceRows(charterText).map((r) => r.id));
     for (const id of gateEvidence) {
-      if (!ids.has(id)) fail(`evidence id ${id} is not in the charter's catalogue`);
-      charterText = setReproducedBy(charterText, id, `wave ${n} gate on ${flags.sha || 'unrecorded sha'}`);
+      charterText = stampRow(horde, charterText, id, `wave ${n} gate passed at ${gateSha.slice(0, 7)}`, { kind: 'gate', sha: gateSha });
     }
     writeText(charterPath, charterText);
   }

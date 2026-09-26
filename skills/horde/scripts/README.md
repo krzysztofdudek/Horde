@@ -148,9 +148,12 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   (first promoting whatever a merged ticket's own verdict already proved, mission-wide and
   regardless of wave, into the charter's "reproduced by" cell — the same reading `wave.mjs close`
   uses for one wave, stretched over the whole mission); the trunk branch does not exist, or
-  `config.gates.trunk` is not configured, or it is not green at the trunk branch's tip (a matching
-  recorded green in `cache/last-gate.json` is accepted, anything else is run fresh in a scratch
-  worktree); no retrospective has been run on this mission at all, or the one on file was taken over
+  a filled row no longer holds against the proof recorded when it was filled (`evidence.json`; a
+  cell typed into the charter holds against nothing); `config.gates.trunk` is not configured, or it
+  is not green at the trunk branch's tip (a recorded
+  green in `cache/last-gate.json` is accepted only when it was run — `kind: "ran"`, by a landing or
+  by `wave.mjs close --gate green --sha` — on that very sha; anything else, a typed claim or an
+  entry older than the field included, is run fresh in a scratch worktree); no retrospective has been run on this mission at all, or the one on file was taken over
   a different set of landed tickets than the mission now has (run `retro.mjs --horde h` again).
   Otherwise: the charter is already stamped (a side effect of the evidence check above), the
   completion block (`templates/mission-close.md`) is appended to the mission's `plan.md`, and the
@@ -160,7 +163,7 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
 
 One screen: hordes, for each: trunk sha and distance from base, its branch tip, ticket branches
 beyond it (landed, unverified, unmerged, waiting), queue counts by state (including `waiting`), the
-**landing load** (see `tick.mjs` below), open asks, the last recorded gate result per level, any lease another *live* horde holds on a node this
+**landing load** (see `tick.mjs` below), open asks, the last recorded gate result per level (and whether it was run or only said), the graph findings the last landing found already on its parent (`cache/inherited.json`), any lease another *live* horde holds on a node this
 horde's own tickets touch (node-lease-across-hordes — `.horde/leases.json`, shared by every horde
 on the repository), and an **evidence** block: every row of the charter's evidence catalogue in one
 of six states — `no-ticket` (nothing claims it), `prototyping` (every ticket naming it is a
@@ -929,9 +932,20 @@ Appends to `hordes/<horde>/plan.md` (team waves to `teams/<team>/plan.md`): `sta
 `note "…"`, `merged NNN <sha>`,
 `close [--gate green|red] [--sha <tip>]
 [--evidence E5,…] [--team t]` (renders `templates/wave-close.md` with counts from the queue
-and the evidence catalogue; `--gate` with `--sha` records the level's gate at that tip in
-`cache/last-gate.json`; `--evidence` fills catalogue rows the green wave gate itself proves),
-`evidence <id> --by "<who/what>"` (fills one row by hand, for rows no ticket verdict can fill),
+and the evidence catalogue; `--gate green --sha` runs the level's gate command at that commit (which
+must be on the trunk), refuses
+the close when it does not pass, and records the run in `cache/last-gate.json` as `kind: "ran"`;
+`--gate red --sha` is recorded as said, `kind: "asserted"`; `--evidence` fills catalogue rows a gate
+run here proves — never a "client testimony" or "artifact" row),
+`evidence <id> (--ask <id> | --artifact <path> | --run "<command>")` (fills one row no ticket
+verdict can fill, with what the tool checks and by the row's kind of proof: an answered ask naming
+the row's id for "client testimony", a file the trunk tip carries for "artifact" — recorded with the
+commit and its object id — and for any other kind one of the commands the row states in backticks,
+run by the tool at the trunk tip and recorded only when it passes; a typed `--by` is refused). Every
+tool that fills a cell records what it was proved by in `hordes/<h>/evidence.json` — the ticket
+verdict, the gate run and its commit, the command and its commit, the file and its object, or the
+ask — and the mission's final gate (`horde.mjs done`) checks every filled cell against that record
+again; `horde.mjs charter edit` warns about a filled cell with no record, and the final gate refuses it,
 `current [--team t]`. Every close also writes the mission's `horde-law/1` document (see `law.mjs`) and
 prints its path, and runs the law audit off that same reading (see `audit.mjs`). Its one-team,
 one-wave judgement of "does a ticket prove this row" is also
@@ -978,12 +992,20 @@ Beyond the counts it always carried, `close` states seven figures the chairman r
   it merged, with the trend across the closes before it. It is meant to fall: a horde needing as
   many rulings per ticket in wave six as in wave one has learned nothing.
 - **the quality index** — read from the graph's own CLI (`config.ygCommand`) on the tree the close
-  runs on, through its two machine documents: `check --json` (`yg-check/1`, for `totals.errors`,
-  `totals.warnings`, `coverage` and `judges`) and `aspects --json` (`yg-aspects/1`, for each rule's
-  status). Five figures — enforced rules, advisory rules with nothing recorded against them,
-  blocking violations, the standing noise floor, and file coverage — each print with their delta
+  runs on, through its two machine documents: the free fill `check --approve --only-deterministic
+  --json` (`yg-check/1`, for its findings, `coverage` and `judges` — it writes only the gitignored
+  script cache, and it is the one run that sees a check that failed to run) and `aspects --json` (`yg-aspects/1`, for each rule's status). Five
+  figures — enforced rules, advisory rules with nothing recorded against them, blocking violations,
+  the standing noise floor, and file coverage — each print with their delta
   from the previous wave, plus a sixth, the number of distinct external judges a verdict in force
-  rests on, shown for the record but never part of what "fell" means. A CLI that runs but does not
+  rests on, shown for the record but never part of what "fell" means. What is only the state of a
+  cache or of the horde's own process is counted apart and never as the graph getting weaker: a
+  pair with no verdict yet for a cache reason (cause `deterministic-not-run`,
+  `keyed-by-earlier-release`, `stale` or `never-reviewed`) is neither a violation nor something
+  against an advisory rule — any other cause, a check that failed to run or a reviewer that failed
+  among them, counts like a finding — and a `log-cycle-open` warning is
+  not noise — the close says both beside the index (`unfilled`, `unfilledScript`,
+  `logCyclesOpen` in `--json`). A CLI that runs but does not
   answer with `schema: "yg-check/1"` (or `"yg-aspects/1"`) — too old, or answering something else
   — is refused with the release to install, never read as text: the exact fragility these
   documents exist to remove. A fall in any of the five opens a `quality` escalation by itself:
@@ -1064,7 +1086,9 @@ the JSON, and every item below is measured against it:
    fixable or fillable but something waits on the user or the reviewer (`next.remaining`), or every
    blocking finding is a reviewer that is missing, unreachable or failed, no round is written: the
    ticket's log says it waits on a user decision, and the result carries `waitingOnUser: {text,
-   reviewerMissing, causes, rules}`, `text` being the graph's own `next.text`. When item
+   reviewerMissing, causes, rules}`, `text` being the graph's own `next.text` (the step of the
+   first finding's own block when the parent's findings are left out — see item 6). A dependency the
+   architecture forbids is the same kind of refusal (item 6). When item
    1 brought the parent in cleanly and the only red items are this one and the graph's, both about
    prose verdicts that merge left pending (a reviewer configured, nothing else refused), the result
    carries `rejudge: true` and no round is written — the merge moved the code under the verdicts,
@@ -1095,20 +1119,42 @@ the JSON, and every item below is measured against it:
    `config.gates.report` names the report the command's own runner wrote, every live promise's own
    paired case has to be in it, passing, or the gate is red and names the promise. See
    [the gate's own report](#the-gates-own-report) below. Once the branch actually merges, what this
-   measured is recorded in `cache/last-gate.json` at the sha the merge produced — the same file and
-   the same matching-sha acceptance `horde.mjs done` and `wave.mjs close` already read, so either
-   sees this landing's own result right away instead of finding nothing there and running the gate a
-   second time over a tree it was just run on;
+   measured is recorded in `cache/last-gate.json` at the sha the merge produced, stamped `kind:
+   "ran"` — the same file and the same matching-sha acceptance `horde.mjs done` and `wave.mjs close`
+   already read, so either sees this landing's own result right away instead of finding nothing
+   there and running the gate a second time over a tree it was just run on;
 6. graph — the graph's own verdict on the branch's tree, on every run whatever `config.gates` holds:
    the graph is the node map, so it is what says the code is right there, and a repository whose own
    gate command never calls `yg` would otherwise show a green gate over a tree `yg check` exits 1
-   on. Two halves. The free one runs here: `yg check --approve --only-deterministic` records every
-   rule a script can decide, at no cost. What that leaves is the prose rules, which a reader has to
-   judge — the item names each pending pair rather than approving it, and hands them to item 2. The
-   item is ✓ only when a full `yg check` is green. A red graph is a red gate. When the CLI cannot be
-   started the item is ✗ (never a quiet ✓) and names `config.ygCommand`; when the free run itself
-   did not take — a judgement rule with no judge configured refuses it outright — the item hands
-   over the CLI's own words rather than naming pairs it cannot classify. One warning is read as a
+   on. One run: `yg check --approve --only-deterministic --json` (`--compact` on a CLI that has it)
+   records every rule a script can decide, at no cost, and answers the `yg-check/1` document of the
+   tree it just filled, which is what the item reads — by its fields, never its text. What the fill
+   leaves is the prose rules, which a reader has to judge — the item names each pending pair rather
+   than approving it, and hands them to item 2. A red graph is a red gate. When the CLI cannot be
+   started the item is ✗ (never a quiet ✓) and names `config.ygCommand`. A fill that stopped at a
+   gate before recording anything says which one (`exit.status: aborted`, `aborted.stage`): at the
+   log gate the item names each component that changed with no log entry and the `yg log add` step
+   the document gives; at the structural gate it names the problems. A script pair still open after
+   a fill that did run is named with its cause. On a red tree only what the branch brought is its
+   round: the parent's tree is filled and read the same way (on a red landing only), each blocking
+   finding is keyed by its code, rule, subject and component and then by each edge, violation or
+   file it names, and the parent's keys are counted, not merely looked up — a second violation
+   identical to one the parent has (same rule, file and message) is the branch's own. A finding that
+   names none of those (a prose refusal, a structural finding) is the parent's only when the parent
+   has as many of it and the branch touched neither the rule, nor the unit's file, nor the
+   component's graph directory or mapped files. A finding the parent already carries is inherited —
+   named apart, never held against the ticket, and kept for the director in `cache/inherited.json`
+   (shown by `status.mjs`); the item is ✓ over a non-zero exit only when every blocking finding the
+   document counts is listed and inherited. A fill whose document says `aborted` with no stage is
+   still a stop. Every block of what the branch brought is
+   listed with its label, subject and step. An undeclared dependency the architecture allows — a
+   type-only import is one, since Yggdrasil 6.1.0 — names each edge `file:line → component` and the
+   relation to declare in the importing component's own `yg-node.yaml` (inside the ticket's
+   boundary), or removing the import: the worker's round. One the architecture forbids (no relation
+   type is allowed between the two component types, `relation-target-forbidden`,
+   `type-relation-forbidden`) is no worker's to clear: alone, it is a refusal that waits on the user
+   (`waitingOnUser` with `architecture: true`), who has the import removed or approves an
+   architecture change the architect then files. One warning is read as a
    refusal: `log-cycle-open` on a `log_required` component that owns a file the branch changed —
    on the branch's tree, or on the base's for a file the branch deleted. Asked only when there is
    such a warning, and narrowly: one `yg node --json` per open component narrows the changed files

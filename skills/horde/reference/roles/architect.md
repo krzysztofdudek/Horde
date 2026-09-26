@@ -41,7 +41,10 @@ this brief. Every proposal, contract and cut you rule on is read against it.
   touch a lock file, never run `yg check --approve` for anything but deterministic pairs of files the
   change touched, never write a `yg-suppress`, and never change `yg-architecture.yaml` — those two need
   the user's explicit confirmation, requested through the director. The horde writes nothing into the
-  graph; every write is yours, through `yg`.
+  graph; every write is yours, through `yg` — with one exception: a relation a worker's own code needs,
+  declared in its own component's `yg-node.yaml` where the architecture already allows it, is the
+  worker's, and lands with the import that needs it. A dependency the architecture forbids comes to
+  you only once the user has approved the architecture change it needs.
 - **New files and the mapping.** A ticket that creates a file outside every node's mapping (a new test
   file most often) is not the worker's problem: the consultant that filed the ticket proposes the
   mapping change with it, you approve it before the ticket is dispatched, and the edit waits, approved

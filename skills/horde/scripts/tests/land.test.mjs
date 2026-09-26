@@ -121,7 +121,7 @@ function makeTicketBranch(dir, id, { fromRef = 'mission1/trunk', extraFiles = {}
 function setupLandable(dir, id, {
   marker = false, prose = false, reviewer = false, files = null, extraFiles = {}, mapping = null,
   evidence = null, kind = null, cutPrototypeBranch = false, fromRef = 'mission1/trunk',
-  trunkFiles = {}, gate = 'true',
+  trunkFiles = {}, gate = 'true', nodes = [],
 } = {}) {
   initHorde(dir);
   if (reviewer === true) assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
@@ -140,6 +140,7 @@ function setupLandable(dir, id, {
     mapping: mapping || [`feature-${id}.mjs`, `feature-${id}.test.mjs`, ...Object.keys(extraFiles)],
     aspects: prose ? ['no-marker', 'reads-well'] : ['no-marker'],
   });
+  for (const n of nodes) addNode(dir, n.path, n.spec);
   run('horde.mjs', ['config', 'set', 'gates.team', gate], dir);
   if (Object.keys(trunkFiles).length) {
     git(['checkout', '-q', 'mission1/trunk'], dir);
@@ -4002,4 +4003,250 @@ test('land.mjs: after a clean catch-up, a landing red only for pending prose ver
   assert.equal(own.code, 1);
   assert.notEqual(own.json.rejudge, true);
   assert.match(ticketLog(other, '192'), /round 1\//);
+});
+
+// ---- the graph item reads the fill's own document (issues 291 and 296) ---------------------------
+//
+// One `yg check --approve --only-deterministic --json` run fills the free verdicts and answers the
+// document the item reads — a stand-in CLI in front of the real one counts the runs. A fill the log
+// gate stopped is named for what it is, never as a missing reviewer. On a red tree, only what the
+// branch brought is its round: the parent is read the same way and a finding it already carries is
+// inherited; a dependency the architecture allows is the worker's to declare, one it forbids waits on
+// the user.
+
+// A stand-in that writes each call's arguments to a log and hands the call to the real CLI.
+function countingYg(t) {
+  const stubDir = mkdtempSync(join(tmpdir(), 'horde-yg-count-'));
+  t.after(() => rmSync(stubDir, { recursive: true, force: true }));
+  const log = join(stubDir, 'calls.log');
+  const stub = join(stubDir, 'yg-count.mjs');
+  writeFileSync(stub, [
+    "import { spawnSync } from 'node:child_process';",
+    "import { appendFileSync } from 'node:fs';",
+    'const argv = process.argv.slice(2);',
+    `appendFileSync(${JSON.stringify(log)}, argv.join(' ') + '\\n');`,
+    `const real = ${JSON.stringify(requireYg().split(/\s+/).filter(Boolean))};`,
+    "const r = spawnSync(real[0], [...real.slice(1), ...argv], { stdio: 'inherit' });",
+    'process.exit(r.status === null || r.status === undefined ? 1 : r.status);',
+    '',
+  ].join('\n'));
+  return {
+    command: `node ${stub}`,
+    checks: () => (existsSync(log) ? readFileSync(log, 'utf8').split('\n').filter((l) => l.startsWith('check')) : []),
+  };
+}
+
+const ARCHITECTURE = (extra = '') => [
+  'node_types:',
+  '  module:',
+  '    description: A unit of the product.',
+  extra,
+  '    when:',
+  '      path: "feature-*"',
+  '  money:',
+  '    description: The money types every unit shares.',
+  '    when:',
+  '      path: "money/**"',
+  '',
+].filter((l) => l !== '').join('\n');
+
+test('land.mjs graph item: one yg check run fills and reads the tree', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '401');
+  const counter = countingYg(t);
+  assert.equal(run('horde.mjs', ['config', 'set', 'ygCommand', counter.command], dir).code, 0);
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, `${r.stdout}${r.stderr}`);
+  assert.equal(byName(r).graph.ok, true);
+  const checks = counter.checks();
+  assert.deepEqual(checks, ['check --approve --only-deterministic --json --compact'], 'the fill IS the read — one run, not two');
+});
+
+test('land.mjs graph item: a fill the log gate stopped names the component and its log step, never a missing reviewer', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const architecture = [
+    'node_types:',
+    '  module:',
+    '    description: A unit of the product.',
+    '    log_required: true',
+    '    when:',
+    '      path: "feature-*.mjs"',
+    '',
+  ].join('\n');
+  const { branch } = setupLandable(dir, '402', {
+    mapping: ['feature-*.mjs'], trunkFiles: { '.yggdrasil/yg-architecture.yaml': architecture },
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, `${r.stdout}${r.stderr}`);
+  const graph = byName(r).graph;
+  assert.equal(graph.ok, false);
+  assert.match(graph.note, /stopped at the log gate and recorded nothing/);
+  assert.match(graph.note, /"feature" changed with no log entry/);
+  assert.match(graph.note, /yg log add --node feature/);
+  assert.doesNotMatch(graph.note, /judge configured|free half did not take/);
+  assert.equal(r.json.waitingOnUser, undefined, 'a log entry is the worker\'s to write');
+});
+
+test('land.mjs graph item: a type-only import across components the architecture allows is the worker\'s — the edge and the relation to declare', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: dst } = setupLandable(dir, '403', {
+    mapping: ['feature-*'],
+    nodes: [{ path: 'money', spec: { type: 'money', mapping: ['money/**'] } }],
+    trunkFiles: {
+      '.yggdrasil/yg-architecture.yaml': ARCHITECTURE(),
+      'money/money.ts': 'export type Money = { cents: number };\n',
+    },
+    extraFiles: { 'feature-403.ts': "import type { Money } from './money/money';\nexport const price: Money = { cents: 100 };\n" },
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, `${r.stdout}${r.stderr}`);
+  const graph = byName(r).graph;
+  assert.equal(graph.ok, false);
+  assert.match(graph.note, /the graph refuses what this branch brought/);
+  assert.match(graph.note, /\[relation-undeclared-dependency\]/);
+  assert.match(graph.note, /feature-403\.ts:1 → money — Add - \{ target: money, type: uses \} under relations: in \.yggdrasil\/model\/feature\/yg-node\.yaml, or remove the import/);
+  assert.equal(r.json.waitingOnUser, undefined, 'a relation the architecture allows is no decision of the user\'s');
+  assert.match(readFileSync(join(dst, 'issue.md'), 'utf8'), /\*\*Status:\*\* changes/, 'it is the worker\'s round');
+});
+
+test('land.mjs graph item: a dependency the architecture forbids waits on the user, with no round', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: dst } = setupLandable(dir, '404', {
+    mapping: ['feature-*'],
+    nodes: [{ path: 'money', spec: { type: 'money', mapping: ['money/**'] } }],
+    trunkFiles: {
+      '.yggdrasil/yg-architecture.yaml': ARCHITECTURE('    relations:\n      default: deny'),
+      'money/money.ts': 'export type Money = { cents: number };\n',
+    },
+    extraFiles: { 'feature-404.ts': "import type { Money } from './money/money';\nexport const price: Money = { cents: 100 };\n" },
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, `${r.stdout}${r.stderr}`);
+  const graph = byName(r).graph;
+  assert.equal(graph.ok, false);
+  assert.match(graph.note, /the architecture forbids a dependency this branch brought/);
+  assert.ok(r.json.waitingOnUser, `the landing waits on the user: ${graph.note}`);
+  assert.equal(r.json.waitingOnUser.architecture, true);
+  assert.match(r.json.waitingOnUser.text, /feature-404\.ts:1 → money/);
+  assert.doesNotMatch(readFileSync(join(dst, 'log.md'), 'utf8'), /round \d+\//, 'no round counted');
+});
+
+test('land.mjs graph item: a finding the parent already carries is inherited — the ticket lands, and the director is told once', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '405', {
+    mapping: ['feature-*.mjs'],
+    trunkFiles: { 'feature-old.mjs': 'export const old = 1; // UNFINISHED\n' },
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, `${r.stdout}${r.stderr}`);
+  const graph = byName(r).graph;
+  assert.equal(graph.ok, true, graph.note);
+  assert.match(graph.note, /nothing this branch brought is refused/);
+  assert.match(graph.note, /1 finding\(s\) already on the parent — not this branch's/);
+  assert.match(graph.note, /feature-old\.mjs:1 unfinished-work marker left behind/);
+  assert.ok(r.json.landed, 'the ticket landed over what the trunk already carried');
+
+  const item = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'cache', 'inherited.json'), 'utf8'));
+  assert.equal(item.parent, 'mission1/trunk');
+  assert.equal(item.ticket, '405');
+  assert.ok(item.findings.some((l) => /feature-old\.mjs:1/.test(l)));
+  const status = run('status.mjs', ['--horde', 'mission1'], dir, { json: false });
+  assert.match(status.stdout, /graph findings already on mission1\/trunk/);
+});
+
+test('land.mjs graph item: what the branch brought is its round, and the parent\'s own finding is named apart', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '406', {
+    marker: true,
+    mapping: ['feature-*.mjs'],
+    trunkFiles: { 'feature-old.mjs': 'export const old = 1; // UNFINISHED\n' },
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, `${r.stdout}${r.stderr}`);
+  const graph = byName(r).graph;
+  assert.equal(graph.ok, false);
+  const [brought, parent] = graph.note.split('already on the parent');
+  assert.match(brought, /feature-406\.mjs:1 unfinished-work marker left behind/);
+  assert.doesNotMatch(brought, /feature-old\.mjs/);
+  assert.match(parent, /feature-old\.mjs:1 unfinished-work marker left behind/);
+});
+
+// Counted, not looked up: a second violation identical to one the parent already has (same rule,
+// file and message, another line) is the branch's own, and the inherited note never carries it.
+test('land.mjs graph item: a second identical violation in a file the parent already refuses is the branch\'s', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '407', {
+    mapping: ['feature-*.mjs'],
+    trunkFiles: { 'feature-old.mjs': 'export const old = 1; // UNFINISHED\n' },
+    extraFiles: { 'feature-old.mjs': 'export const old = 1; // UNFINISHED\nexport const more = 2; // UNFINISHED\n' },
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, `${r.stdout}${r.stderr}`);
+  const graph = byName(r).graph;
+  assert.equal(graph.ok, false, graph.note);
+  const [brought, parent] = graph.note.split('already on the parent');
+  assert.match(brought, /the graph refuses what this branch brought/);
+  assert.match(brought, /feature-old\.mjs:2 unfinished-work marker left behind/, 'the new line is the branch\'s');
+  assert.doesNotMatch(brought, /feature-old\.mjs:1 /, 'the old one is not');
+  assert.match(parent, /feature-old\.mjs:1 unfinished-work marker left behind/);
+  assert.doesNotMatch(parent, /feature-old\.mjs:2 /);
+  assert.equal(existsSync(join(dir, '.horde', 'hordes', 'mission1', 'cache', 'inherited.json')), true);
+  const item = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'cache', 'inherited.json'), 'utf8'));
+  assert.ok(item.findings.every((l) => !/feature-old\.mjs:2 /.test(l)), 'the branch\'s own violation never goes to the director as the parent\'s');
+});
+
+// A finding that names no edge, violation or file of its own is the parent's only while the branch
+// leaves what it is about alone.
+const TWO_MODULES = [
+  'node_types:',
+  '  module:',
+  '    description: A unit of the product.',
+  '    when:',
+  '      path: "{feature-*.mjs,other/**}"',
+  '',
+].join('\n');
+
+test('land.mjs graph item: a finding with no detail of its own is inherited while the branch leaves its component alone', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '408', {
+    mapping: ['feature-*.mjs'],
+    nodes: [{ path: 'other', spec: { mapping: ['other/**'], relations: [{ target: 'ghost', type: 'uses' }] } }],
+    trunkFiles: { '.yggdrasil/yg-architecture.yaml': TWO_MODULES, 'other/o.mjs': 'export const o = 1;\n' },
+  });
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, `${r.stdout}${r.stderr}`);
+  const graph = byName(r).graph;
+  assert.match(graph.note, /already on the parent/);
+  assert.match(graph.note, /relation-broken/);
+});
+
+test('land.mjs graph item: the same finding with no detail is the branch\'s once the branch touches its component', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '409', {
+    mapping: ['feature-*.mjs'],
+    nodes: [{ path: 'other', spec: { mapping: ['other/**'], relations: [{ target: 'ghost', type: 'uses' }] } }],
+    trunkFiles: { '.yggdrasil/yg-architecture.yaml': TWO_MODULES, 'other/o.mjs': 'export const o = 1;\n' },
+    extraFiles: { 'other/o.mjs': 'export const o = 2;\n' },
+  });
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, `${r.stdout}${r.stderr}`);
+  const graph = byName(r).graph;
+  assert.equal(graph.ok, false, graph.note);
+  assert.match(graph.note.split('already on the parent')[0], /the graph refuses what this branch brought:[\s\S]*relation-broken/);
 });

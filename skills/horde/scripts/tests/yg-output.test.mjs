@@ -18,6 +18,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   aspectStanding, drillFromDoc, parseDrillSummary, pendingProsePairs, runDrill, runYgCheck, ygJson,
+  fillDeterministic, splitFindings,
 } from '../node.mjs';
 import { healthFromDoc, parseHealth, readHealth } from '../audit.mjs';
 
@@ -346,4 +347,50 @@ test('yg aspects --health: a re-laid table still reads by its column names', () 
 test('yg aspects --health: text without both column names is unread, not a guess', () => {
   assert.equal(parseHealth('aspect  kind  status\nno-marker  deterministic  enforced\n'), null);
   assert.equal(parseHealth(fixture('health-json-refused-6.1.0.json')), null);
+});
+
+// ---- the landing's reading of a red document (issues 291 and 296) ------------------------------
+
+test('yg check: a fill the document calls aborted is a stop even when it does not say where', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'horde-yg-abort-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const doc = { schema: 'yg-check/1', exit: { code: 1, status: 'aborted', reason: 'stopped' }, issues: [], pairs: [] };
+  const body = join(dir, 'doc.json');
+  writeFileSync(body, JSON.stringify(doc));
+  const stub = join(dir, 'yg-stub.mjs');
+  writeFileSync(stub, [
+    "import { readFileSync } from 'node:fs';",
+    "if (process.argv.includes('--version')) { console.log('6.1.0'); process.exit(0); }",
+    `process.stdout.write(readFileSync(${JSON.stringify(body)}, 'utf8'));`,
+    'process.exit(1);',
+    '',
+  ].join('\n'));
+  const filled = fillDeterministic({ ygCommand: `${process.execPath} ${stub}` }, dir);
+  assert.deepEqual(filled.aborted, { stage: null, issues: [] });
+  assert.equal(filled.ok, false);
+});
+
+test('splitFindings: the parent\'s findings are counted, and a finding with no detail is the parent\'s only while the branch leaves it alone', () => {
+  const refusal = (lines) => ({
+    code: 'aspect-violation-enforced', severity: 'error', aspect: 'no-marker', unit: 'node:feature', node: 'feature',
+    violations: lines.map((line) => ({ file: 'a.mjs', line, message: 'marker.' })),
+  });
+  const prose = { code: 'aspect-violation-enforced', severity: 'error', aspect: 'reads-well', unit: 'node:feature', node: 'feature' };
+  const parent = { issues: [refusal([1]), prose] };
+  const branch = { issues: [refusal([1, 7]), prose] };
+
+  const untouched = splitFindings(branch, parent, { touched: () => false });
+  assert.equal(untouched.introduced.length, 1, 'the second identical violation is the branch\'s');
+  assert.deepEqual(untouched.introduced[0].violations.map((v) => v.line), [7]);
+  assert.deepEqual(untouched.alsoOnParent[0].violations.map((v) => v.line), [1]);
+  assert.deepEqual(untouched.inherited.map((f) => f.issue.aspect), ['reads-well'], 'the prose refusal is the parent\'s while nothing it judges moved');
+
+  const touched = splitFindings(branch, parent, { touched: (i) => i.aspect === 'reads-well' });
+  assert.ok(touched.introduced.some((f) => f.issue.aspect === 'reads-well'), 'once the branch touches what it judges, it is the branch\'s');
+
+  const twice = splitFindings({ issues: [prose, { ...prose }] }, parent, { touched: () => false });
+  assert.equal(twice.introduced.length, 1, 'one more of the same finding than the parent has is the branch\'s');
+
+  const unread = splitFindings(branch, null);
+  assert.equal(unread.inherited.length, 0, 'no parent reading, nothing inherited');
 });

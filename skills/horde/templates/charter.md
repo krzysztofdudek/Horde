@@ -34,7 +34,9 @@ paragraph records only what the mission found.
 The mission is done when every item below is green. Each item is something a verifier can reproduce:
 a test, a scenario file, a film, a screenshot, a measurement with a threshold. Never an adjective.
 Every row gets an id — E1, E2, E3 … — because that is how a ticket says which evidence it earns
-(`**Evidence:** E2, E5`), and how the plan names the rows no ticket has taken.
+(`**Evidence:** E2, E5`), and how the plan names the rows no ticket has taken. A row proved by
+running something names that command in backticks, because that command, and no other, is what
+fills it.
 
 A row may also name what kind of proof it rests on, in a fifth cell: e2e scenario, hermetic test,
 mutation, recorded stub, artifact, or client testimony — the same six words a promise file's own

@@ -6,11 +6,12 @@
 
 import {
   existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, realpathSync, rmSync,
-  cpSync, linkSync, renameSync,
+  cpSync, linkSync, renameSync, mkdtempSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 
 const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'templates');
 
@@ -1835,4 +1836,42 @@ export function renderTemplate(name, vars = {}) {
     throw new Error(`template ${name}.md: unfilled placeholder(s): ${[...new Set(unfilled)].join(', ')}`);
   }
   return rendered;
+}
+
+// ---- a gate run, and the record of one -------------------------------------------------------
+//
+// cache/last-gate.json holds, per level, the last gate result somebody can point at. Every entry
+// says how it got there: `kind: 'ran'` when a tool here ran the level's gate command itself and
+// read its exit code (a landing, `wave close --gate green --sha`, `horde.mjs done`), `kind:
+// 'asserted'` when it is only what somebody typed (`wave close --gate red`). `done` trusts only
+// `ran`; an entry from before the field existed carries neither word and is run again.
+export const GATE_RAN = 'ran';
+export const GATE_ASSERTED = 'asserted';
+
+// Runs `cmd` against one commit's own tree, in a scratch worktree that never touches the caller's.
+// `ref` is resolved first, so the answer names the exact commit it ran on; a ref that names no
+// commit is `{ ok: false, sha: null }` and nothing is run. `timeoutMs` stops a command that hangs,
+// which is a red gate, never a wait.
+export function runGateAt(root, cmd, ref, timeoutMs = null) {
+  let sha = null;
+  try {
+    sha = execFileSync('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null;
+  } catch { sha = null; }
+  if (!sha) return { ok: false, sha: null, ran: false };
+  const tmp = mkdtempSync(join(tmpdir(), 'horde-gate-'));
+  let ok = false;
+  let timedOut = false;
+  try {
+    execFileSync('git', ['worktree', 'add', '--detach', '--force', tmp, sha], { cwd: root, stdio: 'pipe' });
+    try {
+      execSync(cmd, { cwd: tmp, stdio: 'pipe', ...(timeoutMs ? { timeout: timeoutMs, killSignal: 'SIGTERM' } : {}) });
+      ok = true;
+    } catch (e) {
+      ok = false;
+      timedOut = e.killed === true || e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT';
+    }
+  } finally {
+    try { execFileSync('git', ['worktree', 'remove', tmp, '--force'], { cwd: root, stdio: 'pipe' }); } catch { rmSync(tmp, { recursive: true, force: true }); }
+  }
+  return { ok, sha, ran: true, timedOut };
 }

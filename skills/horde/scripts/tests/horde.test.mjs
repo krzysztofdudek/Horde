@@ -340,21 +340,53 @@ test('horde.mjs charter edit: a rewrite that drops a recorded verifier says so',
   const withRow = [
     '# Mission · m', '', '## Acceptance — the evidence catalogue', '',
     '| id | evidence | node | reproduced by |', '|---|---|---|---|',
-    '| E1 | the suite is green | api | |', '',
+    '| E1 | `true` is green | api | |', '',
   ].join('\n');
   const charterEdit = (input) => JSON.parse(execFileSync(
     'node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit', '--json'],
     { cwd: dir, input, encoding: 'utf8' },
   ));
   charterEdit(withRow);
-  run('wave.mjs', ['evidence', 'E1', '--by', 'verifier1'], dir);
+  const proved = run('wave.mjs', ['evidence', 'E1', '--run', 'true'], dir);
+  assert.equal(proved.code, 0, proved.stderr);
+  const by = proved.json.by;
 
-  const kept = charterEdit(withRow.replace('| api | |', '| api | verifier1 |'));
+  const kept = charterEdit(withRow.replace('| api | |', `| api | ${by} |`));
   assert.equal(kept.evidenceReproduced, 1);
   assert.deepEqual(kept.droppedEvidence, []);
+  assert.deepEqual(kept.unprovenEvidence, [], 'the cell is the one the tool proved');
 
   const dropped = charterEdit(withRow);
-  assert.deepEqual(dropped.droppedEvidence, [{ id: 'E1', was: 'verifier1' }]);
+  assert.deepEqual(dropped.droppedEvidence, [{ id: 'E1', was: by }]);
+});
+
+// Issue 303: a cell typed into the charter proves nothing. The charter still takes the text — it is
+// the client's document — but says so, and `done` refuses the row until a tool fills it.
+test('horde.mjs: a reproduced-by cell typed by hand is flagged by charter edit and refused by done; the proved one passes', () => {
+  const dir = makeRepo();
+  try {
+    initHorde(dir);
+    run('horde.mjs', ['config', 'set', 'gates.trunk', 'true'], dir);
+    const typed = [
+      '# Mission · m', '', '## Acceptance — the evidence catalogue', '',
+      '| id | evidence | node | reproduced by |', '|---|---|---|---|',
+      '| E1 | `true` is green | api | looks fine |', '',
+    ].join('\n');
+    const edited = execFileSync('node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit'], { cwd: dir, input: typed, encoding: 'utf8' });
+    assert.match(edited, /warning: E1 says it is reproduced by "looks fine", and no tool proved that/);
+
+    const refused = run('horde.mjs', ['done'], dir);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /E1 says "looks fine", and nothing recorded proves it/);
+
+    execFileSync('node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit'], { cwd: dir, input: typed.replace('| looks fine |', '| |'), encoding: 'utf8' });
+    assert.equal(run('wave.mjs', ['evidence', 'E1', '--run', 'true'], dir).code, 0);
+    const next = run('horde.mjs', ['done'], dir);
+    assert.equal(next.code, 1, 'still no retrospective');
+    assert.doesNotMatch(next.stderr, /E1/, 'the proved row holds');
+  } finally {
+    rmRepo(dir);
+  }
 });
 
 test('horde.mjs charter edit: rewording a stamped row\'s evidence or class leaves the stamp and warns, since the stamp no longer says what it proved', async (t) => {
@@ -1134,4 +1166,33 @@ test('detectEvidenceLayer: with no graph, the guessed promises paths are still t
   const layer = detectEvidenceLayer(dir, {});
   assert.equal(layer.kind, 'promises');
   assert.equal(layer.promises.dir, 'promises');
+});
+
+// Issue 303: `done` depends only on what ran. A green entry in cache/last-gate.json that no tool here
+// ran — what `wave close --gate green --sha` used to write from the flag alone, or anything else
+// without `kind: 'ran'` — is never taken: the trunk gate is run again, and its own answer stands.
+test('horde.mjs done: a green gate somebody typed is not taken — the trunk gate is run, and a red one refuses', () => {
+  const dir = makeRepo();
+  try {
+    initHorde(dir);
+    run('horde.mjs', ['config', 'set', 'gates.trunk', 'node -e "process.exit(1)"'], dir);
+    const trunkSha = git(['rev-parse', 'mission1/trunk'], dir);
+    const cachePath = join(dir, '.horde', 'hordes', 'mission1', 'cache', 'last-gate.json');
+    mkdirSync(dirname(cachePath), { recursive: true });
+    writeFileSync(cachePath, `${JSON.stringify({
+      trunk: {
+        result: 'green', sha: trunkSha, count: null, at: new Date().toISOString(), by: 'wave 1 close',
+      },
+    }, null, 2)}\n`);
+
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /trunk gate red at/, 'the typed green was not taken');
+    const cache = JSON.parse(readFileSync(cachePath, 'utf8'));
+    assert.equal(cache.trunk.by, 'horde done', 'done ran the gate itself');
+    assert.equal(cache.trunk.kind, 'ran');
+    assert.equal(cache.trunk.result, 'red');
+  } finally {
+    rmRepo(dir);
+  }
 });
