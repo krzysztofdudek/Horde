@@ -170,8 +170,9 @@ items, with three differences. Item 4 asks that t-NNN's change is gone: every fi
 stands on the branch as before that merge (unless a later landing changed it again). The guards do
 not refuse taking back a test, a promise or a gate script t-NNN brought, in a file the branch returns
 to exactly its state before that merge and that no later landing touched; nor a rule weakening that
-does not stand against the mission's start and is about what t-NNN's merge brought (the rule's own
-files, or reach over files that merge changed). Anything else — a later ticket's work in a shared
+stands neither against the mission's start nor against the tree before t-NNN's merge, that the clean
+inverse of that merge (git revert -m 1 onto the parent) produces too, and after which the rule's own
+files and every attachment of it are exactly what that inverse leaves. Anything else — a later ticket's work in a shared
 file, what was already there at the start — still needs its "lower" ask. And on merge t-NNN's fate is recorded as reverted by that merge. A revert always
 lands on its own, never in a shared run.
 
@@ -3177,8 +3178,7 @@ function verdictsCurrentAt(root, cfg, sha, pairs) {
 //                     removes what the reverted ticket brought: its tests, its promises. A path the
 //                     reverted merge changed, returned by the branch to exactly its state before
 //                     that merge, and touched by no landing since, needs no ask. A rule refusal is
-//                     dropped only where it does not stand against the mission's START and is about
-//                     what the merge brought. A later ticket's work in a shared file, or anything
+//                     dropped only where the merge's clean inverse explains it (revertLawRefusals). A later ticket's work in a shared file, or anything
 //                     that was there when the mission started, taken away, still needs its ask.
 //   what it records   on merge, the reverted ticket's fate: reverted, by this merge.
 
@@ -3248,35 +3248,70 @@ function revertExempt(root, cfg, horde, revert, branchSha, parentTip) {
   return out;
 }
 
-// The law guard for a revert. A refusal against the parent is dropped only when it does not also
-// stand against the mission's start AND it is about something the reverted merge itself brought: a
-// file of the rule's own (`.yggdrasil/aspects/<id>/`), or — for a rule that lost reach — units every
-// one of which the reverted merge introduced or changed. A rule weakened anywhere else, or reach
-// lost over code the merge never touched, keeps its refusal and needs its ask.
-function revertLawRefusals(root, cfg, horde, revert, law, headPath, cleaner) {
+// The law guard for a revert. A refusal against the parent is dropped only when three readings all
+// say the weakening is the reverted merge's own inverse and nothing more:
+//   - it does not fire against the mission's start (nothing the mission found is weakened);
+//   - it does not fire against the tree just before the reverted merge (t-NNN^1): the branch leaves
+//     the rule no weaker than it stood before t-NNN landed;
+//   - it DOES fire for the clean inverse itself — the parent with `git revert -m 1` of that merge
+//     applied and nothing else — so the weakening is one undoing t-NNN produces, not one the branch
+//     added on top (a rule a later change attached, a rule file a later landing edited).
+// A clean inverse that cannot be made (the revert conflicts with later landings) explains nothing,
+// and every refusal stands.
+function revertLawRefusals(root, cfg, horde, revert, law, basePath, headPath, parentTip, cleaner) {
   if (!law.refusals.length) return [];
+  const key = (r) => `${r.aspect}\u0000${r.case}`;
+  const readAgainst = (sha) => {
+    const tree = resolveTree({ scratch: sha }, { cwd: root });
+    cleaner.add(() => cleanupTree(tree, root));
+    const res = lawGuard(cfg, horde, tree.path, headPath);
+    return res.stopped ? null : new Set(res.refusals.map(key));
+  };
   const start = missionStartSha(horde, cfg, root);
   if (!start) return law.refusals;
-  const startTree = resolveTree({ scratch: start }, { cwd: root });
-  cleaner.add(() => cleanupTree(startTree, root));
-  const fromStart = lawGuard(cfg, horde, startTree.path, headPath);
-  if (fromStart.stopped) return law.refusals;
-  const still = new Set(fromStart.refusals.map((r) => `${r.aspect}\u0000${r.case}`));
-  const merged = revert.files;
-  const brought = (r) => {
-    if (merged.some((f) => f.startsWith(`.yggdrasil/aspects/${r.aspect}/`))) return true;
-    if (!Array.isArray(r.units) || !r.units.length) return false;
-    return r.units.every((u) => {
-      const [kind, ...rest] = String(u).split(':');
-      const path = rest.join(':');
-      if (kind === 'node') {
-        const boundary = ticketBoundary(root, cfg, [path]);
-        return boundary.length > 0 && merged.some((f) => pathInBoundary(f, boundary));
+  const fromStart = readAgainst(start);
+  const fromBefore = readAgainst(`${revert.sha}^1`);
+  if (!fromStart || !fromBefore) return law.refusals;
+
+  const inverse = resolveTree({ scratch: parentTip }, { cwd: root });
+  cleaner.add(() => cleanupTree(inverse, root));
+  if (git(['revert', '-m', '1', '--no-commit', revert.sha], inverse.path) === null) return law.refusals;
+  const byInverse = lawGuard(cfg, horde, basePath, inverse.path);
+  if (byInverse.stopped) return law.refusals;
+  const explained = new Set(byInverse.refusals.map(key));
+
+  // And the rule itself has to stand on the branch exactly as the clean inverse leaves it: its own
+  // files, and every place in the graph that attaches it. A reach both lose for the same reason (the
+  // component's code gone) is not the same as the branch also taking the rule's declaration away.
+  const sameRule = (id) => ruleState(inverse.path, id) === ruleState(headPath, id);
+  return law.refusals.filter((r) => fromStart.has(key(r)) || fromBefore.has(key(r)) || !explained.has(key(r)) || !sameRule(r.aspect));
+}
+
+// One rule's state in a tree on disk, as one comparable string: every file under its own directory
+// with its content, and every graph file (outside the rules) with how many times it lists the rule
+// as an item (`- <id>`), which is how a component or a type attaches it.
+function ruleState(treePath, id) {
+  const ygDir = join(treePath, '.yggdrasil');
+  const own = [];
+  const attached = [];
+  const walk = (dir, rel) => {
+    let entries = [];
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const abs = join(dir, e.name);
+      const relPath = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) { walk(abs, relPath); continue; }
+      if (relPath.startsWith(`aspects/${id}/`)) {
+        own.push(`${relPath}\u0000${readFileSync(abs, 'utf8')}`);
+      } else if (/\.ya?ml$/.test(e.name) && !relPath.startsWith('aspects/')) {
+        const esc = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const n = (readFileSync(abs, 'utf8').match(new RegExp(`^\\s*-\\s*["']?${esc}["']?\\s*$`, 'gm')) || []).length;
+        if (n) attached.push(`${relPath}:${n}`);
       }
-      return merged.includes(path);
-    });
+    }
   };
-  return law.refusals.filter((r) => still.has(`${r.aspect}\u0000${r.case}`) || !brought(r));
+  walk(ygDir, '');
+  return `${own.join('\u0001')}\u0002${attached.join(',')}`;
 }
 
 // ---- trailers -----------------------------------------------------------------------------
@@ -4325,7 +4360,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       // that took away the proof or the gate would be measured by what it left behind.
       const law = lawGuard(cfg, horde, base.path, head.path);
       if (law.stopped) fail(law.stopped);
-      guards.push(...(revert ? revertLawRefusals(root, cfg, horde, revert, law, head.path, cleaner) : law.refusals));
+      guards.push(...(revert ? revertLawRefusals(root, cfg, horde, revert, law, base.path, head.path, parentTip, cleaner) : law.refusals));
       const conflict = conflictGuard(cfg, base.path, head.path, changedFiles, law);
       guards.push(...conflict.refusals);
       const exempt = revert ? revertExempt(root, cfg, horde, revert, branchSha, parentTip) : new Set();
