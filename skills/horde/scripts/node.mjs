@@ -1158,8 +1158,18 @@ function readDrillRun(run) {
 export function runDrill(root, cfg, aspect) {
   const { display } = ygCommand(cfg);
   const args = ['drill', '--aspect', aspect, '--json'];
-  const run = startDrill(cfg, root, args);
   const command = `${display} ${args.join(' ')}`;
+  // A CLI below the floor is named before a single case runs (a drill can cost a reviewer's time),
+  // by the version it reports — the same refusal every other document read gives.
+  const old = tooOldCli(cfg, root);
+  if (old) {
+    return {
+      available: true, command, root, read: false, stale: true, cases: 0, green: false,
+      saw: `it reports version ${old}, and Horde needs ${YG_DOCUMENTS_AFTER} or newer`,
+      out: `the Yggdrasil CLI reports version ${old}, and Horde needs ${YG_DOCUMENTS_AFTER} or newer`,
+    };
+  }
+  const run = startDrill(cfg, root, args);
   if (run.timedOut) {
     return {
       available: true, command, read: false, timedOut: true, out: timedOutDetail(run.ms), cases: 0, green: false,
@@ -1396,6 +1406,7 @@ function ladderEvidence(horde, root, cfg, aspect, { withReviewer }) {
 
   const drill = runDrill(root, cfg, aspect);
   if (!drill.available) failNoCli(cfg, drill.command);
+  if (drill.stale) failStaleCli(cfg, drill, 'yg-drill/1');
   // The free, keyless fill first: a pair whose code has moved since it was last judged reads as
   // unjudged until a script has looked again, and refusing to raise a rule over that would be
   // refusing over a question a command answers for nothing.

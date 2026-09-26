@@ -152,6 +152,7 @@ function drillCli(t, { json, jsonExit = 0, refuseJson = false, text = 'drill-6.1
   writeFileSync(stub, [
     "import { appendFileSync, readFileSync } from 'node:fs';",
     'const argv = process.argv.slice(2);',
+    "if (argv[0] === '--version') { console.log('6.1.0'); process.exit(0); }",
     `appendFileSync(${JSON.stringify(calls)}, argv.join(' ') + '\\n');`,
     "if (argv.includes('--json')) {",
     refuseJson
@@ -303,4 +304,26 @@ test('splitFindings: the parent\'s findings are counted, and a finding with no d
 
   const unread = splitFindings(branch, null);
   assert.equal(unread.inherited.length, 0, 'no parent reading, nothing inherited');
+});
+
+// Review of 297: the drill is refused on a CLI below the floor by the version it reports, before any
+// case runs, and the refusal names the release Horde needs.
+test('yg drill: a CLI below the floor (6.0.3) is refused by its version, and no case is run', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'horde-yg-floor-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const calls = join(dir, 'calls.log');
+  const stub = join(dir, 'yg-stub.mjs');
+  writeFileSync(stub, [
+    "import { appendFileSync, readFileSync } from 'node:fs';",
+    'const argv = process.argv.slice(2);',
+    `appendFileSync(${JSON.stringify(calls)}, argv.join(' ') + '\\n');`,
+    "if (argv[0] === '--version') { console.log('6.0.3'); process.exit(0); }",
+    `process.stdout.write(readFileSync(${JSON.stringify(join(FIXTURES, 'drill-6.1.0.json'))}, 'utf8'));`,
+    '',
+  ].join('\n'));
+  const res = runDrill(dir, { ygCommand: `${process.execPath} ${stub}` }, 'no-marker');
+  assert.equal(res.read, false);
+  assert.equal(res.stale, true);
+  assert.match(res.out, /reports version 6\.0\.3, and Horde needs 6\.1\.0 or newer/);
+  assert.deepEqual(readFileSync(calls, 'utf8').trim().split('\n'), ['--version'], 'the drill itself never ran');
 });
