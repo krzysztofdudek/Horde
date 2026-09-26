@@ -368,7 +368,10 @@ whatever calls `tick.mjs`, which then starts one worker at a time itself from `c
 — so the loop survives a closed session, at the cost of nobody being there to answer an ask. That is
 the whole of the difference the two make: **who starts what the loop hands out**, never whether a
 mission can run at all. Under `session`, tick never spawns — the caller does; under `external`,
-tick.mjs spawns each worker itself, and each review from the same command.
+tick.mjs spawns each worker itself, and each review from the same command. That command has to keep
+the agent in the foreground: the process tick starts is how it knows the worker is still working, so
+a command that puts the agent in the background (`&`, `nohup`, a launcher that detaches) ends at once
+and its worker is read as having ended while it still works.
 
 A review holds its ticket's gate the same way under both: until the ticket's log carries the
 review's closing line (`tk.mjs review-close`) or the director's skip with a reason (`tk.mjs

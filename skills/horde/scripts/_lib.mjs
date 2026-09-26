@@ -300,6 +300,20 @@ export function processAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
 
+// When the process `pid` started, as the system reports it (`ps -o lstart=`), or null where that cannot
+// be read (no such process, no `ps`, a platform without it). Recorded beside a pid that is kept for
+// longer than one run, so a live pid can be told apart from a new process that was given the same
+// number after the first one ended: same pid, a different start, is a different process.
+export function processStartedAt(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
 // readLockText(path) / removeStaleLock(path, seen) — taking over a lock judged abandoned, safely.
 // Between reading a lock and finding its holder gone, that holder may have released it the normal
 // way and another process taken a fresh lock at the same path. Removing the path then deletes a

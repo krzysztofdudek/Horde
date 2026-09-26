@@ -1075,7 +1075,9 @@ the JSON, and every item below is measured against it:
    node's `log.md` through `yg log merge-resolve --node <n>`, Yggdrasil's `yg-lock.*.json` by
    taking the parent's side whole (the verdicts dropped are judged again), and a file
    `config.appendOnly` names by keeping both sides' added lines — only when neither side did more
-   than add lines. A stale result carries `conflictFiles`, the files no rule resolved, sorted.
+   than add lines; where both added at the same place, the lines both begin and end with (a section
+   heading each opened, the blank line closing it) are written once, with the parent's own lines
+   and then the branch's between them. A stale result carries `conflictFiles`, the files no rule resolved, sorted.
    `--no-gate` never writes to a branch, so it reports the staleness as it stands;
 2. judge — every prose rule on this tree carries a verdict from Yggdrasil's own reviewer, the only
    judge a prose rule has. A worker runs `yg check --approve` before committing (so does the commit
@@ -1094,7 +1096,10 @@ the JSON, and every item below is measured against it:
    1 brought the parent in cleanly and the only red items are this one and the graph's, both about
    prose verdicts that merge left pending (a reviewer configured, nothing else refused), the result
    carries `rejudge: true` and no round is written — the merge moved the code under the verdicts,
-   the ticket did not;
+   the ticket did not. That holds only when the branch had a verdict recorded for every one of
+   those pairs before the merge (its committed `yg-lock.nondeterministic.json`, read by field), or
+   the merge took the lock file from the parent; prose the branch never had judged is its own red
+   and costs its round, or every move of the parent would hand it another free one;
 3. scope — the diff stays inside the files the ticket declared in `**Files:**`; a ticket that
    declared none falls back to the union of its node boundaries (from `node.mjs`). Either way it
    touches no protected path, and Yggdrasil's committed lock files (`.yggdrasil/yg-lock.*.json`) are
@@ -1640,10 +1645,11 @@ inherits whatever tree the session's shell is already in.
 1. **Reconcile.** Every `running` item whose worker has ended, settled from its branch. Ended means
    evidence, never a clock: the worker's own `landed <sha>` or `stopped: <why>` line in the
    ticket's log since the
-   lease was recorded (`worker: {name, startedAt, pid, log}` on the queue item, written by every
+   lease was recorded (`worker: {name, startedAt, pid, pidStartedAt, log}` on the queue item, written by every
    start), the process tick started for it under `external` gone, or `--reclaim NNN[,MMM]` — the
    director saying a worker came back without that line (refused, naming it, for a ticket that is
-   not running). An item whose worker has not ended goes on `working` with who holds it and since
+   not running). Under `--watch` the reclaim is read by the first pass that runs and then dropped; a
+   pass refused for anything but the reclaim itself keeps it for the next pass. An item whose worker has not ended goes on `working` with who holds it and since
    when, and nothing of it is touched. An ended worker's tree left mid-merge has that merge aborted
    first, and the files it was stopped on are named. Then: a commit beyond the parent goes to
    `landed`; a dirty worktree is committed as `wip: reclaimed` and goes back to `queued`, worktree
@@ -1769,7 +1775,12 @@ with `role`. Each process's output goes to its own log, `hordes/<h>/runs/NNN.log
 `NNN-review.log`), and each `external` entry carries its `pid` and `log`; a worker's pid and log are
 written onto its lease before the run lets go of the gate lock, so the next run's reconcile reads a
 live pid as the worker still working and a gone one as the worker having ended — `--watch` can tick
-every interval under a worker that runs for an hour and never hand its ticket out twice. Under
+every interval under a worker that runs for an hour and never hand its ticket out twice. The lease
+also records when that process started (`pidStartedAt`, from `ps -o lstart=`; null where `ps` cannot
+say), so a live pid whose start differs — the number handed to another process after the worker
+ended — reads as the worker gone. This is why `config.runner.spawn` must keep the agent in the
+foreground: the pid is the command's own process, and one that backgrounds the agent (`&`, `nohup`, a
+detaching launcher) ends at once, so its worker is read as ended while it is still working. Under
 `session` it starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds until the
 queue empties or a signal arrives — an open `stop` holds the close, so it keeps waiting rather than
 exiting on an emptied queue the client still has a question about; a signal exits cleanly, holding no lock. A refused pass does not

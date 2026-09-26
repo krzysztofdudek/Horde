@@ -3889,6 +3889,16 @@ test('land.mjs appendOnlyMerge: both sides\' added lines are kept, the parent\'s
   assert.equal(appendOnlyMerge(CHANGELOG_BASE, parent, `${CHANGELOG_BASE}- tail\n`), `${parent}- tail\n`);
 });
 
+// Issue 359: two tickets that each open the same new section for their own line add the same heading;
+// the merge writes it once, with both lines under it, not a second copy of the heading.
+test('land.mjs appendOnlyMerge: identical leading lines both sides added are written once', () => {
+  const parent = CHANGELOG_BASE.replace('### Added\n', '### Added\n\n### Fixed\n- one\n');
+  const branch = CHANGELOG_BASE.replace('### Added\n', '### Added\n\n### Fixed\n- two\n');
+  const merged = appendOnlyMerge(CHANGELOG_BASE, parent, branch);
+  assert.equal(merged, CHANGELOG_BASE.replace('### Added\n', '### Added\n\n### Fixed\n- one\n- two\n'));
+  assert.equal(merged.match(/### Fixed/g).length, 1);
+});
+
 test('land.mjs: three parallel tickets on one node, each adding a log entry and a CHANGELOG line, land in one batch with no stale refusal', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -3975,10 +3985,24 @@ test('land.mjs: a catch-up conflict outside the files that merge by rule is stil
 // A catch-up merge moves the code a branch's prose verdicts were recorded over, so a landing that is
 // red only for those pending verdicts was made red by somebody else's landing. Its result says
 // "rejudge" and no round is written.
+// The branch had its prose judged before the parent came in: its committed lock carries a verdict for
+// the pair the catch-up then leaves pending (the entry's hash is beside the point — what the merge
+// changed is exactly whether it still holds).
+function recordVerdictOnBranch(dir, branch, aspect, unitKey) {
+  git(['checkout', '-q', branch], dir);
+  writeFileSync(join(dir, '.yggdrasil', 'yg-lock.nondeterministic.json'), `${JSON.stringify({
+    version: 1, verdicts: { [aspect]: { [unitKey]: { hash: '0'.repeat(64), verdict: 'approved' } } }, nodes: {},
+  }, null, 2)}\n`);
+  git(['add', '.yggdrasil/yg-lock.nondeterministic.json'], dir);
+  git(['commit', '-qm', 'prose judged'], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+}
+
 test('land.mjs: after a clean catch-up, a landing red only for pending prose verdicts is "rejudge" and counts no round', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   const { branch, issueDir: dst } = setupLandable(dir, '191', { prose: true, reviewer: true });
+  recordVerdictOnBranch(dir, branch, 'reads-well', 'node:feature');
   // The parent moves on under the branch, cleanly.
   git(['checkout', '-q', 'mission1/trunk'], dir);
   writeFileSync(join(dir, 'elsewhere.txt'), 'a sibling landed\n');
@@ -4003,6 +4027,29 @@ test('land.mjs: after a clean catch-up, a landing red only for pending prose ver
   assert.equal(own.code, 1);
   assert.notEqual(own.json.rejudge, true);
   assert.match(ticketLog(other, '192'), /round 1\//);
+});
+
+// Issue 359: a catch-up is what left the prose pending only when the branch had it judged before the
+// merge. A branch that never recorded a verdict is red on its own account — without this, every move
+// of the parent handed it another free round.
+test('land.mjs: after a clean catch-up, prose the branch never had judged is its own red, not "rejudge"', async () => {
+  const dir = makeRepo();
+  try {
+    const { branch, issueDir: dst } = setupLandable(dir, '193', { prose: true, reviewer: true });
+    git(['checkout', '-q', 'mission1/trunk'], dir);
+    writeFileSync(join(dir, 'elsewhere.txt'), 'a sibling landed\n');
+    git(['add', 'elsewhere.txt'], dir);
+    git(['commit', '-qm', 'a sibling landed'], dir);
+    writeTicketLog(dst);
+
+    const r = run('land.mjs', [branch], dir);
+    assert.equal(r.code, 1, r.stdout + r.stderr);
+    assert.match(byName(r)['base freshness'].note, /brought mission1\/trunk into mission1\/t-193/);
+    assert.notEqual(r.json.rejudge, true, JSON.stringify(r.json.checks));
+    assert.match(ticketLog(dir, '193'), /round 1\//, 'the round is counted');
+  } finally {
+    rmRepo(dir);
+  }
 });
 
 // ---- the graph item reads the fill's own document (issues 291 and 296) ---------------------------

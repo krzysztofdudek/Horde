@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 import {
   hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, leaseHolderForNode,
   resolveTree, provisionTree, provenanceLine, withProvenance, firstClass, withQueueLock, appendText,
-  parseEvidenceRows, diffSize, sizeRanks, parseLogEntries, processAlive,
+  parseEvidenceRows, diffSize, sizeRanks, parseLogEntries, processAlive, processStartedAt,
   runMain,
 } from './_lib.mjs';
 import {
@@ -774,12 +774,16 @@ export function startRunning(horde, team, key, { tree, on, agent } = {}) {
 // to a second worker, or send a branch with one stage commit on it to review — and tick runs every
 // interval under --watch and at every wake-up of a session. So each start records who holds the ticket
 // and since when — `worker:
-// {name, startedAt, pid, log}`, the pid and the log only when tick started the process itself under
-// the external runner — and reconcile settles the item only on evidence that the worker ended:
+// {name, startedAt, pid, pidStartedAt, log}`, the pid (with when that process started, so a number the
+// system handed to another process later is not read as the worker) and the log only when tick
+// started the process itself under the external runner — and reconcile settles the item only on evidence that the worker ended:
 //
 //   - its last line, `tk.mjs log NNN "landed <sha> — …"`, logged since it started — or, for a worker
 //     that stops without landing, `tk.mjs log NNN "stopped: <why>"`;
-//   - the process tick started for it is gone (external runner);
+//   - the process tick started for it is gone (external runner). That process is the one
+//     `config.runner.spawn` runs, so the command must keep the agent in the foreground: one that
+//     puts it in the background (`&`, `nohup`, a detaching launcher) ends at once, and its worker is
+//     read as ended while it is still working;
 //   - the director says so: `tick.mjs --reclaim NNN` (or `queue.mjs reconcile --reclaim NNN`), for a
 //     worker that came back without that line — stopped, reported it could not, or died.
 //
@@ -825,6 +829,14 @@ export function workerEnded(horde, item) {
   if (Number.isInteger(w.pid) && w.pid > 0 && !processAlive(w.pid)) {
     return { ended: true, how: 'pid-gone', note: `the process started for its worker (pid ${w.pid}) is gone` };
   }
+  // A live pid is the worker only while it is the same process: one that ended and whose number the
+  // system gave to another carries a different start time.
+  if (Number.isInteger(w.pid) && w.pid > 0 && w.pidStartedAt) {
+    const now = processStartedAt(w.pid);
+    if (now && now !== w.pidStartedAt) {
+      return { ended: true, how: 'pid-gone', note: `the process started for its worker (pid ${w.pid}) is gone — that number now belongs to a process started ${now}` };
+    }
+  }
   const who = w.name || 'its worker';
   return {
     ended: false,
@@ -841,7 +853,10 @@ export function recordWorkerRun(horde, team, key, { pid, log } = {}) {
   return withQueueLock(horde, team, () => {
     const { doc, item } = findItem(horde, team, key);
     if (!item || item.state !== 'running') return null;
-    item.worker = { ...(item.worker || workerLease(item.agent)), pid: Number.isInteger(pid) ? pid : null, log: log || null };
+    const known = Number.isInteger(pid) ? pid : null;
+    item.worker = {
+      ...(item.worker || workerLease(item.agent)), pid: known, pidStartedAt: known ? processStartedAt(known) : null, log: log || null,
+    };
     save(horde, team, doc);
     return item.worker;
   });

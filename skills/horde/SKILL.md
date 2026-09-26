@@ -46,7 +46,11 @@ node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tick.mjs               
 
 `status` says "no horde" → the user is handing you a mission: go to **Framing**. Otherwise resume:
 relay open asks to the client and record their answers, then go to **Ticking** — `tick.mjs` is the
-one run that tells you what changed since you last looked and what to do about it. First message to
+one run that tells you what changed since you last looked and what to do about it. A cold boot — a new
+session after the last one ended — leaves nobody behind the tickets that session handed out: its
+workers were its subagents and ended with it, and under the session runner there is no pid to show
+it. So every ticket the first `tick.mjs` lists as `working` without a pid is reclaimed, `tick.mjs
+--reclaim NNN[,NNN]`, and what its worker left is settled and handed out again. First message to
 the user: one sentence of state, one of what you are doing first, nothing more.
 
 **End of every turn that changed anything:** `handoff.mjs write --summary "…" --next "…"`. Without it

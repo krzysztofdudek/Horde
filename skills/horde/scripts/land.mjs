@@ -142,7 +142,10 @@ team you can name: passing --level team is refused outright rather than read as 
 --no-gate skips items 5, 6 and 7 (informational: pass) and never merges.
 A landing whose parent was brought in cleanly and whose only red is prose verdicts left pending by
 that merge (the reviewer configured, and nothing else the graph refuses) writes no round and says
-"rejudge": true in its result — the ticket goes back to refresh the verdicts, not for a fix.
+"rejudge": true in its result — the ticket goes back to refresh the verdicts, not for a fix. The
+merge is what left them pending only when the branch had recorded a verdict for every one of them
+before it (in its committed lock), or when the merge took the lock file from the parent; a prose
+rule the branch never had judged is its own red, and costs its round.
 A landing whose only red is a decision the user has to make — the graph and judge items alone, and
 Yggdrasil's own reading says nothing in the tree is fixable or fillable but something waits on the
 user or the reviewer, or every blocking finding is a reviewer that is missing, unreachable or
@@ -2961,6 +2964,9 @@ function insertionsOver(base, side) {
 }
 
 // The pure-addition merge of one append-only file: null when either side did more than add lines.
+// Where both sides added at the same place, the lines they both begin with — a section heading each
+// opened for its own entry, say — and the lines they both end with (the blank line closing it) are
+// written once, and the branch's own lines follow the parent's between them.
 export function appendOnlyMerge(baseText, parentText, branchText) {
   const base = String(baseText || '').split('\n');
   const parent = insertionsOver(base, String(parentText).split('\n'));
@@ -2968,7 +2974,18 @@ export function appendOnlyMerge(baseText, parentText, branchText) {
   if (!parent || !branch) return null;
   const out = [];
   for (let i = 0; i <= base.length; i += 1) {
-    out.push(...(parent.get(i) || []), ...(branch.get(i) || []));
+    const fromParent = parent.get(i) || [];
+    const fromBranch = branch.get(i) || [];
+    const shortest = Math.min(fromParent.length, fromBranch.length);
+    let lead = 0;
+    while (lead < shortest && fromParent[lead] === fromBranch[lead]) lead += 1;
+    let tail = 0;
+    while (lead + tail < shortest && fromParent[fromParent.length - 1 - tail] === fromBranch[fromBranch.length - 1 - tail]) tail += 1;
+    out.push(
+      ...fromParent.slice(0, fromParent.length - tail),
+      ...fromBranch.slice(lead, fromBranch.length - tail),
+      ...fromParent.slice(fromParent.length - tail),
+    );
     if (i < base.length) out.push(base[i]);
   }
   return out.join('\n');
@@ -3097,6 +3114,20 @@ function pullParentIntoBranch(root, cfg, branch, parentBranch, branchSha) {
   } finally {
     cleanupTree(info, root);
   }
+}
+
+// Whether every one of `pairs` (yg-check/1 pending pairs) carried a recorded verdict at `sha`, in the
+// committed reviewer lock. Read by its fields: `verdicts[<aspect>]["<unitKind>:<unit>"]`. Only the
+// entry's presence is asked — whether its hash still holds is exactly what the catch-up changed.
+// No lock at that commit, or one that does not parse, is no verdict.
+function verdictsRecordedAt(root, sha, pairs) {
+  if (!sha || !pairs.length) return false;
+  const text = gitBlob(`${sha}:.yggdrasil/yg-lock.nondeterministic.json`, root);
+  if (!text) return false;
+  let doc;
+  try { doc = JSON.parse(text); } catch { return false; }
+  const verdicts = (doc && doc.verdicts) || {};
+  return pairs.every((p) => !!(verdicts[p.aspect] && verdicts[p.aspect][`${p.unitKind}:${p.unit}`]));
 }
 
 // ---- trailers -----------------------------------------------------------------------------
@@ -4018,6 +4049,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
   // gate measures is what will merge; a conflict is refused below, before any gate. --no-gate never
   // writes to a branch, so it measures and reports the staleness as it stands.
   let pulled = null;
+  const preMergeSha = branchSha;
   if (!noGate && !checkBaseFreshness(branch, parentBranch).ok) {
     pulled = pullParentIntoBranch(root, cfg, branch, parentBranch, branchSha);
     if (pulled.ok) {
@@ -4136,9 +4168,16 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     // this ticket — the same reason a stale branch costs no round. The result says "rejudge" and no
     // round is written; tick sends the ticket back with a narrow brief to refresh the verdicts.
     const redNames = checks.filter((c) => !c.ok).map((c) => c.name);
+    // It is the merge that left them pending only when the branch had them judged before it came
+    // in — every pending pair carried a verdict in the lock the branch committed — or when the merge
+    // took the lock file whole from the parent, dropping the branch's own verdicts. Otherwise the
+    // prose was never judged at all, which is the ticket's own red, and a parent that keeps moving
+    // would hand it a free round every time.
     const rejudge = !allOk && !noGate && !!(pulled && pulled.ok)
       && redNames.includes('judge') && redNames.every((n) => n === 'judge' || n === 'graph')
-      && !!(results.graph && results.graph.onlyProsePending) && !results.graph.reviewerMissing;
+      && !!(results.graph && results.graph.onlyProsePending) && !results.graph.reviewerMissing
+      && (asArray(pulled.resolved).some((r) => YG_LOCK_FILE.test(r.file))
+        || verdictsRecordedAt(root, preMergeSha, asArray(results.graph.pending)));
     // Red only because of a decision the user has to make — no reviewer to judge the prose rules, or
     // one that could not be reached. No worker can clear that, so no round is counted: the result says
     // so and tick holds the ticket on one question to the user for the whole horde.
