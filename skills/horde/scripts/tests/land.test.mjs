@@ -368,52 +368,151 @@ test('land.mjs: once the reviewer has judged the pairs on the branch, the judge 
   assert.ok(green.json.landed, 'it landed');
 });
 
-test('horde.mjs init says whether the repository has a reviewer, and keeps no judge policy', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
-  assert.equal(r.code, 0, r.stderr);
-  // A fresh `yg init` with no --provider leaves no reviewer, and nothing else may judge a prose rule.
-  assert.match(r.stdout, /has no Yggdrasil reviewer, and prose rules are judged by no one else/);
-  assert.equal(JSON.parse(readFileSync(join(dir, '.horde', 'config.json'), 'utf8')).judge, undefined);
+// A prose rule attached to a component, committed on the branch a horde is cut from — the one shape
+// in which the graph itself says whether a reviewer is missing (`config-reviewer-missing`).
+function proseRuleOnMain(dir) {
+  addAspect(dir, 'reads-well', {
+    description: 'Every exported name reads as a sentence a stranger understands.',
+    content: '# Reads well\n\nAn exported name must read as something a stranger understands.\n',
+  });
+  addNode(dir, 'feature', { mapping: ['feature.mjs'], aspects: ['reads-well'] });
+  writeFileSync(join(dir, 'feature.mjs'), 'export const add = (a, b) => a + b;\n');
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'a component under a prose rule'], dir);
+  git(['branch', '-f', 'develop', 'HEAD'], dir);
+}
+
+test('horde.mjs init reads a missing reviewer off the graph, and names it as the client\'s decision', async (t) => {
+  await t.test('a prose rule and no reviewer: the gap is named, with the graph\'s own next step', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    assert.equal(yg(dir, ['init']).code, 0);
+    proseRuleOnMain(dir);
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /prose rules here wait on a decision only the user can make/);
+    assert.match(r.stdout, /configuring a reviewer/, 'the graph\'s own next step is carried');
+    assert.match(r.stdout, /rules: reads-well/);
+    assert.match(r.stdout, /with no fix round counted/);
+    assert.equal(JSON.parse(readFileSync(join(dir, '.horde', 'config.json'), 'utf8')).judge, undefined);
+  });
+
+  await t.test('no prose rule at all: nothing waits on a reviewer, and nothing is said to be missing', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.json.reviewerGap, { read: true, gap: false });
+  });
+
+  await t.test('a reviewer configured: no gap, whatever its config file looks like', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
+    proseRuleOnMain(dir);
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /prose rules are judged by the reviewer configured in this repository's graph/);
+    assert.doesNotMatch(r.stdout, /decision only the user can make/);
+  });
 });
 
-// A config whose `reviewer:` block is its LAST top-level key — Yggdrasil's own repository ends its
-// yg-config.yaml that way, and a reviewer added to an existing config lands there too. The
-// detection used to need another top-level key after the block, so it read such a config as having
-// no reviewer at all.
-test('horde.mjs init finds a reviewer block that ends the config file', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
-  const configPath = join(dir, '.yggdrasil', 'yg-config.yaml');
-  const lines = readFileSync(configPath, 'utf8').split('\n');
-  const start = lines.findIndex((l) => /^reviewer:\s*$/.test(l));
-  assert.ok(start >= 0, 'yg init --provider wrote a reviewer block');
-  let end = start + 1;
-  while (end < lines.length && !/^\S/.test(lines[end])) end += 1;
-  const block = lines.slice(start, end).join('\n').replace(/\s+$/, '');
-  const rest = [...lines.slice(0, start), ...lines.slice(end)].join('\n').replace(/\s+$/, '');
-  writeFileSync(configPath, `${rest}\n${block}\n`);
-
-  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
-  assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /prose rules are judged by the reviewer configured in this repository's graph/);
-});
-
-test('horde.mjs init refuses a commit hook that runs a full check in a repository with no reviewer', async (t) => {
+test('horde.mjs init refuses a commit hook that runs a full check while a prose rule has no reviewer', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   assert.equal(yg(dir, ['init']).code, 0);
+  proseRuleOnMain(dir);
   writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nyg check\n');
 
   const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir);
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /runs a full `yg check` on every commit, and this repository has no Yggdrasil reviewer/);
+  assert.match(r.stderr, /runs a full `yg check` on every commit, and this repository has no Yggdrasil reviewer configured for its prose rules \(reads-well\)/);
   assert.match(r.stderr, /Prose rules are judged only by that reviewer/);
-  assert.match(r.stderr, /yg init --provider/);
+  assert.match(r.stderr, /the user's decision/);
   assert.doesNotMatch(r.stderr, /--no-verify is fine|use --no-verify/);
   assert.equal(existsSync(join(dir, '.horde', 'hordes')), false, 'nothing of the horde was created');
+});
+
+// ---- a refusal only the user can clear (issue 292) ---------------------------------------
+//
+// A prose rule no reviewer is configured to judge is not something a worker can fix: configuring
+// one, or putting the rule on hold, is the user's decision. The graph says so in its own buckets, so
+// two tickets that meet it both wait with no round counted, and the user is asked once.
+test('land + tick: two tickets on a prose-ruled node with no reviewer wait on one user decision, and no round is counted', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // One glob for both tickets' files: a mapped path that is not on a branch yet would be a graph fix,
+  // which is a worker's, and this fixture is about the one thing that is not.
+  const mapping = ['feature-*.mjs'];
+  const first = setupLandable(dir, '311', { prose: true, mapping });
+  const secondBranch = makeTicketBranch(dir, '312');
+  const secondIssue = writeIssue(dir, 'trunk', '312');
+  writeTicketLog(secondIssue);
+  seedQueueItem(dir, 'trunk', '312', secondBranch);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+
+  for (const [id, branch, issue] of [['311', first.branch, first.issueDir], ['312', secondBranch, secondIssue]]) {
+    const r = run('land.mjs', [branch, '--result'], dir);
+    assert.equal(r.code, 1, `${id}: ${r.stdout}${r.stderr}`);
+    const checks = byName(r);
+    assert.equal(checks.judge.ok, false);
+    assert.match(checks.judge.note, /the user's decision, not a worker's/);
+    assert.ok(r.json.waitingOnUser, `${id} is waiting on the user: ${JSON.stringify(r.json)}`);
+    assert.equal(r.json.waitingOnUser.reviewerMissing, true);
+    assert.match(r.json.waitingOnUser.text, /configuring a reviewer/);
+    const log = readFileSync(join(issue, 'log.md'), 'utf8');
+    assert.match(log, /waiting on a user decision, no round counted/);
+    assert.doesNotMatch(log, /round \d+\//, `${id}: no round was counted`);
+    assert.doesNotMatch(log, /status: changes/, `${id}: the landing does not send it back for a fix`);
+  }
+
+  const ticked = run('tick.mjs', [], dir);
+  assert.equal(ticked.code, 0, ticked.stderr);
+  const steps = ticked.json.landed.filter((l) => ['311', '312'].includes(l.ticket));
+  assert.equal(steps.length, 2, JSON.stringify(ticked.json.landed));
+  for (const step of steps) {
+    assert.equal(step.action, 'waiting', JSON.stringify(step));
+    assert.equal(step.round, null);
+  }
+  const asks = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json'), 'utf8')).items;
+  assert.equal(asks.length, 1, `exactly one question for the whole horde: ${JSON.stringify(asks)}`);
+  assert.equal(asks[0].kind, 'stuck');
+  assert.equal(asks[0].ticket, undefined, 'it names no ticket — it is the horde\'s question');
+  assert.match(asks[0].why, /decision only you can make/);
+  assert.ok(steps.every((s) => s.ask === asks[0].id), 'both tickets point at the same question');
+
+  const queue = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json'), 'utf8'));
+  for (const [id, issue] of [['311', first.issueDir], ['312', secondIssue]]) {
+    const item = queue.items.find((i) => i.ticket === id);
+    assert.equal(item.state, 'blocked');
+    assert.equal(item.returnReason.kind, 'waiting-on-user');
+    assert.equal(item.returnReason.ask, asks[0].id);
+    assert.match(readFileSync(join(issue, 'issue.md'), 'utf8'), /\*\*Status:\*\* blocked/);
+    const log = readFileSync(join(issue, 'log.md'), 'utf8');
+    assert.match(log, /status: blocked — waiting on a user decision/);
+    assert.doesNotMatch(log, /round \d+\//, `${id}: still no round`);
+  }
+
+  // Answered once, both go back to a worker — still with no round — and the brief carries the answer.
+  assert.equal(run('ask.mjs', ['answer', asks[0].id, 'set reads-well to draft for this mission'], dir).code, 0);
+  const released = run('tick.mjs', [], dir);
+  assert.equal(released.code, 0, released.stderr);
+  const back = released.json.landed.filter((l) => l.action === 'released').map((l) => l.ticket).sort();
+  assert.deepEqual(back, ['311', '312']);
+  const after = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json'), 'utf8'));
+  for (const id of ['311', '312']) {
+    const item = after.items.find((i) => i.ticket === id);
+    assert.notEqual(item.state, 'blocked');
+    assert.equal(item.returnReason.kind, 'user-decided');
+    assert.match(item.returnReason.answer, /draft/);
+  }
+  const brief = run('brief.mjs', ['worker', '311', '--name', 'w-311'], dir, { json: false });
+  assert.equal(brief.code, 0, brief.stderr);
+  assert.match(brief.stdout, /## The user decided/);
+  assert.match(brief.stdout, /set reads-well to draft for this mission/);
+  for (const issue of [first.issueDir, secondIssue]) {
+    assert.doesNotMatch(readFileSync(join(issue, 'log.md'), 'utf8'), /round \d+\//, 'released with no round');
+  }
 });
 
 // ---- the items, one refusal each -------------------------------------------------------

@@ -35,7 +35,7 @@ import {
 } from './_lib.mjs';
 import {
   ygCommand, ygNode, ygContext, nodeExists, nodeBoundary, nodeRules, renderRules, listAllNodes,
-  pathInBoundary, nodeDir, loadGraph, grainLine, grainAsk,
+  pathInBoundary, nodeDir, loadGraph, grainLine, grainAsk, reviewerGap,
 } from './node.mjs';
 import { buildPlan, renderPlan, titleOf, loadQueue } from './queue.mjs';
 import {
@@ -86,6 +86,10 @@ steps (default: cut):
       with --json, the data a session renders to the client: what will change and where, what it
       will prove, and what the law gains. Three sections, no tool names, nothing about how any of
       it is run. The client's "go" is the only approval in the whole mission.
+      When the graph on the trunk has prose rules no reviewer is set up to judge (or one that could
+      not be reached), a fourth section comes first — what needs their decision before the work
+      can finish — and "decision" in --json carries the rules and the command that settles it.
+      Every ticket those rules reach would otherwise stop at the gate on that same question.
       A promise the client has already been shown a prototype for and accepted says so on its own
       line, with who accepted it and when — it is the one line on the page they wrote themselves.
       A promise nobody has taken and nobody is showing anything for is where a prototype is
@@ -1106,7 +1110,23 @@ function stepFrame(horde, flags) {
     ? 'One area, one piece of work, one check before it counts as done.'
     : `${areas.length} areas, worked at the same time, each checked before it counts as done.`;
 
+  // A decision only the user can make, asked of the graph on the trunk: prose rules that no
+  // reviewer is set up to judge. Every ticket on the parts those rules cover would otherwise stop at
+  // the gate, one after another, on a question nobody put to the client while they were here. In
+  // their words, not the tool's: the command that settles it travels in the data, for the director.
+  const gap = reviewerGap(cfg, info.path);
+  const decision = gap.read && gap.gap ? {
+    title: 'What needs your decision first',
+    note: gap.reviewerMissing
+      ? 'Some of the rules here are written in plain words, and only a reviewer you set up can read the work against them. None is set up yet, so the work those rules cover cannot be finished until you decide: set one up, or put those rules on hold for this work.'
+      : 'Some of the rules here are written in plain words, and the reviewer set up to read the work against them could not be reached. The work those rules cover cannot be finished until that is settled: fix the reviewer, or put those rules on hold for this work.',
+    gap: {
+      reviewerMissing: !!gap.reviewerMissing, waitingOnReviewer: gap.waitingOnReviewer, rules: gap.rules, command: gap.text,
+    },
+  } : null;
+
   const sections = [
+    ...(decision ? [decision] : []),
     {
       title: 'What will change, and where',
       note: shape,
@@ -1141,7 +1161,7 @@ function stepFrame(horde, flags) {
   ];
 
   const frame = {
-    mission: missionIntent(charter), shape, sections,
+    mission: missionIntent(charter), shape, sections, decision: decision ? decision.gap : null,
   };
   emit(frame, flags, () => [
     `# ${frame.mission}`,

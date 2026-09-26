@@ -367,8 +367,9 @@ function takeoverBlockFor(horde, t) {
 
 // Why this ticket came back to a worker without a round counted, when it did — rendered only then.
 // tick records it on the queue item when it sends a ticket back: a catch-up merge that stopped on
-// files no rule resolves, or prose verdicts that catch-up made stale. Each gets the one thing that
-// is the worker's to do about it, and nothing else.
+// files no rule resolves, prose verdicts that catch-up made stale, or a decision only the user could
+// make that has now been answered. Each gets the one thing that is the worker's to do about it, and
+// nothing else.
 function returnBlockFor(t, parentBranch, cfg) {
   const reason = t.queueItem && t.queueItem.returnReason;
   if (!reason) return '';
@@ -393,6 +394,22 @@ function returnBlockFor(t, parentBranch, cfg) {
       'coming back a second time goes to the client.',
       '',
     ].join('\n').split('{{worktree}}').join(t.queueItem.worktree || '');
+  }
+  if (reason.kind === 'user-decided') {
+    return [
+      '## The user decided',
+      '',
+      'This ticket waited at the gate, with no round counted, on a decision only the user could make:',
+      `> ${String(reason.text || '').trim()}`,
+      '',
+      `They answered (${reason.ask || 'the ask'}): ${String(reason.answer || '').trim() || '(no words)'}`,
+      '',
+      `Your code is not what was wrong. Bring the parent into your branch first, as below — whatever the answer changed`,
+      `lives there — then run \`${display} check --approve\` in your worktree, commit what it records, and log`,
+      '`landed <sha>` as always. If the answer leaves the prose rules still with nobody to judge them, say so in your',
+      'log and stop: that is the user\'s to settle, not yours.',
+      '',
+    ].join('\n');
   }
   if (reason.kind === 'rejudge') {
     const pairs = Array.isArray(reason.pairs) ? reason.pairs : [];

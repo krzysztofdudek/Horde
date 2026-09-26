@@ -60,7 +60,12 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   whole command, naming that horde and its last activity, before the branch or any of this horde's
   own state is created. See `node.mjs bind` below for the same check made any time after init, and
   "Node leases, kept as territories" in `reference/model.md` for the full contract. `--quality autonomous|only-the-work`
-  writes the charter's quality policy; the template's own default is `autonomous`.
+  writes the charter's quality policy; the template's own default is `autonomous`. It asks the graph
+  one read-only `yg check --json` whether a prose rule waits on a reviewer that is not configured
+  (`config-reviewer-missing`) or not reachable (`next.remaining.waitingOnReviewer`), says so in its
+  result as a decision to put to the client while framing, and carries it as `reviewerGap` in
+  `--json`. A commit hook that runs a full `yg check` while a reviewer rule has no reviewer refuses
+  init, before anything of the horde exists.
 - `list` — hordes with trunk, base, wave, open tickets, leased nodes, last activity.
 - `config get|set <key> [value]` — `.horde/config.json`: `base`, `gates.commit|team|trunk` (commands),
   `gates.testFile` (a command that runs ONE test file, `{file}` standing for its path — for a test
@@ -528,8 +533,12 @@ guesses at an answer.
   sections and not one tool name: what will change and where (territory → nodes → tickets), what it
   will prove (the charter's evidence rows through `parseEvidenceRows`, with who is taking them and
   which nobody has), and what the law gains (the consultants' rule proposals, one sentence each). A
-  cut of one territory with one ticket says so plainly rather than dressing it up. The client's "go"
-  is the only approval in the whole mission run, and nothing is exposed before it.
+  cut of one territory with one ticket says so plainly rather than dressing it up. When the trunk's
+  graph has prose rules no reviewer is set up to judge, or one that could not be reached (the same
+  read-only `yg check --json` reading `horde.mjs init` takes), a fourth section comes first — *What
+  needs your decision first*, in plain words — and `decision` in `--json` carries the rules and the
+  graph's own `next.text`, the command that settles it. The client's "go" is the only approval in the
+  whole mission run, and nothing is exposed before it.
 
 ## brief.mjs — rendered briefs
 
@@ -1033,7 +1042,14 @@ the JSON, and every item below is measured against it:
    judge a prose rule has. A worker runs `yg check --approve` before committing (so does the commit
    hook, where there is one), and this item only checks that nothing came back unjudged. A pair still
    waiting is a refusal that names it and the one way out: `yg check --approve` on the branch, or,
-   in a repository with no reviewer, configuring one (`yg init --provider … --model …`). When item
+   in a repository with no reviewer, the user's decision to configure one or to set those rules to
+   `draft`. Whether the reviewer is missing is the graph's own answer (`config-reviewer-missing`, or
+   an unverified pair whose `cause` is `reviewer-missing`), never a reading of its config file. When
+   the only red items are this one and the graph's, and the graph says nothing in the tree is
+   fixable or fillable but something waits on the user or the reviewer (`next.remaining`), or every
+   blocking finding is a reviewer that is missing, unreachable or failed, no round is written: the
+   ticket's log says it waits on a user decision, and the result carries `waitingOnUser: {text,
+   reviewerMissing, causes, rules}`, `text` being the graph's own `next.text`. When item
    1 brought the parent in cleanly and the only red items are this one and the graph's, both about
    prose verdicts that merge left pending (a reviewer configured, nothing else refused), the result
    carries `rejudge: true` and no round is written — the merge moved the code under the verdicts,
@@ -1261,7 +1277,7 @@ whatever `config.testGlobs` recognise, plus whatever keeps a live promise, wheth
 would have recognised that. A repository whose `has-evidence` aspect **pins** one pairing for every
 promise, instead of leaving it `auto`, is read the same way: the pin decides the pairing, not each
 promise's own frontmatter. The rule is found by its id — the one whose id is `has-evidence` or ends in
-`/has-evidence`, so a copy installed with `yg pack add` under `packages/<owner>/<repo>/promises/` is
+`/has-evidence`, so a copy installed with `yg pack add` under `packages/<publisher>/<repo>/promises/` is
 found as surely as one copied in by hand — and the pin is read from its `yg-aspect.adapt.yaml` first,
 where an installed rule's settings live, then from its own `yg-aspect.yaml`.
 
@@ -1307,7 +1323,7 @@ directory — its text, its code, any helper or table its code reads, the adopte
 corpus and dot-files; its `yg-aspect.yaml` and its adaptation count only when something other than
 `status` and `review_by` moved. A changed path belongs to the rule whose id is the longest directory
 above it in the graph's own inventory (`yg aspects --json` on both trees), so a nested rule
-(`boundary/clean-core`) and an installed one (`packages/<owner>/<repo>/<package>/<rule>`) are named
+(`boundary/clean-core`) and an installed one (`packages/<publisher>/<repo>/<package>/<rule>`) are named
 by their full ids, never by their first path segment. The merge commit's `Law:` trailers read the
 same way. The refusal names the rule, the file, and the way out: one ticket for the code,
 one for the rule, landing separately so each is judged by a law it did not write. Nothing waives
@@ -1582,7 +1598,14 @@ inherits whatever tree the session's shell is already in.
    configured, and the only red is prose verdicts that merge left pending — also goes back with no
    round, `returnReason: {kind: "rejudge", pairs}`, and a brief whose *Refresh the verdicts* section
    says to run `yg check --approve`, commit and log; a second `rejudge` in a row counts its round
-   like any red gate. Any counted return clears `returnReason`.
+   like any red gate. A result carrying `waitingOnUser` — red only on a decision the user has to
+   make, by the graph's own reading (see item 2 of the landing) — goes to `blocked` with no round,
+   `returnReason: {kind: "waiting-on-user", text, ask}`, the ticket's status `blocked` with the words
+   "waiting on a user decision", and one `stuck` ask naming no ticket, filed once per horde for the
+   same gap (a second ticket meeting it finds the open one). Once that ask is answered, the next run
+   puts every item it held back on `queued`, `returnReason: {kind: "user-decided", text, ask,
+   answer}`, the ticket on `changes` with no round, and the next worker's brief carries a *The user
+   decided* section with the answer. Any counted return clears `returnReason`.
 
    **The review, once per ticket, before its first gate.** The first time an item would go on the
    gate's re-run list, it goes on `review` instead — `{ticket, model, name, brief}`, `model` the

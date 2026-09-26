@@ -259,7 +259,15 @@ parent's side, and the files `config.appendOnly` names (a CHANGELOG, as `horde.m
 by keeping both sides' added lines. Any other conflict sends the ticket back with no round counted
 and a brief naming the files to resolve; the second time the same files stop it, one `stuck` ask
 names them to the client. A landing red only because that catch-up left prose verdicts to refresh
-comes back with no round counted too, briefed to run `yg check --approve` and nothing else. `reference/model.md`'s
+comes back with no round counted too, briefed to run `yg check --approve` and nothing else.
+
+**A decision only the user can make costs no round.** When the graph says a landing is red only on
+something no worker can clear — prose rules with no reviewer configured, or a reviewer that could not
+be reached — the ticket goes to `blocked` with no round counted, and one `stuck` ask, naming no
+ticket, puts the decision to the client once for the whole horde. Answer it and the next tick sends
+every ticket it held back to a worker with the answer in its brief. `horde.mjs init` and the frame
+(`refine.mjs --step frame`) read the same gap off the graph first, so it reaches the client while they
+are still framing the mission rather than at the first landing. `reference/model.md`'s
 **Runner** section has the whole of who drives that loop and what changes when it runs outside a
 session altogether.
 
@@ -282,7 +290,7 @@ whether that belongs to `ask.mjs` too is still open (see the CHANGELOG).
 
 **What travels to the client, and what does not.** `ask.mjs` carries exactly four kinds: `stop` (a
 worker ran out of spec and wrote down the question instead of guessing — the ticket stays put),
-`stuck` (a ticket exhausted its fix rounds, or its catch-up merge stopped on the same files twice — `tick.mjs` files this one, not an agent), `lower` (a
+`stuck` (a ticket exhausted its fix rounds, or its catch-up merge stopped on the same files twice, or — one per horde, naming no ticket — landings wait on a decision only the user can make, such as configuring a reviewer for the prose rules; `tick.mjs` files this one, not an agent), `lower` (a
 request to weaken something that protects the work: a rule — demote, an added `yg-suppress` marker,
 a moved `review_by`, an aspect detached from a node — or the proof — a promise put back to planned,
 a test file or an assertion taken out, a skip marker added — or a gate — the script a gate command

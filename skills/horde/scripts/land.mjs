@@ -38,7 +38,7 @@ import {
   runMain,
 } from './_lib.mjs';
 import {
-  ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, hasReviewer,
+  ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, userOnlyRefusal, reviewerMissingIn,
   globToRegExp, pathInBoundary, ticketBoundary, proposalBoundaryOf, ygFileContext, ygAvailable, ygJson,
   NODE_LOG_FILE, YG_LOCK_FILE, mergesByRule, nodeOfLogFile, ygLogMergeResolve,
 } from './node.mjs';
@@ -135,6 +135,11 @@ team you can name: passing --level team is refused outright rather than read as 
 A landing whose parent was brought in cleanly and whose only red is prose verdicts left pending by
 that merge (the reviewer configured, and nothing else the graph refuses) writes no round and says
 "rejudge": true in its result — the ticket goes back to refresh the verdicts, not for a fix.
+A landing whose only red is a decision the user has to make — the graph and judge items alone, and
+Yggdrasil's own reading says nothing in the tree is fixable or fillable but something waits on the
+user or the reviewer, or every blocking finding is a reviewer that is missing, unreachable or
+failed — writes no round either: its result carries "waitingOnUser": {text, reviewerMissing,
+causes, rules}, and tick holds the ticket on one question for the whole horde.
 --background starts the run and prints the path of the result file it will write, immediately.
 
 Everything above — the scope check's own graph read included — runs against the tree --tree
@@ -1010,16 +1015,23 @@ function checkGraph(cfg, worktree, noGate) {
   if (res.ok) return { ok: true, note: `${res.command} green${res.summary ? ` — ${res.summary}` : ''}` };
   if (res.timedOut) return { ok: false, note: `\`${res.command}\` — ${res.summary}` };
 
+  // Whether what is red here is a decision only the user can make — no reviewer configured, or one
+  // that could not be reached — read off the graph's own buckets and causes. Carried on every red
+  // answer below: a refusal like that is nobody's fix round (see run()).
+  const userOnly = userOnlyRefusal(res.doc);
+  const reviewerMissing = reviewerMissingIn(res.doc);
+  const red = (item) => ({ ...item, ...(userOnly ? { userOnly } : {}), reviewerMissing });
+
   const pending = pendingProsePairs(cfg, worktree, res);
   if (pending.scriptPending.length) {
     // The free half did not take — a graph the CLI refuses to fill at all, most often because a
     // judgement rule has no judge configured. Nobody should be sent to read a script rule, so the
     // item hands over the CLI's own words instead of naming pairs it cannot classify.
-    return {
+    return red({
       ok: false,
       note: `${filled.command} left ${pending.scriptPending.length} script rule(s) with no verdict — `
         + `the free half did not take, and until it does nothing else about the graph can be judged:\n${filled.out.trim()}`,
-    };
+    });
   }
   if (pending.pairs.length) {
     const named = pending.pairs.map((p) => `${p.aspect} on ${p.unitKind}:${p.unit}`);
@@ -1030,18 +1042,20 @@ function checkGraph(cfg, worktree, noGate) {
     const errors = asArray(res.doc && res.doc.issues).filter((i) => i && i.severity === 'error');
     const onlyProsePending = errors.length > 0 && errors.every((i) => i.aspect && i.cause !== 'reviewer-missing'
       && pending.pairs.some((p) => p.aspect === i.aspect && `${p.unitKind}:${p.unit}` === i.unit));
-    return {
+    return red({
       ok: false,
       pending: pending.pairs,
       onlyProsePending,
       note: `${res.command} exited ${res.exit} — the script rules are recorded (free, no key), and `
-        + `${named.length} prose rule(s) still wait on a judgement: ${named.join(' · ')}`,
-    };
+        + `${named.length} prose rule(s) still wait on a judgement: ${named.join(' · ')}`
+        + (userOnly ? ` — waiting on a user decision: ${userOnly.text}` : ''),
+    });
   }
-  return {
+  return red({
     ok: false,
-    note: `${res.command} exited ${res.exit} — the graph refuses this tree${res.summary ? `: ${res.summary}` : ''}; a red graph is a red gate, whatever the level's gate command said`,
-  };
+    note: `${res.command} exited ${res.exit} — the graph refuses this tree${res.summary ? `: ${res.summary}` : ''}; a red graph is a red gate, whatever the level's gate command said`
+      + (userOnly ? ` — waiting on a user decision: ${userOnly.text}` : ''),
+  });
 }
 
 // Whether the prose rules are judged. They have one judge: the reviewer configured inside
@@ -1060,10 +1074,11 @@ function checkJudge(cfg, worktree, graphItem, noGate) {
   return {
     ok: false,
     pairs: pending,
-    note: hasReviewer(worktree)
+    note: !(graphItem && graphItem.reviewerMissing)
       ? `${pending.length} prose rule(s) have no verdict from this repository's reviewer: ${named}. Run \`${display} check --approve\` on the branch and commit what it records, then land again`
       : `${pending.length} prose rule(s) have no verdict, and this repository has no Yggdrasil reviewer to give one: ${named}. `
-        + 'Prose rules are judged by that reviewer only — configure one (yg init --provider <claude-code|codex|copilot-cli|…> --model <model>), run `yg check --approve`, then land again',
+        + 'Prose rules are judged by that reviewer only, and configuring one — or setting those rules to status: draft — is the user\'s decision, not a worker\'s: '
+        + 'no fix round is counted for it, and the ticket waits until the user has answered',
   };
 }
 
@@ -3912,7 +3927,13 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     const redNames = checks.filter((c) => !c.ok).map((c) => c.name);
     const rejudge = !allOk && !noGate && !!(pulled && pulled.ok)
       && redNames.includes('judge') && redNames.every((n) => n === 'judge' || n === 'graph')
-      && !!(results.graph && results.graph.onlyProsePending) && hasReviewer(head.path);
+      && !!(results.graph && results.graph.onlyProsePending) && !results.graph.reviewerMissing;
+    // Red only because of a decision the user has to make — no reviewer to judge the prose rules, or
+    // one that could not be reached. No worker can clear that, so no round is counted: the result says
+    // so and tick holds the ticket on one question to the user for the whole horde.
+    const waitingOnUser = !allOk && !noGate && !rejudge && redNames.length > 0
+      && redNames.every((n) => n === 'judge' || n === 'graph')
+      && !!(results.graph && results.graph.userOnly) ? results.graph.userOnly : null;
 
     if (allOk && !noGate) {
       // The sha the items were measured against has to be the sha that lands. A branch that moved
@@ -3936,6 +3957,8 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       // a sha `done` and `close` can actually find on the branch they read. See checkGate's comment.
       if (results.gate.cache) recordGateCache(horde, level, { ...results.gate.cache, sha: merged.sha }, ticketId, branch, cfg);
       checks.push({ name: 'merge', ok: true, note: `${merged.note} — ${short(merged.sha)}` });
+    } else if (waitingOnUser) {
+      recordWaiting(horde, ticketId, waitingOnUser);
     } else if (!allOk && !noGate && !rejudge) {
       recordChanges(horde, ticketId, checks);
     }
@@ -3947,6 +3970,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       sha: branchSha,
       ok: allOk,
       ...(rejudge ? { rejudge: true } : {}),
+      ...(waitingOnUser ? { waitingOnUser } : {}),
       checks,
       pairs: asArray(judge.pairs),
       landed,
@@ -3974,6 +3998,16 @@ function recordChanges(horde, ticketId, checks) {
     return;
   }
   transitionStatus(ticket, 'changes', `land refused: ${red.join(' · ')}`, roundInfo);
+}
+
+// A refusal only the user can clear is written into the ticket's history too — once per landing,
+// with no round and no change of status: the status is tick's to move (to "blocked", on the one
+// question it files for the whole horde), and a landing run by hand must not leave the queue and
+// the ticket disagreeing about where the ticket is.
+function recordWaiting(horde, ticketId, waiting) {
+  const ticket = findTicket(horde, ticketId);
+  if (!ticket) return;
+  appendTicketLine(ticket, `- ${nowIso()} land refused, waiting on a user decision, no round counted — ${waiting.text}\n`);
 }
 
 function appendTicketLine(ticket, line) {

@@ -488,26 +488,70 @@ export function ygAvailable(cfg, cwd) {
   return !(run.missing || run.spawnFailed || run.timedOut) && run.code === 0;
 }
 
-// ---- whether this repository has a reviewer ----------------------------------------------
+// ---- refusals only the user can clear -------------------------------------------------------
 //
 // Yggdrasil's rules come in two kinds. A script rule answers for itself, free, in any worktree. A
 // prose rule is judged by one reader only: the reviewer configured inside Yggdrasil, through
-// `yg check --approve`. A repository without one cannot have its prose rules judged at all, and
-// that decides what the commit hook may demand and what init says out loud.
+// `yg check --approve`. Whether that reader exists, or answered, is not something a worker can
+// change: configuring a reviewer, or putting the prose rules on hold, is the user's decision.
 //
-// The evidence is Yggdrasil's own config: a `reviewer:` block with a provider under it. Read as
-// text because Horde has no YAML parser and does not want one.
-const YG_CONFIG_FILES = ['yg-config.yaml', 'yg-secrets.yaml'];
-export function hasReviewer(root) {
-  for (const name of YG_CONFIG_FILES) {
-    let text = '';
-    try { text = readFileSync(join(root, '.yggdrasil', name), 'utf8'); } catch { continue; }
-    // The block runs to the next top-level key or to the end of the file — `yg init` writes
-    // `reviewer:` as the last key, and JavaScript has no `\Z` (it would match a literal Z).
-    const block = /^reviewer:\s*$([\s\S]*?)(?=^\S|(?![\s\S]))/m.exec(text);
-    if (block && /^\s+provider:\s*\S/m.test(block[1])) return true;
+// The graph says which of its findings those are, in its own buckets, so nothing here reads a
+// config file. `next.remaining` puts every blocking finding in exactly one bucket by what clears it
+// (`needsFix` a code or graph fix, `fillable` a fill, `needsUser` a decision of the user's,
+// `waitingOnReviewer` pairs no run can judge until a reviewer is configured or reachable), and an
+// unverified finding carries its `cause`. A red tree is the user's alone when nothing in it is
+// fixable or fillable and something waits on the user or the reviewer — or when every blocking
+// finding is an unverified pair whose cause is a reviewer that is missing, unreachable or failed
+// (plus the `config-reviewer-missing` finding that names the missing one).
+export const USER_ONLY_CAUSES = ['reviewer-missing', 'reviewer-unreachable', 'reviewer-failed'];
+
+export function userOnlyRefusal(doc) {
+  if (!doc || !doc.exit || doc.exit.code === 0) return null;
+  const errors = asArray(doc.issues).filter((i) => i && i.severity === 'error');
+  const next = doc.next || null;
+  const remaining = (next && next.remaining) || null;
+  const byBuckets = !!remaining && remaining.needsFix === 0 && remaining.fillable === 0
+    && (Number(remaining.needsUser) || 0) + (Number(remaining.waitingOnReviewer) || 0) > 0;
+  const byCauses = errors.length > 0 && errors.every((i) => USER_ONLY_CAUSES.includes(i.cause) || i.code === 'config-reviewer-missing');
+  if (!byBuckets && !byCauses) return null;
+  const causes = [...new Set(errors.map((i) => i.cause || i.code).filter(Boolean))].sort();
+  const rules = [...new Set(errors.filter((i) => i.aspect).map((i) => i.aspect))].sort();
+  return {
+    text: (next && typeof next.text === 'string' && next.text) || 'a decision only the user can make — see `yg check`',
+    reviewerMissing: reviewerMissingIn(doc),
+    causes,
+    rules,
+  };
+}
+
+// Whether the graph says its prose rules have no reviewer to judge them.
+export function reviewerMissingIn(doc) {
+  return asArray(doc && doc.issues).some((i) => i && (i.code === 'config-reviewer-missing' || i.cause === 'reviewer-missing'));
+}
+
+// The same question asked of a tree before any work starts — `horde.mjs init` and the frame the
+// client reads. One read-only `yg check --json`; `read: false` when the CLI could not answer, which
+// the caller says out loud rather than reading as "no gap".
+export function reviewerGap(cfg, cwd) {
+  const checked = runYgCheck(cfg, cwd);
+  if (!checked.available || !checked.doc) {
+    return { read: false, why: checked.summary || `\`${checked.command}\` did not answer` };
   }
-  return false;
+  const { doc } = checked;
+  const missing = reviewerMissingIn(doc);
+  const remaining = (doc.next && doc.next.remaining) || {};
+  const waiting = Number(remaining.waitingOnReviewer) || 0;
+  if (!missing && waiting === 0) return { read: true, gap: false };
+  const rules = [...new Set(asArray(doc.issues)
+    .filter((i) => i && i.aspect && USER_ONLY_CAUSES.includes(i.cause)).map((i) => i.aspect))].sort();
+  return {
+    read: true,
+    gap: true,
+    reviewerMissing: missing,
+    waitingOnReviewer: waiting,
+    rules,
+    text: (doc.next && doc.next.text) || 'configure a reviewer, or set the reviewer rules to status: draft',
+  };
 }
 
 // ---- the free half of a graph gate -----------------------------------------------------------

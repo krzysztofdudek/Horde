@@ -943,6 +943,48 @@ test('refine.mjs --step frame: one area with one piece of work says so plainly',
   assert.equal(r.json.sections[0].note, r.json.shape);
 });
 
+// A decision only the client can make — prose rules nobody is set up to judge — is put to them in
+// the frame, first, while they are still in the loop, rather than met ticket by ticket at the gate.
+test('refine.mjs --step frame: a prose rule with no reviewer to judge it is the first thing the client is asked to decide', async (t) => {
+  await t.test('no reviewer: a section of its own, first, in plain words; the command travels in the data', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    graphFixture(dir);
+    addAspect(dir, 'reads-well', { description: 'Names read as sentences.', content: '# Reads well\n\nA name reads as a sentence.\n' });
+    addNode(dir, 'auth', { description: 'Signing people in.', mapping: ['src/auth/**'], aspects: ['no-marker', 'reads-well'] });
+    git(['add', '-A'], dir);
+    git(['commit', '-qm', 'a prose rule on the way in'], dir);
+    git(['branch', '-f', 'develop', 'HEAD'], dir);
+    initHorde(dir, 'm1');
+    writeTerritories(dir, 'm1', { doors: { nodes: ['auth'], class: 'standard', why: 'The way in, and nothing else.' } });
+    assert.equal(run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).code, 0);
+
+    const r = run('refine.mjs', ['--step', 'frame', '--horde', 'm1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.sections[0].title, 'What needs your decision first');
+    assert.match(r.json.sections[0].note, /None is set up yet/);
+    assert.equal(r.json.decision.reviewerMissing, true);
+    assert.deepEqual(r.json.decision.rules, ['reads-well']);
+    assert.match(r.json.decision.command, /configuring a reviewer/);
+    const plain = run('refine.mjs', ['--step', 'frame', '--horde', 'm1'], dir, { json: false });
+    assert.match(plain.stdout, /## What needs your decision first/);
+    assert.doesNotMatch(plain.stdout, /yg init|--provider/, 'no tool is named to the client');
+  });
+
+  await t.test('nothing waiting on a reviewer: no such section, and no decision in the data', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    graphFixture(dir);
+    initHorde(dir, 'm1');
+    writeTerritories(dir, 'm1', { doors: { nodes: ['auth'], class: 'standard', why: 'The way in, and nothing else.' } });
+    assert.equal(run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).code, 0);
+    const r = run('refine.mjs', ['--step', 'frame', '--horde', 'm1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.decision, null);
+    assert.ok(r.json.sections.every((sec) => sec.title !== 'What needs your decision first'));
+  });
+});
+
 test('refine.mjs: the broken states, each refused in its own words', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
