@@ -948,3 +948,29 @@ test('node.mjs ygJson: a yg-error/1 refusal is read by its code, and stderr pros
     rmRepo(dir);
   }
 });
+
+// Review of 297: the floor is compared by number, patch included. A CLI reporting 6.0.3 is below
+// 6.1.0 and refused by name; 6.1.0 and a later minor (6.10.0, never read as text) are not.
+test('node.mjs: a Yggdrasil reporting 6.0.3 is below the floor and refused naming 6.1.0; 6.1.0 and 6.10.0 are not', async () => {
+  const { ygJson, tooOldCli } = await import('../node.mjs');
+  const dir = makeRepo();
+  try {
+    const stub = (version) => {
+      const p = join(dir, `yg-${version}.mjs`);
+      writeFileSync(p, [
+        `if (process.argv.includes('--version')) { console.log(${JSON.stringify(version)}); process.exit(0); }`,
+        "console.log(JSON.stringify({ schema: 'yg-node/1', node: { path: 'core' } }));",
+        '',
+      ].join('\n'));
+      return { ygCommand: `node ${p}` };
+    };
+    assert.equal(tooOldCli(stub('6.0.3'), dir), '6.0.3');
+    assert.equal(tooOldCli(stub('6.1.0'), dir), null);
+    assert.equal(tooOldCli(stub('6.10.0'), dir), null);
+    const res = ygJson(dir, stub('6.0.3'), ['node', 'core', '--json'], 'yg-node/1');
+    assert.equal(res.state, 'stale');
+    assert.match(res.saw, /reports version 6\.0\.3, and Horde needs 6\.1\.0 or newer/);
+  } finally {
+    rmRepo(dir);
+  }
+});
