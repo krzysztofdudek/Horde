@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 import {
   hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, leaseHolderForNode,
   resolveTree, provisionTree, provenanceLine, withProvenance, firstClass, withQueueLock, appendText,
-  parseEvidenceRows, diffSize, sizeRanks, parseLogEntries, processAlive, processStartedAt,
+  parseEvidenceRows, diffSize, sizeRanks, parseLogEntries, processAlive, processStartedAt, REASON_RECLAIM_REFUSED,
   runMain,
 } from './_lib.mjs';
 import {
@@ -1840,7 +1840,7 @@ function reconcileRunningLocked(horde, team, { tree, reclaim = [] } = {}) {
     const key = normalizeKey(raw);
     const item = doc.items.find((i) => i.ticket === key);
     if (!item || item.state !== 'running') {
-      fail(`--reclaim ${raw}: ${item ? `${key} is "${item.state}", not running` : `no queue item ${key}`} — only a ticket a worker holds can be reclaimed. Nothing was changed`);
+      fail(`--reclaim ${raw}: ${item ? `${key} is "${item.state}", not running` : `no queue item ${key}`} — only a ticket a worker holds can be reclaimed. Nothing was changed`, 1, REASON_RECLAIM_REFUSED);
     }
     item.worker = { ...(item.worker || workerLease(item.agent)), reclaimedAt: nowIso() };
     item.notes.push({ at: nowIso(), text: `reconcile: reclaimed by the director — its worker is taken to have ended` });

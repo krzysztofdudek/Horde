@@ -42,7 +42,7 @@ import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readText, readConfig, nowIso, fail, HordeError, parseArgs, emit,
   isMain, resolveHorde, git, resolveTree, withProvenance, provenanceLine, withQueueLock,
-  runMain, appendText, parseEvidenceRows, classUp, processAlive,
+  runMain, appendText, parseEvidenceRows, classUp, processAlive, REASON_RECLAIM_REFUSED,
 } from './_lib.mjs';
 import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine, recordWorkerRun,
@@ -1128,7 +1128,7 @@ async function watch(horde, cfg, flags, runner) {
       recordRefusal(horde, e, flags);
       // A refusal of the --reclaim itself (a ticket nobody holds) is the same on every pass, so it is
       // said once, like any settled one; the loop goes on without it.
-      if (/^--reclaim /.test(String(e.message || ''))) pass = { ...pass, reclaim: undefined };
+      if (e.reason === REASON_RECLAIM_REFUSED) pass = { ...pass, reclaim: undefined };
     }
     // --reclaim is the director's word about one moment, so it is said once: the first pass that
     // succeeds settles those tickets, and a later pass reading it again would refuse them for no

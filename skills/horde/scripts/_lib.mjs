@@ -1711,17 +1711,23 @@ export function today() {
 // not. Every tool below still ends on a refusal exactly as before, because `runMain` turns this
 // into the same `error: ...` line and the same exit code — and `process.exit` now lives only
 // there, in one place, at the edge of each script.
+// `reason` is an optional word a caller that catches the refusal can decide by — never the
+// message, which is written for a person and is free to be reworded.
 export class HordeError extends Error {
-  constructor(msg, code = 1) {
+  constructor(msg, code = 1, reason = null) {
     super(msg);
     this.name = 'HordeError';
     this.code = code;
+    this.reason = reason;
   }
 }
 
-export function fail(msg, code = 1) {
-  throw new HordeError(msg, code);
+export function fail(msg, code = 1, reason = null) {
+  throw new HordeError(msg, code, reason);
 }
+
+// The reasons a refusal carries for a caller to decide by.
+export const REASON_RECLAIM_REFUSED = 'reclaim-refused';
 
 // runMain(main) — the one place a horde tool exits. A refusal raised anywhere below prints the
 // same `error: ...` line it always did and exits with its code; anything else keeps its stack and

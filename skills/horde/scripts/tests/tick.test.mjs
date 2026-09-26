@@ -1726,6 +1726,26 @@ test('tick.mjs --watch: --reclaim survives a refused pass and is settled by the 
   assert.match(out, /reclaimed by the director/, `the reclaim was carried to the pass that ran: ${out.slice(0, 400)}`);
 });
 
+// A refusal of the reclaim itself — a ticket nobody holds — would be the same on every pass, so it is
+// said once and the loop goes on without it. Decided by the refusal's reason, not its wording.
+test('tick.mjs --watch: a refused --reclaim is written down once, not refused again every pass', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'tick.interval', '1'], dir);
+  const watcher = spawn('node', [join(SCRIPTS_DIR, 'tick.mjs'), '--watch', '--reclaim', '999'], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+  watcher.stdout.on('data', () => {});
+  watcher.stderr.on('data', () => {});
+  const exited = new Promise((resolve) => { watcher.on('close', (code) => resolve(code)); });
+  await new Promise((resolve) => { setTimeout(resolve, 3500); });
+  watcher.kill('SIGINT');
+  assert.equal(await exited, 0);
+  const journal = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
+  const refusals = journal.split('\n').filter((l) => l.includes('tick refused:'));
+  assert.equal(refusals.length, 1, `one refusal for the reclaim, then passes without it:\n${refusals.join('\n')}`);
+  assert.match(refusals[0], /--reclaim 999/);
+});
+
 test('tick.mjs: says how loaded the landing gate is — branches waiting, and what a landing has been costing', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
