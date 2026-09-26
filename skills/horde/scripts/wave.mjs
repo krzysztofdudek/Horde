@@ -18,7 +18,7 @@ import {
   hordePath, teamPath, readText, writeText, appendText, readJSON, writeJSON, readConfig, today,
   nowIso, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy, resolveTree,
   markdownSection, markdownTableCells, parseEvidenceRows, parseVerdictBlocks, diffSize, sizeRanks,
-  noEvidenceLayerNote, EVIDENCE_CLASSES, git, runGateAt, GATE_RAN, GATE_ASSERTED,
+  noEvidenceLayerNote, EVIDENCE_CLASSES, git, runGateAt, gateTimeoutOf, GATE_RAN, GATE_ASSERTED,
   runMain,
 } from './_lib.mjs';
 // The charter section's heading lives with the readers of it, and is handed on from here because
@@ -885,12 +885,6 @@ export function stampMissionEvidence(horde) {
 //                     when it passes, with the commit it passed on
 const TESTIMONY = 'client testimony';
 const ARTIFACT = 'artifact';
-const GATE_TIMEOUT_MS = 15 * 60 * 1000;
-
-function gateTimeoutOf(cfg) {
-  const asked = Number(cfg && cfg.gateTimeoutMs);
-  return Number.isFinite(asked) && asked > 0 ? asked : GATE_TIMEOUT_MS;
-}
 
 export function evidenceWay(evidenceClass) {
   const c = String(evidenceClass || '').trim().toLowerCase();

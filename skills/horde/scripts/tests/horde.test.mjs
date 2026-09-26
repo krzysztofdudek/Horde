@@ -1229,3 +1229,21 @@ test('horde.mjs done: a forged evidence record and a forged ran gate are run aga
     rmRepo(dir);
   }
 });
+
+// Review of 371: `done` runs the trunk gate itself, so a gate that hangs would hang `done` with it.
+// It runs under the configured gate timeout, and a gate stopped there is a refusal saying so.
+test('horde.mjs done: a trunk gate that hangs is stopped at config.gateTimeoutMs and refused as not finishing in time', () => {
+  const dir = makeRepo();
+  try {
+    initHorde(dir);
+    run('horde.mjs', ['config', 'set', 'gates.trunk', 'sleep 30'], dir);
+    run('horde.mjs', ['config', 'set', 'gateTimeoutMs', '1500'], dir);
+    const started = Date.now();
+    const r = run('horde.mjs', ['done'], dir);
+    assert.ok(Date.now() - started < 20000, 'done did not wait for the hanging gate');
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /trunk gate did not finish in time at \w+ and was stopped after 2s \(sleep 30\)/);
+  } finally {
+    rmRepo(dir);
+  }
+});

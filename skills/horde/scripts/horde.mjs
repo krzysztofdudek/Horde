@@ -16,7 +16,7 @@ import {
   writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
   readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
   qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES, parseEvidenceRows, asArray,
-  runGateAt, GATE_RAN,
+  runGateAt, gateTimeoutOf, GATE_RAN,
   runMain,
 } from './_lib.mjs';
 import { nodesOf, padId } from './tk.mjs';
@@ -90,7 +90,8 @@ commands:
       horde the way "archive" does, and prints what to do next (push — that decision is the
       chairman's, never this tool's). What the tools recorded is a record, never a proof: the trunk
       gate and every command row's command (hordes/<h>/evidence.json) are run again at the trunk
-      tip, whatever cache/last-gate.json or evidence.json says. The trunk gate's own run runs from --tree, or without one, cwd — the same ordinary default
+      tip, whatever cache/last-gate.json or evidence.json says, each stopped at config.gateTimeoutMs
+      (default 15 minutes) — a gate that does not finish in time is refused as not green. The trunk gate's own run runs from --tree, or without one, cwd — the same ordinary default
       this tool set reads everywhere else, not this horde's trunk just because a horde was
       resolvable. --horde h written out (no --tree) is what changes that, exactly as
       queue.mjs plan/quality, tick.mjs and land.mjs already read it; what gets tested is always
@@ -1352,7 +1353,7 @@ function cmdDone(positional, flags) {
       reasons.push('no config.gates.trunk configured — set it: horde.mjs config set gates.trunk "<command>"');
     } else {
       const gateCache = readJSON(hordePath(horde, 'cache', 'last-gate.json'), {});
-      const ran = runGateAt(root, gateCmd, trunkSha);
+      const ran = runGateAt(root, gateCmd, trunkSha, gateTimeoutOf(cfg));
       gateGreen = ran.ok;
       writeJSON(hordePath(horde, 'cache', 'last-gate.json'), {
         ...gateCache,
@@ -1360,7 +1361,11 @@ function cmdDone(positional, flags) {
           sha: trunkSha, result: gateGreen ? 'green' : 'red', count: null, kind: GATE_RAN, at: new Date().toISOString(), by: 'horde done',
         },
       });
-      if (!gateGreen) reasons.push(`trunk gate red at ${short(trunkSha)} (${gateCmd})`);
+      if (!gateGreen) {
+        reasons.push(ran.timedOut
+          ? `trunk gate did not finish in time at ${short(trunkSha)} and was stopped after ${Math.round(gateTimeoutOf(cfg) / 1000)}s (${gateCmd}) — a gate that hangs is not green; raise the limit with: horde.mjs config set gateTimeoutMs <milliseconds>`
+          : `trunk gate red at ${short(trunkSha)} (${gateCmd})`);
+      }
     }
   }
 

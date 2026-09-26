@@ -154,7 +154,8 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   anybody can write, so a row whose command does not pass now is refused whatever the record says; a
   command stated by several rows runs once); `config.gates.trunk` is not configured, or it
   is not green at the trunk branch's tip — run by `done` itself every time, in a scratch worktree of
-  the tip, and never read from `cache/last-gate.json`, whose `kind: "ran"` entry is as writable as any
+  the tip, stopped at `config.gateTimeoutMs` (default 15 minutes) and refused as not finishing in time
+  when it hangs, and never read from `cache/last-gate.json`, whose `kind: "ran"` entry is as writable as any
   other file (the run's answer is written there); no retrospective has been run on this mission at all, or the one on file was taken over
   a different set of landed tickets than the mission now has (run `retro.mjs --horde h` again).
   Otherwise: the charter is already stamped (a side effect of the evidence check above), the

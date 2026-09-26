@@ -1863,6 +1863,14 @@ export function renderTemplate(name, vars = {}) {
 export const GATE_RAN = 'ran';
 export const GATE_ASSERTED = 'asserted';
 
+// How long a gate command may run before it is stopped: `config.gateTimeoutMs`, or 15 minutes. A
+// command that hangs is a red gate, never a wait — for every tool that runs one.
+export const GATE_TIMEOUT_MS = 15 * 60 * 1000;
+export function gateTimeoutOf(cfg) {
+  const asked = Number(cfg && cfg.gateTimeoutMs);
+  return Number.isFinite(asked) && asked > 0 ? asked : GATE_TIMEOUT_MS;
+}
+
 // Runs `cmd` against one commit's own tree, in a scratch worktree that never touches the caller's.
 // `ref` is resolved first, so the answer names the exact commit it ran on; a ref that names no
 // commit is `{ ok: false, sha: null }` and nothing is run. `timeoutMs` stops a command that hangs,
