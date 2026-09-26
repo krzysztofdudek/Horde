@@ -447,7 +447,7 @@ test('E14 — a wave close states parallelism, keys transferred, decisions per m
       // configured reviewer on this fixture, and the full verdict breakdown is passed through.
       assert.equal(closed.json.quality.judges, 0);
       assert.ok(closed.json.quality.verdicts, 'totals.verdicts from yg-check/1 is carried through');
-      assert.match(block, /\*\*Quality index:\*\* enforced 1 · advisory clean 0\/0 · baseline \d+ · noise floor \d+ · coverage 2\/\d+ · judges 0 \(first reading\)/);
+      assert.match(block, /\*\*Quality index:\*\* enforced 1 · advisory clean 0\/0 · baseline \d+ · noise floor \d+ · coverage 2\/\d+ \(first reading\)/, 'no retired judge figure while there are none');
     } else {
       assert.equal(closed.json.quality.measured, false);
       assert.match(block, /\*\*Quality index:\*\* not measured — the Yggdrasil CLI could not be started/);
@@ -469,7 +469,7 @@ test('E14 — a wave close states parallelism, keys transferred, decisions per m
     assert.equal(r.code, 1);
     assert.match(r.stderr, /predates/);
     assert.match(r.stderr, /yg-check\/1 and yg-aspects\/1/);
-    assert.match(r.stderr, /Upgrade to 6\.0\.0 or newer/);
+    assert.match(r.stderr, /Upgrade to 6\.1\.0 or newer/);
     assert.match(r.stderr, /reports version 5\.7\.9/);
     run('horde.mjs', ['config', 'set', 'ygCommand', yg], dir);
   });

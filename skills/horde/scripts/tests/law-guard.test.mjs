@@ -558,7 +558,7 @@ test('law guard: a CLI that cannot answer reach stops the run, and never falls b
     "import { spawnSync } from 'node:child_process';",
     'const args = process.argv.slice(2);',
     "if (args[0] === 'aspects' && args.includes('--reach')) {",
-    '  process.stderr.write("error: unknown option \'--reach\'\\n");',
+    '  process.stdout.write(JSON.stringify({ schema: "yg-error/1", code: "usage", what: "unknown option \'--reach\'", why: null, next: { command: ["yg", "aspects", "--help"], text: "yg aspects --help" } }) + "\\n");',
     '  process.exit(1);',
     '}',
     `const real = ${JSON.stringify(real)}.split(/\\s+/);`,

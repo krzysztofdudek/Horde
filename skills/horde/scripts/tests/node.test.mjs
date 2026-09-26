@@ -54,19 +54,19 @@ test('node.mjs bind: the graph is read through the Yggdrasil CLI, and there is n
     assert.equal(r.code, 1);
     assert.match(r.stderr, /predates/);
     assert.match(r.stderr, /yg-node\/1, yg-context\/1 and yg-impact\/1/);
-    assert.match(r.stderr, /Upgrade to 6\.0\.0 or newer/);
+    assert.match(r.stderr, /Upgrade to 6\.1\.0 or newer/);
     assert.match(r.stderr, /reports version 5\.7\.3/);
     run('horde.mjs', ['config', 'set', 'ygCommand', requireYg()], dir);
   });
 
-  await t.test('a CLI older than 6.0.0 is refused even when it already answers the documents', () => {
-    // The real CLI for every document, reporting a 5.9.0 version: the documents Horde reads already
-    // existed in 5.9, so only the version tells this CLI apart from a supported one.
+  await t.test('a CLI older than 6.1.0 is refused even when it already answers the documents', () => {
+    // The real CLI for every document, reporting a 6.0.0 version: the documents Horde reads already
+    // existed in 6.0, so only the version tells this CLI apart from a supported one.
     const [cmd, ...pre] = requireYg().split(/\s+/);
     const old = join(dir, 'old-yg.mjs');
     writeFileSync(old, [
       "import { spawnSync } from 'node:child_process';",
-      "if (process.argv.includes('--version')) { console.log('5.9.0'); process.exit(0); }",
+      "if (process.argv.includes('--version')) { console.log('6.0.0'); process.exit(0); }",
       `const r = spawnSync(${JSON.stringify(cmd)}, [...${JSON.stringify(pre)}, ...process.argv.slice(2)], { stdio: 'inherit' });`,
       'process.exit(r.status === null ? 1 : r.status);',
       '',
@@ -74,8 +74,8 @@ test('node.mjs bind: the graph is read through the Yggdrasil CLI, and there is n
     run('horde.mjs', ['config', 'set', 'ygCommand', `node ${old}`], dir);
     const r = run('node.mjs', ['bind'], dir);
     assert.equal(r.code, 1, r.stdout);
-    assert.match(r.stderr, /reports version 5\.9\.0, and Horde needs 6\.0\.0 or newer/);
-    assert.match(r.stderr, /Upgrade to 6\.0\.0 or newer/);
+    assert.match(r.stderr, /reports version 6\.0\.0, and Horde needs 6\.1\.0 or newer/);
+    assert.match(r.stderr, /Upgrade to 6\.1\.0 or newer/);
     run('horde.mjs', ['config', 'set', 'ygCommand', requireYg()], dir);
   });
 });
@@ -912,4 +912,65 @@ test('node.mjs: a graph lock caught half-made is waited for, never taken for an 
   assert.equal(overlaps(paused, other), false,
     'both processes held the graph lock at the same time: the one paused mid-creation had its '
     + `lock file read as an abandoned one and taken.\n${describeRace(race)}`);
+});
+
+// Issue 297: with Yggdrasil 6.1.0 as the floor every answer is a document, and Horde reads it by its
+// code, never its words. A `usage` refusal is a call this CLI does not know — stale, whatever the
+// sentence says, with the step it names carried as argv. Words on stderr with no document are
+// nobody's code: from a CLI at the floor they are an error reported as it is, never guessed into
+// "an old CLI" by matching English.
+test('node.mjs ygJson: a yg-error/1 refusal is read by its code, and stderr prose is never matched', async () => {
+  const { ygJson } = await import('../node.mjs');
+  const dir = makeRepo();
+  try {
+    const usage = join(dir, 'usage-yg.mjs');
+    writeFileSync(usage, [
+      "if (process.argv.includes('--version')) { console.log('6.1.0'); process.exit(0); }",
+      'console.log(JSON.stringify({ schema: "yg-error/1", code: "usage", what: "opcja --json jest tu nieznana", why: null, next: { command: ["yg", "node", "--help"], text: "yg node --help" } }));',
+      'process.exit(1);',
+      '',
+    ].join('\n'));
+    const stale = ygJson(dir, { ygCommand: `node ${usage}` }, ['node', 'core', '--json'], 'yg-node/1');
+    assert.equal(stale.state, 'stale', JSON.stringify(stale));
+    assert.deepEqual(stale.nextCommand, ['yg', 'node', '--help']);
+
+    const prose = join(dir, 'prose-yg.mjs');
+    writeFileSync(prose, [
+      "if (process.argv.includes('--version')) { console.log('6.1.0'); process.exit(0); }",
+      "console.error(\"error: unknown option '--json' — node 'core' does not exist in the graph\");",
+      'process.exit(1);',
+      '',
+    ].join('\n'));
+    const said = ygJson(dir, { ygCommand: `node ${prose}` }, ['node', 'core', '--json'], 'yg-node/1');
+    assert.equal(said.state, 'error', `the words were not read as a code: ${JSON.stringify(said)}`);
+    assert.match(said.detail, /unknown option/, 'and they are reported as they were said');
+  } finally {
+    rmRepo(dir);
+  }
+});
+
+// Review of 297: the floor is compared by number, patch included. A CLI reporting 6.0.3 is below
+// 6.1.0 and refused by name; 6.1.0 and a later minor (6.10.0, never read as text) are not.
+test('node.mjs: a Yggdrasil reporting 6.0.3 is below the floor and refused naming 6.1.0; 6.1.0 and 6.10.0 are not', async () => {
+  const { ygJson, tooOldCli } = await import('../node.mjs');
+  const dir = makeRepo();
+  try {
+    const stub = (version) => {
+      const p = join(dir, `yg-${version}.mjs`);
+      writeFileSync(p, [
+        `if (process.argv.includes('--version')) { console.log(${JSON.stringify(version)}); process.exit(0); }`,
+        "console.log(JSON.stringify({ schema: 'yg-node/1', node: { path: 'core' } }));",
+        '',
+      ].join('\n'));
+      return { ygCommand: `node ${p}` };
+    };
+    assert.equal(tooOldCli(stub('6.0.3'), dir), '6.0.3');
+    assert.equal(tooOldCli(stub('6.1.0'), dir), null);
+    assert.equal(tooOldCli(stub('6.10.0'), dir), null);
+    const res = ygJson(dir, stub('6.0.3'), ['node', 'core', '--json'], 'yg-node/1');
+    assert.equal(res.state, 'stale');
+    assert.match(res.saw, /reports version 6\.0\.3, and Horde needs 6\.1\.0 or newer/);
+  } finally {
+    rmRepo(dir);
+  }
 });

@@ -180,13 +180,12 @@ function ygOpts(cfg, opts = {}) {
   return { timeout: ygTimeout(cfg), killSignal: 'SIGTERM', ...opts };
 }
 
-// The oldest Yggdrasil Horde works with: 6.0.0 or newer. Checked by schema name, never by comparing
-// version numbers (`ygJson`'s own `parsed.schema === schema` test, below) — this constant names
-// nothing more than what the refusal tells a person to install, so a newer major that keeps these
-// documents keeps working. An older Yggdrasil answers `--json` with something that is not the
-// document at all, and the horde says which release to install rather than degrading into reading
-// the graph's files itself.
-const YG_DOCUMENTS_AFTER = '6.0.0';
+// The oldest Yggdrasil Horde works with: 6.1.0 or newer — the release Horde ships beside, and the
+// first whose every answer Horde reads is a document: a failure is `yg-error/1` with a `code`, the
+// drill is `yg-drill/1`, the health view is `yg-aspects-health/1`. Nothing here reads Yggdrasil's
+// prose. A CLI that reports an older version is refused naming this release, before and after it
+// answers, rather than read a second way; a newer major that keeps these documents keeps working.
+export const YG_DOCUMENTS_AFTER = '6.1.0';
 
 const YG_DOCUMENTS = 'yg-node/1, yg-context/1 and yg-impact/1';
 
@@ -204,11 +203,11 @@ function ygVersion(cfg, cwd) {
 }
 
 // A CLI older than the floor, even one that already answers these documents: Horde requires
-// Yggdrasil 6.0.0 or newer, and a document name that happens to exist in an older release is not
+// Yggdrasil 6.1.0 or newer, and a document name that happens to exist in an older release is not
 // that. Asked once per CLI and directory; a version that cannot be read or parsed is not held
 // against the CLI, because the documents themselves are still checked by schema on every call.
 const versionCache = new Map();
-function tooOldCli(cfg, root) {
+export function tooOldCli(cfg, root) {
   const key = `${ygCommand(cfg).display}\u0000${root || ''}`;
   if (!versionCache.has(key)) versionCache.set(key, ygVersion(cfg, root));
   const reported = versionCache.get(key);
@@ -324,24 +323,27 @@ function timedOutDetail(ms) {
 // Exported because the landing gate reads the same documents on two trees at once and must not go
 // through the readers below: every one of them caches by node or by file alone, which is right for
 // a command looking at one tree and exactly wrong for a comparison of two.
-// A command that answers in JSON and fails writes a `yg-error/1` document on stdout (Yggdrasil 6.1.0
-// and newer): `code` names the failure, `what` / `why` / `next` say it. It is an answer, not a
-// stranger's document, so it is never read as an old CLI — which is what a schema mismatch otherwise
-// means above. A node the graph does not have is `absent` by its code, `node-not-found`, which every
-// command that takes a node answers with (`yg node`, `yg impact`, `yg context --node`), and by
-// nothing else: the sentence in `what` is Yggdrasil's to reword. The text test survives only for
-// 6.0.x, which writes no document and says it on stderr alone (the test below the JSON branch).
+// A command that answers in JSON and fails writes a `yg-error/1` document on stdout: `code` names the
+// failure, `what` / `why` / `next` say it. It is an answer, not a stranger's document, so it is never
+// read as an old CLI — which is what a schema mismatch otherwise means above. Everything is read by
+// its code, never by its words, which are Yggdrasil's to reword: a node the graph does not have is
+// `absent` by `node-not-found` (what every command that takes a node answers with — `yg node`, `yg
+// impact`, `yg context --node`); an option or command the CLI does not know is `usage`, which on a
+// CLI at the floor means Horde asked for something this build does not have — stale. `next.command`,
+// the step as argv, rides along as `nextCommand` for a caller that names it.
 const YG_ERROR_SCHEMA = 'yg-error/1';
-const NODE_MISSING_TEXT = /does not exist in the graph/;
 function ygErrorState(doc, { command, root, code, err }) {
   if (doc.code === 'node-not-found') return { state: 'absent', command };
-  if (/unknown option|unknown command/i.test(`${err || ''}\n${doc.what || ''}`)) {
-    return { state: 'stale', command, root, saw: 'it does not know that option' };
+  const nextCommand = doc.next && typeof doc.next === 'object' && Array.isArray(doc.next.command) ? doc.next.command : null;
+  if (doc.code === 'usage') {
+    return {
+      state: 'stale', command, root, saw: `it refused the call as usage${typeof doc.what === 'string' && doc.what ? `: ${doc.what}` : ''}`, nextCommand,
+    };
   }
   const nextText = doc.next && typeof doc.next === 'object' ? doc.next.text : doc.next;
   const detail = [doc.what, doc.why, nextText].filter((s) => typeof s === 'string' && s.trim()).join('\n');
   return {
-    state: 'error', command, code: code ?? 1, errorCode: doc.code || null, detail: detail || (err || '').trim(),
+    state: 'error', command, code: code ?? 1, errorCode: doc.code || null, nextCommand, detail: detail || (err || '').trim(),
   };
 }
 
@@ -380,8 +382,10 @@ export function ygJson(root, cfg, args, schema) {
     if (parsed && parsed.schema === YG_ERROR_SCHEMA) return ygErrorState(parsed, { command, root, code, err });
     if (parsed) return { state: 'stale', command, root, saw: `it answered a "${parsed.schema || 'nameless'}" document, not ${schema}` };
   }
-  if (NODE_MISSING_TEXT.test(err)) return { state: 'absent', command };
-  if (/unknown option|unknown command/i.test(err)) return { state: 'stale', command, root, saw: 'it does not know that option' };
+  // No document at all. A CLI at the floor always answers `--json` with one, the failure included, so
+  // one that reports an older version is that older version — named, never read around.
+  const old = tooOldCli(cfg, root);
+  if (old) return { state: 'stale', command, root, saw: `it reports version ${old}, and Horde needs ${YG_DOCUMENTS_AFTER} or newer` };
   // Exit 0 and an EMPTY body — not merely "not the document" — is not an old CLI — an old one still
   // answers something, in whatever format it knows, which the fallback below reads as stale. It is a
   // CLI that does not work from this directory at all: a relative command that resolves to nothing
@@ -569,8 +573,7 @@ export function reviewerGap(cfg, cwd) {
 // and needs no key. Always allowed, in any worktree, before any gate is judged. It is asked for its
 // yg-check/1 document (`--json`), which after the fill is the read-only report of the same tree: which
 // pairs are left, of what kind, and every finding with its code — so the fill and the read are one
-// run, and nothing here parses a report written for a person. On a CLI that has it (6.1.0 and later)
-// the document is the compact form: approved pairs left out of `pairs` (still counted in `totals`),
+// run, and nothing here parses a report written for a person. It is asked for in its compact form: approved pairs left out of `pairs` (still counted in `totals`),
 // which is everything a reader of what is left needs.
 //
 // A fill can stop at a gate before recording anything. The document says so itself — `exit.status`
@@ -584,26 +587,8 @@ export function fillDeterministic(cfg, cwd, { compact = true } = {}) {
 
 function fillArgs(cfg, cwd, compact) {
   const args = ['check', '--approve', '--only-deterministic', '--json'];
-  if (compact && cliAtLeast(cfg, cwd, YG_COMPACT_FROM)) args.push('--compact');
+  if (compact) args.push('--compact');
   return args;
-}
-
-// `--compact` arrived with 6.1.0; an older CLI refuses the flag, so it is only asked of one that has it.
-const YG_COMPACT_FROM = '6.1.0';
-
-// Whether the CLI answering in `root` reports `version` or newer. A version that cannot be read is not
-// held against the CLI: the caller then asks for the plain form, which every supported CLI answers.
-function cliAtLeast(cfg, root, version) {
-  const key = `${ygCommand(cfg).display}\u0000${root || ''}`;
-  if (!versionCache.has(key)) versionCache.set(key, ygVersion(cfg, root));
-  const m = /(\d+)\.(\d+)\.(\d+)/.exec(versionCache.get(key) || '');
-  if (!m) return false;
-  const want = version.split('.').map(Number);
-  const have = m.slice(1, 4).map(Number);
-  for (let i = 0; i < 3; i++) {
-    if (have[i] !== want[i]) return have[i] > want[i];
-  }
-  return true;
 }
 
 // One read-only `yg check`, as its yg-check/1 document, for the landing's graph item. `ok` is the
@@ -656,8 +641,7 @@ function checkSummary(doc) {
 // The pairs a verdict is still owed on, sorted by the kind of rule each one is. Read off the same
 // yg-check/1 document — every pair names its `verdict` (`unverified` never judged, `stale` judged over
 // code that has since moved) and its `kind` (`llm`: a judgement somebody has to make; anything else
-// a script that has simply not been run yet). Both fields are in the document since 6.0.0, the
-// oldest Yggdrasil Horde runs with. Pass the `runYgCheck` answer already in hand to read it once.
+// a script that has simply not been run yet). Both fields are in every document Horde accepts. Pass the `runYgCheck` answer already in hand to read it once.
 export function pendingProsePairs(cfg, cwd, checked = runYgCheck(cfg, cwd)) {
   // A run that was stopped, or never started, listed nothing, which is not the same as "nothing is
   // pending" — reading it as an empty list would hand a caller a confident "no prose rule waits" off
@@ -923,9 +907,10 @@ export function renderFindings(doc, findings) {
 //   noiseFloor     findings that only warn — the standing noise — less the same, and less a log
 //                  cycle a free fill left open (`logCyclesOpen`)
 //   coverage       files a component owns, of all files the graph can see (yg-check/1 coverage)
-//   judges         distinct external judges a verdict in force rests on (yg-check/1 judges) —
-//                  verifier-is-yggdrasil-reviewer's own count of who is answering outside the
-//                  configured reviewer; not part of what "fell" means below, shown for the record
+//   judges         distinct judges other than the configured reviewer that a verdict in force
+//                  still rests on (yg-check/1 judges) — the external channel 6.1.0 retired, whose
+//                  verdicts stay until their pairs are judged again; shown only while above zero,
+//                  never part of what "fell" means below
 //
 // Beside them, never part of what "fell" means: `unfilled` (findings that are a pair with no
 // verdict yet for a cache reason — stale, never reviewed, not run in this checkout, keyed by an
@@ -1030,14 +1015,10 @@ export function ygQualityIndex(cfg, cwd) {
     logCyclesOpen: logCycles.length,
     fillStopped: check.exit && check.exit.status === 'aborted' ? ((check.aborted && check.aborted.stage) || 'unknown') : null,
     // coverage.covered also counts excluded files, so a repository whose init excluded its own
-    // plumbing (Yggdrasil 6.1.0+) would read as covered by files no node owns. With the split
-    // present, covered is what a node or a type answers for, out of the files not excluded.
-    coveredFiles: check.coverage.nodeOwned != null
-      ? check.coverage.nodeOwned + (check.coverage.typeCovered ?? 0)
-      : check.coverage.covered,
-    totalFiles: check.coverage.nodeOwned != null
-      ? check.coverage.files - (check.coverage.excluded ?? 0)
-      : check.coverage.files,
+    // plumbing would read as covered by files no node owns. Covered is what a node or a type answers
+    // for, out of the files not excluded.
+    coveredFiles: (check.coverage.nodeOwned ?? 0) + (check.coverage.typeCovered ?? 0),
+    totalFiles: check.coverage.files - (check.coverage.excluded ?? 0),
     nodes: check.project.nodes,
     aspects: check.project.aspects,
     judges: check.judges.length,
@@ -1079,47 +1060,10 @@ export function ygQualityIndex(cfg, cwd) {
 const ASPECT_RUNGS = ['draft', 'advisory', 'enforced'];
 const WAVES_CLEAN_FOR_ENFORCED = 2;
 
-// `yg drill --json` answers `yg-drill/1` (Yggdrasil 6.1.0 and newer), and that document is what is
-// read (drillFromDoc below). Yggdrasil 6.0.x, which the version floor still allows, has no `--json`
-// on drill, so for that CLI alone its summary line is read — tolerantly, because its wording is
-// Yggdrasil's to change. The line is the
-// one that counts cases (`<n> pass`); on it every `<n> <word>` is read by what the word means, in
-// any order, any case, any separator (`2 pass · 0 MISS`, `2 passed, 0 missed`, `0 false alarms`).
-// A count the line leaves out is zero — a grammar that drops zero segments says nothing about them —
-// but only when every count the line DOES carry is one of the five outcomes: a word Horde does not
-// know may be a renamed outcome, and reading its absence as zero would be a guess. Such a line is
-// unread, never green. The drill's own exit code is the second witness: any MISS or FALSE-ALARM
-// exits 1 and any unrun exits 2 whatever the text says, so a line that disagrees with it is unread too.
-const DRILL_OUTCOMES = [
-  ['pass', /^pass(?:ed|es)?$/],
-  ['miss', /^miss(?:ed|es)?$/],
-  ['falseAlarm', /^false[- ]?alarms?$/],
-  ['unrun', /^unrun$/],
-  ['unsupported', /^unsupported$/],
-];
-const DRILL_COUNT_RE = /(\d+)\s+(false[- ]alarms?|[a-z]+(?:-[a-z]+)*)/gi;
-
-export function parseDrillSummary(out, exit = null) {
-  const lines = String(out || '').replace(/\x1b\[[0-9;]*m/g, '').split('\n').map((l) => l.trim());
-  const line = lines.find((l) => /\b\d+\s+pass(?:ed|es)?\b/i.test(l));
-  if (!line) return null;
-  const counts = {
-    pass: 0, miss: 0, falseAlarm: 0, unrun: 0, unsupported: 0,
-  };
-  for (const [, n, word] of line.matchAll(DRILL_COUNT_RE)) {
-    const outcome = DRILL_OUTCOMES.find(([, re]) => re.test(word.toLowerCase()));
-    if (!outcome) return null;
-    counts[outcome[0]] = Number(n);
-  }
-  if (exit !== null && exit !== undefined) {
-    const expected = counts.miss > 0 || counts.falseAlarm > 0 ? 1 : counts.unrun > 0 ? 2 : 0;
-    if (exit !== expected) return null;
-  }
-  return { ...counts, line };
-}
-
-// The five counts off a `yg-drill/1` document, the same shape parseDrillSummary returns (its `line`
-// is the document's own counts written out, for a report that quotes it). The exit code is the
+// `yg drill --json` answers `yg-drill/1`, and that document is what is read (drillFromDoc below):
+// the five counts, never the summary line printed for a person.
+// The five counts off a `yg-drill/1` document, and `line`, the document's own counts written out for a
+// report that quotes it. The exit code is the
 // second witness here as well: a document whose counts disagree with how the drill exited is unread,
 // never green. Null when the document is not one, or carries a count that is not a whole number.
 const DRILL_SCHEMA = 'yg-drill/1';
@@ -1190,17 +1134,15 @@ export function aspectStanding(checkDoc, aspect) {
 }
 
 // `yg drill --aspect <id>` — the rule over its own case corpus, read as its `yg-drill/1` document.
-// A CLI that does not know `--json` there (6.0.x: `unknown option '--json'`, refused before any case
-// runs, so nothing is run or billed twice) is asked again without it and its summary line is read.
-// A run whose counts cannot be read either way is reported as unread rather than as green.
+// A refusal is its `yg-error/1` (what, why, next); a run whose counts cannot be read is reported as
+// unread rather than as green.
 function startDrill(cfg, root, args) {
   const { cmd, prefix } = ygCommand(cfg);
   return startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
 }
 
-function readDrillRun(run, asJson) {
+function readDrillRun(run) {
   const out = `${run.out || ''}${run.err || ''}`;
-  if (!asJson) return { parsed: parseDrillSummary(out, run.code), out };
   const body = String(run.out || '').trim();
   let doc = null;
   if (body.startsWith('{')) {
@@ -1215,22 +1157,26 @@ function readDrillRun(run, asJson) {
 
 export function runDrill(root, cfg, aspect) {
   const { display } = ygCommand(cfg);
-  let args = ['drill', '--aspect', aspect, '--json'];
-  let run = startDrill(cfg, root, args);
-  let asJson = true;
-  if (!run.timedOut && !run.missing && !run.spawnFailed && run.code !== 0 && /unknown option '--json'/.test(run.err || '')) {
-    args = ['drill', '--aspect', aspect];
-    run = startDrill(cfg, root, args);
-    asJson = false;
-  }
+  const args = ['drill', '--aspect', aspect, '--json'];
   const command = `${display} ${args.join(' ')}`;
+  // A CLI below the floor is named before a single case runs (a drill can cost a reviewer's time),
+  // by the version it reports — the same refusal every other document read gives.
+  const old = tooOldCli(cfg, root);
+  if (old) {
+    return {
+      available: true, command, root, read: false, stale: true, cases: 0, green: false,
+      saw: `it reports version ${old}, and Horde needs ${YG_DOCUMENTS_AFTER} or newer`,
+      out: `the Yggdrasil CLI reports version ${old}, and Horde needs ${YG_DOCUMENTS_AFTER} or newer`,
+    };
+  }
+  const run = startDrill(cfg, root, args);
   if (run.timedOut) {
     return {
       available: true, command, read: false, timedOut: true, out: timedOutDetail(run.ms), cases: 0, green: false,
     };
   }
   if (run.missing || run.spawnFailed) return { available: false, command };
-  const { parsed, out } = readDrillRun(run, asJson);
+  const { parsed, out } = readDrillRun(run);
   if (!parsed) {
     return {
       available: true, command, read: false, out: out.trim(), cases: 0, green: false,
@@ -1356,26 +1302,13 @@ function logToNodes(root, cfg, nodes, reason) {
   return { logged, missed };
 }
 
-// The release "aspects log" arrived in — the same shape as YG_DOCUMENTS_AFTER above, but for a
-// plain command rather than a --json document: `aspects log add` has no --json of its own, so a
-// too-old CLI is told apart by how it fails rather than by what schema it answered with. The
-// refusal still points at Horde's own floor, because a CLI that has the log and not the documents
-// is refused one read later anyway.
-const ASPECT_LOG_SINCE = '5.9.0';
-
-// Commander's own two shapes for "this subcommand does not exist here": an unrecognised name, and
-// — the shape a pre-152 `aspects` prints, since it took no subcommands at all — positional
-// arguments handed to a command that accepts none. Either means the installed CLI predates the
-// rule's own log, never that the graph refused something.
-const STALE_ASPECT_LOG_RE = /unknown option|unknown command|too many arguments for/i;
-
-function failNoAspectLog(cfg, command, root) {
+// `aspects log add` has no `--json` of its own, so a CLI below the floor is told apart by the version
+// it reports, asked before anything is written — never by the words of how it fails.
+function failNoAspectLog(cfg, command, root, version) {
   const { display } = ygCommand(cfg);
-  const version = ygVersion(cfg, root);
   fail(
-    `\`${command}\` did not run${root ? `, run in ${root}` : ''} — the Yggdrasil CLI at "${display}"${root ? ', as it resolves from there,' : ''}${version ? ` reports version ${version} and` : ''} `
-    + `predates its own rule log ("yg aspects log add" / "yg aspects log read"), which arrived in ${ASPECT_LOG_SINCE}, the `
-    + 'feature a rule\'s own history now lives in.\n'
+    `\`${command}\` did not run${root ? `, run in ${root}` : ''} — the Yggdrasil CLI at "${display}"${root ? ', as it resolves from there,' : ''} reports version ${version}, `
+    + `and Horde needs ${YG_DOCUMENTS_AFTER} or newer for a rule's own log ("yg aspects log add").\n`
     + `Upgrade to ${YG_DOCUMENTS_AFTER} or newer (npm i -g @chrisdudek/yg), or point the horde at a newer `
     + 'build: horde.mjs config set ygCommand "node path/to/bin.js"',
   );
@@ -1391,6 +1324,8 @@ function logToAspect(root, cfg, aspectId, reason, { status, evidence, by } = {})
   if (status) args.push('--status', status, '--evidence', evidence);
   if (by) args.push('--by', by);
   const command = `${yg.display} ${args.join(' ')}`;
+  const old = tooOldCli(cfg, root);
+  if (old) { failNoAspectLog(cfg, command, root, old); return null; }
   const run = startCli(yg.cmd, [...yg.prefix, ...args], ygOpts(cfg, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
   if (run.missing) { failNoCli(cfg, command); return null; }
   if (run.timedOut) { fail(`\`${command}\` — ${timedOutDetail(run.ms)}`); return null; }
@@ -1399,7 +1334,6 @@ function logToAspect(root, cfg, aspectId, reason, { status, evidence, by } = {})
     return null;
   }
   if (run.code !== 0) {
-    if (STALE_ASPECT_LOG_RE.test(run.err || '')) { failNoAspectLog(cfg, command, root); return null; }
     fail(`\`${command}\` — ${(run.err || run.out || '').trim()}`);
     return null;
   }
@@ -1472,6 +1406,7 @@ function ladderEvidence(horde, root, cfg, aspect, { withReviewer }) {
 
   const drill = runDrill(root, cfg, aspect);
   if (!drill.available) failNoCli(cfg, drill.command);
+  if (drill.stale) failStaleCli(cfg, drill, 'yg-drill/1');
   // The free, keyless fill first: a pair whose code has moved since it was last judged reads as
   // unjudged until a script has looked again, and refusing to raise a rule over that would be
   // refusing over a question a command answers for nothing.

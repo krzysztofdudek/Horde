@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
 const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'templates');
@@ -298,6 +298,20 @@ export function createLockFile(path, content) {
 export function processAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+// When the process `pid` started, as the system reports it (`ps -o lstart=`), or null where that cannot
+// be read (no such process, no `ps`, a platform without it). Recorded beside a pid that is kept for
+// longer than one run, so a live pid can be told apart from a new process that was given the same
+// number after the first one ended: same pid, a different start, is a different process.
+export function processStartedAt(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
 }
 
 // readLockText(path) / removeStaleLock(path, seen) — taking over a lock judged abandoned, safely.
@@ -1697,17 +1711,23 @@ export function today() {
 // not. Every tool below still ends on a refusal exactly as before, because `runMain` turns this
 // into the same `error: ...` line and the same exit code — and `process.exit` now lives only
 // there, in one place, at the edge of each script.
+// `reason` is an optional word a caller that catches the refusal can decide by — never the
+// message, which is written for a person and is free to be reworded.
 export class HordeError extends Error {
-  constructor(msg, code = 1) {
+  constructor(msg, code = 1, reason = null) {
     super(msg);
     this.name = 'HordeError';
     this.code = code;
+    this.reason = reason;
   }
 }
 
-export function fail(msg, code = 1) {
-  throw new HordeError(msg, code);
+export function fail(msg, code = 1, reason = null) {
+  throw new HordeError(msg, code, reason);
 }
+
+// The reasons a refusal carries for a caller to decide by.
+export const REASON_RECLAIM_REFUSED = 'reclaim-refused';
 
 // runMain(main) — the one place a horde tool exits. A refusal raised anywhere below prints the
 // same `error: ...` line it always did and exits with its code; anything else keeps its stack and
@@ -1843,15 +1863,55 @@ export function renderTemplate(name, vars = {}) {
 // cache/last-gate.json holds, per level, the last gate result somebody can point at. Every entry
 // says how it got there: `kind: 'ran'` when a tool here ran the level's gate command itself and
 // read its exit code (a landing, `wave close --gate green --sha`, `horde.mjs done`), `kind:
-// 'asserted'` when it is only what somebody typed (`wave close --gate red`). `done` trusts only
-// `ran`; an entry from before the field existed carries neither word and is run again.
+// 'asserted'` when it is only what somebody typed (`wave close --gate red`). It is a record, never
+// a proof — a file anybody can write — so `horde.mjs done` reads no entry here and runs the trunk
+// gate itself at the tip it hands over.
 export const GATE_RAN = 'ran';
 export const GATE_ASSERTED = 'asserted';
 
+// How long a gate command may run before it is stopped: `config.gateTimeoutMs`, or 15 minutes. A
+// command that hangs is a red gate, never a wait — for every tool that runs one.
+export const GATE_TIMEOUT_MS = 15 * 60 * 1000;
+export function gateTimeoutOf(cfg) {
+  const asked = Number(cfg && cfg.gateTimeoutMs);
+  return Number.isFinite(asked) && asked > 0 ? asked : GATE_TIMEOUT_MS;
+}
+
+// Runs `cmd` in `cwd` as a process group of its own, and waits for it. A timeout stops the whole
+// group — the shell and everything it started — not the shell alone: a test runner the shell
+// launched would otherwise go on running, and holding the worktree, after the gate said it was
+// stopped. Whatever the group left running once the command itself ends is stopped too. Node's
+// synchronous spawn cannot make a group or signal one, so a small supervisor does it: it starts the
+// command detached (its own group), and on the deadline sends SIGTERM to the group, then SIGKILL.
+const GROUP_SUPERVISOR = `
+const { spawn } = require('node:child_process');
+const [cmd, cwd, ms] = process.argv.slice(1);
+const child = spawn('sh', ['-c', cmd], { cwd, detached: true, stdio: 'ignore' });
+const group = (sig) => { try { process.kill(-child.pid, sig); } catch {} };
+let timedOut = false;
+const timer = Number(ms) > 0 ? setTimeout(() => { timedOut = true; group('SIGTERM'); setTimeout(() => group('SIGKILL'), 2000).unref(); }, Number(ms)) : null;
+child.on('error', () => process.exit(127));
+child.on('exit', (code) => {
+  if (timer) clearTimeout(timer);
+  group('SIGKILL');
+  if (timedOut) process.stdout.write('HORDE-GATE-TIMED-OUT');
+  process.exit(timedOut ? 1 : (code ?? 1));
+});
+`;
+
+export function runCommandGroup(cmd, cwd, timeoutMs = null) {
+  const res = spawnSync(process.execPath, ['-e', GROUP_SUPERVISOR, cmd, cwd, String(timeoutMs || 0)], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    ...(timeoutMs ? { timeout: timeoutMs + 10000, killSignal: 'SIGKILL' } : {}),
+  });
+  const timedOut = String(res.stdout || '').includes('HORDE-GATE-TIMED-OUT') || (res.error && res.error.code === 'ETIMEDOUT');
+  return { ok: !timedOut && res.status === 0, timedOut: !!timedOut };
+}
+
 // Runs `cmd` against one commit's own tree, in a scratch worktree that never touches the caller's.
 // `ref` is resolved first, so the answer names the exact commit it ran on; a ref that names no
-// commit is `{ ok: false, sha: null }` and nothing is run. `timeoutMs` stops a command that hangs,
-// which is a red gate, never a wait.
+// commit is `{ ok: false, sha: null }` and nothing is run. `timeoutMs` stops a command that hangs —
+// the command and every process it started (runCommandGroup) — which is a red gate, never a wait.
 export function runGateAt(root, cmd, ref, timeoutMs = null) {
   let sha = null;
   try {
@@ -1863,13 +1923,9 @@ export function runGateAt(root, cmd, ref, timeoutMs = null) {
   let timedOut = false;
   try {
     execFileSync('git', ['worktree', 'add', '--detach', '--force', tmp, sha], { cwd: root, stdio: 'pipe' });
-    try {
-      execSync(cmd, { cwd: tmp, stdio: 'pipe', ...(timeoutMs ? { timeout: timeoutMs, killSignal: 'SIGTERM' } : {}) });
-      ok = true;
-    } catch (e) {
-      ok = false;
-      timedOut = e.killed === true || e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT';
-    }
+    const res = runCommandGroup(cmd, tmp, timeoutMs);
+    ok = res.ok;
+    timedOut = res.timedOut;
   } finally {
     try { execFileSync('git', ['worktree', 'remove', tmp, '--force'], { cwd: root, stdio: 'pipe' }); } catch { rmSync(tmp, { recursive: true, force: true }); }
   }

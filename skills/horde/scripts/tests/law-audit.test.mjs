@@ -124,19 +124,21 @@ function passthroughYg(dir, realYg, name, matchJs, bodyJs) {
   return `node ${path}`;
 }
 
-// The real table `yg aspects --health` prints, with the one row a fixture cannot earn: a rule with
-// recorded exposure and zero catches. Both the `decorative?` cell and the plain-words line under
-// the table are copied verbatim from Yggdrasil's own renderer (cli/aspects.ts's HEALTH_HEADERS and
-// core/aspect-health-signals.ts's covenantLine) — the point of the test is that Horde repeats
-// Yggdrasil's reading, so inventing a nicer sentence here would test nothing.
-const HEALTH_WITH_A_QUIET_RULE = [
-  'aspect     kind           status    nodes  pairs  refused  suppresses  errs   age  catch  exposure  signal       fp  wrong-rule  files',
-  'no-marker  deterministic  enforced  1      1      0        0           under  <1d  0      40        decorative?  —   —           0',
-  '',
-  'Signal detail (catch = violations caught; exposure = times the reviewer judged):',
-  '  no-marker: enforceable but never violated — may be deterring violations (0 of 40 recorded checks; estimated catch rate ~2%).',
-  '',
-].join('\\n');
+// The `yg-aspects-health/1` document `yg aspects --health --json` answers, with the one rule a
+// fixture cannot earn: recorded exposure and zero catches. The `decorative?` signal and the
+// plain-words reading are copied verbatim from Yggdrasil's own (core/aspect-health-signals.ts's
+// covenantLine) — the point of the test is that Horde repeats Yggdrasil's reading, so inventing a
+// nicer sentence here would test nothing.
+const HEALTH_WITH_A_QUIET_RULE = JSON.stringify({
+  schema: 'yg-aspects-health/1',
+  rules: [{
+    aspect: 'no-marker', kind: 'deterministic', status: 'enforced', nodes: 1, pairs: 1, refused: 0, catch: 0, exposure: 40,
+    signal: 'decorative?',
+    reading: 'enforceable but never violated — may be deterring violations (0 of 40 recorded checks; estimated catch rate ~2%).',
+  }],
+  wildcardMarkers: 0,
+  telemetry: null,
+});
 
 test('the law audit: an overdue review date becomes a ticket that ends in a proposal, never in an edit to the date', async (t) => {
   const yg = requireYg();
@@ -425,7 +427,7 @@ test('the law audit: a rule nothing has hit is reported in Yggdrasil\'s words, a
     run('wave.mjs', ['start'], dir);
     const closed = run('wave.mjs', ['close', '--gate', 'green'], dir);
     assert.equal(closed.code, 0, closed.stderr);
-    assert.equal(closed.json.audit.health.read, true, 'the real `yg aspects --health` answers its own table');
+    assert.equal(closed.json.audit.health.read, true, 'the real `yg aspects --health --json` answers its own document');
     assert.deepEqual(closed.json.audit.quiet, []);
     assert.match(auditSection(dir), /Rules nothing has hit: none — no rule has gone 2 closed waves without something against it\./);
   });
@@ -438,7 +440,7 @@ test('the law audit: a rule nothing has hit is reported in Yggdrasil\'s words, a
     const stubbed = passthroughYg(
       dir, yg, 'health-yg.mjs',
       "argv[0] === 'aspects' && argv[1] === '--health'",
-      `  process.stdout.write("${HEALTH_WITH_A_QUIET_RULE}");\n  process.exit(0);`,
+      `  process.stdout.write(${JSON.stringify(HEALTH_WITH_A_QUIET_RULE)});\n  process.exit(0);`,
     );
     run('horde.mjs', ['config', 'set', 'ygCommand', stubbed], dir);
 
@@ -449,7 +451,7 @@ test('the law audit: a rule nothing has hit is reported in Yggdrasil\'s words, a
     assert.equal(closed.json.audit.quiet.length, 1);
     const [quiet] = closed.json.audit.quiet;
     assert.equal(quiet.aspect, 'no-marker');
-    assert.equal(quiet.signal, 'decorative?', "the graph's own label, read off its own table");
+    assert.equal(quiet.signal, 'decorative?', "the graph's own label, read off its own document");
     assert.equal(
       quiet.reading,
       'enforceable but never violated — may be deterring violations (0 of 40 recorded checks; estimated catch rate ~2%).',

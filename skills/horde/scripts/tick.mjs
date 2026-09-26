@@ -42,7 +42,7 @@ import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readText, readConfig, nowIso, fail, HordeError, parseArgs, emit,
   isMain, resolveHorde, git, resolveTree, withProvenance, provenanceLine, withQueueLock,
-  runMain, appendText, parseEvidenceRows, classUp, processAlive,
+  runMain, appendText, parseEvidenceRows, classUp, processAlive, REASON_RECLAIM_REFUSED,
 } from './_lib.mjs';
 import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine, recordWorkerRun,
@@ -125,12 +125,15 @@ nobody reads it as ready.
 
 --runner names who is spinning the loop, and only "external" changes what this script does: it
 starts each worker itself through config.runner.spawn, and each review the same way. "session" (the
-default) starts nothing — the caller does.
+default) starts nothing — the caller does. The runner.spawn command must keep the agent in the
+foreground: the process it starts is how the next run knows the worker still works, and one that
+backgrounds the agent ("&", nohup) ends at once and has its worker read as ended.
 
 --watch repeats the run every config.tick.interval seconds until the queue empties or a signal
 arrives — an open "stop" holds the close, so it keeps waiting rather than exiting on an emptied
 queue the client still has a question about. A signal exits cleanly: no lock left held, nothing
-half-written.
+half-written. --reclaim under --watch is read by the first pass that runs, then dropped; a pass
+refused for another reason keeps it for the next.
 
 options: --json  --help`;
 
@@ -1123,10 +1126,16 @@ async function watch(horde, cfg, flags, runner) {
       // forever instead of crashing loudly where whoever is watching can see it.
       if (!(e instanceof HordeError)) throw e;
       recordRefusal(horde, e, flags);
+      // A refusal of the --reclaim itself (a ticket nobody holds) is the same on every pass, so it is
+      // said once, like any settled one; the loop goes on without it.
+      if (e.reason === REASON_RECLAIM_REFUSED) pass = { ...pass, reclaim: undefined };
     }
-    // --reclaim is the director's word about one moment, so it is said once: the first pass settles
-    // those tickets, and a later pass reading it again would refuse them for no longer running.
-    pass = { ...flags, reclaim: undefined };
+    // --reclaim is the director's word about one moment, so it is said once: the first pass that
+    // succeeds settles those tickets, and a later pass reading it again would refuse them for no
+    // longer running. A pass refused for something else (a lock another run held) settled nothing,
+    // so the word is kept for the next one — dropping it there would leave the ticket held by a
+    // worker the director already said is gone.
+    if (out) pass = { ...pass, reclaim: undefined };
     if (out) {
       if (flags.json) console.log(JSON.stringify(out, null, 2));
       else console.log(render(out));

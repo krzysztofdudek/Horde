@@ -314,7 +314,7 @@ test('a Yggdrasil CLI Horde does not know: a refusal naming the version to insta
   assert.equal(r.code, 1);
   assert.match(r.stderr, /did not answer with the yg-aspects\/1 document Horde reads/);
   assert.match(r.stderr, /reports version/);
-  assert.match(r.stderr, /Upgrade to 6\.0\.0 or later/);
+  assert.match(r.stderr, /Upgrade to 6\.1\.0 or later/);
   assert.match(r.stderr, /npm i -g @chrisdudek\/yg/);
   assert.equal(existsSync(lawPath(dir, '1')), false);
 });
@@ -373,7 +373,7 @@ test('a CLI that does not know a flag the law diff needs: a refusal naming the c
     `const REAL = ${JSON.stringify(yg)};`,
     'const argv = process.argv.slice(2);',
     "if (argv[0] === 'aspects' && argv.includes('--reach')) {",
-    '  process.stderr.write("error: unknown option \'--reach\'\\n");',
+    '  process.stdout.write(JSON.stringify({ schema: "yg-error/1", code: "usage", what: "unknown option \'--reach\'", why: null, next: { command: ["yg", "aspects", "--help"], text: "yg aspects --help" } }) + "\\n");',
     '  process.exit(1);',
     '}',
     'const real = REAL.split(/\\s+/);',
@@ -387,7 +387,7 @@ test('a CLI that does not know a flag the law diff needs: a refusal naming the c
   const r = run('law.mjs', ['diff', '--wave', '1'], dir);
   assert.equal(r.code, 1);
   assert.match(r.stderr, /aspects --json --reach/);
-  assert.match(r.stderr, /it does not know that option/);
+  assert.match(r.stderr, /refused the call as usage/);
   assert.doesNotMatch(r.stderr, /check --json --full/, 'and never by silently asking the older document instead');
   assert.equal(existsSync(lawPath(dir, '1')), false);
 });

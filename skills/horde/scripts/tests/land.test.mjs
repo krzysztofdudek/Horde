@@ -1403,11 +1403,12 @@ test('land.mjs: --level trunk selects the trunk gate; --level team is not a valu
 
 // A landing writes its own measurement to cache/last-gate.json (at the sha the merge actually
 // produced, not the pre-merge ticket-branch tip — a `--no-ff` merge commit is never that sha), so
-// `horde.mjs done` and `wave.mjs close`, run right after, read what this landing just measured
-// instead of finding nothing recorded. The gate command counts its own calls to a file outside any
-// worktree the landing cleans up, so "did `done` trust the cache" is a fact about how many times
+// `wave.mjs close`, run right after, reports what this landing just measured instead of finding
+// nothing recorded. `horde.mjs done` does not rest on that record (issue 371: a record is a file
+// anybody can write) and runs the gate itself. The gate command counts its own calls to a file
+// outside any worktree the landing cleans up, so "did `done` run it" is a fact about how many times
 // the command ran, not an inference from timing.
-test('land.mjs: a green landing at --level trunk records the gate cache, so `done` accepts it without re-running the gate and `wave.mjs close` reports it recorded', async (t) => {
+test('land.mjs: a green landing at --level trunk records the gate cache — `wave.mjs close` reports it, and `done` runs the gate itself', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   const { branch } = setupLandable(dir, '020');
@@ -1430,24 +1431,19 @@ test('land.mjs: a green landing at --level trunk records the gate cache, so `don
   assert.equal(cacheAfterLand.trunk.result, 'green');
   assert.match(cacheAfterLand.trunk.by, /^land /);
 
-  // `done` is not otherwise satisfied here (no evidence, no retrospective on file), so this run
-  // still refuses with exactly those two reasons — but its own trunk-gate check runs before any of
-  // that, unconditionally, and what matters is only what it did about the gate: found a matching
-  // cached green and accepted it, rather than re-running the whole command a second time over the
-  // tree land.mjs just measured. A third reason (any of the three phrasings `done` itself uses for
-  // "the gate was not accepted") would mean it was not accepted after all.
-  const done = run('horde.mjs', ['done'], dir);
-  assert.equal(done.code, 1);
-  assert.match(done.stderr, /is not done — 2 reason\(s\):/, `a 3rd reason would mean the gate was not accepted from cache: ${done.stderr}`);
-  assert.doesNotMatch(done.stderr, /trunk gate red|no config\.gates\.trunk configured|no such branch: mission1\/trunk/);
-  assert.equal(callCount(), 1, 'still exactly one gate run after `done` — it trusted the cache instead of measuring again');
-  assert.deepEqual(JSON.parse(readFileSync(cachePath, 'utf8')).trunk, cacheAfterLand.trunk, '`done` left the cache exactly as the landing wrote it, rather than overwriting it with a fresh run of its own');
-
-  // `wave.mjs close`, run with none of its own --gate/--sha, reads that same recorded entry rather
+  // `wave.mjs close`, run with none of its own --gate/--sha, reads that recorded entry rather
   // than reporting the gate as unrecorded right after a landing that was green.
   const close = run('wave.mjs', ['close'], dir);
   assert.equal(close.code, 0, close.stderr);
   assert.equal(close.json.gate, 'green');
+
+  // `done` is not otherwise satisfied here (no evidence, no retrospective on file), so it refuses
+  // for those — and it ran the gate itself at the trunk tip, green, rather than taking the record.
+  const done = run('horde.mjs', ['done'], dir);
+  assert.equal(done.code, 1);
+  assert.doesNotMatch(done.stderr, /trunk gate red|no config\.gates\.trunk configured|no such branch: mission1\/trunk/);
+  assert.equal(callCount(), 2, '`done` ran the gate once more itself — the record is not proof');
+  assert.equal(JSON.parse(readFileSync(cachePath, 'utf8')).trunk.by, 'horde done');
 });
 
 // ---- the gate's own report: the paired case actually ran (022) ------------------------------
@@ -3889,6 +3885,16 @@ test('land.mjs appendOnlyMerge: both sides\' added lines are kept, the parent\'s
   assert.equal(appendOnlyMerge(CHANGELOG_BASE, parent, `${CHANGELOG_BASE}- tail\n`), `${parent}- tail\n`);
 });
 
+// Issue 359: two tickets that each open the same new section for their own line add the same heading;
+// the merge writes it once, with both lines under it, not a second copy of the heading.
+test('land.mjs appendOnlyMerge: identical leading lines both sides added are written once', () => {
+  const parent = CHANGELOG_BASE.replace('### Added\n', '### Added\n\n### Fixed\n- one\n');
+  const branch = CHANGELOG_BASE.replace('### Added\n', '### Added\n\n### Fixed\n- two\n');
+  const merged = appendOnlyMerge(CHANGELOG_BASE, parent, branch);
+  assert.equal(merged, CHANGELOG_BASE.replace('### Added\n', '### Added\n\n### Fixed\n- one\n- two\n'));
+  assert.equal(merged.match(/### Fixed/g).length, 1);
+});
+
 test('land.mjs: three parallel tickets on one node, each adding a log entry and a CHANGELOG line, land in one batch with no stale refusal', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -3975,10 +3981,24 @@ test('land.mjs: a catch-up conflict outside the files that merge by rule is stil
 // A catch-up merge moves the code a branch's prose verdicts were recorded over, so a landing that is
 // red only for those pending verdicts was made red by somebody else's landing. Its result says
 // "rejudge" and no round is written.
+// The branch had its prose judged before the parent came in: its committed lock carries a verdict for
+// the pair the catch-up then leaves pending (the entry's hash is beside the point — what the merge
+// changed is exactly whether it still holds).
+function recordVerdictOnBranch(dir, branch, aspect, unitKey) {
+  git(['checkout', '-q', branch], dir);
+  writeFileSync(join(dir, '.yggdrasil', 'yg-lock.nondeterministic.json'), `${JSON.stringify({
+    version: 1, verdicts: { [aspect]: { [unitKey]: { hash: '0'.repeat(64), verdict: 'approved' } } }, nodes: {},
+  }, null, 2)}\n`);
+  git(['add', '.yggdrasil/yg-lock.nondeterministic.json'], dir);
+  git(['commit', '-qm', 'prose judged'], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+}
+
 test('land.mjs: after a clean catch-up, a landing red only for pending prose verdicts is "rejudge" and counts no round', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   const { branch, issueDir: dst } = setupLandable(dir, '191', { prose: true, reviewer: true });
+  recordVerdictOnBranch(dir, branch, 'reads-well', 'node:feature');
   // The parent moves on under the branch, cleanly.
   git(['checkout', '-q', 'mission1/trunk'], dir);
   writeFileSync(join(dir, 'elsewhere.txt'), 'a sibling landed\n');
@@ -4003,6 +4023,29 @@ test('land.mjs: after a clean catch-up, a landing red only for pending prose ver
   assert.equal(own.code, 1);
   assert.notEqual(own.json.rejudge, true);
   assert.match(ticketLog(other, '192'), /round 1\//);
+});
+
+// Issue 359: a catch-up is what left the prose pending only when the branch had it judged before the
+// merge. A branch that never recorded a verdict is red on its own account — without this, every move
+// of the parent handed it another free round.
+test('land.mjs: after a clean catch-up, prose the branch never had judged is its own red, not "rejudge"', async () => {
+  const dir = makeRepo();
+  try {
+    const { branch, issueDir: dst } = setupLandable(dir, '193', { prose: true, reviewer: true });
+    git(['checkout', '-q', 'mission1/trunk'], dir);
+    writeFileSync(join(dir, 'elsewhere.txt'), 'a sibling landed\n');
+    git(['add', 'elsewhere.txt'], dir);
+    git(['commit', '-qm', 'a sibling landed'], dir);
+    writeTicketLog(dst);
+
+    const r = run('land.mjs', [branch], dir);
+    assert.equal(r.code, 1, r.stdout + r.stderr);
+    assert.match(byName(r)['base freshness'].note, /brought mission1\/trunk into mission1\/t-193/);
+    assert.notEqual(r.json.rejudge, true, JSON.stringify(r.json.checks));
+    assert.match(ticketLog(dir, '193'), /round 1\//, 'the round is counted');
+  } finally {
+    rmRepo(dir);
+  }
 });
 
 // ---- the graph item reads the fill's own document (issues 291 and 296) ---------------------------

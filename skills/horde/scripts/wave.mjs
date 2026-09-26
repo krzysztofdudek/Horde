@@ -18,7 +18,7 @@ import {
   hordePath, teamPath, readText, writeText, appendText, readJSON, writeJSON, readConfig, today,
   nowIso, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy, resolveTree,
   markdownSection, markdownTableCells, parseEvidenceRows, parseVerdictBlocks, diffSize, sizeRanks,
-  noEvidenceLayerNote, EVIDENCE_CLASSES, git, runGateAt, GATE_RAN, GATE_ASSERTED,
+  noEvidenceLayerNote, EVIDENCE_CLASSES, git, runGateAt, gateTimeoutOf, GATE_RAN, GATE_ASSERTED,
   runMain,
 } from './_lib.mjs';
 // The charter section's heading lives with the readers of it, and is handed on from here because
@@ -62,8 +62,8 @@ commands:
       renders templates/wave-close.md — counts from the team's queue.json — and appends it.
       --gate green --sha runs the level's gate command (config.gates.trunk for the trunk team)
       at that commit — which must be on the trunk — here, before anything is written, and refuses the close when it does not
-      pass; what it records in cache/last-gate.json is that run (kind "ran"), the only kind of
-      entry "horde.mjs done" trusts. --gate red --sha is recorded as said (kind "asserted").
+      pass; what it records in cache/last-gate.json is that run (kind "ran"); "horde.mjs done"
+      reads no entry there and runs the trunk gate itself. --gate red --sha is recorded as said (kind "asserted").
       --gate without --sha only names the gate in the report, and records nothing.
       --evidence names catalogue rows the wave gate itself proves — only with --gate green --sha,
       and never a "client testimony" or "artifact" row; they are filled with "wave <n> gate
@@ -103,7 +103,8 @@ commands:
       with the commit it passed on; a row that states no command cannot be filled this way until
       the charter names one. The wrong flag for the row, or --by, is refused. What each cell was
       proved by is recorded in hordes/<h>/evidence.json, and "horde.mjs done" checks every filled
-      cell against it again.
+      cell against it again and runs a command row's command again at the trunk tip — the record
+      is not the proof.
       A row in the charter's evidence
       catalogue counts green when its "reproduced by" cell is filled, or (on a ticket logged
       before this migration) when a ticket merged this wave names the row's id in its own
@@ -511,7 +512,7 @@ function setReproducedBy(charterText, id, name) {
 // whose reproduced verdict it is, the gate run and the commit it passed at, the command run and the
 // commit, the file and its object id at a commit, or the answered ask. Every tool that fills a cell
 // writes both, together (stampRow). `horde.mjs done` checks each filled cell against its record
-// again (verifyEvidence), and a cell with no record — typed into the charter by hand — proves
+// again (verifyEvidence) and runs a command row's command again, and a cell with no record — typed into the charter by hand — proves
 // nothing, whatever it says.
 function proofsPath(horde) {
   return hordePath(horde, 'evidence.json');
@@ -551,12 +552,23 @@ function reachableFrom(root, sha, branch) {
 
 // Every filled cell checked against what was recorded when it was filled. One line per row that
 // does not hold, naming why and the way to fill it again; empty when every filled cell holds.
-export function verifyEvidence(horde, root) {
+//
+// evidence.json is a record, never a proof: it is a file anybody can write. So with `rerun`
+// ({ sha, timeoutMs }) a command row's recorded command is run again, here, at that commit (the
+// trunk tip `horde.mjs done` hands over), and the row holds only when it passes now. A command
+// stated by several rows runs once. A gate row rests on the trunk gate, which `done` runs itself
+// at the same tip, so it is not run twice here. Without `rerun` nothing is run, only compared.
+export function verifyEvidence(horde, root, rerun = null) {
   const rows = parseEvidenceRows(readText(hordePath(horde, 'charter.md')) || '');
   const proofs = readProofs(horde);
   const trunk = `${horde}/trunk`;
   const tickets = allHordeTickets(horde);
   const out = [];
+  const runs = new Map();
+  const runAgain = (cmd) => {
+    if (!runs.has(cmd)) runs.set(cmd, runGateAt(root, cmd, rerun.sha, rerun.timeoutMs || gateTimeoutOf(readConfig() || {})));
+    return runs.get(cmd);
+  };
   for (const row of rows) {
     if (!row.reproducedBy) continue;
     const proof = proofs[row.id];
@@ -572,6 +584,12 @@ export function verifyEvidence(horde, root) {
     } else if (proof.kind === 'run' || proof.kind === 'gate') {
       if (!reachableFrom(root, proof.sha, trunk)) out.push(`${row.id} was proved at ${String(proof.sha).slice(0, 7)}, which is not on ${trunk}; ${again}`);
       else if (proof.kind === 'run' && !rowCommands(row).includes(proof.run)) out.push(`${row.id} was proved by \`${proof.run}\`, which the row no longer states; ${again}`);
+      else if (proof.kind === 'run' && rerun && rerun.sha) {
+        const ran = runAgain(proof.run);
+        if (!ran.ok) {
+          out.push(`${row.id} rests on \`${proof.run}\`, which ${ran.timedOut ? 'did not finish in time' : 'fails'} when run again at the trunk tip (${String(rerun.sha).slice(0, 7)}) — what evidence.json records is not proof, only what runs now is; ${again}`);
+        }
+      }
     } else if (proof.kind === 'artifact') {
       const now = git(['rev-parse', '--verify', '--quiet', `${trunk}:${proof.artifact}`], root);
       if (now !== proof.object) out.push(`${row.id} rests on ${proof.artifact} as it was at ${String(proof.sha).slice(0, 7)}, and the trunk tip ${now ? 'carries a different file' : 'no longer carries it'}; ${again}`);
@@ -867,12 +885,6 @@ export function stampMissionEvidence(horde) {
 //                     when it passes, with the commit it passed on
 const TESTIMONY = 'client testimony';
 const ARTIFACT = 'artifact';
-const GATE_TIMEOUT_MS = 15 * 60 * 1000;
-
-function gateTimeoutOf(cfg) {
-  const asked = Number(cfg && cfg.gateTimeoutMs);
-  return Number.isFinite(asked) && asked > 0 ? asked : GATE_TIMEOUT_MS;
-}
 
 export function evidenceWay(evidenceClass) {
   const c = String(evidenceClass || '').trim().toLowerCase();
@@ -1002,14 +1014,15 @@ function decisionsKpi(horde, journalText, openedAt, mergedThisWave) {
 // ---- the quality index (ruling quality-always-authorised) ------------------------------------
 //
 // Five numbers read from the graph's own CLI at the tree this close is run on, printed with the
-// delta from the wave before, plus a sixth (judges) shown for the record but never part of what
-// "fell" means. The ruling says the index must not fall: raising enforcement is the horde's to do
+// delta from the wave before. A sixth — verdicts in force that rest on a judge other than the
+// configured reviewer, the channel 6.1.0 retired — is printed only while there are any, so a
+// reader sees what still has to be judged again; it is never part of what "fell" means. The ruling says the index must not fall: raising enforcement is the horde's to do
 // on its own, lowering it is the chairman's call — so a fall is not something this tool argues
 // with, it is something it escalates.
 
-// The trailing "· judges N" is optional in the pattern: a journal entry a close wrote before this
-// figure existed has none, and that is a missing delta to fall back on, not a parse failure.
-const QUALITY_RE = /\*\*Quality index:\*\* enforced (\d+) · advisory clean (\d+)\/(\d+) · baseline (\d+) · noise floor (\d+) · coverage (\d+)\/(\d+)(?: · judges (\d+))?/g;
+// The trailing figure is optional in the pattern: a line with none has no retired verdicts in force
+// (or was written before the figure existed), and an older close wrote it as "· judges N".
+const QUALITY_RE = /\*\*Quality index:\*\* enforced (\d+) · advisory clean (\d+)\/(\d+) · baseline (\d+) · noise floor (\d+) · coverage (\d+)\/(\d+)(?: · (?:judges|verdicts by a retired judge) (\d+))?/g;
 
 function previousQuality(journalText) {
   QUALITY_RE.lastIndex = 0;
@@ -1024,7 +1037,7 @@ function previousQuality(journalText) {
       noiseFloor: Number(m[5]),
       coveredFiles: Number(m[6]),
       totalFiles: Number(m[7]),
-      judges: m[8] !== undefined ? Number(m[8]) : null,
+      judges: m[8] !== undefined ? Number(m[8]) : 0,
     };
   }
   return last;
@@ -1066,7 +1079,8 @@ function qualityLine(now, prev) {
   if (!now.measured) return `not measured — ${now.why}`;
   const coverage = now.totalFiles === null ? '0/0' : `${now.coveredFiles}/${now.totalFiles}`;
   const base = `enforced ${now.enforced} · advisory clean ${now.advisoryClean}/${now.advisoryTotal}`
-    + ` · baseline ${now.baseline} · noise floor ${now.noiseFloor} · coverage ${coverage} · judges ${now.judges}`;
+    + ` · baseline ${now.baseline} · noise floor ${now.noiseFloor} · coverage ${coverage}`
+    + `${now.judges ? ` · verdicts by a retired judge ${now.judges}` : ''}`;
   // Pairs with no verdict yet and open log cycles are the state of a cache and of the horde's own
   // process, not of the graph: said beside the index, never part of it or of what "fell" means.
   const unfilled = now.unfilled || now.logCyclesOpen
@@ -1082,7 +1096,7 @@ function qualityLine(now, prev) {
     `noise floor ${sign(now.noiseFloor - prev.noiseFloor)}`,
     `coverage ${sign((now.coveredFiles || 0) - prev.coveredFiles)}`,
   ];
-  if (prev.judges !== null && prev.judges !== undefined) deltas.push(`judges ${sign(now.judges - prev.judges)}`);
+  if (now.judges || prev.judges) deltas.push(`verdicts by a retired judge ${sign((now.judges || 0) - (prev.judges || 0))}`);
   return `${base} (Δ ${deltas.join(' · ')})${unfilled}`;
 }
 
@@ -1226,7 +1240,8 @@ function cmdClose(horde, positional, flags) {
   }
   // "--gate green --sha" is checked, not taken: the level's own gate command is run at that commit
   // here, and a close that says green over a gate that is not is refused before anything is
-  // written. What it records is `kind: 'ran'`, the only kind `horde.mjs done` trusts. A red one is
+  // written. What it records is `kind: 'ran'` (a record for the next close to read; `horde.mjs done`
+  // reads none and runs the trunk gate itself). A red one is
   // recorded as said (`kind: 'asserted'`) — it can only hold the mission back, never let it through.
   let gateSha = flags.sha ? String(flags.sha) : null;
   if (flags.gate && flags.sha) {

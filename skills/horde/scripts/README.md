@@ -137,8 +137,8 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   as missing (`null`) and the rest is still read — half a book is worth more than none. The same
   reader scopes the archive into each consultant's brief (`refine.mjs --step consult`, below).
 - `done [--tree p] [--horde h]` — the mission's final gate (ruling `evidence-is-the-plan`: "the queue
-  is empty" is never "done"). The one place this reads a tree — the trunk gate's own fresh re-run,
-  below, when no cached green already covers the tip — runs from `--tree`, or without one, cwd: the
+  is empty" is never "done"). The one place this reads a tree — the trunk gate's run and the command rows' re-runs,
+  below — runs from `--tree`, or without one, cwd: the
   same ordinary default every read in this tool set takes, not this horde's trunk just because a
   horde was resolvable. `--horde h` written out (no `--tree`) is what changes that, exactly as
   `queue.mjs plan`/`quality`, `tick.mjs` and `land.mjs` already read it; what the gate actually tests
@@ -149,11 +149,14 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   regardless of wave, into the charter's "reproduced by" cell — the same reading `wave.mjs close`
   uses for one wave, stretched over the whole mission); the trunk branch does not exist, or
   a filled row no longer holds against the proof recorded when it was filled (`evidence.json`; a
-  cell typed into the charter holds against nothing); `config.gates.trunk` is not configured, or it
-  is not green at the trunk branch's tip (a recorded
-  green in `cache/last-gate.json` is accepted only when it was run — `kind: "ran"`, by a landing or
-  by `wave.mjs close --gate green --sha` — on that very sha; anything else, a typed claim or an
-  entry older than the field included, is run fresh in a scratch worktree); no retrospective has been run on this mission at all, or the one on file was taken over
+  cell typed into the charter holds against nothing), or a command row's recorded command fails when
+  `done` runs it again at the trunk tip (`evidence.json` is a record, never a proof: it is a file
+  anybody can write, so a row whose command does not pass now is refused whatever the record says; a
+  command stated by several rows runs once); `config.gates.trunk` is not configured, or it
+  is not green at the trunk branch's tip — run by `done` itself every time, in a scratch worktree of
+  the tip, stopped at `config.gateTimeoutMs` (default 15 minutes) and refused as not finishing in time
+  when it hangs, and never read from `cache/last-gate.json`, whose `kind: "ran"` entry is as writable as any
+  other file (the run's answer is written there); no retrospective has been run on this mission at all, or the one on file was taken over
   a different set of landed tickets than the mission now has (run `retro.mjs --horde h` again).
   Otherwise: the charter is already stamped (a side effect of the evidence check above), the
   completion block (`templates/mission-close.md`) is appended to the mission's `plan.md`, and the
@@ -686,9 +689,7 @@ several users.
     (an empty corpus is never a pass: nothing has been run against that rule). The counts are read
     off the drill's `yg-drill/1` document (`yg drill --aspect <id> --json`) and checked against the
     drill's own exit code; a document the exit code contradicts, or one missing a count, is unread —
-    never green. Yggdrasil 6.0.x has no `--json` on `yg drill`: for it alone the summary line is read
-    by what each count's word means, in any order or case, under the same exit-code check, and a count
-    Horde does not recognise is unread. The move records the
+    never green. The summary line printed for a person is never read. The move records the
     **baseline** — the refusals `yg check --json` reports for that rule once the rung makes its pairs
     exist, after the free keyless fill — so a later reading above it is a new violation and a reading
     at or below it is not.
@@ -707,9 +708,9 @@ several users.
   rule; *draft → advisory* touches no node at all. Never a lock, never a `yg-suppress`, never
   `review_by`. A rule a reader judges costs money to drill, so `promote` refuses it until
   `--with-reviewer` says to spend that. Under a charter set to `only-the-work`, `promote` refuses
-  outright. An installed `yg` that predates the rule's own log ("yg aspects log add"/"yg aspects log
-  read") is refused too, naming the release to upgrade to — the same shape 148's own refusal takes for
-  `yg-check/1`.
+  outright. An installed `yg` that reports a version below Horde's floor (6.1.0) is refused before the
+  rule's own log ("yg aspects log add") is written, naming the release to upgrade to — told by the
+  version it reports, never by the words of how it fails.
 - `demote <aspect> --to draft|advisory --by user --why "<what they said>"` — the one direction nobody
   in the horde may take alone. Without `--by user` it refuses, and `--by architect` is refused just as
   flatly — and either refusal still leaves a best-effort note in the rule's own log saying who reached
@@ -813,11 +814,9 @@ useless": a rule that is never violated may be deterring the very violations it 
 never coins a word for it — it prints Yggdrasil's `signal` cell and the plain-words line under the
 table verbatim, or it prints nothing. It reads both off Yggdrasil's `yg-aspects-health/1` document
 (`yg aspects --health --json`, its own document, not the rule inventory), where a rule never judged
-carries no signal and is shown with the table's own em-dash. Yggdrasil 6.0.x refuses `--health`
-with `--json`; for it alone the table is read, because the alternative is inventing a label, which
-is the one thing this line exists not to do — by its column names (`aspect` and `signal`, in any
-position, case or indentation), so a re-laid table still reads, and one without both names is
-reported as unread, never guessed at.
+carries no signal and is shown with the table's own em-dash. The table printed for a person is never
+read; a CLI that answers no document is below Horde's floor, and the close says it could not read
+the health view and why.
 
 Both ledgers live in the horde's own `graph.json`, under `audits`, keyed by what the finding IS
 (`review-by:<rule>`, or the attention item's own stable id) — a rule stays overdue until somebody
@@ -945,7 +944,7 @@ run by the tool at the trunk tip and recorded only when it passes; a typed `--by
 tool that fills a cell records what it was proved by in `hordes/<h>/evidence.json` — the ticket
 verdict, the gate run and its commit, the command and its commit, the file and its object, or the
 ask — and the mission's final gate (`horde.mjs done`) checks every filled cell against that record
-again; `horde.mjs charter edit` warns about a filled cell with no record, and the final gate refuses it,
+again, and runs a command row's command again at the trunk tip, since the record is a file and only the run is proof; `horde.mjs charter edit` warns about a filled cell with no record, and the final gate refuses it,
 `current [--team t]`. Every close also writes the mission's `horde-law/1` document (see `law.mjs`) and
 prints its path, and runs the law audit off that same reading (see `audit.mjs`). Its one-team,
 one-wave judgement of "does a ticket prove this row" is also
@@ -997,8 +996,9 @@ Beyond the counts it always carried, `close` states seven figures the chairman r
   script cache, and it is the one run that sees a check that failed to run) and `aspects --json` (`yg-aspects/1`, for each rule's status). Five
   figures — enforced rules, advisory rules with nothing recorded against them, blocking violations,
   the standing noise floor, and file coverage — each print with their delta
-  from the previous wave, plus a sixth, the number of distinct external judges a verdict in force
-  rests on, shown for the record but never part of what "fell" means. What is only the state of a
+  from the previous wave. A sixth, "verdicts by a retired judge" — distinct judges other than the
+  configured reviewer that a verdict in force still rests on, the external channel 6.1.0 retired —
+  is printed only while it is above zero, and is never part of what "fell" means. What is only the state of a
   cache or of the horde's own process is counted apart and never as the graph getting weaker: a
   pair with no verdict yet for a cache reason (cause `deterministic-not-run`,
   `keyed-by-earlier-release`, `stale` or `never-reviewed`) is neither a violation nor something
@@ -1073,7 +1073,9 @@ the JSON, and every item below is measured against it:
    node's `log.md` through `yg log merge-resolve --node <n>`, Yggdrasil's `yg-lock.*.json` by
    taking the parent's side whole (the verdicts dropped are judged again), and a file
    `config.appendOnly` names by keeping both sides' added lines — only when neither side did more
-   than add lines. A stale result carries `conflictFiles`, the files no rule resolved, sorted.
+   than add lines; where both added at the same place, the lines both begin and end with (a section
+   heading each opened, the blank line closing it) are written once, with the parent's own lines
+   and then the branch's between them. A stale result carries `conflictFiles`, the files no rule resolved, sorted.
    `--no-gate` never writes to a branch, so it reports the staleness as it stands;
 2. judge — every prose rule on this tree carries a verdict from Yggdrasil's own reviewer, the only
    judge a prose rule has. A worker runs `yg check --approve` before committing (so does the commit
@@ -1092,7 +1094,10 @@ the JSON, and every item below is measured against it:
    1 brought the parent in cleanly and the only red items are this one and the graph's, both about
    prose verdicts that merge left pending (a reviewer configured, nothing else refused), the result
    carries `rejudge: true` and no round is written — the merge moved the code under the verdicts,
-   the ticket did not;
+   the ticket did not. That holds only when the branch had a verdict recorded for every one of
+   those pairs before the merge (its committed `yg-lock.nondeterministic.json`, read by field), or
+   the merge took the lock file from the parent; prose the branch never had judged is its own red
+   and costs its round, or every move of the parent would hand it another free one;
 3. scope — the diff stays inside the files the ticket declared in `**Files:**`; a ticket that
    declared none falls back to the union of its node boundaries (from `node.mjs`). Either way it
    touches no protected path, and Yggdrasil's committed lock files (`.yggdrasil/yg-lock.*.json`) are
@@ -1120,13 +1125,12 @@ the JSON, and every item below is measured against it:
    paired case has to be in it, passing, or the gate is red and names the promise. See
    [the gate's own report](#the-gates-own-report) below. Once the branch actually merges, what this
    measured is recorded in `cache/last-gate.json` at the sha the merge produced, stamped `kind:
-   "ran"` — the same file and the same matching-sha acceptance `horde.mjs done` and `wave.mjs close`
-   already read, so either sees this landing's own result right away instead of finding nothing
-   there and running the gate a second time over a tree it was just run on;
+   "ran"` — the same file `wave.mjs close` reads for the level's last result (`horde.mjs done` never
+   reads it: it runs the trunk gate itself at the tip it hands over);
 6. graph — the graph's own verdict on the branch's tree, on every run whatever `config.gates` holds:
    the graph is the node map, so it is what says the code is right there, and a repository whose own
    gate command never calls `yg` would otherwise show a green gate over a tree `yg check` exits 1
-   on. One run: `yg check --approve --only-deterministic --json` (`--compact` on a CLI that has it)
+   on. One run: `yg check --approve --only-deterministic --json --compact`
    records every rule a script can decide, at no cost, and answers the `yg-check/1` document of the
    tree it just filled, which is what the item reads — by its fields, never its text. What the fill
    leaves is the prose rules, which a reader has to judge — the item names each pending pair rather
@@ -1599,11 +1603,11 @@ read it in one place.
 The second run validates that file — every key classified exactly once, a `rule` carrying its
 sentence, its component and `check`/`prose`, a `taste` carrying a component and no rule, an
 `inexpressible` carrying neither — and writes `hordes/<h>/retro.json` (`horde-retro/1`) with
-`retro.md` beside it: `{schema, horde, at, state, items, law, returns, taste, inexpressible, logged,
-judge, threshold, notes}`. A `taste` item leaves one line in its component's own log through
+`retro.md` beside it: `{schema, horde, at, noEvidenceLayer, state, items, law, returns, taste,
+inexpressible, logged, threshold, notes}`. A `taste` item leaves one line in its component's own log through
 `yg log add` and nowhere else; a key already on the previous document is never logged twice, and one
 retrospective runs at a time (`hordes/<h>/retro.lock`, taken over when the pid holding it is gone).
-That `yg log add` write, and the judge measurement beside it, run against the tree `--tree` names;
+That `yg log add` write runs against the tree `--tree` names;
 without it, cwd, the same ordinary default every read in this tool set takes, not this horde's
 trunk just because a horde was resolvable. `--horde h` written out (no `--tree`) is what changes
 that, exactly as `queue.mjs plan`/`quality`, `tick.mjs`, `land.mjs` and `horde.mjs done` already
@@ -1639,10 +1643,11 @@ inherits whatever tree the session's shell is already in.
 1. **Reconcile.** Every `running` item whose worker has ended, settled from its branch. Ended means
    evidence, never a clock: the worker's own `landed <sha>` or `stopped: <why>` line in the
    ticket's log since the
-   lease was recorded (`worker: {name, startedAt, pid, log}` on the queue item, written by every
+   lease was recorded (`worker: {name, startedAt, pid, pidStartedAt, log}` on the queue item, written by every
    start), the process tick started for it under `external` gone, or `--reclaim NNN[,MMM]` — the
    director saying a worker came back without that line (refused, naming it, for a ticket that is
-   not running). An item whose worker has not ended goes on `working` with who holds it and since
+   not running). Under `--watch` the reclaim is read by the first pass that runs and then dropped; a
+   pass refused for anything but the reclaim itself keeps it for the next pass. An item whose worker has not ended goes on `working` with who holds it and since
    when, and nothing of it is touched. An ended worker's tree left mid-merge has that merge aborted
    first, and the files it was stopped on are named. Then: a commit beyond the parent goes to
    `landed`; a dirty worktree is committed as `wip: reclaimed` and goes back to `queued`, worktree
@@ -1768,7 +1773,12 @@ with `role`. Each process's output goes to its own log, `hordes/<h>/runs/NNN.log
 `NNN-review.log`), and each `external` entry carries its `pid` and `log`; a worker's pid and log are
 written onto its lease before the run lets go of the gate lock, so the next run's reconcile reads a
 live pid as the worker still working and a gone one as the worker having ended — `--watch` can tick
-every interval under a worker that runs for an hour and never hand its ticket out twice. Under
+every interval under a worker that runs for an hour and never hand its ticket out twice. The lease
+also records when that process started (`pidStartedAt`, from `ps -o lstart=`; null where `ps` cannot
+say), so a live pid whose start differs — the number handed to another process after the worker
+ended — reads as the worker gone. This is why `config.runner.spawn` must keep the agent in the
+foreground: the pid is the command's own process, and one that backgrounds the agent (`&`, `nohup`, a
+detaching launcher) ends at once, so its worker is read as ended while it is still working. Under
 `session` it starts nothing at all. `--watch` repeats the run every `config.tick.interval` seconds until the
 queue empties or a signal arrives — an open `stop` holds the close, so it keeps waiting rather than
 exiting on an emptied queue the client still has a question about; a signal exits cleanly, holding no lock. A refused pass does not

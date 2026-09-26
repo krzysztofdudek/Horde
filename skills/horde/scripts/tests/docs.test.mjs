@@ -836,9 +836,13 @@ function topChangelogSection(changelog) {
   return next === -1 ? rest : rest.slice(0, next + 1);
 }
 
+// A floor raised since the last release is stated under [Unreleased] (new entries go there and move
+// into the version section at the release), so that section, when it names a floor, is the one read.
 test('CHANGELOG\'s top released section states the Yggdrasil floor as "<version> or newer", never a same-major ceiling', () => {
   const floor = ygDocumentsAfter();
-  const topSection = topChangelogSection(readText(join(REPO_ROOT, 'CHANGELOG.md')));
+  const changelog = readText(join(REPO_ROOT, 'CHANGELOG.md'));
+  const unreleased = unreleasedSection(changelog);
+  const topSection = /Needs Yggdrasil/.test(unreleased) ? unreleased : topChangelogSection(changelog);
 
   assert.match(topSection, new RegExp(`Yggdrasil ${floor.replace(/\./g, '\\.')} or newer`),
     `top released section does not state the Yggdrasil floor as "${floor} or newer", matching node.mjs's own YG_DOCUMENTS_AFTER`);
@@ -1185,4 +1189,35 @@ test('scripts/README.md says the gate commands prepare a fresh tree, since Horde
   assert.match(readme, /Horde runs nothing to prepare a fresh tree/);
   assert.match(readme, /either prepares the tree itself[\s\S]*?or relies on what `worktree\.copy` carries in/);
   assert.doesNotMatch(readme, /worktree\.prepare/, 'there is no prepare key — the ruling kept the environment outside Horde');
+});
+
+// ---- issue 298: a changelog section never says a yg document is both read and not there -------------
+//
+// The 6.1.0 notes shipped saying Horde reads `yg drill` and `yg aspects --health` as their documents,
+// and, a paragraph later, that neither has a machine form and both stay text. A section that names a
+// document as read must not also say its command has none. Checked over every section, one by one.
+const YG_DOCUMENT_COMMANDS = [
+  ['yg-drill/1', 'yg drill'],
+  ['yg-aspects-health/1', 'yg aspects --health'],
+];
+const NOT_A_DOCUMENT = /no machine form|stays? text|read tolerantly|has no document|have no document/i;
+
+function documentContradictions(section) {
+  const sentences = section.split(/(?<=[.;])\s+/);
+  const out = [];
+  for (const [schema, command] of YG_DOCUMENT_COMMANDS) {
+    if (!section.includes(schema)) continue;
+    for (const s of sentences) if (s.includes(command) && NOT_A_DOCUMENT.test(s)) out.push(`${schema} is read, yet: ${s.trim().slice(0, 160)}`);
+  }
+  return out;
+}
+
+test('no CHANGELOG section names a yg document as read and as not available', () => {
+  const changelog = readText(join(REPO_ROOT, 'CHANGELOG.md'));
+  const sections = changelog.split(/^(?=## \[)/m).filter((x) => x.startsWith('## ['));
+  assert.ok(sections.length > 1, 'the changelog splits into its sections');
+  const found = sections.flatMap((sec) => documentContradictions(sec).map((c) => `${sec.split('\n')[0]}: ${c}`));
+  assert.deepEqual(found, []);
+  const shipped = '- Horde reads `yg drill` as its document (`yg-drill/1`). `yg drill` has no machine form, so it stays text.';
+  assert.equal(documentContradictions(shipped).length, 1, 'the contradiction the 6.1.0 notes shipped with is caught');
 });

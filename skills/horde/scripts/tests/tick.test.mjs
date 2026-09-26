@@ -1696,6 +1696,56 @@ test('tick.mjs --watch: a refusal in one pass is written down, not the end of th
   assert.ok(!existsSync(join(dir, '.horde', 'gate.lock')), 'and no pass left the gate lock held');
 });
 
+// Issue 359: --reclaim under --watch is said once — but only once a pass has actually read it. A pass
+// refused for something else settled nothing, and dropping the word there left the ticket held by a
+// worker the director had already said was gone.
+test('tick.mjs --watch: --reclaim survives a refused pass and is settled by the first pass that runs', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'tick.interval', '1'], dir);
+  const id = mkTicket(dir, 'reclaimed-later', { files: 'src/later.ts' });
+  run('queue.mjs', ['add', id], dir);
+  assert.equal(tick(dir).code, 0);
+  assert.equal(itemOf(dir, id).state, 'running');
+  const good = readFileSync(queuePath(dir), 'utf8');
+  writeFileSync(queuePath(dir), '{ not json at all');
+
+  const watcher = spawn('node', [join(SCRIPTS_DIR, 'tick.mjs'), '--watch', '--json', '--reclaim', id], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+  let out = '';
+  let err = '';
+  watcher.stdout.on('data', (d) => { out += d; });
+  watcher.stderr.on('data', (d) => { err += d; });
+  const exited = new Promise((resolve) => { watcher.on('close', (code) => resolve(code)); });
+  await new Promise((resolve) => { setTimeout(resolve, 1500); });
+  assert.match(err, /invalid JSON in/, 'the first pass was refused');
+  writeFileSync(queuePath(dir), good);
+  await new Promise((resolve) => { setTimeout(resolve, 3000); });
+  watcher.kill('SIGINT');
+  assert.equal(await exited, 0);
+  assert.match(out, /reclaimed by the director/, `the reclaim was carried to the pass that ran: ${out.slice(0, 400)}`);
+});
+
+// A refusal of the reclaim itself — a ticket nobody holds — would be the same on every pass, so it is
+// said once and the loop goes on without it. Decided by the refusal's reason, not its wording.
+test('tick.mjs --watch: a refused --reclaim is written down once, not refused again every pass', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  run('horde.mjs', ['config', 'set', 'tick.interval', '1'], dir);
+  const watcher = spawn('node', [join(SCRIPTS_DIR, 'tick.mjs'), '--watch', '--reclaim', '999'], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+  watcher.stdout.on('data', () => {});
+  watcher.stderr.on('data', () => {});
+  const exited = new Promise((resolve) => { watcher.on('close', (code) => resolve(code)); });
+  await new Promise((resolve) => { setTimeout(resolve, 3500); });
+  watcher.kill('SIGINT');
+  assert.equal(await exited, 0);
+  const journal = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
+  const refusals = journal.split('\n').filter((l) => l.includes('tick refused:'));
+  assert.equal(refusals.length, 1, `one refusal for the reclaim, then passes without it:\n${refusals.join('\n')}`);
+  assert.match(refusals[0], /--reclaim 999/);
+});
+
 test('tick.mjs: says how loaded the landing gate is — branches waiting, and what a landing has been costing', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
@@ -1947,6 +1997,42 @@ test('tick.mjs lease: under the external runner a worker whose process lives is 
     assert.match(settled.note, new RegExp(`pid ${started.pid}\\) is gone`));
     for (const e of r.json.external) if (Number.isInteger(e.pid)) pids.push(e.pid);
   });
+});
+
+// Issue 359: a pid is the worker only while it is the same process. The lease records when the process
+// started; a live pid whose start differs is a number the system gave to someone else after the worker
+// ended, and the ticket is settled rather than held forever behind a stranger.
+test('tick.mjs lease: a live pid that started at another time than the worker\'s process is not the worker', async () => {
+  const dir = makeRepo();
+  const pids = [];
+  try {
+    initHorde(dir);
+    const id = mkTicket(dir, 'pid-reused', { files: 'src/reused.ts' });
+    run('queue.mjs', ['add', id], dir);
+    run('horde.mjs', ['config', 'set', 'runner.spawn', 'sleep 600'], dir);
+    const first = tick(dir, ['--runner', 'external']);
+    assert.equal(first.code, 0, first.stderr);
+    const started = first.json.external.find((e) => e.ticket === id && e.role === 'worker');
+    pids.push(started.pid);
+    const lease = itemOf(dir, id).worker;
+    assert.ok(lease.pidStartedAt, `the lease records when its process started: ${JSON.stringify(lease)}`);
+
+    // The same number, alive, but a different process: what a reused pid looks like from here.
+    const queuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json');
+    const doc = JSON.parse(readFileSync(queuePath, 'utf8'));
+    doc.items.find((i) => i.ticket === id).worker.pidStartedAt = 'Thu Jan  1 00:00:00 1970';
+    writeFileSync(queuePath, JSON.stringify(doc, null, 2));
+
+    const r = tick(dir, ['--runner', 'external']);
+    assert.equal(r.code, 0, r.stderr);
+    const settled = r.json.reconciled.find((x) => x.ticket === id);
+    assert.ok(settled, JSON.stringify(r.json));
+    assert.match(settled.note, /now belongs to a process started/);
+    for (const e of r.json.external) if (Number.isInteger(e.pid)) pids.push(e.pid);
+  } finally {
+    for (const pid of pids) { try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ } }
+    await quietRm(dir);
+  }
 });
 
 test('tick.mjs lease: a worker that ended mid-merge has the merge aborted before its branch is read, and the files are named', async (t) => {

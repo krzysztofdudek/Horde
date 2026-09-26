@@ -16,7 +16,7 @@ import {
   writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
   readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
   qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES, parseEvidenceRows, asArray,
-  runGateAt, GATE_RAN,
+  runGateAt, gateTimeoutOf, GATE_RAN,
   runMain,
 } from './_lib.mjs';
 import { nodesOf, padId } from './tk.mjs';
@@ -88,9 +88,10 @@ commands:
       retrospective (retro.mjs) has not been run over the mission as it now stands. Otherwise
       stamps the charter, appends the completion block to the mission journal, archives the
       horde the way "archive" does, and prints what to do next (push — that decision is the
-      chairman's, never this tool's). A recorded green counts only when a tool here ran it on the
-      trunk tip (a landing, or "wave.mjs close --gate green --sha", which runs it); a typed one is
-      run again. The trunk gate's own fresh re-run runs from --tree, or without one, cwd — the same ordinary default
+      chairman's, never this tool's). What the tools recorded is a record, never a proof: the trunk
+      gate and every command row's command (hordes/<h>/evidence.json) are run again at the trunk
+      tip, whatever cache/last-gate.json or evidence.json says, each stopped at config.gateTimeoutMs
+      (default 15 minutes) — a gate that does not finish in time is refused as not green. The trunk gate's own run runs from --tree, or without one, cwd — the same ordinary default
       this tool set reads everywhere else, not this horde's trunk just because a horde was
       resolvable. --horde h written out (no --tree) is what changes that, exactly as
       queue.mjs plan/quality, tick.mjs and land.mjs already read it; what gets tested is always
@@ -1308,13 +1309,6 @@ function cmdHistory(positional, flags) {
 
 function short(sha) { return sha ? sha.slice(0, 7) : '(none)'; }
 
-// Tolerant the same way land.mjs's own gate comparisons are: a short sha, a full sha, or
-// either shortened to the other's length all count as the same commit.
-function shaMatchesTolerant(a, b) {
-  if (!a || !b) return false;
-  return a === b || a === short(b) || short(a) === short(b) || String(b).startsWith(a) || String(a).startsWith(b);
-}
-
 function cmdDone(positional, flags) {
   const horde = resolveHorde(flags);
   const cfg = readConfig() || {};
@@ -1340,15 +1334,16 @@ function cmdDone(positional, flags) {
   if (red.length) {
     reasons.push(`evidence row(s) not reproduced: ${red.map((r) => `${r.id} (${r.state})`).join(', ')} — see status.mjs --horde ${horde} for what each is waiting on`);
   }
-  // Every filled cell, checked again against what it was proved by when it was filled.
-  for (const problem of verifyEvidence(horde, root)) reasons.push(problem);
-
-  // 2. The trunk gate green at the trunk tip — a recorded green is accepted only when a tool here
-  // ran it (kind "ran": a landing, or a wave close that ran the gate itself) on this very sha;
-  // anything else — a typed claim, an entry older than the kind, another sha — is run fresh
-  // (config.gates.trunk, in a scratch worktree of the trunk branch).
+  // Every filled cell, checked again against what it was proved by when it was filled — and a
+  // command row's command run again at the trunk tip: evidence.json is a record of a run, and a
+  // record is a file anybody can write, so what `done` accepts is only what passes now.
   const trunkBranch = `${horde}/trunk`;
   const trunkSha = git(['rev-parse', trunkBranch]);
+  for (const problem of verifyEvidence(horde, root, trunkSha ? { sha: trunkSha } : null)) reasons.push(problem);
+
+  // 2. The trunk gate green at the trunk tip, run here, now (config.gates.trunk, in a scratch
+  // worktree of the trunk tip). cache/last-gate.json is where the answer is written, never where
+  // it is read from: an entry there, `kind: "ran"` included, is a file anybody can write.
   let gateGreen = false;
   if (!trunkSha) {
     reasons.push(`no such branch: ${trunkBranch}`);
@@ -1358,19 +1353,18 @@ function cmdDone(positional, flags) {
       reasons.push('no config.gates.trunk configured — set it: horde.mjs config set gates.trunk "<command>"');
     } else {
       const gateCache = readJSON(hordePath(horde, 'cache', 'last-gate.json'), {});
-      const cached = gateCache.trunk;
-      if (cached && cached.kind === GATE_RAN && cached.result === 'green' && shaMatchesTolerant(cached.sha, trunkSha)) {
-        gateGreen = true;
-      } else {
-        const ran = runGateAt(root, gateCmd, trunkSha);
-        gateGreen = ran.ok;
-        writeJSON(hordePath(horde, 'cache', 'last-gate.json'), {
-          ...gateCache,
-          trunk: {
-            sha: trunkSha, result: gateGreen ? 'green' : 'red', count: null, kind: GATE_RAN, at: new Date().toISOString(), by: 'horde done',
-          },
-        });
-        if (!gateGreen) reasons.push(`trunk gate red at ${short(trunkSha)} (${gateCmd})`);
+      const ran = runGateAt(root, gateCmd, trunkSha, gateTimeoutOf(cfg));
+      gateGreen = ran.ok;
+      writeJSON(hordePath(horde, 'cache', 'last-gate.json'), {
+        ...gateCache,
+        trunk: {
+          sha: trunkSha, result: gateGreen ? 'green' : 'red', count: null, kind: GATE_RAN, at: new Date().toISOString(), by: 'horde done',
+        },
+      });
+      if (!gateGreen) {
+        reasons.push(ran.timedOut
+          ? `trunk gate did not finish in time at ${short(trunkSha)} and was stopped after ${Math.round(gateTimeoutOf(cfg) / 1000)}s (${gateCmd}) — a gate that hangs is not green; raise the limit with: horde.mjs config set gateTimeoutMs <milliseconds>`
+          : `trunk gate red at ${short(trunkSha)} (${gateCmd})`);
       }
     }
   }
