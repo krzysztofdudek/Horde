@@ -20,6 +20,10 @@ import { join } from 'node:path';
 import {
   makeRepo, rmRepo, run, initHorde, requireYg, git,
 } from './helpers.mjs';
+import { adviseKeys } from '../audit.mjs';
+
+// The hot-spot item under either name: before Yggdrasil 6.1.0 renamed the class, and after.
+const HOT_SPOT_IDS = ['uncovered-hot-spot:billing', 'unguarded-hot-spot:billing'];
 
 const planPath = (dir, horde = 'mission1') => join(dir, '.horde', 'hordes', horde, 'plan.md');
 const aspectPath = (dir, id) => join(dir, '.yggdrasil', 'aspects', id, 'yg-aspect.yaml');
@@ -225,7 +229,9 @@ test('the law audit: an attention item nobody has answered is queued; one the cl
     // What the real CLI actually says about this graph, read here so the test is pinned to the
     // feed rather than to a document written to suit it.
     const feed = JSON.parse(ygRaw(dir, yg, ['advise', '--json']).out);
-    assert.ok(feed.items.some((i) => i.id === 'uncovered-hot-spot:billing'), `the feed nominated ${feed.items.map((i) => i.id).join(', ')}`);
+    // Yggdrasil 6.1.0 renamed the class (uncovered-hot-spot → unguarded-hot-spot); either build passes.
+    const hotSpot = feed.items.find((i) => HOT_SPOT_IDS.includes(i.id));
+    assert.ok(hotSpot, `the feed nominated ${feed.items.map((i) => i.id).join(', ')}`);
 
     run('wave.mjs', ['start'], dir);
     const closed = run('wave.mjs', ['close', '--gate', 'green'], dir);
@@ -234,13 +240,13 @@ test('the law audit: an attention item nobody has answered is queued; one the cl
     assert.equal(sweep.read, true);
     assert.equal(sweep.decided, 0);
     assert.equal(sweep.filed.length, 1);
-    assert.equal(sweep.filed[0].item, 'uncovered-hot-spot:billing');
+    assert.equal(sweep.filed[0].item, hotSpot.id);
     assert.equal(sweep.filed[0].node, 'billing');
 
     const ticket = run('tk.mjs', ['show', sweep.filed[0].ticket], dir);
     assert.match(ticket.json.text, /Node 'billing' is changing but has no rule (?:covering|guarding) it/);
     assert.match(ticket.json.text, /an (?:uncovered|unguarded) hot spot/, 'Yggdrasil\'s own why, carried verbatim');
-    assert.match(ticket.json.text, /Attention item id: `uncovered-hot-spot:billing`/);
+    assert.match(ticket.json.text, /Attention item id: `(?:uncovered|unguarded)-hot-spot:billing`/);
     assert.match(ticket.json.text, /reason is a signature, so it is theirs to give, not the horde's/);
 
     // The overdue review date is raised by the feed too, and is not filed twice under two ids.
@@ -255,7 +261,9 @@ test('the law audit: an attention item nobody has answered is queued; one the cl
 
     // The client's answer, recorded through the real command — a dismissal takes a mandatory
     // human-signed reason, which is exactly what makes it a decision rather than a preference.
-    const dismissed = ygRaw(dir, yg, ['advise', 'dismiss', 'uncovered-hot-spot:billing', '--reason', 'billing is a spike we delete next month; a rule on it would outlive the code']);
+    const feedId = JSON.parse(ygRaw(dir, yg, ['advise', '--json']).out).items.map((i) => i.id).find((id) => HOT_SPOT_IDS.includes(id));
+    assert.ok(feedId, 'the feed nominates the hot spot before it is dismissed');
+    const dismissed = ygRaw(dir, yg, ['advise', 'dismiss', feedId, '--reason', 'billing is a spike we delete next month; a rule on it would outlive the code']);
     assert.equal(dismissed.code, 0, dismissed.out);
     git(['add', '-A'], dir);
     git(['commit', '-qm', 'the client decided about the hot spot'], dir);
@@ -271,6 +279,58 @@ test('the law audit: an attention item nobody has answered is queued; one the cl
     assert.deepEqual(sweep.filed, [], 'nothing is filed from an item somebody signed a reason about');
     assert.equal(JSON.parse(readFileSync(queuePath(dir), 'utf8')).items.length, 0);
     assert.match(auditSection(dir), /1 already decided on and left alone/);
+  });
+});
+
+test('the law audit: an item filed under a class\'s former name is not filed again after the rename', async (t) => {
+  await t.test('the feed\'s own aliases carry the former id', () => {
+    const keys = adviseKeys({
+      id: 'unguarded-hot-spot:billing',
+      aliases: [{ id: 'uncovered-hot-spot:billing', evidenceHash: 'abc' }],
+    });
+    assert.ok(keys.includes('advise:unguarded-hot-spot:billing'));
+    assert.ok(keys.includes('advise:uncovered-hot-spot:billing'));
+    assert.equal(keys[0], 'advise:unguarded-hot-spot:billing', 'the current id comes first — it is the one a new filing is recorded under');
+  });
+
+  await t.test('a bare-string alias counts too', () => {
+    assert.ok(adviseKeys({ id: 'x:1', aliases: ['y:1'] }).includes('advise:y:1'));
+  });
+
+  await t.test('without aliases, the known renames map both ways', () => {
+    assert.ok(adviseKeys({ id: 'unguarded-hot-spot:billing' }).includes('advise:uncovered-hot-spot:billing'));
+    assert.ok(adviseKeys({ id: 'uncovered-hot-spot:billing' }).includes('advise:unguarded-hot-spot:billing'));
+    assert.ok(adviseKeys({ id: 'aspect-effective-nowhere:boundary/clean-core' }).includes('advise:dead-attach:boundary/clean-core'));
+    assert.ok(adviseKeys({ id: 'dead-attach:boundary/clean-core' }).includes('advise:aspect-effective-nowhere:boundary/clean-core'));
+    assert.deepEqual(adviseKeys({ id: 'promotion:billing' }), ['advise:promotion:billing'], 'a class nobody renamed maps to itself only');
+  });
+
+  await t.test('a ledger holding the former id: the close skips the item, whichever build of yg is on the path', () => {
+    const yg = requireYg();
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    graphFixture(dir, yg);
+    initHorde(dir);
+    assert.equal(run('node.mjs', ['bind', 'feature'], dir).code, 0);
+    assert.equal(run('node.mjs', ['bind', 'billing'], dir).code, 0);
+
+    // What an earlier close recorded, under the name the class had then.
+    const graphPath = join(dir, '.horde', 'hordes', 'mission1', 'graph.json');
+    let graph = {};
+    try { graph = JSON.parse(readFileSync(graphPath, 'utf8')); } catch { /* not written yet */ }
+    graph.audits = [{
+      key: 'advise:uncovered-hot-spot:billing', kind: 'advise', item: 'uncovered-hot-spot:billing', node: 'billing', territory: null, ticket: 't-99', at: '2026-09-01T00:00:00.000Z',
+    }];
+    writeFileSync(graphPath, JSON.stringify(graph, null, 2));
+
+    run('wave.mjs', ['start'], dir);
+    const closed = run('wave.mjs', ['close', '--gate', 'green'], dir);
+    assert.equal(closed.code, 0, closed.stderr);
+    const sweep = closed.json.audit.advise;
+    assert.deepEqual(sweep.filed, [], 'the hot spot already has its ticket');
+    const skip = sweep.skipped.find((s) => HOT_SPOT_IDS.map((id) => `advise:${id}`).includes(s.key));
+    assert.ok(skip, `skipped: ${JSON.stringify(sweep.skipped)}`);
+    assert.match(skip.why, /^already filed as a ticket/);
   });
 });
 
