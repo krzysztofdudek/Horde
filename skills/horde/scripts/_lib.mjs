@@ -1843,8 +1843,9 @@ export function renderTemplate(name, vars = {}) {
 // cache/last-gate.json holds, per level, the last gate result somebody can point at. Every entry
 // says how it got there: `kind: 'ran'` when a tool here ran the level's gate command itself and
 // read its exit code (a landing, `wave close --gate green --sha`, `horde.mjs done`), `kind:
-// 'asserted'` when it is only what somebody typed (`wave close --gate red`). `done` trusts only
-// `ran`; an entry from before the field existed carries neither word and is run again.
+// 'asserted'` when it is only what somebody typed (`wave close --gate red`). It is a record, never
+// a proof — a file anybody can write — so `horde.mjs done` reads no entry here and runs the trunk
+// gate itself at the tip it hands over.
 export const GATE_RAN = 'ran';
 export const GATE_ASSERTED = 'asserted';
 

@@ -344,8 +344,7 @@ empty" is never "done" — `status.mjs` shows every charter row's own coverage
 ask. Only what ran counts: a catalogue row is filled by what the tool checks (`wave.mjs evidence` — an
 answered ask naming the row for client testimony, a file the trunk carries for an artifact, and for
 anything else the command the row itself states, which the tool runs), never by a name you type — a
-cell typed into the charter is taken as text and refused by `done`, and a green gate is one a tool here ran (a landing,
-`wave.mjs close --gate green --sha`, which runs it, or `done` itself). `horde.mjs done` is the gate
+cell typed into the charter is taken as text and refused by `done`. What the tools record (`evidence.json`, `cache/last-gate.json`) is a record, never a proof: `done` runs every command row's command and the trunk gate again at the trunk tip, and only what passes then counts. `horde.mjs done` is the gate
 itself: it refuses, listing every reason, until all three hold, then
 stamps the charter, appends the completion block to the mission journal, archives the horde, and tells
 you what to do next. Only then do you present it to the user with the branch name. The pull request and

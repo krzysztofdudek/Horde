@@ -137,8 +137,8 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   as missing (`null`) and the rest is still read — half a book is worth more than none. The same
   reader scopes the archive into each consultant's brief (`refine.mjs --step consult`, below).
 - `done [--tree p] [--horde h]` — the mission's final gate (ruling `evidence-is-the-plan`: "the queue
-  is empty" is never "done"). The one place this reads a tree — the trunk gate's own fresh re-run,
-  below, when no cached green already covers the tip — runs from `--tree`, or without one, cwd: the
+  is empty" is never "done"). The one place this reads a tree — the trunk gate's run and the command rows' re-runs,
+  below — runs from `--tree`, or without one, cwd: the
   same ordinary default every read in this tool set takes, not this horde's trunk just because a
   horde was resolvable. `--horde h` written out (no `--tree`) is what changes that, exactly as
   `queue.mjs plan`/`quality`, `tick.mjs` and `land.mjs` already read it; what the gate actually tests
@@ -149,11 +149,13 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   regardless of wave, into the charter's "reproduced by" cell — the same reading `wave.mjs close`
   uses for one wave, stretched over the whole mission); the trunk branch does not exist, or
   a filled row no longer holds against the proof recorded when it was filled (`evidence.json`; a
-  cell typed into the charter holds against nothing); `config.gates.trunk` is not configured, or it
-  is not green at the trunk branch's tip (a recorded
-  green in `cache/last-gate.json` is accepted only when it was run — `kind: "ran"`, by a landing or
-  by `wave.mjs close --gate green --sha` — on that very sha; anything else, a typed claim or an
-  entry older than the field included, is run fresh in a scratch worktree); no retrospective has been run on this mission at all, or the one on file was taken over
+  cell typed into the charter holds against nothing), or a command row's recorded command fails when
+  `done` runs it again at the trunk tip (`evidence.json` is a record, never a proof: it is a file
+  anybody can write, so a row whose command does not pass now is refused whatever the record says; a
+  command stated by several rows runs once); `config.gates.trunk` is not configured, or it
+  is not green at the trunk branch's tip — run by `done` itself every time, in a scratch worktree of
+  the tip, and never read from `cache/last-gate.json`, whose `kind: "ran"` entry is as writable as any
+  other file (the run's answer is written there); no retrospective has been run on this mission at all, or the one on file was taken over
   a different set of landed tickets than the mission now has (run `retro.mjs --horde h` again).
   Otherwise: the charter is already stamped (a side effect of the evidence check above), the
   completion block (`templates/mission-close.md`) is appended to the mission's `plan.md`, and the
@@ -945,7 +947,7 @@ run by the tool at the trunk tip and recorded only when it passes; a typed `--by
 tool that fills a cell records what it was proved by in `hordes/<h>/evidence.json` — the ticket
 verdict, the gate run and its commit, the command and its commit, the file and its object, or the
 ask — and the mission's final gate (`horde.mjs done`) checks every filled cell against that record
-again; `horde.mjs charter edit` warns about a filled cell with no record, and the final gate refuses it,
+again, and runs a command row's command again at the trunk tip, since the record is a file and only the run is proof; `horde.mjs charter edit` warns about a filled cell with no record, and the final gate refuses it,
 `current [--team t]`. Every close also writes the mission's `horde-law/1` document (see `law.mjs`) and
 prints its path, and runs the law audit off that same reading (see `audit.mjs`). Its one-team,
 one-wave judgement of "does a ticket prove this row" is also
@@ -1120,9 +1122,8 @@ the JSON, and every item below is measured against it:
    paired case has to be in it, passing, or the gate is red and names the promise. See
    [the gate's own report](#the-gates-own-report) below. Once the branch actually merges, what this
    measured is recorded in `cache/last-gate.json` at the sha the merge produced, stamped `kind:
-   "ran"` — the same file and the same matching-sha acceptance `horde.mjs done` and `wave.mjs close`
-   already read, so either sees this landing's own result right away instead of finding nothing
-   there and running the gate a second time over a tree it was just run on;
+   "ran"` — the same file `wave.mjs close` reads for the level's last result (`horde.mjs done` never
+   reads it: it runs the trunk gate itself at the tip it hands over);
 6. graph — the graph's own verdict on the branch's tree, on every run whatever `config.gates` holds:
    the graph is the node map, so it is what says the code is right there, and a repository whose own
    gate command never calls `yg` would otherwise show a green gate over a tree `yg check` exits 1

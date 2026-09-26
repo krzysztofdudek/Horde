@@ -1196,3 +1196,36 @@ test('horde.mjs done: a green gate somebody typed is not taken — the trunk gat
     rmRepo(dir);
   }
 });
+
+// Issue 371: hordes/<h>/evidence.json and cache/last-gate.json are records, never proofs — both are
+// files anybody can write. A record forged for a row whose command is `false`, pinned to the trunk
+// tip, and a `kind: "ran"` green gate entry forged at the same tip are both refused: `done` runs the
+// row's command and the trunk gate again at the tip, and only what passes then counts.
+test('horde.mjs done: a forged evidence record and a forged ran gate are run again at the trunk tip, and refused', () => {
+  const dir = makeRepo();
+  try {
+    initHorde(dir);
+    run('horde.mjs', ['config', 'set', 'gates.trunk', 'false'], dir);
+    const hordeDir = join(dir, '.horde', 'hordes', 'mission1');
+    const charterPath = join(hordeDir, 'charter.md');
+    const by = '`false` passed at 0000000';
+    writeFileSync(charterPath, readFileSync(charterPath, 'utf8').replace('| | | | |', `| E1 | \`false\` is green | api | ${by} |`));
+    const trunkSha = git(['rev-parse', 'mission1/trunk'], dir);
+    writeFileSync(join(hordeDir, 'evidence.json'), `${JSON.stringify({
+      rows: { E1: { by, kind: 'run', run: 'false', sha: trunkSha, at: new Date().toISOString() } },
+    }, null, 2)}\n`);
+    mkdirSync(join(hordeDir, 'cache'), { recursive: true });
+    writeFileSync(join(hordeDir, 'cache', 'last-gate.json'), `${JSON.stringify({
+      trunk: {
+        result: 'green', sha: trunkSha, count: null, kind: 'ran', at: new Date().toISOString(), by: 'wave 1 close',
+      },
+    }, null, 2)}\n`);
+
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /E1 rests on `false`, which fails when run again at the trunk tip/);
+    assert.match(r.stderr, /trunk gate red at/, 'the forged ran green was not taken');
+  } finally {
+    rmRepo(dir);
+  }
+});
