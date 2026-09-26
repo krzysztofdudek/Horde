@@ -1195,9 +1195,7 @@ test('scripts/README.md says the gate commands prepare a fresh tree, since Horde
 //
 // The 6.1.0 notes shipped saying Horde reads `yg drill` and `yg aspects --health` as their documents,
 // and, a paragraph later, that neither has a machine form and both stay text. A section that names a
-// document as read must not also say its command has none. Checked over [Unreleased], which is what
-// the next release says; the 6.1.0 section is corrected by a note there, and its own line is fixed
-// when the entries move into it at the release.
+// document as read must not also say its command has none. Checked over every section, one by one.
 const YG_DOCUMENT_COMMANDS = [
   ['yg-drill/1', 'yg drill'],
   ['yg-aspects-health/1', 'yg aspects --health'],
@@ -1215,7 +1213,11 @@ function documentContradictions(section) {
 }
 
 test('no CHANGELOG section names a yg document as read and as not available', () => {
-  assert.deepEqual(documentContradictions(unreleasedSection(readText(join(REPO_ROOT, 'CHANGELOG.md')))), []);
+  const changelog = readText(join(REPO_ROOT, 'CHANGELOG.md'));
+  const sections = changelog.split(/^(?=## \[)/m).filter((x) => x.startsWith('## ['));
+  assert.ok(sections.length > 1, 'the changelog splits into its sections');
+  const found = sections.flatMap((sec) => documentContradictions(sec).map((c) => `${sec.split('\n')[0]}: ${c}`));
+  assert.deepEqual(found, []);
   const shipped = '- Horde reads `yg drill` as its document (`yg-drill/1`). `yg drill` has no machine form, so it stays text.';
   assert.equal(documentContradictions(shipped).length, 1, 'the contradiction the 6.1.0 notes shipped with is caught');
 });
