@@ -836,9 +836,13 @@ function topChangelogSection(changelog) {
   return next === -1 ? rest : rest.slice(0, next + 1);
 }
 
+// A floor raised since the last release is stated under [Unreleased] (new entries go there and move
+// into the version section at the release), so that section, when it names a floor, is the one read.
 test('CHANGELOG\'s top released section states the Yggdrasil floor as "<version> or newer", never a same-major ceiling', () => {
   const floor = ygDocumentsAfter();
-  const topSection = topChangelogSection(readText(join(REPO_ROOT, 'CHANGELOG.md')));
+  const changelog = readText(join(REPO_ROOT, 'CHANGELOG.md'));
+  const unreleased = unreleasedSection(changelog);
+  const topSection = /Needs Yggdrasil/.test(unreleased) ? unreleased : topChangelogSection(changelog);
 
   assert.match(topSection, new RegExp(`Yggdrasil ${floor.replace(/\./g, '\\.')} or newer`),
     `top released section does not state the Yggdrasil floor as "${floor} or newer", matching node.mjs's own YG_DOCUMENTS_AFTER`);

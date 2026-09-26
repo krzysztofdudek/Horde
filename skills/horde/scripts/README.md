@@ -688,9 +688,7 @@ several users.
     (an empty corpus is never a pass: nothing has been run against that rule). The counts are read
     off the drill's `yg-drill/1` document (`yg drill --aspect <id> --json`) and checked against the
     drill's own exit code; a document the exit code contradicts, or one missing a count, is unread —
-    never green. Yggdrasil 6.0.x has no `--json` on `yg drill`: for it alone the summary line is read
-    by what each count's word means, in any order or case, under the same exit-code check, and a count
-    Horde does not recognise is unread. The move records the
+    never green. The summary line printed for a person is never read. The move records the
     **baseline** — the refusals `yg check --json` reports for that rule once the rung makes its pairs
     exist, after the free keyless fill — so a later reading above it is a new violation and a reading
     at or below it is not.
@@ -709,9 +707,9 @@ several users.
   rule; *draft → advisory* touches no node at all. Never a lock, never a `yg-suppress`, never
   `review_by`. A rule a reader judges costs money to drill, so `promote` refuses it until
   `--with-reviewer` says to spend that. Under a charter set to `only-the-work`, `promote` refuses
-  outright. An installed `yg` that predates the rule's own log ("yg aspects log add"/"yg aspects log
-  read") is refused too, naming the release to upgrade to — the same shape 148's own refusal takes for
-  `yg-check/1`.
+  outright. An installed `yg` that reports a version below Horde's floor (6.1.0) is refused before the
+  rule's own log ("yg aspects log add") is written, naming the release to upgrade to — told by the
+  version it reports, never by the words of how it fails.
 - `demote <aspect> --to draft|advisory --by user --why "<what they said>"` — the one direction nobody
   in the horde may take alone. Without `--by user` it refuses, and `--by architect` is refused just as
   flatly — and either refusal still leaves a best-effort note in the rule's own log saying who reached
@@ -815,11 +813,9 @@ useless": a rule that is never violated may be deterring the very violations it 
 never coins a word for it — it prints Yggdrasil's `signal` cell and the plain-words line under the
 table verbatim, or it prints nothing. It reads both off Yggdrasil's `yg-aspects-health/1` document
 (`yg aspects --health --json`, its own document, not the rule inventory), where a rule never judged
-carries no signal and is shown with the table's own em-dash. Yggdrasil 6.0.x refuses `--health`
-with `--json`; for it alone the table is read, because the alternative is inventing a label, which
-is the one thing this line exists not to do — by its column names (`aspect` and `signal`, in any
-position, case or indentation), so a re-laid table still reads, and one without both names is
-reported as unread, never guessed at.
+carries no signal and is shown with the table's own em-dash. The table printed for a person is never
+read; a CLI that answers no document is below Horde's floor, and the close says it could not read
+the health view and why.
 
 Both ledgers live in the horde's own `graph.json`, under `audits`, keyed by what the finding IS
 (`review-by:<rule>`, or the attention item's own stable id) — a rule stays overdue until somebody
@@ -1132,7 +1128,7 @@ the JSON, and every item below is measured against it:
 6. graph — the graph's own verdict on the branch's tree, on every run whatever `config.gates` holds:
    the graph is the node map, so it is what says the code is right there, and a repository whose own
    gate command never calls `yg` would otherwise show a green gate over a tree `yg check` exits 1
-   on. One run: `yg check --approve --only-deterministic --json` (`--compact` on a CLI that has it)
+   on. One run: `yg check --approve --only-deterministic --json --compact`
    records every rule a script can decide, at no cost, and answers the `yg-check/1` document of the
    tree it just filled, which is what the item reads — by its fields, never its text. What the fill
    leaves is the prose rules, which a reader has to judge — the item names each pending pair rather

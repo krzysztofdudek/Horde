@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Needs Yggdrasil 6.1.0 or newer; an older one is refused with the release to install.
+
 ### Fixed
 
 - `tick` no longer takes a ticket from a worker that is still working. A ticket handed out stays with its worker until the worker logs its last `landed <sha>` line (or `stopped: <why>` when it stops without landing), until the process `tick` started for it under the external runner has ended, or until the director runs `tick.mjs --reclaim <ticket>` for a worker that came back without that line. Until then `tick` lists the ticket as `working` and leaves it alone. Before, a `tick` run while a worker was still busy committed its half-written work, handed the same ticket to a second worker, or sent a half-finished branch to review, so `--watch` and the session's periodic ticks could not run beside a long worker. `queue.mjs reconcile` takes `--reclaim` too. A ticket handed out before you upgrade has no record of its worker, so the first `tick` after the upgrade settles it the old way, even if its worker is still busy. Upgrade when no worker is running. If a worker is still running, expect its ticket to be settled and handed out again.
@@ -33,6 +35,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Horde now needs Yggdrasil 6.1.0 or newer, the release it ships with. An older one is refused, naming the version it reports and the release to install. Horde no longer reads anything Yggdrasil prints for a person: `yg drill` and `yg aspects --health` are read only as their documents, and a refusal is read by its code, never by its wording. An option the CLI does not know means the CLI is too old.
 - `horde done` trusts only what it runs itself. It runs the trunk gate at the trunk tip every time, and runs the command of every row filled by a command again there, refusing a row whose command fails now. What Horde recorded about earlier runs no longer counts as proof, because it is a file anyone can edit. `wave close --gate green --sha <sha>` now runs the gate at that commit, which must be on the trunk, and refuses to close the wave when it fails. `--gate red` is recorded as said. `--evidence` on a wave close needs `--gate green --sha`, and never fills a client-testimony or artifact row.
 - `wave evidence` no longer takes `--by`. A row is filled by what its kind of proof names: `--ask <id>` with an answered question that names the row for client testimony, `--artifact <path>` with a file on the trunk for an artifact, and `--run "<command>"` for anything else. The command must be one the row itself names in backticks; Horde runs it on the trunk and records it only when it passes. `horde done` checks every filled row again against what proved it, and refuses a row whose "reproduced by" was typed into the charter by hand. `charter edit` warns about such a row.
 - `horde init --json` no longer reports `reviewer: true|false`. It reports `reviewerGap` instead, which says whether prose rules wait on a reviewer that is missing or unreachable, which rules those are, and what settles it. A script that read `reviewer` should read `reviewerGap.gap`.

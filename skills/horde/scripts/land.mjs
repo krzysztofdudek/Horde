@@ -41,7 +41,7 @@ import {
   ticketNodes, ygCommand, fillDeterministic, pendingProsePairs, userOnlyRefusal, reviewerMissingIn,
   blockingFindings, splitFindings, routeFindings, renderFindings,
   globToRegExp, pathInBoundary, ticketBoundary, proposalBoundaryOf, ygFileContext, ygAvailable, ygJson,
-  NODE_LOG_FILE, YG_LOCK_FILE, mergesByRule, nodeOfLogFile, ygLogMergeResolve,
+  NODE_LOG_FILE, YG_LOCK_FILE, mergesByRule, nodeOfLogFile, ygLogMergeResolve, YG_DOCUMENTS_AFTER,
 } from './node.mjs';
 import {
   ticketFiles, ticketEvidence, ticketKind, prototypeBranchOf, ticketReopens, findTicket,
@@ -1444,7 +1444,7 @@ function docOrStop(res, cfg, schema, what) {
     fail(`\`${res.command}\` could not be started — there is no Yggdrasil CLI at "${ygCommand(cfg).display}", and ${what} cannot be read without one. Point config.ygCommand at a build: horde.mjs config set ygCommand "node path/to/bin.js"`);
   }
   if (res.state === 'stale') {
-    fail(`\`${res.command}\` did not answer with the ${schema} document Horde reads (${res.saw}) — ${what} cannot be read from an older CLI, and reading it a second, fragile way is exactly what this document exists to remove. Upgrade the Yggdrasil CLI (npm i -g @chrisdudek/yg), or point config.ygCommand at a newer build`);
+    fail(`\`${res.command}\` did not answer with the ${schema} document Horde reads (${res.saw}) — ${what} cannot be read from an older CLI, and reading it a second, fragile way is exactly what this document exists to remove. Upgrade the Yggdrasil CLI to ${YG_DOCUMENTS_AFTER} or newer (npm i -g @chrisdudek/yg), or point config.ygCommand at a newer build`);
   }
   fail(`\`${res.command}\` could not answer for ${what}: ${res.detail || `exit ${res.code}`}`);
   return null;

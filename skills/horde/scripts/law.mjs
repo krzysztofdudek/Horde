@@ -34,7 +34,7 @@ import {
   resolveTree, asArray, git,
   runMain,
 } from './_lib.mjs';
-import { ygJson, ygCommand } from './node.mjs';
+import { ygJson, ygCommand, YG_DOCUMENTS_AFTER } from './node.mjs';
 
 export const LAW_SCHEMA = 'horde-law/1';
 
@@ -61,11 +61,11 @@ options: --json  --help`;
 
 const LAW_DOCUMENTS = 'yg-aspects/1 (including its `--reach`) and yg-aspect-log/1';
 
-// The release those answers arrived complete in. `--reach` is the newest of them, and a CLI that
-// does not know it cannot be fallen back to: the old road (`check --json --full`'s pairs) is a
-// different document answering a narrower question, and quietly taking it is how a draft rule's
-// real subjects went missing in the first place. So the refusal names a release to install.
-const LAW_CLI_AFTER = '6.0.0';
+// The release to install, Horde's one floor for every Yggdrasil answer. `--reach` is among those
+// answers, and a CLI that does not know it cannot be fallen back to: the old road (`check --json
+// --full`'s pairs) is a different document answering a narrower question, and quietly taking it is
+// how a draft rule's real subjects went missing in the first place. So the refusal names a release.
+const LAW_CLI_AFTER = YG_DOCUMENTS_AFTER;
 
 function docOn(tree, cfg, args, schema, where) {
   const res = ygJson(tree, cfg, args, schema);

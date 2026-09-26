@@ -273,25 +273,20 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
     assert.match(readFileSync(aspectPath(other, 'no-marker'), 'utf8'), /^status: draft$/m);
   });
 
-  await t.test('a real yg that predates the rule\'s own log is refused, naming the release to upgrade to', () => {
+  await t.test('a yg below Horde\'s floor is refused by the version it reports, naming the release to upgrade to', () => {
     const other = makeRepo();
     t.after(() => rmRepo(other));
     graphFixture(other, yg, { status: 'draft' });
     initHorde(other);
 
-    // A real, working CLI for everything BUT `aspects log` — the same shape a pre-152 install
-    // actually takes (that subcommand did not exist, so its own arguments read as extras `aspects`
-    // itself does not accept) — so this is the version guard alone under test, on a graph and a
-    // drill that are otherwise entirely real.
-    const passthrough = join(other, 'no-aspect-log-yg.mjs');
+    // A real, working CLI that reports 6.0.0. It is told apart by that version alone — never by the
+    // words it prints when a call fails — and refused before the promotion writes anything.
+    const passthrough = join(other, 'old-yg.mjs');
     writeFileSync(passthrough, [
       "import { execFileSync } from 'node:child_process';",
       `const REAL = ${JSON.stringify(yg)};`,
       'const argv = process.argv.slice(2);',
-      "if (argv[0] === 'aspects' && argv[1] === 'log') {",
-      "  process.stderr.write(\"error: too many arguments for 'aspects'. Expected 0 arguments but got \" + (argv.length - 2) + \": \" + argv.slice(2).join(', ') + \".\\n\");",
-      '  process.exit(1);',
-      '}',
+      "if (argv[0] === '--version') { console.log('6.0.0'); process.exit(0); }",
       'const real = REAL.split(/\\s+/);',
       'try {',
       '  execFileSync(real[0], [...real.slice(1), ...argv], { stdio: "inherit" });',
@@ -302,14 +297,10 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
 
     const r = run('node.mjs', ['promote', 'no-marker'], other);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /predates its own rule log/);
-    assert.match(r.stderr, /yg aspects log add.*yg aspects log read/);
-    assert.match(r.stderr, /arrived in 5\.9\.0[\s\S]*Upgrade to 6\.0\.0 or newer/);
+    assert.match(r.stderr, /reports version 6\.0\.0/);
+    assert.match(r.stderr, /Upgrade to 6\.1\.0 or newer/);
     assert.match(r.stderr, /npm i -g @chrisdudek\/yg/);
-    // Nothing was left half-done: the rule file itself was already moved by the time the log call
-    // ran (the same order promote always writes in), but the horde's own working still reflects
-    // that this call failed rather than claiming a raise that has no history behind it.
-    assert.match(readFileSync(aspectPath(other, 'no-marker'), 'utf8'), /^status: advisory$/m);
+    assert.match(readFileSync(aspectPath(other, 'no-marker'), 'utf8'), /^status: draft$/m, 'nothing was raised');
   });
 
   await t.test('the refusal names the tree it ran in and the version that tree\'s own CLI reports (issue 086)', () => {

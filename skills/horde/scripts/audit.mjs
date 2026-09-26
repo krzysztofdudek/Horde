@@ -76,7 +76,7 @@ import {
   asArray, readTerritories, leaseHolderForNode, today, qualityPolicy, firstClass, withQueueLock,
 } from './_lib.mjs';
 import {
-  ygJson, ygCommand, readAuditLedger, recordAudit, readAspectLedger, listAllNodes,
+  ygJson, ygCommand, readAuditLedger, recordAudit, readAspectLedger, listAllNodes, YG_DOCUMENTS_AFTER,
 } from './node.mjs';
 import {
   createTicket, setTicketBody, findTicket, parseField,
@@ -164,29 +164,21 @@ function readGrainAdvice(root, cfg) {
   };
 }
 
-// ---- yg aspects --health: the document, and the table only for 6.0.x ----------------------------
+// ---- yg aspects --health: the document ---------------------------------------------------------
 //
 // Yggdrasil answers the health projection as its own document, `yg-aspects-health/1`
-// (`yg aspects --health --json`, 6.1.0 and newer): per rule the signal word and the plain-words
-// reading it prints under its table, `null` for a question it never asked. That is what is read.
-// The document is not the rule inventory (`yg-aspects/1`) and never was folded into it — one schema
-// name never means two things — so it is asked for by its own name.
-//
-// Yggdrasil 6.0.x, which the version floor still allows, refuses `--health` with `--json` and prints
-// only the table. For that CLI alone the table is read, tolerantly, because its layout is the tool's
-// to change: going without would mean Horde inventing its own word for "a rule nothing has hit",
-// which is the one thing this whole line exists NOT to do — the word belongs to the tool that
-// measured it. The header row is found by the two column NAMES it must carry (`aspect` and
-// `signal`, anywhere in the row, any case, any indentation), each cell is taken by that header's
-// position, colour codes are stripped, and the plain-words note is taken verbatim from
-// the block whose heading starts "signal detail". Anything that does not carry both column names is
-// an unreadable answer, never a guess — the close then says it could not read it.
+// (`yg aspects --health --json`): per rule the signal word and the plain-words reading it prints
+// under its table, `null` for a question it never asked. That is what is read, and nothing else —
+// the word for "a rule nothing has hit" belongs to the tool that measured it, never to Horde, and
+// the table printed for a person is never parsed. The document is not the rule inventory
+// (`yg-aspects/1`) and never was folded into it — one schema name never means two things — so it is
+// asked for by its own name.
 
 const HEALTH_SCHEMA = 'yg-aspects-health/1';
 
-// {aspect -> {signal, reading}} off the document — the same shape the table reader returns, with a
-// rule the tool never judged carrying the table's own em-dash rather than a word Horde made up.
-// Null when the document is not one.
+// {aspect -> {signal, reading}} off the document, with a rule the tool never judged carrying the
+// em-dash Yggdrasil's own table prints rather than a word Horde made up. Null when the document is
+// not one.
 export function healthFromDoc(doc) {
   if (!doc || doc.schema !== HEALTH_SCHEMA || !Array.isArray(doc.rules)) return null;
   const out = new Map();
@@ -200,13 +192,8 @@ export function healthFromDoc(doc) {
   return out;
 }
 
-// A refusal that means "this CLI has no machine form of the health view": 6.0.x's own sentence on
-// stderr, a 6.1.0 build from before the document, or an answer that is no document at all. Anything
-// else — a graph that does not load, say — is the CLI's real answer and is reported as it is.
-const NO_HEALTH_DOCUMENT = /cannot be combined with --json|unknown option '--json'/;
-
-// The health reading, the document first and the table only for a CLI that has no document.
-// `{read: true, health}` or `{read: false, why}`.
+// The health reading off its document. `{read: true, health}` or `{read: false, why}`: a CLI that
+// answers no document is below Horde's floor and is named as such, never read a second way.
 export function readHealth(tree, cfg) {
   const res = ygJson(tree, cfg, ['aspects', '--health', '--json'], HEALTH_SCHEMA);
   if (res.state === 'ok') {
@@ -216,71 +203,10 @@ export function readHealth(tree, cfg) {
       : { read: false, why: `\`${res.command}\` answered a ${HEALTH_SCHEMA} document Horde could not read` };
   }
   if (res.state === 'no-cli') return { read: false, why: `there is no Yggdrasil CLI at "${ygCommand(cfg).display}"` };
-  const noDocument = res.state === 'stale' || (res.state === 'error' && NO_HEALTH_DOCUMENT.test(res.detail || ''));
-  if (!noDocument) {
-    return { read: false, why: `\`${res.command}\` refused: ${(res.detail || `exit ${res.code}`).split('\n')[0]}` };
+  if (res.state === 'stale') {
+    return { read: false, why: `\`${res.command}\` did not answer the ${HEALTH_SCHEMA} document (${res.saw}); Horde needs Yggdrasil ${YG_DOCUMENTS_AFTER} or newer` };
   }
-  const text = runHealth(tree, cfg);
-  if (!text.read) return text;
-  const health = parseHealth(text.text);
-  return health
-    ? { read: true, health }
-    : { read: false, why: `\`${ygCommand(cfg).display} aspects --health\` answered something that is not the health table` };
-}
-
-function runHealth(tree, cfg) {
-  const { cmd, prefix, display } = ygCommand(cfg);
-  try {
-    return {
-      read: true,
-      text: execFileSync(cmd, [...prefix, 'aspects', '--health'], {
-        cwd: tree, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
-      }),
-    };
-  } catch (e) {
-    if (e.code === 'ENOENT') return { read: false, why: `there is no Yggdrasil CLI at "${display}"` };
-    const detail = ((e.stderr && e.stderr.toString()) || e.message || '').trim().split('\n')[0];
-    return { read: false, why: `\`${display} aspects --health\` refused (exit ${e.status === undefined ? '?' : e.status})${detail ? `: ${detail}` : ''}` };
-  }
-}
-
-// {aspect -> {signal, reading}} off the rendered table. `signal` is the word in the signal column
-// ('active', 'decorative?', 'quiet', or the em-dash for a rule with no recorded exposure);
-// `reading` is the plain-words line Yggdrasil prints under the table for that rule, verbatim and
-// unparaphrased. Null when the text is not that table at all.
-const cellsOf = (line) => line.trim().split(/\s{2,}|\t+/);
-export function parseHealth(text) {
-  const lines = String(text || '').replace(/\x1b\[[0-9;]*m/g, '').split('\n');
-  let headerIdx = -1;
-  let aspectCol = -1;
-  let signalCol = -1;
-  for (let i = 0; i < lines.length && headerIdx === -1; i++) {
-    const names = cellsOf(lines[i]).map((c) => c.toLowerCase());
-    const a = names.indexOf('aspect');
-    const sg = names.indexOf('signal');
-    if (a !== -1 && sg !== -1) { headerIdx = i; aspectCol = a; signalCol = sg; }
-  }
-  if (headerIdx === -1) return null;
-  const out = new Map();
-  for (let i = headerIdx + 1; i < lines.length; i++) {
-    const line = lines[i];
-    if (line.trim() === '') break;
-    const cells = cellsOf(line);
-    if (cells.length <= Math.max(aspectCol, signalCol)) continue;
-    out.set(cells[aspectCol], { signal: cells[signalCol], reading: null });
-  }
-  // "Signal detail (…):" then one indented "<aspect>: <plain words>" per rule that earned one.
-  const detailIdx = lines.findIndex((l) => /^\s*(?:note:\s*)?signal detail/i.test(l));
-  if (detailIdx !== -1) {
-    for (let i = detailIdx + 1; i < lines.length; i++) {
-      if (lines[i].trim() === '') break;
-      const m = /^\s*(\S+?):\s+(.*)$/.exec(lines[i]);
-      if (!m) continue;
-      const entry = out.get(m[1]);
-      if (entry) entry.reading = m[2].trim();
-    }
-  }
-  return out;
+  return { read: false, why: `\`${res.command}\` refused: ${(res.detail || `exit ${res.code}`).split('\n')[0]}` };
 }
 
 // ---- who owns a rule's finding ----------------------------------------------------------------
