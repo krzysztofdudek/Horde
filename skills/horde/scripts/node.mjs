@@ -907,9 +907,10 @@ export function renderFindings(doc, findings) {
 //   noiseFloor     findings that only warn — the standing noise — less the same, and less a log
 //                  cycle a free fill left open (`logCyclesOpen`)
 //   coverage       files a component owns, of all files the graph can see (yg-check/1 coverage)
-//   judges         distinct external judges a verdict in force rests on (yg-check/1 judges) —
-//                  verifier-is-yggdrasil-reviewer's own count of who is answering outside the
-//                  configured reviewer; not part of what "fell" means below, shown for the record
+//   judges         distinct judges other than the configured reviewer that a verdict in force
+//                  still rests on (yg-check/1 judges) — the external channel 6.1.0 retired, whose
+//                  verdicts stay until their pairs are judged again; shown only while above zero,
+//                  never part of what "fell" means below
 //
 // Beside them, never part of what "fell" means: `unfilled` (findings that are a pair with no
 // verdict yet for a cache reason — stale, never reviewed, not run in this checkout, keyed by an

@@ -995,8 +995,9 @@ Beyond the counts it always carried, `close` states seven figures the chairman r
   script cache, and it is the one run that sees a check that failed to run) and `aspects --json` (`yg-aspects/1`, for each rule's status). Five
   figures — enforced rules, advisory rules with nothing recorded against them, blocking violations,
   the standing noise floor, and file coverage — each print with their delta
-  from the previous wave, plus a sixth, the number of distinct external judges a verdict in force
-  rests on, shown for the record but never part of what "fell" means. What is only the state of a
+  from the previous wave. A sixth, "verdicts by a retired judge" — distinct judges other than the
+  configured reviewer that a verdict in force still rests on, the external channel 6.1.0 retired —
+  is printed only while it is above zero, and is never part of what "fell" means. What is only the state of a
   cache or of the horde's own process is counted apart and never as the graph getting weaker: a
   pair with no verdict yet for a cache reason (cause `deterministic-not-run`,
   `keyed-by-earlier-release`, `stale` or `never-reviewed`) is neither a violation nor something
@@ -1602,10 +1603,10 @@ The second run validates that file — every key classified exactly once, a `rul
 sentence, its component and `check`/`prose`, a `taste` carrying a component and no rule, an
 `inexpressible` carrying neither — and writes `hordes/<h>/retro.json` (`horde-retro/1`) with
 `retro.md` beside it: `{schema, horde, at, state, items, law, returns, taste, inexpressible, logged,
-judge, threshold, notes}`. A `taste` item leaves one line in its component's own log through
+threshold, notes}`. A `taste` item leaves one line in its component's own log through
 `yg log add` and nowhere else; a key already on the previous document is never logged twice, and one
 retrospective runs at a time (`hordes/<h>/retro.lock`, taken over when the pid holding it is gone).
-That `yg log add` write, and the judge measurement beside it, run against the tree `--tree` names;
+That `yg log add` write runs against the tree `--tree` names;
 without it, cwd, the same ordinary default every read in this tool set takes, not this horde's
 trunk just because a horde was resolvable. `--horde h` written out (no `--tree`) is what changes
 that, exactly as `queue.mjs plan`/`quality`, `tick.mjs`, `land.mjs` and `horde.mjs done` already

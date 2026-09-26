@@ -452,7 +452,7 @@ function cmdRetro(flags) {
   // `flags.horde`, never `horde` above (main()'s own resolveHorde(flags), which defaults to the
   // sole horde in a single-horde repository even with nothing typed at all) — the same distinction
   // tick.mjs (041), land.mjs (109) and horde.mjs done (113) already draw. Only logTaste's
-  // `yg log add` and measureJudge's own reads below actually touch this tree; the gathering run
+  // `yg log add` below actually touches this tree; the gathering run
   // above (collectRetroInput) reads only .horde/ and resolves no tree at all, on purpose (see its
   // own comment) — issue 114 caught this command's tree resolution up to the same rule.
   const info = resolveTree({ tree: flags.tree, horde: flags.horde });

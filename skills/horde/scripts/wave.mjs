@@ -1020,14 +1020,15 @@ function decisionsKpi(horde, journalText, openedAt, mergedThisWave) {
 // ---- the quality index (ruling quality-always-authorised) ------------------------------------
 //
 // Five numbers read from the graph's own CLI at the tree this close is run on, printed with the
-// delta from the wave before, plus a sixth (judges) shown for the record but never part of what
-// "fell" means. The ruling says the index must not fall: raising enforcement is the horde's to do
+// delta from the wave before. A sixth — verdicts in force that rest on a judge other than the
+// configured reviewer, the channel 6.1.0 retired — is printed only while there are any, so a
+// reader sees what still has to be judged again; it is never part of what "fell" means. The ruling says the index must not fall: raising enforcement is the horde's to do
 // on its own, lowering it is the chairman's call — so a fall is not something this tool argues
 // with, it is something it escalates.
 
-// The trailing "· judges N" is optional in the pattern: a journal entry a close wrote before this
-// figure existed has none, and that is a missing delta to fall back on, not a parse failure.
-const QUALITY_RE = /\*\*Quality index:\*\* enforced (\d+) · advisory clean (\d+)\/(\d+) · baseline (\d+) · noise floor (\d+) · coverage (\d+)\/(\d+)(?: · judges (\d+))?/g;
+// The trailing figure is optional in the pattern: a line with none has no retired verdicts in force
+// (or was written before the figure existed), and an older close wrote it as "· judges N".
+const QUALITY_RE = /\*\*Quality index:\*\* enforced (\d+) · advisory clean (\d+)\/(\d+) · baseline (\d+) · noise floor (\d+) · coverage (\d+)\/(\d+)(?: · (?:judges|verdicts by a retired judge) (\d+))?/g;
 
 function previousQuality(journalText) {
   QUALITY_RE.lastIndex = 0;
@@ -1042,7 +1043,7 @@ function previousQuality(journalText) {
       noiseFloor: Number(m[5]),
       coveredFiles: Number(m[6]),
       totalFiles: Number(m[7]),
-      judges: m[8] !== undefined ? Number(m[8]) : null,
+      judges: m[8] !== undefined ? Number(m[8]) : 0,
     };
   }
   return last;
@@ -1084,7 +1085,8 @@ function qualityLine(now, prev) {
   if (!now.measured) return `not measured — ${now.why}`;
   const coverage = now.totalFiles === null ? '0/0' : `${now.coveredFiles}/${now.totalFiles}`;
   const base = `enforced ${now.enforced} · advisory clean ${now.advisoryClean}/${now.advisoryTotal}`
-    + ` · baseline ${now.baseline} · noise floor ${now.noiseFloor} · coverage ${coverage} · judges ${now.judges}`;
+    + ` · baseline ${now.baseline} · noise floor ${now.noiseFloor} · coverage ${coverage}`
+    + `${now.judges ? ` · verdicts by a retired judge ${now.judges}` : ''}`;
   // Pairs with no verdict yet and open log cycles are the state of a cache and of the horde's own
   // process, not of the graph: said beside the index, never part of it or of what "fell" means.
   const unfilled = now.unfilled || now.logCyclesOpen
@@ -1100,7 +1102,7 @@ function qualityLine(now, prev) {
     `noise floor ${sign(now.noiseFloor - prev.noiseFloor)}`,
     `coverage ${sign((now.coveredFiles || 0) - prev.coveredFiles)}`,
   ];
-  if (prev.judges !== null && prev.judges !== undefined) deltas.push(`judges ${sign(now.judges - prev.judges)}`);
+  if (now.judges || prev.judges) deltas.push(`verdicts by a retired judge ${sign((now.judges || 0) - (prev.judges || 0))}`);
   return `${base} (Δ ${deltas.join(' · ')})${unfilled}`;
 }
 
