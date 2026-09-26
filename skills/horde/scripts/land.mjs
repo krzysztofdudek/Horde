@@ -906,8 +906,8 @@ function checkRevertTest(horde, root, cfg, branch, parentBranch, files, issueTex
 // two parents; nothing is ever its own parent). The tree the gate just measured and the tree that
 // commit carries are identical either way, so once the merge names that sha, that — not
 // `branchSha` — is what recordGateCache is called with: the one a later `git rev-parse` of the
-// parent branch will actually produce, and so the one `horde.mjs done` and `wave.mjs close` can
-// match against without re-running anything.
+// parent branch will actually produce, and so the one `wave.mjs close` can match against without
+// re-running anything (`horde.mjs done` reads none of it: it runs the trunk gate itself).
 //
 // A command that hangs is not a verdict either, so the run carries a timeout and says so rather
 // than leaving a stuck process behind a checklist that never finishes. A stopped command is the
@@ -967,11 +967,11 @@ function checkGate(cfg, level, worktree, branchSha, noGate) {
   };
 }
 
-// Writes a gate measurement to the same file horde.mjs's `done` and wave.mjs's `close` read
-// (hordes/<horde>/cache/last-gate.json), keyed by the same level name ("team" or "trunk") land.mjs
-// itself ran the gate command under — so a `done` or a `close` right after a landing reads exactly
-// what that landing measured, instead of finding nothing there and either re-running the whole gate
-// on a tree it was already run on, or reporting the gate as unrecorded. Called from run() only once
+// Writes a gate measurement to the file wave.mjs's `close` reads (hordes/<horde>/cache/last-gate.json),
+// keyed by the same level name ("team" or "trunk") land.mjs itself ran the gate command under — so a
+// `close` right after a landing reports what that landing measured instead of the gate as
+// unrecorded. It is a record, never a proof: `horde.mjs done` reads none of it and runs the trunk
+// gate itself. Called from run() only once
 // a landing has actually merged, with `cache.sha` already corrected to the sha that merge produced
 // (see checkGate's own comment for why that is never `branchSha`).
 //
@@ -987,14 +987,13 @@ function recordGateCache(horde, level, cache, ticketId, branch, cfg) {
   const lock = acquireGateLock(ticketId, branch, { waitMs: lockWait(cfg) });
   // Best-effort: the ticket is already landed by the time this runs — a lock this contended (every
   // other landing on the repository holding it past its own wait) is not a reason to report an
-  // already-merged ticket as failed over a cache entry that a later `done` or `close` can still get
-  // by running the gate fresh, exactly as either would have before this existed.
+  // already-merged ticket as failed over a cache entry a later `close` only reports.
   if (!lock.ok) return;
   try {
     const path = hordePath(horde, 'cache', 'last-gate.json');
     const existing = readJSON(path, {});
-    // `kind: 'ran'` — the landing ran this gate itself (checkGate), which is the only kind of
-    // entry `horde.mjs done` trusts without running the gate again.
+    // `kind: 'ran'` — the landing ran this gate itself (checkGate); `kind: 'asserted'` is what was
+    // only typed. Either is a record for a reader to report, never what `horde.mjs done` rests on.
     writeJSON(path, { ...existing, [level]: { ...cache, kind: GATE_RAN, at: nowIso(), by: `land ${ticketId}` } });
   } finally {
     lock.release();
