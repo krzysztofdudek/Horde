@@ -29,8 +29,8 @@ Needs Yggdrasil 6.1.0 or newer; an older one is refused with the release to inst
 - An import between two components with no declared relation now names each import by file and line, and the relation the worker declares in its own component, or says to remove the import. Yggdrasil 6.1.0 reports type-only imports too. When the architecture allows no relation between the two components, the ticket waits on you and no fix round is counted: have the import removed, or approve the architecture change.
 - `land.mjs NNN --fate reverted --by <commit>` now checks the commit: it must be on the mission's trunk, come after the ticket's merge, and undo it. Before, any commit in the repository was accepted.
 - Stopping a landing with Ctrl-C, or with a SIGTERM or SIGHUP, now stops the repository's test command it was running too, and everything that command started. Before, the test command kept running in the background and holding its checkout after the landing had ended.
-- The wave report no longer prints `judges 0` on every quality line.
-- The wave report no longer prints the escalated count and the keys-transferred line from before 6.0.0 when they are zero, which they always are for a mission started since then. It prints how many verdicts still rest on a judge Horde no longer uses, and only while there are any.
+- The wave report no longer prints `judges 0` on every quality line. It prints how many verdicts still rest on a judge Horde no longer uses, and only while there are any.
+- The wave report no longer prints the escalated count and the keys-transferred line from before 6.0.0 when they are zero, which they always are for a mission started since then.
 
 ### Added
 
