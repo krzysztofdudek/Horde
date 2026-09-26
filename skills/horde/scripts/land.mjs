@@ -1315,21 +1315,90 @@ function suppressionsAt(tree, cfg) {
 // A rule's own applicability text, read off the tree rather than inferred. Only `when` and `scope`
 // matter here: they are what decides which units the rule reaches, so a change to either is what
 // turns a lost pair into "the rule was narrowed" rather than "the rule was unhooked from a node".
+// An installed rule's `scope` is the adopter's to adapt, so it may sit in `yg-aspect.adapt.yaml`
+// beside the copy rather than in the copy itself; both files are read, in that order.
 const TOP_LEVEL_KEY = /^[A-Za-z_][\w-]*:/;
-function aspectReachText(tree, aspectId) {
-  const path = join(tree, '.yggdrasil', 'aspects', aspectId, 'yg-aspect.yaml');
-  let text = '';
-  try { text = readFileSync(path, 'utf8'); } catch { return ''; }
+function yamlBlocks(text, keys) {
   const out = [];
   let inBlock = false;
-  for (const line of text.split('\n')) {
-    if (/^(when|scope):/.test(line)) { inBlock = true; out.push(line); continue; }
+  for (const line of String(text || '').split('\n')) {
+    const key = /^([A-Za-z_][\w-]*):/.exec(line);
+    if (key && keys.includes(key[1])) { inBlock = true; out.push(line); continue; }
     if (inBlock) {
       if (TOP_LEVEL_KEY.test(line)) { inBlock = false; continue; }
       out.push(line);
     }
   }
   return out.join('\n').trim();
+}
+
+function aspectReachText(tree, aspectId) {
+  const dir = join(tree, '.yggdrasil', 'aspects', aspectId);
+  return RULE_YAML_FILES
+    .map((name) => yamlBlocks(contentAt(dir, name), ['when', 'scope']))
+    .filter(Boolean)
+    .join('\n');
+}
+
+// ---- which rule a path under .yggdrasil/aspects/ belongs to ------------------------------------
+//
+// A rule id is its directory's path under `.yggdrasil/aspects/`, and it can hold `/` of its own: a
+// rule nested under another (`boundary/clean-core`), or one installed from a package
+// (`packages/<owner>/<repo>/<package>/<rule>`). So a changed path is never cut at its first segment
+// — it belongs to the longest id in the graph's own inventory that is a directory above it. A path
+// under no known rule belongs to none.
+const ASPECTS_DIR = '.yggdrasil/aspects/';
+const RULE_YAML_FILES = ['yg-aspect.yaml', 'yg-aspect.adapt.yaml'];
+
+export function ruleOfPath(path, ids) {
+  if (!String(path).startsWith(ASPECTS_DIR)) return null;
+  const rest = String(path).slice(ASPECTS_DIR.length);
+  let best = null;
+  for (const id of ids) {
+    if (!id || !rest.startsWith(`${id}/`)) continue;
+    if (!best || id.length > best.length) best = id;
+  }
+  return best === null ? null : { id: best, file: rest.slice(best.length + 1) };
+}
+
+// Whether a file inside a rule's own directory is part of what the rule SAYS. Everything there is —
+// the rule's text, its code, any helper or table its code reads, the adopter's adaptation — except
+// what describes or tests the rule rather than deciding a verdict: its history (`log.md`, and an
+// installed rule's `yg-aspect.adapt.log.md`), the `drills/` corpus it is measured against, and
+// dot-files. The same line Yggdrasil draws when it decides which bytes a verdict rests on.
+export function isRuleText(file) {
+  const segs = String(file).split('/');
+  if (segs.some((s) => s.startsWith('.'))) return false;
+  if (segs.length > 1 && segs[0] === 'drills') return false;
+  if (segs.length === 1 && (file === 'log.md' || file === 'yg-aspect.adapt.log.md')) return false;
+  return true;
+}
+
+// A rule's definition file with the two keys that say how hard it bites and when it is next re-read
+// taken out, comments and blank lines dropped. Those two are the law guard's to judge (a lowering)
+// or nobody's (a raise); everything else in the file is what the rule is and what it reaches.
+function ruleYamlSubstance(text) {
+  if (text === null) return null;
+  const kept = [];
+  let skipping = false;
+  for (const line of String(text).split('\n')) {
+    if (line.trim() === '' || /^\s*#/.test(line)) continue;
+    const key = /^([A-Za-z_][\w-]*):/.exec(line);
+    if (key) skipping = key[1] === 'status' || key[1] === 'review_by';
+    else if (!/^\s/.test(line)) skipping = false;
+    if (!skipping) kept.push(line.replace(/\s+$/, ''));
+  }
+  return kept.join('\n');
+}
+
+// Whether this branch changed what the rule at `id` says, through the one file `file` inside its
+// directory. A definition or adaptation file counts only when something other than its status or
+// review date moved; any other rule text counts whenever it moved at all.
+function ruleTextChanged(baseTree, headTree, id, file) {
+  if (!isRuleText(file)) return false;
+  if (!RULE_YAML_FILES.includes(file)) return true;
+  const rel = join('.yggdrasil', 'aspects', id, file);
+  return ruleYamlSubstance(contentAt(baseTree, rel)) !== ruleYamlSubstance(contentAt(headTree, rel));
 }
 
 // ---- the law guard --------------------------------------------------------------------
@@ -1450,7 +1519,9 @@ function lawGuard(cfg, horde, baseTree, headTree) {
     take(refuse(aspect, 'suppressed', `This branch adds a yg-suppress marker for "${aspect}" on ${file}, which switches that rule off there.`));
   }
 
-  return { ok: refusals.length === 0, refusals, used, headReach };
+  return {
+    ok: refusals.length === 0, refusals, used, headReach, baseAspects, headAspects,
+  };
 }
 
 // ---- the conflict-of-interest guard ---------------------------------------------------
@@ -1460,22 +1531,22 @@ function lawGuard(cfg, horde, baseTree, headTree) {
 // needed it to. Adding a NEW rule is not this — it judged nothing before. Raising an existing
 // rule's status is not this either — the rule's text is the same one that already refused or
 // passed the code. Changing what the rule SAYS, while changing code it reaches, is.
-const ASPECT_TEXT_FILE = /^\.yggdrasil\/aspects\/([^/]+)\/(content\.md|check\.mjs|companion\.mjs|yg-aspect\.yaml)$/;
-
-function conflictGuard(cfg, baseTree, headTree, changedFiles, headReach) {
-  const baseAspects = aspectsById(baseTree, cfg);
+function conflictGuard(cfg, baseTree, headTree, changedFiles, law) {
+  const baseAspects = law.baseAspects || aspectsById(baseTree, cfg);
+  const headAspects = law.headAspects || aspectsById(headTree, cfg);
+  const headReach = law.headReach;
+  const ids = [...new Set([...baseAspects.keys(), ...headAspects.keys()])];
   const touched = new Map();
   for (const f of changedFiles) {
-    const m = ASPECT_TEXT_FILE.exec(f);
-    if (!m) continue;
-    const [, id, file] = m;
+    const rule = ruleOfPath(f, ids);
+    if (!rule) continue;
+    const { id, file } = rule;
     // A rule this branch invents judged nothing before it existed, so nothing it says about this
     // code can be a rule bent around it.
     if (!baseAspects.has(id)) continue;
-    // yg-aspect.yaml carries status and review_by as well as when/scope. Only the two that decide
-    // what the rule reaches count as its text here; a raised status is dealt with by the law guard
-    // on its way down, never up.
-    if (file === 'yg-aspect.yaml' && aspectReachText(baseTree, id) === aspectReachText(headTree, id)) continue;
+    // A raised status or a moved review date is not what the rule says: the first is the law
+    // guard's to see on its way down and nobody's on its way up, the second the law guard's alone.
+    if (!ruleTextChanged(baseTree, headTree, id, file)) continue;
     if (!touched.has(id)) touched.set(id, new Set());
     touched.get(id).add(file);
   }
@@ -1669,11 +1740,14 @@ export function promiseFrontmatter(text) {
 //
 // A repository may pin one pairing for every promise, instead of each promise saying which it
 // uses: the SAME `evidence` setting `packages/promises/has-evidence/check.mjs`'s own `check(ctx)`
-// reads off `ctx.config?.evidence` (`DEFAULT_EVIDENCE = 'auto'`), installed on a tree's own
-// `.yggdrasil/aspects/has-evidence/yg-aspect.yaml` under a `config:` block. Duplicated here rather
-// than imported — this skill's own self-containment rule keeps the (separately installed)
-// `promises` package out of reach from `land.mjs`, the same reason `SKIP_MARKERS` above is a
-// hand-mirrored copy rather than an import.
+// reads off `ctx.config?.evidence` (`DEFAULT_EVIDENCE = 'auto'`). Where it is written depends on
+// how the rule got there. Installed with `yg pack add`, the rule lives at
+// `.yggdrasil/aspects/packages/<owner>/<repo>/<package>/has-evidence/` and its settings are the
+// adopter's `yg-aspect.adapt.yaml` beside the copy; copied in by hand, it lives wherever it was put
+// (most often `.yggdrasil/aspects/has-evidence/`) with the setting in its own `yg-aspect.yaml`.
+// Duplicated here rather than imported — this skill's own self-containment rule keeps the
+// (separately installed) `promises` package out of reach from `land.mjs`, the same reason
+// `SKIP_MARKERS` above is a hand-mirrored copy rather than an import.
 const EVIDENCE_ADAPTERS = ['mirror', 'named', 'self', 'artefact'];
 
 // A YAML file's own flat scalars plus one level of nesting — the same shape `promiseFrontmatter`
@@ -1707,19 +1781,50 @@ function flatYamlBlock(text) {
 // The has-evidence aspect's own pin on one tree — one of the four pairings, or null. Null covers
 // every shape of "auto" at once, on purpose, so a caller never has to branch on which: the aspect
 // is not installed on this tree at all (a repository that has not adopted the has-evidence rule —
-// the common, unaffected case); the file carries no `config:` block; the block carries no
-// `evidence:` key; the key is written out as `auto` explicitly; or the key names something that is
-// none of the four pairings and not `auto` either, which is a graph problem for `yg check` to
-// catch (the real rule refuses a setting outside its five recognised words) and never a promise
-// this guard would otherwise have to guess a pairing for. Read off the same tree-relative path
-// `aspectReachText` above reads aspect content from.
+// the common, unaffected case); no `config:` block carries an `evidence:` key; the key is written
+// out as `auto` explicitly; or the key names something that is none of the four pairings and not
+// `auto` either, which is a graph problem for `yg check` to catch (the real rule refuses a setting
+// outside its five recognised words) and never a promise this guard would otherwise have to guess
+// a pairing for.
+//
+// The rule is found by its id, never by a fixed path: the rule whose id is `has-evidence` or ends
+// in `/has-evidence`, read off the tree's own `.yggdrasil/aspects/` (a directory holding a
+// `yg-aspect.yaml` is a rule, and its path there is its id — the graph's own definition). The
+// adaptation wins over the copy, as it does in Yggdrasil: an installed rule's copy is never edited,
+// so a pin written anywhere but the adaptation would not be the adopter's.
 export function evidencePinAt(tree) {
-  const text = contentAt(tree, '.yggdrasil/aspects/has-evidence/yg-aspect.yaml');
-  if (text === null) return null;
-  const raw = flatYamlBlock(text).blocks.config?.evidence;
-  if (raw === undefined) return null;
-  const setting = String(raw).trim();
-  return EVIDENCE_ADAPTERS.includes(setting) ? setting : null;
+  const rule = hasEvidenceRuleDir(tree);
+  if (rule === null) return null;
+  for (const name of ['yg-aspect.adapt.yaml', 'yg-aspect.yaml']) {
+    const raw = flatYamlBlock(contentAt(rule, name)).blocks.config?.evidence;
+    if (raw === undefined) continue;
+    const setting = String(raw).trim();
+    return EVIDENCE_ADAPTERS.includes(setting) ? setting : null;
+  }
+  return null;
+}
+
+// The directory of the has-evidence rule on one tree, or null. Several would be a repository that
+// installed the package and kept a hand-copied one too; the first by id is read, the same order
+// `yg aspects` lists them in.
+function hasEvidenceRuleDir(tree) {
+  const root = join(tree, '.yggdrasil', 'aspects');
+  const found = [];
+  const walk = (dir, rel) => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    if (rel && (rel === 'has-evidence' || rel.endsWith('/has-evidence'))
+      && entries.some((e) => e.isFile() && e.name === 'yg-aspect.yaml')) found.push(rel);
+    for (const e of entries) {
+      if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'drills' && e.name !== 'node_modules') {
+        walk(join(dir, e.name), rel ? `${rel}/${e.name}` : e.name);
+      }
+    }
+  };
+  walk(root, '');
+  if (!found.length) return null;
+  found.sort();
+  return join(root, found[0]);
 }
 
 // Which of the four pairings applies to a promise: the tree's own pin when it names one, or — same
@@ -1845,8 +1950,8 @@ export function promisesIn(tree, cfg) {
 //   evidence:<name>    a promise's own id, or a test file's path  (the evidence guard)
 //   gate:<path>        a file a gate, a hook or CI actually runs  (the gate guard)
 //
-// A rule id is a bare directory name under `.yggdrasil/aspects/`, so it can never carry the `:`
-// the other two open with; a promise id is a filename stem and a test file is a path, so the two
+// A rule id is its directory's path under `.yggdrasil/aspects/` — it may hold `/` (a nested or an
+// installed rule), never the `:` the other two open with; a promise id is a filename stem and a test file is a path, so the two
 // that share the `evidence:` prefix never spell each other either.
 //
 // Nothing here asks a model anything. Both guards read two trees and compare two numbers or two
@@ -2799,22 +2904,36 @@ function renderTrailers(entries) {
     .map(([key, value]) => `${key}: ${trailerValue(value)}`);
 }
 
-// What the branch did to the law, read off the files it changed: a rule's own directory under
-// `.yggdrasil/aspects/<id>/` appearing is a rule added, and a change inside one that was already
-// there is a rule changed. Read from the diff rather than by asking Yggdrasil twice — the gate has
-// already run `yg check` on this tree, and the question here is only which rules the diff touched.
+// What the branch did to the law, read off the files it changed. Each changed path under
+// `.yggdrasil/aspects/` belongs to the rule whose directory is the longest one above it (see
+// ruleOfPath) — a rule's id may hold `/` — and the rules are the directories holding a
+// `yg-aspect.yaml` on either side, the graph's own definition of one. A rule only the branch has
+// was added, one only the parent has was removed, any other was changed. Read from the two commits
+// rather than by asking Yggdrasil twice — the gate has already run `yg check` on this tree, and the
+// question here is only which rules the diff touched.
+function ruleIdsAt(root, ref) {
+  const out = git(['-c', 'core.quotepath=false', 'ls-tree', '-r', '--name-only', ref, '--', '.yggdrasil/aspects'], root) || '';
+  const ids = new Set();
+  for (const f of out.split('\n')) {
+    const m = /^\.yggdrasil\/aspects\/(.+)\/yg-aspect\.yaml$/.exec(f.trim());
+    if (m) ids.add(m[1]);
+  }
+  return ids;
+}
+
 function lawTrailers(root, branch, parentBranch) {
-  const rows = (git(['diff', '--name-status', `${parentBranch}...${branch}`], root) || '')
+  const rows = (git(['-c', 'core.quotepath=false', 'diff', '--name-only', `${parentBranch}...${branch}`], root) || '')
     .split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!rows.some((f) => f.startsWith(ASPECTS_DIR))) return [];
+  const before = ruleIdsAt(root, parentBranch);
+  const after = ruleIdsAt(root, branch);
+  const ids = [...new Set([...before, ...after])];
   const byAspect = new Map();
-  for (const row of rows) {
-    const [status, ...rest] = row.split(/\t/);
-    const m = /^\.yggdrasil\/aspects\/([^/]+)\//.exec(rest[rest.length - 1] || '');
-    if (!m) continue;
-    const added = status.startsWith('A');
-    const seen = byAspect.get(m[1]);
-    // One rule, one line: a rule whose diff both adds and edits files is a rule this branch added.
-    if (!seen || added) byAspect.set(m[1], added ? 'added' : 'changed');
+  for (const f of rows) {
+    const rule = ruleOfPath(f, ids);
+    if (!rule) continue;
+    const what = !before.has(rule.id) ? 'added' : (!after.has(rule.id) ? 'removed' : 'changed');
+    byAspect.set(rule.id, what);
   }
   return [...byAspect.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([id, what]) => ['Law', `${id} ${what}`]);
 }
@@ -3265,7 +3384,7 @@ function screenBatchMember(root, cfg, horde, ctx, basePath, cleaner) {
   const law = lawGuard(cfg, horde, basePath, head.path);
   if (law.stopped) return { ok: false, note: law.stopped };
   const refusals = [...law.refusals];
-  const conflict = conflictGuard(cfg, basePath, head.path, ctx.changedFiles, law.headReach);
+  const conflict = conflictGuard(cfg, basePath, head.path, ctx.changedFiles, law);
   refusals.push(...conflict.refusals);
   const protection = protectionGuards(cfg, horde, basePath, head.path, ctx.changedFiles);
   refusals.push(...protection.refusals);
@@ -3752,7 +3871,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       const law = lawGuard(cfg, horde, base.path, head.path);
       if (law.stopped) fail(law.stopped);
       guards.push(...law.refusals);
-      const conflict = conflictGuard(cfg, base.path, head.path, changedFiles, law.headReach);
+      const conflict = conflictGuard(cfg, base.path, head.path, changedFiles, law);
       guards.push(...conflict.refusals);
       const protection = protectionGuards(cfg, horde, base.path, head.path, changedFiles);
       guards.push(...protection.refusals);

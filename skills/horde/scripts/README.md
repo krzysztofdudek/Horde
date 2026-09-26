@@ -843,8 +843,8 @@ row).
   being weakened, in whichever of three spellings says which — a rule's own id (`no-marker`), a
   promise or a test file (`evidence:adds-two-numbers`, `evidence:tests/second.test.mjs`), or a gate,
   hook or workflow file (`gate:scripts/gate.sh`, `gate:.husky/pre-commit`). The three cannot collide:
-  a rule id is a bare directory name under `.yggdrasil/aspects/` and never carries the `:` the other
-  two open with. One answer lets exactly that one thing through and never a category, so a mission
+  a rule id is its directory's path under `.yggdrasil/aspects/` — it may hold `/` (a nested or an
+  installed rule), never the `:` the other two open with. One answer lets exactly that one thing through and never a category, so a mission
   meaning to lower three things files three questions.
 - `list [--open]` — open first, newest first.
 - `show <id>`.
@@ -1260,7 +1260,10 @@ test file carrying **more skip or exclusivity markers** than it had. The files i
 whatever `config.testGlobs` recognise, plus whatever keeps a live promise, whether or not the globs
 would have recognised that. A repository whose `has-evidence` aspect **pins** one pairing for every
 promise, instead of leaving it `auto`, is read the same way: the pin decides the pairing, not each
-promise's own frontmatter.
+promise's own frontmatter. The rule is found by its id — the one whose id is `has-evidence` or ends in
+`/has-evidence`, so a copy installed with `yg pack add` under `packages/<owner>/<repo>/promises/` is
+found as surely as one copied in by hand — and the pin is read from its `yg-aspect.adapt.yaml` first,
+where an installed rule's settings live, then from its own `yg-aspect.yaml`.
 
 Assertions and markers are each counted off a **closed list per language**, combined into one
 pattern so nothing is counted twice, and compared **per file** — never in total, since assertions
@@ -1298,8 +1301,15 @@ differs is only the name on it: `evidence:<promise id>` or `evidence:<test file 
 refuses in the same landing: whichever way the rule now reads, it reads that way because the code
 needed it to. Adding a new rule is not this — it judged nothing before. Raising an existing rule's
 status is not this either — the text judging this code is the one that already judged it. Changing
-what a rule *says* (`content.md`, `check.mjs`, `companion.mjs`, `when`, `scope`) while changing a
-file it reaches is. The refusal names the rule, the file, and the way out: one ticket for the code,
+what a rule *says* while changing a file it reaches is. What a rule says is every file in its own
+directory — its text, its code, any helper or table its code reads, the adopter's
+`yg-aspect.adapt.yaml` — except its history (`log.md`, `yg-aspect.adapt.log.md`), its `drills/`
+corpus and dot-files; its `yg-aspect.yaml` and its adaptation count only when something other than
+`status` and `review_by` moved. A changed path belongs to the rule whose id is the longest directory
+above it in the graph's own inventory (`yg aspects --json` on both trees), so a nested rule
+(`boundary/clean-core`) and an installed one (`packages/<owner>/<repo>/<package>/<rule>`) are named
+by their full ids, never by their first path segment. The merge commit's `Law:` trailers read the
+same way. The refusal names the rule, the file, and the way out: one ticket for the code,
 one for the rule, landing separately so each is judged by a law it did not write. Nothing waives
 this guard — no ask kind, no answer in `decisions.md` lets it through; the split is the only way
 out.

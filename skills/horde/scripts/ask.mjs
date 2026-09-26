@@ -38,8 +38,8 @@
 //   evidence:<name>    a promise's own id, or a test file's path
 //   gate:<path>        a file a gate command, a hook or CI actually runs
 //
-// A rule id is a bare directory name under `.yggdrasil/aspects/`, so it never carries the `:` the
-// other two open with. One answer lets one of these through and never a category: a mission that
+// A rule id is its directory's path under `.yggdrasil/aspects/` — it may hold `/` (a nested or an
+// installed rule), never the `:` the other two open with. One answer lets one of these through and never a category: a mission that
 // means to lower three things files three questions.
 
 import {

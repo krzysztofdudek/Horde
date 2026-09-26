@@ -7,10 +7,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, MARKER_CHECK, git, requireYg,
+  cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, MARKER_CHECK, git, requireYg, yg,
 } from './helpers.mjs';
 
 function write(dir, rel, text) {
@@ -996,7 +1000,7 @@ function hasEvidenceAspectYaml(pin) {
   ].join('\n');
 }
 
-function pinnedEvidenceFixture(dir, id, pin) {
+function pinnedEvidenceFixture(dir, id, pin, { installed = false } = {}) {
   initHorde(dir);
   run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
 
@@ -1028,8 +1032,15 @@ function pinnedEvidenceFixture(dir, id, pin) {
     '',
   ].join('\n'));
   write(dir, 'promises/checked-in-note.txt', 'Scenario: the target runs\n');
-  write(dir, '.yggdrasil/aspects/has-evidence/yg-aspect.yaml', hasEvidenceAspectYaml(pin));
-  write(dir, '.yggdrasil/aspects/has-evidence/check.mjs', MARKER_CHECK);
+  if (installed) {
+    // The rule as `yg pack add` puts it, and the pin where an adopter writes it: in the adaptation
+    // beside the copy, never in the copy itself. `pin: null` leaves the adaptation as written.
+    installPromises(dir);
+    if (pin) write(dir, `${INSTALLED_HAS_EVIDENCE}/yg-aspect.adapt.yaml`, `config:\n  evidence: ${pin}\n`);
+  } else {
+    write(dir, '.yggdrasil/aspects/has-evidence/yg-aspect.yaml', hasEvidenceAspectYaml(pin));
+    write(dir, '.yggdrasil/aspects/has-evidence/check.mjs', MARKER_CHECK);
+  }
   git(['add', '--', 'src', 'tests', 'promises'], dir);
   git(['commit', '-qm', 'the code and the pinned promise both trees start from'], dir);
 
@@ -1062,4 +1073,144 @@ test('protection guards: a `named` pin overrides a promise\'s own stale `artefac
   assert.match(out, asRegExp('evidence:named-target (pairing gone)'), 'the pin decided the pairing, and its real evidence going missing is what refuses');
   // Nothing landed.
   assert.equal(git(['rev-list', '--count', '--merges', 'mission1/trunk'], dir), '0');
+});
+
+// ---- rule ids that hold a `/` (issue 290) --------------------------------------------------
+//
+// A rule id is its directory's path under `.yggdrasil/aspects/`, and two ordinary shapes hold a `/`:
+// a rule nested under another, and every rule `yg pack add` installs, which lands under
+// `packages/<owner>/<repo>/<package>/`. The guards resolve a changed path to the longest rule id
+// above it, so neither shape walks past them — and the has-evidence pin is read where an installed
+// rule keeps it, in the adaptation beside the copy.
+
+const HORDE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
+const INSTALLED_HAS_EVIDENCE = '.yggdrasil/aspects/packages/o/r/promises/has-evidence';
+
+// Horde's own `promises` package, installed the way an adopter installs it — through the real
+// `yg pack add` — from a plain copy of this checkout's package under the identity o/r.
+function installPromises(dir) {
+  const source = mkdtempSync(join(tmpdir(), 'promises-source-'));
+  cpSync(join(HORDE_ROOT, 'packages'), join(source, 'packages'), { recursive: true });
+  cpSync(join(HORDE_ROOT, 'yg-marketplace.yaml'), join(source, 'yg-marketplace.yaml'));
+  const r = yg(dir, ['pack', 'add', `${source}#promises`, '--as', 'o/r']);
+  rmSync(source, { recursive: true, force: true });
+  if (r.code !== 0) throw new Error(`yg pack add failed: ${r.out}`);
+}
+
+// An installed copy is never edited — Yggdrasil refuses a changed copy on its own, and its context
+// cannot even be assembled over one — so the way an adopter changes what an installed rule says is
+// its adaptation. That file sits in the rule's own directory, under the rule's full id.
+test('conflict guard: an installed rule\'s adaptation changed beside a promise it reaches is refused, under the rule\'s full id', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const declared = [...DECLARED, 'promises/keeps-a.md', `${INSTALLED_HAS_EVIDENCE}/yg-aspect.adapt.yaml`];
+  const { branch } = lawFixture(dir, '291', (dir2) => {
+    write(dir2, `${INSTALLED_HAS_EVIDENCE}/yg-aspect.adapt.yaml`, 'config:\n  spec_suffix: ".spec"\n');
+    write(dir2, 'promises/keeps-a.md', '---\nid: keeps-a\nstatus: implemented\n---\n\nThe feature adds two numbers, and nothing else.\n');
+    git(['add', 'promises'], dir2);
+  }, {
+    declared,
+    extraBase: (dir2) => {
+      installPromises(dir2);
+      write(dir2, 'promises/keeps-a.md', '---\nid: keeps-a\nstatus: implemented\n---\n\nThe feature adds two numbers.\n');
+      git(['add', 'promises'], dir2);
+      addNode(dir2, 'feature', {
+        mapping: ['src/a.mjs', 'src/b.mjs', 'tests/feature.test.mjs', 'promises/keeps-a.md'],
+        aspects: ['no-marker', 'packages/o/r/promises/has-evidence'],
+      });
+    },
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, said(r));
+  const out = said(r);
+  assert.match(out, /packages\/o\/r\/promises\/has-evidence \(conflict of interest\)/, out);
+  assert.match(out, /yg-aspect\.adapt\.yaml/, 'the file that changed the rule is named');
+  assert.match(out, /promises\/keeps-a\.md/, 'and so is the promise it reaches');
+  assert.equal(git(['rev-list', '--count', '--merges', 'mission1/trunk'], dir), '0');
+});
+
+test('conflict guard: an adaptation that only raises an installed rule\'s status is not a change to what it says', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const declared = [...DECLARED, `${INSTALLED_HAS_EVIDENCE}/yg-aspect.adapt.yaml`];
+  const { branch } = lawFixture(dir, '296', (dir2) => {
+    write(dir2, `${INSTALLED_HAS_EVIDENCE}/yg-aspect.adapt.yaml`, '# raised once the promises are in\nstatus: enforced\n');
+    write(dir2, 'src/a.mjs', 'export const a = 11;\n');
+  }, {
+    declared,
+    extraBase: (dir2) => {
+      installPromises(dir2);
+      write(dir2, `${INSTALLED_HAS_EVIDENCE}/yg-aspect.adapt.yaml`, 'status: advisory\n');
+      addNode(dir2, 'feature', {
+        mapping: ['src/a.mjs', 'src/b.mjs', 'tests/feature.test.mjs'],
+        aspects: ['no-marker', 'packages/o/r/promises/has-evidence'],
+      });
+    },
+  });
+  const r = run('land.mjs', [branch], dir);
+  assert.doesNotMatch(said(r), /conflict of interest/, said(r));
+});
+
+test('conflict guard: a nested rule\'s helper file counts as its text; its drill corpus and its history do not', async (t) => {
+  const nested = (dir2, extra = {}) => {
+    addAspect(dir2, 'boundary/no-marker', {
+      description: 'Source files must not carry an unfinished-work marker.',
+      check: "import { MARK } from './mark.mjs';\n" + MARKER_CHECK.replace("'UNFINISHED'", 'MARK'),
+      scope: WIDE_SCOPE,
+    });
+    write(dir2, '.yggdrasil/aspects/boundary/no-marker/mark.mjs', extra.mark || "export const MARK = 'UNFINISHED';\n");
+    addNode(dir2, 'feature', {
+      mapping: ['src/a.mjs', 'src/b.mjs', 'tests/feature.test.mjs'],
+      aspects: ['no-marker', 'boundary/no-marker'],
+    });
+  };
+  const declared = [...DECLARED,
+    '.yggdrasil/aspects/boundary/no-marker/mark.mjs',
+    '.yggdrasil/aspects/boundary/no-marker/log.md',
+    '.yggdrasil/aspects/boundary/no-marker/drills/violates-marker/src/a.mjs'];
+
+  await t.test('the helper the check imports changed beside the code it judges: refused', async () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const { branch } = lawFixture(dir, '292', (dir2) => {
+      write(dir2, '.yggdrasil/aspects/boundary/no-marker/mark.mjs', "export const MARK = 'TODO';\n");
+      write(dir2, 'src/a.mjs', 'export const a = 11;\n');
+    }, { declared, extraBase: (dir2) => nested(dir2) });
+    const r = run('land.mjs', [branch], dir);
+    assert.equal(r.code, 1, said(r));
+    assert.match(said(r), /boundary\/no-marker \(conflict of interest\)/, said(r));
+    assert.match(said(r), /mark\.mjs/);
+  });
+
+  await t.test('only its history and its drill corpus changed beside the code: not a conflict', async () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const { branch } = lawFixture(dir, '293', (dir2) => {
+      write(dir2, '.yggdrasil/aspects/boundary/no-marker/log.md', '## 2026-09-26\n\nWhy the rule reads the marker from a table.\n');
+      write(dir2, '.yggdrasil/aspects/boundary/no-marker/drills/violates-marker/src/a.mjs', 'export const a = 1; // UNFINISHED\n');
+      write(dir2, 'src/a.mjs', 'export const a = 11;\n');
+    }, { declared, extraBase: (dir2) => nested(dir2) });
+    const r = run('land.mjs', [branch], dir);
+    assert.doesNotMatch(said(r), /conflict of interest/, said(r));
+  });
+});
+
+test('protection guards: a pin written in an installed rule\'s adaptation decides the pairing; with none, the promise\'s own frontmatter does', async (t) => {
+  await t.test('pinned `named` in yg-aspect.adapt.yaml: deleting the named evidence refuses as "pairing gone"', async () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const { branch } = pinnedEvidenceFixture(dir, '294', 'named', { installed: true });
+    const r = run('land.mjs', [branch], dir);
+    assert.equal(r.code, 1, said(r));
+    assert.match(said(r), asRegExp('evidence:named-target (pairing gone)'), said(r));
+  });
+
+  await t.test('no pin: the complete artefact block keeps the promise, and the same deletion is no weakening of it', async () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const { branch } = pinnedEvidenceFixture(dir, '295', null, { installed: true });
+    const r = run('land.mjs', [branch], dir);
+    assert.doesNotMatch(said(r), /evidence:named-target \(pairing gone\)/, said(r));
+  });
 });

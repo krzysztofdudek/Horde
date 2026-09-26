@@ -15,7 +15,7 @@ import {
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 import {
   parseReport, sameFile, sameCase, promiseFrontmatter, pairingAdapter, pairingOf, pairingKind,
-  evidencePinAt, promisesIn, appendOnlyMerge,
+  evidencePinAt, promisesIn, appendOnlyMerge, ruleOfPath, isRuleText,
 } from '../land.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -1932,6 +1932,39 @@ test('land.mjs evidencePinAt: a setting outside the five the real rule recognise
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('land.mjs evidencePinAt: an installed rule is found by its id, and the pin in its adaptation wins over the copy', () => {
+  const dir = pinFixture('installed');
+  try {
+    const rule = join(dir, '.yggdrasil', 'aspects', 'packages', 'o', 'r', 'promises', 'has-evidence');
+    mkdirSync(rule, { recursive: true });
+    writeFileSync(join(rule, 'yg-aspect.yaml'), 'name: PromiseHasSomethingKeepingIt\nstatus: enforced\n');
+    writeFileSync(join(rule, 'yg-aspect.adapt.yaml'), '# Adaptation for the rule\n# config:\n#   evidence: "auto"    # string\n');
+    assert.equal(evidencePinAt(dir), null, 'an adaptation left as written pins nothing');
+    writeFileSync(join(rule, 'yg-aspect.adapt.yaml'), '# Adaptation for the rule\nconfig:\n  evidence: "self"\n');
+    assert.equal(evidencePinAt(dir), 'self');
+    // A rule whose id merely contains the name is not it.
+    const other = join(dir, '.yggdrasil', 'aspects', 'not-has-evidence');
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, 'yg-aspect.yaml'), 'name: x\nconfig:\n  evidence: named\n');
+    assert.equal(evidencePinAt(dir), 'self');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('land.mjs ruleOfPath: a changed path belongs to the longest rule id above it, never to its first segment', () => {
+  const ids = ['boundary', 'boundary/clean-core', 'packages/o/r/promises/has-evidence', 'no-marker'];
+  assert.deepEqual(ruleOfPath('.yggdrasil/aspects/boundary/clean-core/content.md', ids), { id: 'boundary/clean-core', file: 'content.md' });
+  assert.deepEqual(ruleOfPath('.yggdrasil/aspects/boundary/check.mjs', ids), { id: 'boundary', file: 'check.mjs' });
+  assert.deepEqual(ruleOfPath('.yggdrasil/aspects/packages/o/r/promises/has-evidence/yg-aspect.adapt.yaml', ids), { id: 'packages/o/r/promises/has-evidence', file: 'yg-aspect.adapt.yaml' });
+  assert.equal(ruleOfPath('.yggdrasil/aspects/packages/o/r/promises/other/check.mjs', ids), null, 'a path under no known rule belongs to none');
+  assert.equal(ruleOfPath('.yggdrasil/aspects/no-marker-two/check.mjs', ids), null, 'a prefix of a directory name is not that directory');
+  assert.equal(ruleOfPath('src/a.mjs', ids), null);
+  assert.equal(isRuleText('helpers/table.mjs'), true);
+  assert.equal(isRuleText('yg-aspect.adapt.yaml'), true);
+  for (const not of ['log.md', 'yg-aspect.adapt.log.md', 'drills/violates-x/a.mjs', '.DS_Store']) assert.equal(isRuleText(not), false, not);
 });
 
 test('land.mjs evidencePinAt: a quoted value, and comments/blocks around config: the way the shipped default is written', () => {
