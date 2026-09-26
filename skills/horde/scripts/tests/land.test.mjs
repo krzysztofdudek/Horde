@@ -1403,11 +1403,12 @@ test('land.mjs: --level trunk selects the trunk gate; --level team is not a valu
 
 // A landing writes its own measurement to cache/last-gate.json (at the sha the merge actually
 // produced, not the pre-merge ticket-branch tip — a `--no-ff` merge commit is never that sha), so
-// `horde.mjs done` and `wave.mjs close`, run right after, read what this landing just measured
-// instead of finding nothing recorded. The gate command counts its own calls to a file outside any
-// worktree the landing cleans up, so "did `done` trust the cache" is a fact about how many times
+// `wave.mjs close`, run right after, reports what this landing just measured instead of finding
+// nothing recorded. `horde.mjs done` does not rest on that record (issue 371: a record is a file
+// anybody can write) and runs the gate itself. The gate command counts its own calls to a file
+// outside any worktree the landing cleans up, so "did `done` run it" is a fact about how many times
 // the command ran, not an inference from timing.
-test('land.mjs: a green landing at --level trunk records the gate cache, so `done` accepts it without re-running the gate and `wave.mjs close` reports it recorded', async (t) => {
+test('land.mjs: a green landing at --level trunk records the gate cache — `wave.mjs close` reports it, and `done` runs the gate itself', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   const { branch } = setupLandable(dir, '020');
@@ -1430,24 +1431,19 @@ test('land.mjs: a green landing at --level trunk records the gate cache, so `don
   assert.equal(cacheAfterLand.trunk.result, 'green');
   assert.match(cacheAfterLand.trunk.by, /^land /);
 
-  // `done` is not otherwise satisfied here (no evidence, no retrospective on file), so this run
-  // still refuses with exactly those two reasons — but its own trunk-gate check runs before any of
-  // that, unconditionally, and what matters is only what it did about the gate: found a matching
-  // cached green and accepted it, rather than re-running the whole command a second time over the
-  // tree land.mjs just measured. A third reason (any of the three phrasings `done` itself uses for
-  // "the gate was not accepted") would mean it was not accepted after all.
-  const done = run('horde.mjs', ['done'], dir);
-  assert.equal(done.code, 1);
-  assert.match(done.stderr, /is not done — 2 reason\(s\):/, `a 3rd reason would mean the gate was not accepted from cache: ${done.stderr}`);
-  assert.doesNotMatch(done.stderr, /trunk gate red|no config\.gates\.trunk configured|no such branch: mission1\/trunk/);
-  assert.equal(callCount(), 1, 'still exactly one gate run after `done` — it trusted the cache instead of measuring again');
-  assert.deepEqual(JSON.parse(readFileSync(cachePath, 'utf8')).trunk, cacheAfterLand.trunk, '`done` left the cache exactly as the landing wrote it, rather than overwriting it with a fresh run of its own');
-
-  // `wave.mjs close`, run with none of its own --gate/--sha, reads that same recorded entry rather
+  // `wave.mjs close`, run with none of its own --gate/--sha, reads that recorded entry rather
   // than reporting the gate as unrecorded right after a landing that was green.
   const close = run('wave.mjs', ['close'], dir);
   assert.equal(close.code, 0, close.stderr);
   assert.equal(close.json.gate, 'green');
+
+  // `done` is not otherwise satisfied here (no evidence, no retrospective on file), so it refuses
+  // for those — and it ran the gate itself at the trunk tip, green, rather than taking the record.
+  const done = run('horde.mjs', ['done'], dir);
+  assert.equal(done.code, 1);
+  assert.doesNotMatch(done.stderr, /trunk gate red|no config\.gates\.trunk configured|no such branch: mission1\/trunk/);
+  assert.equal(callCount(), 2, '`done` ran the gate once more itself — the record is not proof');
+  assert.equal(JSON.parse(readFileSync(cachePath, 'utf8')).trunk.by, 'horde done');
 });
 
 // ---- the gate's own report: the paired case actually ran (022) ------------------------------
