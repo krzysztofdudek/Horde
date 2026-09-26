@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
 const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'templates');
@@ -1871,10 +1871,41 @@ export function gateTimeoutOf(cfg) {
   return Number.isFinite(asked) && asked > 0 ? asked : GATE_TIMEOUT_MS;
 }
 
+// Runs `cmd` in `cwd` as a process group of its own, and waits for it. A timeout stops the whole
+// group — the shell and everything it started — not the shell alone: a test runner the shell
+// launched would otherwise go on running, and holding the worktree, after the gate said it was
+// stopped. Whatever the group left running once the command itself ends is stopped too. Node's
+// synchronous spawn cannot make a group or signal one, so a small supervisor does it: it starts the
+// command detached (its own group), and on the deadline sends SIGTERM to the group, then SIGKILL.
+const GROUP_SUPERVISOR = `
+const { spawn } = require('node:child_process');
+const [cmd, cwd, ms] = process.argv.slice(1);
+const child = spawn('sh', ['-c', cmd], { cwd, detached: true, stdio: 'ignore' });
+const group = (sig) => { try { process.kill(-child.pid, sig); } catch {} };
+let timedOut = false;
+const timer = Number(ms) > 0 ? setTimeout(() => { timedOut = true; group('SIGTERM'); setTimeout(() => group('SIGKILL'), 2000).unref(); }, Number(ms)) : null;
+child.on('error', () => process.exit(127));
+child.on('exit', (code) => {
+  if (timer) clearTimeout(timer);
+  group('SIGKILL');
+  if (timedOut) process.stdout.write('HORDE-GATE-TIMED-OUT');
+  process.exit(timedOut ? 1 : (code ?? 1));
+});
+`;
+
+export function runCommandGroup(cmd, cwd, timeoutMs = null) {
+  const res = spawnSync(process.execPath, ['-e', GROUP_SUPERVISOR, cmd, cwd, String(timeoutMs || 0)], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    ...(timeoutMs ? { timeout: timeoutMs + 10000, killSignal: 'SIGKILL' } : {}),
+  });
+  const timedOut = String(res.stdout || '').includes('HORDE-GATE-TIMED-OUT') || (res.error && res.error.code === 'ETIMEDOUT');
+  return { ok: !timedOut && res.status === 0, timedOut: !!timedOut };
+}
+
 // Runs `cmd` against one commit's own tree, in a scratch worktree that never touches the caller's.
 // `ref` is resolved first, so the answer names the exact commit it ran on; a ref that names no
-// commit is `{ ok: false, sha: null }` and nothing is run. `timeoutMs` stops a command that hangs,
-// which is a red gate, never a wait.
+// commit is `{ ok: false, sha: null }` and nothing is run. `timeoutMs` stops a command that hangs —
+// the command and every process it started (runCommandGroup) — which is a red gate, never a wait.
 export function runGateAt(root, cmd, ref, timeoutMs = null) {
   let sha = null;
   try {
@@ -1886,13 +1917,9 @@ export function runGateAt(root, cmd, ref, timeoutMs = null) {
   let timedOut = false;
   try {
     execFileSync('git', ['worktree', 'add', '--detach', '--force', tmp, sha], { cwd: root, stdio: 'pipe' });
-    try {
-      execSync(cmd, { cwd: tmp, stdio: 'pipe', ...(timeoutMs ? { timeout: timeoutMs, killSignal: 'SIGTERM' } : {}) });
-      ok = true;
-    } catch (e) {
-      ok = false;
-      timedOut = e.killed === true || e.signal === 'SIGTERM' || e.code === 'ETIMEDOUT';
-    }
+    const res = runCommandGroup(cmd, tmp, timeoutMs);
+    ok = res.ok;
+    timedOut = res.timedOut;
   } finally {
     try { execFileSync('git', ['worktree', 'remove', tmp, '--force'], { cwd: root, stdio: 'pipe' }); } catch { rmSync(tmp, { recursive: true, force: true }); }
   }

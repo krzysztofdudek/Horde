@@ -991,3 +991,28 @@ test('an unreadable lock is taken over, not spun on', { timeout: 20000 }, async 
     process.chdir(origCwd);
   }
 });
+
+// Review of 371: a gate stopped at its timeout is stopped whole. Killing only the shell left what it
+// started (a test runner, here a sleep) running after the gate had already been called red.
+test('_lib.mjs runGateAt: a timeout stops the gate command and every process it started', async () => {
+  const { runGateAt } = await import('../_lib.mjs');
+  const dir = makeRepo();
+  const pidFile = join(dir, '..', `${dir.split('/').pop()}-child.pid`);
+  try {
+    const started = Date.now();
+    const res = runGateAt(dir, `sleep 30 & echo $! > "${pidFile}"; wait`, 'HEAD', 1000);
+    assert.equal(res.ok, false);
+    assert.equal(res.timedOut, true);
+    assert.ok(Date.now() - started < 15000, 'the gate returned at its timeout');
+    const pid = Number(readFileSync(pidFile, 'utf8').trim());
+    let alive = true;
+    for (let i = 0; i < 40 && alive; i += 1) {
+      try { process.kill(pid, 0); await new Promise((r) => { setTimeout(r, 100); }); } catch { alive = false; }
+    }
+    if (alive) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+    assert.equal(alive, false, `the child the gate started (pid ${pid}) was stopped with it`);
+  } finally {
+    rmSync(pidFile, { force: true });
+    rmRepo(dir);
+  }
+});
