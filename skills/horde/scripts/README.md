@@ -1836,7 +1836,11 @@ Every fixture repository has a real graph, made by the real Yggdrasil CLI: `hord
 one where there is none, and the suite tells it how to invoke that CLI the same way an adopter
 would. The suite finds it in `HORDE_TEST_YG`, on `PATH` as `yg`, or as a sibling checkout's build,
 and refuses to run with none of those — Horde requires Yggdrasil, and a suite measuring a stand-in
-instead would be proving something no adopter ever runs. Rules, ports, refusals and the verdicts
+instead would be proving something no adopter ever runs. Only a CLI at Horde's floor (6.1.0) or
+newer counts: an older `yg` on `PATH` is passed over for a sibling build that meets it, and when the
+only one found is older, every test file stops as it loads with one message naming that CLI, its
+version and what to install, instead of failing test by test. `tests/yg-floor.mjs`, which `npm test`
+runs first, asks the same once for the whole suite and prints which CLI it will run against. Rules, ports, refusals and the verdicts
 that clear a prose rule are all the CLI's own; nothing about the graph is stood in for.
 
 ### the family's contract test — `tests/family.e2e.test.mjs`
