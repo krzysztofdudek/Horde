@@ -505,19 +505,28 @@ export function ygAvailable(cfg, cwd) {
 // (plus the `config-reviewer-missing` finding that names the missing one).
 export const USER_ONLY_CAUSES = ['reviewer-missing', 'reviewer-unreachable', 'reviewer-failed'];
 
-export function userOnlyRefusal(doc) {
+//
+// `ignore` names findings (by their index in `issues`) the question is not about — the ones the
+// parent tree already carries. The buckets count those too, so with any ignored the answer is read
+// off the causes alone, and the step off the block the first remaining finding sits in.
+export function userOnlyRefusal(doc, { ignore = new Set() } = {}) {
   if (!doc || !doc.exit || doc.exit.code === 0) return null;
-  const errors = asArray(doc.issues).filter((i) => i && i.severity === 'error');
+  const errors = asArray(doc.issues).filter((i, index) => i && i.severity === 'error' && !ignore.has(index));
   const next = doc.next || null;
   const remaining = (next && next.remaining) || null;
-  const byBuckets = !!remaining && remaining.needsFix === 0 && remaining.fillable === 0
+  const byBuckets = ignore.size === 0 && !!remaining && remaining.needsFix === 0 && remaining.fillable === 0
     && (Number(remaining.needsUser) || 0) + (Number(remaining.waitingOnReviewer) || 0) > 0;
   const byCauses = errors.length > 0 && errors.every((i) => USER_ONLY_CAUSES.includes(i.cause) || i.code === 'config-reviewer-missing');
   if (!byBuckets && !byCauses) return null;
   const causes = [...new Set(errors.map((i) => i.cause || i.code).filter(Boolean))].sort();
   const rules = [...new Set(errors.filter((i) => i.aspect).map((i) => i.aspect))].sort();
+  const firstIndex = asArray(doc.issues).indexOf(errors[0]);
+  const ownGroup = asArray(doc.groups).find((g) => g && asArray(g.members).includes(firstIndex));
+  const step = ignore.size === 0
+    ? (next && typeof next.text === 'string' && next.text)
+    : ((ownGroup && typeof ownGroup.next === 'string' && ownGroup.next) || (errors[0] && errors[0].next));
   return {
-    text: (next && typeof next.text === 'string' && next.text) || 'a decision only the user can make — see `yg check`',
+    text: step || 'a decision only the user can make — see `yg check`',
     reviewerMissing: reviewerMissingIn(doc),
     causes,
     rules,
@@ -557,23 +566,40 @@ export function reviewerGap(cfg, cwd) {
 // ---- the free half of a graph gate -----------------------------------------------------------
 //
 // `yg check --approve --only-deterministic` records every verdict a script can reach, costs nothing
-// and needs no key. Always allowed, in any worktree, before any gate is judged. Which pairs are left
-// after it — and which of those a reader has to judge — is read off `yg check --json` (yg-check/1):
-// each pair carries its `verdict` and the `kind` of rule it is, so nothing here parses a report.
-export function fillDeterministic(cfg, cwd) {
-  const { cmd, prefix, display } = ygCommand(cfg);
-  const args = ['check', '--approve', '--only-deterministic'];
-  const command = `${display} ${args.join(' ')}`;
-  const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
-  if (run.timedOut) {
-    return {
-      available: true, ok: false, timedOut: true, exit: null, command, out: timedOutDetail(run.ms),
-    };
+// and needs no key. Always allowed, in any worktree, before any gate is judged. It is asked for its
+// yg-check/1 document (`--json`), which after the fill is the read-only report of the same tree: which
+// pairs are left, of what kind, and every finding with its code — so the fill and the read are one
+// run, and nothing here parses a report written for a person. On a CLI that has it (6.1.0 and later)
+// the document is the compact form: approved pairs left out of `pairs` (still counted in `totals`),
+// which is everything a reader of what is left needs.
+//
+// A fill can stop at a gate before recording anything. The document says so itself — `exit.status`
+// is "aborted" and `aborted: { stage, issues }` names the gate (`log-gate`: a `log_required`
+// component changed with no log entry; `structural`: a problem that leaves it unclear what would be
+// checked) — and the answer carries that as `aborted`, so a caller names the gate instead of guessing
+// why the script pairs are still open.
+export function fillDeterministic(cfg, cwd, { compact = true } = {}) {
+  const args = ['check', '--approve', '--only-deterministic', '--json'];
+  if (compact && cliAtLeast(cfg, cwd, YG_COMPACT_FROM)) args.push('--compact');
+  return checkAnswer(ygJson(cwd, cfg, args, 'yg-check/1'));
+}
+
+// `--compact` arrived with 6.1.0; an older CLI refuses the flag, so it is only asked of one that has it.
+const YG_COMPACT_FROM = '6.1.0';
+
+// Whether the CLI answering in `root` reports `version` or newer. A version that cannot be read is not
+// held against the CLI: the caller then asks for the plain form, which every supported CLI answers.
+function cliAtLeast(cfg, root, version) {
+  const key = `${ygCommand(cfg).display}\u0000${root || ''}`;
+  if (!versionCache.has(key)) versionCache.set(key, ygVersion(cfg, root));
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(versionCache.get(key) || '');
+  if (!m) return false;
+  const want = version.split('.').map(Number);
+  const have = m.slice(1, 4).map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (have[i] !== want[i]) return have[i] > want[i];
   }
-  if (run.missing || run.spawnFailed) return { available: false, ok: false, command, out: '' };
-  return {
-    available: true, ok: run.code === 0, exit: run.code, command, out: run.out + run.err,
-  };
+  return true;
 }
 
 // One read-only `yg check`, as its yg-check/1 document, for the landing's graph item. `ok` is the
@@ -583,14 +609,21 @@ export function fillDeterministic(cfg, cwd) {
 // words as "install the CLI"; a run stopped at the ceiling is available, not ok, with the stop as its
 // summary, because sending somebody to install a CLI that simply never came back fixes nothing.
 export function runYgCheck(cfg, cwd) {
-  const res = ygJson(cwd, cfg, [...READ_ONLY_CHECK, '--json'], 'yg-check/1');
+  return checkAnswer(ygJson(cwd, cfg, [...READ_ONLY_CHECK, '--json'], 'yg-check/1'));
+}
+
+// The one shape both of the above answer in. `aborted` is the document's own stop, or null.
+function checkAnswer(res) {
   const { command } = res;
   if (res.state === 'no-cli') return { available: false, ok: false, command, summary: null };
   if (res.state === 'ok') {
     const { doc } = res;
     const exit = doc.exit && Number.isInteger(doc.exit.code) ? doc.exit.code : null;
+    const aborted = doc.exit && doc.exit.status === 'aborted' && doc.aborted
+      ? { stage: doc.aborted.stage || null, issues: asArray(doc.aborted.issues) }
+      : null;
     return {
-      available: true, ok: exit === 0, exit, command, doc, summary: checkSummary(doc),
+      available: true, ok: exit === 0, exit, command, doc, aborted, summary: checkSummary(doc),
     };
   }
   if (res.timedOut) {
@@ -646,6 +679,184 @@ export function pendingProsePairs(cfg, cwd, checked = runYgCheck(cfg, cwd)) {
 }
 
 
+// ---- what a red graph says, finding by finding ----------------------------------------------
+//
+// A red tree is read finding by finding off its yg-check/1 document, never as one line. Three
+// questions are asked of it, all by the document's own fields:
+//
+//   whose it is      a finding the parent tree already carries is inherited — the branch did not
+//                    bring it, and a worker sent to fix it would be fixing somebody else's tree. Each
+//                    finding is keyed by its code, rule, subject and component, and further by what
+//                    it is about: a relation finding by each edge (file → target, the line left out
+//                    because an edit above it moves it), a refusal by each violation, a coverage
+//                    finding by each file. A finding is introduced when any of its keys is new.
+//   what clears it   a relation finding the architecture allows is cleared by declaring the relation
+//                    in the importing component's yg-node.yaml, or by removing the import — the
+//                    worker's own fix. One the architecture forbids (no relation type is allowed
+//                    between the two component types, or an import between two classified types
+//                    with none allowed) is cleared by removing the import or by an architecture
+//                    change, which is the user's to approve and the architect's to file.
+//   how it reads     every block the report groups findings into (`groups`), each with its label,
+//                    subject, count and step, so one round shows everything there is to fix.
+//
+// Unverified pairs and a missing reviewer are not in this reading: what waits on a verdict is the
+// judge item's, and a decision only the user makes is `userOnlyRefusal`'s.
+const PENDING_CODES = new Set(['unverified', 'config-reviewer-missing']);
+
+// The architecture's own refusals: a relation declared to a type it may not target, and an import
+// between two classified types with no relation type allowed. Neither is a worker's to clear.
+const ARCHITECTURE_CODES = new Set(['relation-target-forbidden', 'type-relation-forbidden']);
+
+export function blockingFindings(doc) {
+  return asArray(doc && doc.issues)
+    .map((issue, index) => ({ issue, index }))
+    .filter(({ issue }) => issue && issue.severity === 'error' && !PENDING_CODES.has(issue.code));
+}
+
+function findingBase(issue) {
+  return [issue.code, issue.aspect || '', issue.unit || '', issue.node || ''].join('|');
+}
+
+function edgeKey(issue, edge) {
+  return `${findingBase(issue)}|${edge.file}->${edge.target}`;
+}
+
+function findingKeys(issue) {
+  const edges = asArray(issue.edges);
+  if (edges.length) return edges.map((e) => edgeKey(issue, e));
+  const base = findingBase(issue);
+  const violations = asArray(issue.violations);
+  if (violations.length) return violations.map((v) => `${base}|${v.file}|${v.message}`);
+  const files = asArray(issue.files);
+  if (files.length) return files.map((f) => `${base}|${f}`);
+  return [base];
+}
+
+// The branch's blocking findings split into the ones it brought and the ones its parent already
+// has. `baseDoc` null (the parent could not be read) makes every finding introduced — the gate
+// never waves a finding through on a reading it could not take. An introduced finding keeps only
+// what is new in it: a relation finding its new edges, a refusal its new violations.
+export function splitFindings(doc, baseDoc) {
+  const onParent = new Set(baseDoc ? blockingFindings(baseDoc).flatMap(({ issue }) => findingKeys(issue)) : []);
+  const introduced = [];
+  const inherited = [];
+  const alsoOnParent = [];
+  for (const f of blockingFindings(doc)) {
+    const fresh = findingKeys(f.issue).filter((k) => !onParent.has(k));
+    if (baseDoc && fresh.length === 0) {
+      inherited.push({ ...f, edges: asArray(f.issue.edges), violations: asArray(f.issue.violations) });
+      continue;
+    }
+    const base = findingBase(f.issue);
+    const edges = asArray(f.issue.edges).filter((e) => !onParent.has(edgeKey(f.issue, e)));
+    const violations = asArray(f.issue.violations).filter((v) => !onParent.has(`${base}|${v.file}|${v.message}`));
+    introduced.push({ ...f, edges, violations });
+    // The part of a finding the branch did bring to that the parent already had: named with the
+    // inherited findings, never as the branch's own.
+    const oldEdges = asArray(f.issue.edges).filter((e) => onParent.has(edgeKey(f.issue, e)));
+    const oldViolations = asArray(f.issue.violations).filter((v) => onParent.has(`${base}|${v.file}|${v.message}`));
+    if (oldEdges.length || oldViolations.length) alsoOnParent.push({ ...f, edges: oldEdges, violations: oldViolations });
+  }
+  return { introduced, inherited, alsoOnParent };
+}
+
+// A finding's own step. The compact document leaves an issue's `next` out when its group states
+// it, so the group is asked when the issue is silent.
+export function findingNext(doc, finding) {
+  if (typeof finding.issue.next === 'string' && finding.issue.next) return finding.issue.next;
+  const group = asArray(doc && doc.groups).find((g) => g && asArray(g.members).includes(finding.index));
+  return group && typeof group.next === 'string' ? group.next : '';
+}
+
+// The targets an undeclared dependency may not be declared to: Yggdrasil's own step names each
+// target on a line of its own, and a target no relation type reaches reads "<target>: no relation
+// type is allowed from <type> to <type>". The one place Horde reads a sentence of the finding, and
+// only to route it — a target not recognised here is read as declarable, and declaring it then
+// meets `relation-target-forbidden`, which is routed by its code.
+const NO_RELATION_ALLOWED_RE = /^(\S+): no relation type is allowed\b/;
+const DECLARE_STEP_RE = /^(\S+): allowed relation types? \[[^\]]*\]\.\s*(.+)$/;
+
+function relationSteps(next) {
+  const forbidden = new Set();
+  const declare = new Map();
+  for (const raw of String(next || '').split('\n')) {
+    const line = raw.trim();
+    const no = NO_RELATION_ALLOWED_RE.exec(line);
+    if (no) { forbidden.add(no[1]); continue; }
+    const yes = DECLARE_STEP_RE.exec(line);
+    if (yes) declare.set(yes[1], yes[2]);
+  }
+  return { forbidden, declare };
+}
+
+// The introduced findings sorted by who clears them. `architecture` is every finding (or, for an
+// undeclared dependency, every edge) that only removing the import or an architecture change
+// clears; `worker` is everything else, the relations a worker declares among it.
+export function routeFindings(doc, introduced) {
+  const architecture = [];
+  const worker = [];
+  for (const f of introduced) {
+    if (ARCHITECTURE_CODES.has(f.issue.code)) { architecture.push(f); continue; }
+    if (f.issue.code !== 'relation-undeclared-dependency') { worker.push(f); continue; }
+    const { forbidden } = relationSteps(findingNext(doc, f));
+    const blocked = f.edges.filter((e) => forbidden.has(e.target));
+    const open = f.edges.filter((e) => !forbidden.has(e.target));
+    if (blocked.length) architecture.push({ ...f, edges: blocked });
+    if (open.length || !f.edges.length) worker.push({ ...f, edges: open });
+  }
+  return { architecture, worker };
+}
+
+function edgeText(e) {
+  return `${e.file}${e.line ? `:${e.line}` : ''} → ${e.target}`;
+}
+
+function findingDetail(doc, f) {
+  const { issue } = f;
+  if (issue.code === 'relation-undeclared-dependency') {
+    const { forbidden, declare } = relationSteps(findingNext(doc, f));
+    return f.edges.map((e) => {
+      if (forbidden.has(e.target)) return `${edgeText(e)} (the architecture allows no relation to ${e.target}: remove the import, or the user approves an architecture change)`;
+      const step = declare.get(e.target);
+      return `${edgeText(e)}${step ? ` — ${step.replace(/\.$/, '')}, or remove the import` : ''}`;
+    });
+  }
+  if (f.edges.length) return f.edges.map(edgeText);
+  const violations = f.violations || asArray(issue.violations);
+  if (violations.length) return violations.map((v) => `${v.file}${v.line ? `:${v.line}` : ''} ${v.message}`);
+  const first = String(issue.what || issue.code).split('\n')[0];
+  return [first];
+}
+
+// Every block the report groups these findings into — label, subject, how many of its findings are
+// among them when not all are, each finding's detail, and the block's step — so one round names
+// everything to fix.
+// A document with no `groups` (an older CLI) gets one block per finding.
+export function renderFindings(doc, findings) {
+  const lines = [];
+  const placed = new Set();
+  for (const g of asArray(doc && doc.groups)) {
+    const members = findings.filter((f) => asArray(g && g.members).includes(f.index));
+    if (!members.length) continue;
+    members.forEach((f) => placed.add(f.index));
+    const total = asArray(g.members).length;
+    const count = members.length === total ? '' : ` (${members.length} of the ${total} findings here)`;
+    lines.push(`[${g.label || g.code}] ${g.subject || g.code}${count}`);
+    for (const f of members) for (const d of findingDetail(doc, f)) lines.push(`  ${d}`);
+    const step = g.next || (members.length === 1 ? findingNext(doc, members[0]) : '');
+    if (step && !members.some((f) => f.issue.code === 'relation-undeclared-dependency')) {
+      lines.push(`  step: ${String(step).split('\n')[0]}`);
+    }
+  }
+  for (const f of findings.filter((x) => !placed.has(x.index))) {
+    lines.push(`[${f.issue.label || f.issue.code}]`);
+    for (const d of findingDetail(doc, f)) lines.push(`  ${d}`);
+    const step = findingNext(doc, f);
+    if (step && f.issue.code !== 'relation-undeclared-dependency') lines.push(`  step: ${step.split('\n')[0]}`);
+  }
+  return lines;
+}
+
 // ---- the quality index ----------------------------------------------------------------------
 //
 // Six numbers that say whether the graph got stronger or weaker over a wave, read from the two
@@ -656,15 +867,23 @@ export function pendingProsePairs(cfg, cwd, checked = runYgCheck(cfg, cwd)) {
 // to, never silently read as text again.
 //
 //   enforced       rules at status "enforced" — the law that actually blocks (yg-aspects/1)
-//   advisoryClean  advisory rules this run recorded nothing but "approved" pairs for, of all
-//                  advisory rules — a pair the lock does not approve (refused, unverified, stale,
-//                  too large, a companion error) is "something against it" (yg-check/1 pairs)
-//   baseline       findings that block right now (yg-check/1 totals.errors)
-//   noiseFloor     findings that only warn (yg-check/1 totals.warnings) — the standing noise
+//   advisoryClean  advisory rules nothing is recorded against, of all advisory rules — a pair the
+//                  lock holds a finding for (refused, too large, a companion error) is "something
+//                  against it"; a pair with no verdict yet is not (yg-check/1 pairs)
+//   baseline       findings that block right now (yg-check/1 issues at severity error), less
+//                  the pairs with no verdict yet (see `unfilled`)
+//   noiseFloor     findings that only warn — the standing noise — less the same, and less a log
+//                  cycle a free fill left open (`logCyclesOpen`)
 //   coverage       files a component owns, of all files the graph can see (yg-check/1 coverage)
 //   judges         distinct external judges a verdict in force rests on (yg-check/1 judges) —
 //                  verifier-is-yggdrasil-reviewer's own count of who is answering outside the
 //                  configured reviewer; not part of what "fell" means below, shown for the record
+//
+// Beside them, never part of what "fell" means: `unfilled` (findings that are a pair with no
+// verdict yet — `unfilledScript` of them script pairs one free fill clears) and `logCyclesOpen`.
+// Those move with every merge and every fill — the landing fills in a throwaway tree, and the
+// script verdicts live in a cache no commit carries — so counting them as violations would report
+// the horde's own process as the graph getting weaker.
 //
 // Higher enforced / advisoryClean / coverage and lower baseline / noiseFloor is a stronger
 // graph; wave.mjs close compares two readings and escalates when any of those five moved the
@@ -674,6 +893,11 @@ export function pendingProsePairs(cfg, cwd, checked = runYgCheck(cfg, cwd)) {
 // grow past them.
 
 const YG_QUALITY_DOCUMENTS = 'yg-check/1 and yg-aspects/1';
+
+// A pair's verdicts that say nothing about the rule yet — only that no verdict is recorded for the
+// code as it stands. And the causes an unverified script pair carries when one free fill clears it.
+const UNFILLED_VERDICTS = new Set(['unverified', 'stale']);
+const SCRIPT_UNFILLED_CAUSES = new Set(['deterministic-not-run', 'keyed-by-earlier-release']);
 
 // ygQualityIndex(cfg, cwd) — the reading above, taken on the tree at `cwd`. `available: false`
 // means the CLI could not be started at all, which is a different answer from a graph that
@@ -706,11 +930,26 @@ export function ygQualityIndex(cfg, cwd) {
   const aspectList = asArray(aspectsRes.doc.aspects);
 
   const advisory = aspectList.filter((a) => a.status === 'advisory');
-  // "Nothing against it" is read off the lock's own verdicts: an advisory aspect with any pair
-  // the lock does not currently approve — refused, unverified, stale, too large, a companion
-  // error — has something recorded against it. An aspect no such pair names raised nothing.
-  const dirtyAdvisory = new Set(asArray(check.pairs).filter((p) => p.verdict !== 'approved').map((p) => p.aspect));
+  // "Nothing against it" is read off the lock's own verdicts: an advisory aspect with any pair the
+  // lock holds a finding for — refused, too large, a companion error — has something recorded
+  // against it. A pair with no verdict yet (unverified, or stale over code that has since moved) is
+  // not: that is the state of a cache, not a reading of the rule.
+  const dirtyAdvisory = new Set(asArray(check.pairs)
+    .filter((p) => p.verdict !== 'approved' && !UNFILLED_VERDICTS.has(p.verdict)).map((p) => p.aspect));
   const advisoryClean = advisory.filter((a) => !dirtyAdvisory.has(a.id)).length;
+
+  // What blocks and what warns, counted in findings the way `totals` counts them, less what is only
+  // the state of a cache or of the horde's own process: a pair with no verdict yet — a script pair
+  // this checkout has not run, one an earlier release keyed differently, a verdict left stale when a
+  // merge moved its code, a prose pair nobody has judged — and a log cycle a free fill left open.
+  // Those are counted apart, as `unfilled` and `logCyclesOpen`, and never read as the graph weaker.
+  const issues = asArray(check.issues).filter(Boolean);
+  const unfilledIssues = issues.filter((i) => i.code === 'unverified');
+  const logCycles = issues.filter((i) => i.code === 'log-cycle-open');
+  const real = issues.filter((i) => i.code !== 'unverified' && i.code !== 'log-cycle-open');
+  const pairKind = new Map(asArray(check.pairs).map((p) => [`${p.aspect} ${p.unit && p.unit.kind}:${p.unit && p.unit.path}`, p.kind]));
+  const unfilledScript = unfilledIssues.filter((i) => SCRIPT_UNFILLED_CAUSES.has(i.cause)
+    || pairKind.get(`${i.aspect} ${i.unit}`) === 'deterministic').length;
 
   return {
     available: true,
@@ -719,8 +958,11 @@ export function ygQualityIndex(cfg, cwd) {
     enforced: aspectList.filter((a) => a.status === 'enforced').length,
     advisoryTotal: advisory.length,
     advisoryClean,
-    baseline: check.totals.errors,
-    noiseFloor: check.totals.warnings,
+    baseline: real.filter((i) => i.severity === 'error').length,
+    noiseFloor: real.filter((i) => i.severity === 'warning').length,
+    unfilled: unfilledIssues.length,
+    unfilledScript,
+    logCyclesOpen: logCycles.length,
     // coverage.covered also counts excluded files, so a repository whose init excluded its own
     // plumbing (Yggdrasil 6.1.0+) would read as covered by files no node owns. With the split
     // present, covered is what a node or a type answers for, out of the files not excluded.

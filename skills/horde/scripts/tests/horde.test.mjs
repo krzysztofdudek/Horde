@@ -1135,3 +1135,32 @@ test('detectEvidenceLayer: with no graph, the guessed promises paths are still t
   assert.equal(layer.kind, 'promises');
   assert.equal(layer.promises.dir, 'promises');
 });
+
+// Issue 303: `done` depends only on what ran. A green entry in cache/last-gate.json that no tool here
+// ran — what `wave close --gate green --sha` used to write from the flag alone, or anything else
+// without `kind: 'ran'` — is never taken: the trunk gate is run again, and its own answer stands.
+test('horde.mjs done: a green gate somebody typed is not taken — the trunk gate is run, and a red one refuses', () => {
+  const dir = makeRepo();
+  try {
+    initHorde(dir);
+    run('horde.mjs', ['config', 'set', 'gates.trunk', 'node -e "process.exit(1)"'], dir);
+    const trunkSha = git(['rev-parse', 'mission1/trunk'], dir);
+    const cachePath = join(dir, '.horde', 'hordes', 'mission1', 'cache', 'last-gate.json');
+    mkdirSync(dirname(cachePath), { recursive: true });
+    writeFileSync(cachePath, `${JSON.stringify({
+      trunk: {
+        result: 'green', sha: trunkSha, count: null, at: new Date().toISOString(), by: 'wave 1 close',
+      },
+    }, null, 2)}\n`);
+
+    const r = run('horde.mjs', ['done'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /trunk gate red at/, 'the typed green was not taken');
+    const cache = JSON.parse(readFileSync(cachePath, 'utf8'));
+    assert.equal(cache.trunk.by, 'horde done', 'done ran the gate itself');
+    assert.equal(cache.trunk.kind, 'ran');
+    assert.equal(cache.trunk.result, 'red');
+  } finally {
+    rmRepo(dir);
+  }
+});

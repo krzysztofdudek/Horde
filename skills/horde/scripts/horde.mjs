@@ -8,16 +8,15 @@
 
 import {
   existsSync, mkdirSync, writeFileSync, readFileSync, renameSync, readdirSync, statSync,
-  mkdtempSync, rmSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { tmpdir } from 'node:os';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import {
   repoRoot, hordeRoot, hordePath, readConfig, writeConfig, listHordes, readJSON,
   writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
   readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
   qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES, parseEvidenceRows, asArray,
+  runGateAt, GATE_RAN,
   runMain,
 } from './_lib.mjs';
 import { nodesOf, padId } from './tk.mjs';
@@ -88,8 +87,9 @@ commands:
       retrospective (retro.mjs) has not been run over the mission as it now stands. Otherwise
       stamps the charter, appends the completion block to the mission journal, archives the
       horde the way "archive" does, and prints what to do next (push — that decision is the
-      chairman's, never this tool's). The trunk gate's own fresh re-run (when no cached green
-      already covers the tip) runs from --tree, or without one, cwd — the same ordinary default
+      chairman's, never this tool's). A recorded green counts only when a tool here ran it on the
+      trunk tip (a landing, or "wave.mjs close --gate green --sha", which runs it); a typed one is
+      run again. The trunk gate's own fresh re-run runs from --tree, or without one, cwd — the same ordinary default
       this tool set reads everywhere else, not this horde's trunk just because a horde was
       resolvable. --horde h written out (no --tree) is what changes that, exactly as
       queue.mjs plan/quality, tick.mjs and land.mjs already read it; what gets tested is always
@@ -1305,26 +1305,6 @@ function shaMatchesTolerant(a, b) {
   return a === b || a === short(b) || short(a) === short(b) || String(b).startsWith(a) || String(a).startsWith(b);
 }
 
-// Runs `cmd` against the trunk branch's own tree, in a scratch worktree that never touches the
-// caller's — the same shape land.mjs's own revert test and gate checks use, since "done" has
-// no ticket branch worktree of its own to run in.
-function runGateAt(root, cmd, branch) {
-  const tmp = mkdtempSync(join(tmpdir(), 'horde-done-gate-'));
-  let ok = false;
-  try {
-    execFileSync('git', ['worktree', 'add', '--detach', '--force', tmp, branch], { cwd: root, stdio: 'pipe' });
-    try {
-      execSync(cmd, { cwd: tmp, stdio: 'pipe' });
-      ok = true;
-    } catch {
-      ok = false;
-    }
-  } finally {
-    try { execFileSync('git', ['worktree', 'remove', tmp, '--force'], { cwd: root, stdio: 'pipe' }); } catch { rmSync(tmp, { recursive: true, force: true }); }
-  }
-  return { ok };
-}
-
 function cmdDone(positional, flags) {
   const horde = resolveHorde(flags);
   const cfg = readConfig() || {};
@@ -1351,8 +1331,10 @@ function cmdDone(positional, flags) {
     reasons.push(`evidence row(s) not reproduced: ${red.map((r) => `${r.id} (${r.state})`).join(', ')} — see status.mjs --horde ${horde} for what each is waiting on`);
   }
 
-  // 2. The trunk gate green at the trunk tip — a matching recorded green is accepted, anything
-  // else is run fresh (config.gates.trunk, in a scratch worktree of the trunk branch).
+  // 2. The trunk gate green at the trunk tip — a recorded green is accepted only when a tool here
+  // ran it (kind "ran": a landing, or a wave close that ran the gate itself) on this very sha;
+  // anything else — a typed claim, an entry older than the kind, another sha — is run fresh
+  // (config.gates.trunk, in a scratch worktree of the trunk branch).
   const trunkBranch = `${horde}/trunk`;
   const trunkSha = git(['rev-parse', trunkBranch]);
   let gateGreen = false;
@@ -1365,15 +1347,15 @@ function cmdDone(positional, flags) {
     } else {
       const gateCache = readJSON(hordePath(horde, 'cache', 'last-gate.json'), {});
       const cached = gateCache.trunk;
-      if (cached && cached.result === 'green' && shaMatchesTolerant(cached.sha, trunkSha)) {
+      if (cached && cached.kind === GATE_RAN && cached.result === 'green' && shaMatchesTolerant(cached.sha, trunkSha)) {
         gateGreen = true;
       } else {
-        const ran = runGateAt(root, gateCmd, trunkBranch);
+        const ran = runGateAt(root, gateCmd, trunkSha);
         gateGreen = ran.ok;
         writeJSON(hordePath(horde, 'cache', 'last-gate.json'), {
           ...gateCache,
           trunk: {
-            sha: trunkSha, result: gateGreen ? 'green' : 'red', count: null, at: new Date().toISOString(), by: 'horde done',
+            sha: trunkSha, result: gateGreen ? 'green' : 'red', count: null, kind: GATE_RAN, at: new Date().toISOString(), by: 'horde done',
           },
         });
         if (!gateGreen) reasons.push(`trunk gate red at ${short(trunkSha)} (${gateCmd})`);

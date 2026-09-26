@@ -75,12 +75,16 @@ test('wave.mjs: start, note, merged, close, current', async (t) => {
   });
 
   await t.test('close renders wave-close.md and appends it, then the wave is no longer current', () => {
-    const r = run('wave.mjs', ['close', '--gate', 'green', '--sha', 'abc1234', '--evidence', 'E9'], dir);
-    assert.equal(r.code, 0);
+    // "--gate green --sha" is run, not taken: the level's gate command runs at that commit here.
+    assert.equal(run('horde.mjs', ['config', 'set', 'gates.trunk', 'node -e "process.exit(0)"'], dir).code, 0);
+    const tip = git(['rev-parse', 'mission1/trunk'], dir);
+    const r = run('wave.mjs', ['close', '--gate', 'green', '--sha', tip.slice(0, 7), '--evidence', 'E9'], dir);
+    assert.equal(r.code, 0, r.stderr);
     const gateCache = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'cache', 'last-gate.json'), 'utf8'));
-    assert.equal(gateCache.trunk.sha, 'abc1234');
+    assert.equal(gateCache.trunk.sha, tip, 'the commit the gate ran on, in full');
     assert.equal(gateCache.trunk.result, 'green');
-    assert.match(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'charter.md'), 'utf8'), /\| E9 \|[^\n]*\| wave 1 gate on abc1234 \|/);
+    assert.equal(gateCache.trunk.kind, 'ran');
+    assert.match(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'charter.md'), 'utf8'), new RegExp(`\\| E9 \\|[^\\n]*\\| wave 1 gate passed at ${tip.slice(0, 7)} \\|`));
     assert.equal(r.json.n, '1');
     assert.equal(r.json.gate, 'green');
     const text = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
@@ -410,6 +414,7 @@ test('E14 — a wave close states parallelism, keys transferred, decisions per m
   run('ask.mjs', ['answer', asked.json.id, 'the feature node owns it; the consumer asks'], dir);
   run('ask.mjs', ['add', 'still thinking about this one', '--kind', 'stop'], dir);
 
+  assert.equal(run('horde.mjs', ['config', 'set', 'gates.trunk', 'node -e "process.exit(0)"'], dir).code, 0);
   const closed = run('wave.mjs', ['close', '--gate', 'green', '--sha', trunkTip], dir);
   assert.equal(closed.code, 0, closed.stderr);
 
@@ -689,4 +694,176 @@ test('wave.mjs start: no --horde stays on cwd; --horde written out resolves to t
     // Shared state, not part of either tree: the main checkout is left exactly where it was.
     assert.equal(git(['rev-parse', '--abbrev-ref', 'HEAD'], dir), 'develop');
   });
+});
+
+// ---- a row is filled by what the tool checks, never by what is typed (issue 303) ----------------
+//
+// The director is an agent too, and its word is a report, not evidence. `wave evidence` fills a
+// row by the row's own kind of proof: client testimony by an answered ask, an artifact by a file
+// the trunk tip carries, and anything else by a command the tool runs at the trunk tip itself.
+test('wave.mjs evidence: each row is filled by what its kind of proof names, and a typed claim is refused', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const charter = readFileSync(charterPath(dir), 'utf8').replace('| | | | |', [
+    '| E1 | the suite passes at the tip | api | | hermetic test |',
+    '| E2 | the client says the report reads right | web | | client testimony |',
+    '| E3 | the readme ships with the release | docs | | artifact |',
+    '| E4 | a row that names no kind of proof | api | |',
+  ].join('\n'));
+  writeFileSync(charterPath(dir), charter);
+  const cell = (id) => {
+    const row = readFileSync(charterPath(dir), 'utf8').split('\n').find((l) => l.startsWith(`| ${id} |`));
+    return row.split('|')[4].trim();
+  };
+  const tip = git(['rev-parse', 'mission1/trunk'], dir).slice(0, 7);
+
+  await t.test('a typed "--by" is refused on a row that is not client testimony, and names the way that fills it', () => {
+    const r = run('wave.mjs', ['evidence', 'E1', '--by', 'looks fine'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /not filled by what is typed/);
+    assert.match(r.stderr, /--run "<command>"/);
+    assert.equal(cell('E1'), '', 'nothing was written');
+    const typedTestimony = run('wave.mjs', ['evidence', 'E2', '--by', 'the client said so'], dir);
+    assert.equal(typedTestimony.code, 1);
+    assert.match(typedTestimony.stderr, /--ask <id>/);
+  });
+
+  await t.test('any other kind: a command the tool runs at the trunk tip, recorded only when it passes', () => {
+    const failing = run('wave.mjs', ['evidence', 'E1', '--run', 'node -e "process.exit(3)"'], dir);
+    assert.equal(failing.code, 1);
+    assert.match(failing.stderr, /failed at the trunk tip/);
+    assert.equal(cell('E1'), '');
+    const wrongWay = run('wave.mjs', ['evidence', 'E1', '--ask', 'a-001'], dir);
+    assert.equal(wrongWay.code, 1, 'an ask does not prove a hermetic test');
+    const passing = run('wave.mjs', ['evidence', 'E1', '--run', 'node -e "process.exit(0)"'], dir);
+    assert.equal(passing.code, 0, passing.stderr);
+    assert.equal(cell('E1'), `\`node -e "process.exit(0)"\` passed at ${tip}`);
+    const unnamed = run('wave.mjs', ['evidence', 'E4', '--run', 'node -e "process.exit(0)"'], dir);
+    assert.equal(unnamed.code, 0, 'a row that names no kind of proof is filled the same way');
+  });
+
+  await t.test('client testimony: an answered ask, and only an answered one', () => {
+    const asked = run('ask.mjs', ['add', 'does the report read right to you?', '--kind', 'stop'], dir);
+    const open = run('wave.mjs', ['evidence', 'E2', '--ask', asked.json.id], dir);
+    assert.equal(open.code, 1);
+    assert.match(open.stderr, /not answered yet/);
+    assert.equal(run('wave.mjs', ['evidence', 'E2', '--ask', 'a-999'], dir).code, 1, 'an ask that does not exist');
+    run('ask.mjs', ['answer', asked.json.id, 'yes, that is the report I meant'], dir);
+    const answered = run('wave.mjs', ['evidence', 'E2', '--ask', asked.json.id], dir);
+    assert.equal(answered.code, 0, answered.stderr);
+    assert.match(cell('E2'), new RegExp(`^client testimony — ${asked.json.id}, answered \\d{4}-\\d{2}-\\d{2}: "yes, that is the report I meant"$`));
+  });
+
+  await t.test('artifact: a file the trunk tip carries, recorded with the commit and the object', () => {
+    const missing = run('wave.mjs', ['evidence', 'E3', '--artifact', 'films/demo.mp4'], dir);
+    assert.equal(missing.code, 1);
+    assert.match(missing.stderr, /does not exist at the trunk tip/);
+    const shipped = run('wave.mjs', ['evidence', 'E3', '--artifact', 'README.md'], dir);
+    assert.equal(shipped.code, 0, shipped.stderr);
+    assert.match(cell('E3'), new RegExp(`^artifact README\\.md at ${tip} \\(object [0-9a-f]{12}\\)$`));
+  });
+});
+
+test('wave.mjs close: "--gate green --sha" is run, not taken — a red gate refuses the close, and a gate proves no testimony', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const charter = readFileSync(charterPath(dir), 'utf8').replace('| | | | |', [
+    '| E1 | the suite passes at the tip | api | | hermetic test |',
+    '| E2 | the client says the report reads right | web | | client testimony |',
+  ].join('\n'));
+  writeFileSync(charterPath(dir), charter);
+  const tip = git(['rev-parse', 'mission1/trunk'], dir);
+  const cachePath = join(dir, '.horde', 'hordes', 'mission1', 'cache', 'last-gate.json');
+  run('wave.mjs', ['start'], dir);
+
+  await t.test('no gate command: nothing to run, so nothing is claimed', () => {
+    const r = run('wave.mjs', ['close', '--gate', 'green', '--sha', tip], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /none is configured/);
+    assert.equal(existsSync(cachePath), false);
+  });
+
+  await t.test('a gate that does not pass at that commit refuses the close, and records nothing', () => {
+    assert.equal(run('horde.mjs', ['config', 'set', 'gates.trunk', 'node -e "process.exit(1)"'], dir).code, 0);
+    const r = run('wave.mjs', ['close', '--gate', 'green', '--sha', tip], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /is red at/);
+    assert.equal(existsSync(cachePath), false);
+    assert.equal(run('wave.mjs', ['current'], dir).json.current, '1', 'the wave is still open');
+  });
+
+  await t.test('a gate proves no client testimony', () => {
+    assert.equal(run('horde.mjs', ['config', 'set', 'gates.trunk', 'node -e "process.exit(0)"'], dir).code, 0);
+    const r = run('wave.mjs', ['close', '--gate', 'green', '--sha', tip, '--evidence', 'E2'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /"client testimony" evidence — a gate run does not prove it/);
+  });
+
+  await t.test('a bare "--gate green" proves no row either', () => {
+    const r = run('wave.mjs', ['close', '--gate', 'green', '--evidence', 'E1'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /only a gate run here proves anything/);
+  });
+
+  await t.test('a gate that passes is recorded as ran, on the commit it ran on', () => {
+    const r = run('wave.mjs', ['close', '--gate', 'green', '--sha', tip.slice(0, 7), '--evidence', 'E1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const cache = JSON.parse(readFileSync(cachePath, 'utf8'));
+    assert.equal(cache.trunk.kind, 'ran');
+    assert.equal(cache.trunk.sha, tip);
+    assert.equal(cache.trunk.result, 'green');
+  });
+
+  await t.test('a red one is recorded as said, not as run', () => {
+    run('wave.mjs', ['start'], dir);
+    const r = run('wave.mjs', ['close', '--gate', 'red', '--sha', tip], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const cache = JSON.parse(readFileSync(cachePath, 'utf8'));
+    assert.equal(cache.trunk.kind, 'asserted');
+    assert.equal(cache.trunk.result, 'red');
+  });
+});
+
+// Issue 294: the quality index measures the graph, not the state of a cache. The script verdicts
+// live in a gitignored cache the landing fills in a throwaway tree, so after every merge the trunk's
+// own script pairs read as having no verdict for the code as it stands — free to fill, and nothing
+// about any rule. Two closes with no rule and no code-quality change between them must read the
+// same baseline and the same noise floor, with the unfilled pairs said beside the index.
+test('wave.mjs close: pairs with no verdict yet after a merge are not "the graph got weaker"', () => {
+  const yg = requireYg();
+  const dir = makeRepo();
+  try {
+    graphFixture(dir, yg);
+    initHorde(dir);
+    // Filled once, so the first reading has every script verdict in hand.
+    const parts = yg.split(/\s+/);
+    execFileSync(parts[0], [...parts.slice(1), 'check', '--approve', '--only-deterministic'], { cwd: dir, stdio: 'ignore' });
+
+    run('wave.mjs', ['start'], dir);
+    const first = run('wave.mjs', ['close', '--gate', 'green'], dir);
+    assert.equal(first.code, 0, first.stderr);
+    assert.equal(first.json.quality.unfilled, 0, 'everything was filled');
+
+    // A merge lands a clean change; nothing fills this tree afterwards, exactly as on a trunk.
+    writeFileSync(join(dir, 'other.mjs'), 'export const other = 1;\n');
+    git(['commit', '-qam', 'a clean change lands'], dir);
+
+    run('wave.mjs', ['start'], dir);
+    const second = run('wave.mjs', ['close', '--gate', 'green'], dir);
+    assert.equal(second.code, 0, second.stderr);
+    assert.ok(second.json.quality.unfilled >= 1, `the moved script pair is counted apart: ${JSON.stringify(second.json.quality)}`);
+    assert.ok(second.json.quality.unfilledScript >= 1, 'and it is a script pair, free to fill');
+    assert.equal(second.json.quality.baseline, first.json.quality.baseline, 'Δ baseline 0');
+    assert.equal(second.json.quality.noiseFloor, first.json.quality.noiseFloor, 'Δ noise floor 0');
+    assert.equal(second.json.quality.advisoryClean, first.json.quality.advisoryClean);
+    assert.deepEqual(second.json.qualityDeclined, [], 'nothing fell');
+    const plan = readFileSync(planPath(dir), 'utf8');
+    const block = plan.slice(plan.lastIndexOf('# Wave 2 — close'));
+    assert.match(block, /Δ enforced \+0 · advisory clean \+0 · baseline \+0 · noise floor \+0/);
+    assert.match(block, /beside it, not counted: \d+ pair\(s\) with no verdict yet \(\d+ script, free to fill\)/);
+  } finally {
+    rmRepo(dir);
+  }
 });

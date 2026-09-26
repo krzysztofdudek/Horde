@@ -110,6 +110,9 @@ function hordeDigest(horde, cfg) {
   // Keyed by level: {commit, team, trunk}, each {sha, result, count, at} when land.mjs has
   // run at that level; absent levels simply aren't shown.
   const lastGate = readJSON(hordePath(horde, 'cache', 'last-gate.json'), {});
+  // What the last landing found already on its parent — land.mjs's one director item for findings
+  // no ticket brought (cache/inherited.json), or null when there is none.
+  const inherited = readJSON(hordePath(horde, 'cache', 'inherited.json'), null);
 
   // node-lease-across-hordes: leases another live horde holds on a node THIS horde touches — the
   // exact overlap node.mjs bind would refuse if this horde tried to claim it. Read fresh every
@@ -141,6 +144,7 @@ function hordeDigest(horde, cfg) {
     landing: landingLoad(horde, queueItems(horde)),
     asks: { open: askItems.filter((i) => i.state !== 'answered').length, total: askItems.length },
     lastGate,
+    inherited,
     leases: { foreign: foreignLeases },
     evidence: { total: evidenceRows.length, byState: evidenceByState, rows: evidenceRows },
     orphanedBranches: orphans,
@@ -170,8 +174,13 @@ function printHorde(h) {
   } else {
     for (const lvl of gateLevels) {
       const g = h.lastGate[lvl];
-      console.log(`  last gate (${lvl}): ${g.result} · sha ${g.sha} · count ${g.count} · at ${g.at}`);
+      const how = g.kind === 'ran' ? ' · ran' : g.kind === 'asserted' ? ' · said, not run' : '';
+      console.log(`  last gate (${lvl}): ${g.result}${how} · sha ${g.sha} · count ${g.count} · at ${g.at}`);
     }
+  }
+  if (h.inherited && Array.isArray(h.inherited.findings) && h.inherited.findings.length) {
+    console.log(`  graph findings already on ${h.inherited.parent} (no ticket brought them; seen landing ${h.inherited.ticket} at ${h.inherited.at}):`);
+    for (const line of h.inherited.findings) console.log(`    ${line}`);
   }
   if (h.orphanedBranches.length > 0) {
     console.log('  orphaned branches (no queue entry):');

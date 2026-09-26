@@ -100,6 +100,13 @@ at the end of this brief; read them before your first commit.
   answering for every later edit. Commit the lock it writes. The landing refuses a branch that changed
   such a component while its cycle is still open (`log-cycle-open`). If the full run stops because no
   reviewer is configured, that is the user's decision, not yours: say so in your log.
+- **A dependency you add is yours to declare.** An import of another component's code — a type-only
+  import included — needs a relation from your component to it. When the landing names one
+  (`relation-undeclared-dependency`, each edge `file:line → component`), declare it in your own
+  component's `yg-node.yaml` with the relation the landing names, and record why with `yg log add`,
+  or remove the import. When it says the architecture allows no relation there, it is not yours: the
+  landing waits on the user, and you do not edit `yg-architecture.yaml`. A finding the landing names
+  as already on the parent is not yours either; leave it.
 - **Never weaken a rule to get past it.** Deleting a rule, lowering its status, moving its review
   date, narrowing what it reaches, unhooking it from a component, or writing a `yg-suppress` marker
   all refuse at landing, by name. So does sharpening a rule in the same change as the code that rule

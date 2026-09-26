@@ -261,9 +261,16 @@ and a brief naming the files to resolve; the second time the same files stop it,
 names them to the client. A landing red only because that catch-up left prose verdicts to refresh
 comes back with no round counted too, briefed to run `yg check --approve` and nothing else.
 
+**A red graph is read finding by finding.** The landing fills the free verdicts and reads the result
+in one `yg check` run. A red finding the trunk already carries is not the ticket's: it is named as
+inherited, never held against the ticket, and kept for you (`status.mjs` shows it) — a red trunk is
+yours to get cleared, not every worker's. A dependency the architecture allows but nobody declared
+is the worker's: declare the relation in its own component's `yg-node.yaml`, or remove the import.
+
 **A decision only the user can make costs no round.** When the graph says a landing is red only on
-something no worker can clear — prose rules with no reviewer configured, or a reviewer that could not
-be reached — the ticket goes to `blocked` with no round counted, and one `stuck` ask, naming no
+something no worker can clear — prose rules with no reviewer configured, a reviewer that could not
+be reached, or a dependency the architecture forbids (the user either has the import removed or
+approves an architecture change, which the architect then files) — the ticket goes to `blocked` with no round counted, and one `stuck` ask, naming no
 ticket, puts the decision to the client once for the whole horde. Answer it and the next tick sends
 every ticket it held back to a worker with the answer in its brief. `horde.mjs init` and the frame
 (`refine.mjs --step frame`) read the same gap off the graph first, so it reaches the client while they
@@ -284,7 +291,9 @@ answers stay three different answers; the tool never turns disagreement into a r
 
 **A wave close that shows the graph weaker names it in the report.** Every close reads the
 quality index — enforced rules, advisory rules with nothing against them, blocking violations, the
-noise floor, coverage — and compares it with the wave before. Raising it is the horde's own call
+noise floor, coverage — and compares it with the wave before. A pair with no verdict yet, or a log
+cycle a free fill left open, is the state of a cache, not a weaker graph: it is said beside the
+index and never counted in it. Raising it is the horde's own call
 and needs nobody. A fall is not: the close names what fell and asks nobody to accept it silently —
 whether that belongs to `ask.mjs` too is still open (see the CHANGELOG).
 
@@ -332,7 +341,11 @@ A mission is done when every item in the evidence catalogue is green, the repo's
 the horde's trunk, and the retrospective has been run over the mission as it now stands. "The queue is
 empty" is never "done" — `status.mjs` shows every charter row's own coverage
 (no ticket / queued / running / merged / reproduced) so you see what still stands in the way before you
-ask. `horde.mjs done` is the gate itself: it refuses, listing every reason, until all three hold, then
+ask. Only what ran counts: a catalogue row is filled by what the tool checks (`wave.mjs evidence` — an
+answered ask for client testimony, a file the trunk carries for an artifact, a command it runs itself
+for anything else), never by a name you type, and a green gate is one a tool here ran (a landing,
+`wave.mjs close --gate green --sha`, which runs it, or `done` itself). `horde.mjs done` is the gate
+itself: it refuses, listing every reason, until all three hold, then
 stamps the charter, appends the completion block to the mission journal, archives the horde, and tells
 you what to do next. Only then do you present it to the user with the branch name. The pull request and
 the push are theirs.

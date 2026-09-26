@@ -35,10 +35,11 @@ import {
   parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine,
   withProvenance, nowIso, parseDecisionEntries, decisionField, diffSize, sizeRanks, sizeLine,
   noEvidenceLayerNote, createLockFile, processAlive, readLockText, removeStaleLock, sleepSync, HordeError,
-  runMain,
+  runMain, GATE_RAN,
 } from './_lib.mjs';
 import {
-  ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, userOnlyRefusal, reviewerMissingIn,
+  ticketNodes, ygCommand, fillDeterministic, pendingProsePairs, userOnlyRefusal, reviewerMissingIn,
+  blockingFindings, splitFindings, routeFindings, renderFindings,
   globToRegExp, pathInBoundary, ticketBoundary, proposalBoundaryOf, ygFileContext, ygAvailable, ygJson,
   NODE_LOG_FILE, YG_LOCK_FILE, mergesByRule, nodeOfLogFile, ygLogMergeResolve,
 } from './node.mjs';
@@ -83,8 +84,15 @@ for either way.
                       that report, passing. Missing, skipped or failed there is a red gate naming
                       the promise. No report configured: the item says so rather than passing for
                       a run nobody confirmed
-  6. graph          — the free deterministic verdicts recorded, every prose rule still waiting
-                      on a judgement named, and a full "yg check" green on this branch's tree
+  6. graph          — one "yg check --approve --only-deterministic --json" run: the free verdicts
+                      recorded, every prose rule still waiting on a judgement named, and the tree
+                      green. A fill stopped at the log gate names the component and its
+                      "yg log add" step. On a red tree only what this branch brought counts: the
+                      parent is read the same way, and a finding it already carries is named as
+                      inherited (and kept in cache/inherited.json for the director), never held
+                      against the ticket. Every refused block is listed, each with its step; an
+                      undeclared dependency names the relation to declare in the component's own
+                      yg-node.yaml, or removing the import
   7. mapping        — every file the branch added is owned by a node on the branch's own tree
                       (a mapping and its first file land in the same commit); skipped with --no-gate
   8. journal        — a log entry newer than the last commit
@@ -139,7 +147,10 @@ A landing whose only red is a decision the user has to make — the graph and ju
 Yggdrasil's own reading says nothing in the tree is fixable or fillable but something waits on the
 user or the reviewer, or every blocking finding is a reviewer that is missing, unreachable or
 failed — writes no round either: its result carries "waitingOnUser": {text, reviewerMissing,
-causes, rules}, and tick holds the ticket on one question for the whole horde.
+causes, rules}, and tick holds the ticket on one question for the whole horde. A dependency the
+branch brought that the architecture forbids (no relation type is allowed between the two
+component types) is one such decision: "waitingOnUser" carries "architecture": true, and the
+answer is either removing the import or an architecture change the architect files.
 --background starts the run and prints the path of the result file it will write, immediately.
 
 Everything above — the scope check's own graph read included — runs against the tree --tree
@@ -979,7 +990,9 @@ function recordGateCache(horde, level, cache, ticketId, branch, cfg) {
   try {
     const path = hordePath(horde, 'cache', 'last-gate.json');
     const existing = readJSON(path, {});
-    writeJSON(path, { ...existing, [level]: { ...cache, at: nowIso(), by: `land ${ticketId}` } });
+    // `kind: 'ran'` — the landing ran this gate itself (checkGate), which is the only kind of
+    // entry `horde.mjs done` trusts without running the gate again.
+    writeJSON(path, { ...existing, [level]: { ...cache, kind: GATE_RAN, at: nowIso(), by: `land ${ticketId}` } });
   } finally {
     lock.release();
   }
@@ -989,12 +1002,21 @@ function recordGateCache(horde, level, cache, ticketId, branch, cfg) {
 // right and `yg check` is the only thing that reads it — it runs on every landing whatever
 // `config.gates` holds, and a graph that refuses the tree is a refused merge.
 //
-// The item runs in two halves, because the two costs are different. The free half —
-// `yg check --approve --only-deterministic` — records every verdict a script can reach, in any
-// worktree, with no key and no judgement, and is always allowed. What it leaves is the prose
-// rules, which only Yggdrasil's configured reviewer judges. So the item names those pairs rather
-// than approving them, and it is ✓ only when a full `yg check` is green; the judge item says who
-// owes them.
+// One run does both halves. `yg check --approve --only-deterministic --json` records every verdict a
+// script can reach — in any worktree, with no key and no judgement, always allowed — and answers with
+// the yg-check/1 document of the tree it just filled. What it leaves open is the prose rules, which
+// only Yggdrasil's configured reviewer judges, so the item names those pairs rather than approving
+// them, and the judge item says who owes them. The document is read by its fields: a fill that
+// stopped at a gate before recording anything says which one (`aborted.stage`), and the item names
+// that gate and its step instead of guessing at why the script pairs are still open.
+//
+// A red tree is read finding by finding (node.mjs, "what a red graph says"). Only the findings this
+// branch brought are its round: the parent's own tree is filled and read the same way — on a red
+// landing only, so a green one still costs one run — and a finding the parent already carries is
+// inherited, named once in the note and on the result, and never held against the ticket. A
+// dependency the architecture allows is the worker's to declare in its own component's yg-node.yaml
+// or to remove; one the architecture forbids is not the worker's at all — the landing waits on the
+// user, who either has the import removed or approves the architecture change the architect files.
 //
 // One warning is read as a refusal here: `log-cycle-open` on a component this branch changed. The
 // free half never records a component's source baseline, so on a `log_required` component whose
@@ -1006,20 +1028,23 @@ function checkGraph(cfg, worktree, noGate, changedFiles = [], baseTree = null) {
   const display = ygCommand(cfg).display;
   if (noGate) return { ok: true, note: `skipped (--no-gate) — \`${display} check\` was not run` };
 
-  const filled = fillDeterministic(cfg, worktree);
-  if (!filled.available) {
+  const res = fillDeterministic(cfg, worktree);
+  if (!res.available) {
     return {
       ok: false,
-      note: `cannot run \`${filled.command}\` — the graph's own verdict is part of the gate; install the Yggdrasil CLI, or point config.ygCommand at it (horde.mjs config set ygCommand "node path/to/bin.js")`,
+      note: `cannot run \`${res.command}\` — the graph's own verdict is part of the gate; install the Yggdrasil CLI, or point config.ygCommand at it (horde.mjs config set ygCommand "node path/to/bin.js")`,
     };
   }
-  // A half that was stopped at its ceiling ends the item here, rather than falling through to ask
-  // the same wedged command the same question again (the full check, read as its document) and
-  // spending a ceiling on each. One stop is the answer; a red graph is a red gate.
-  if (filled.timedOut) return { ok: false, note: `\`${filled.command}\` — ${filled.out}` };
-
-  const res = runYgCheck(cfg, worktree);
+  // A run stopped at its ceiling ends the item here: one stop is the answer, and a red graph is a red gate.
   if (res.timedOut) return { ok: false, note: `\`${res.command}\` — ${res.summary}` };
+  if (!res.doc) {
+    return {
+      ok: false,
+      note: `\`${res.command}\`${res.exit != null ? ` exited ${res.exit}` : ''} and gave no document to read — ${res.summary || 'nothing was said'}; a graph that cannot be read is a red gate`,
+    };
+  }
+  if (res.aborted) return abortedFill(res, display);
+
   const cycles = openLogCycles(cfg, worktree, baseTree, res.doc, changedFiles);
   const cycleNote = cycles.length
     ? ` — and the log requirement is not measuring ${cycles.map((c) => `"${c}"`).join(', ')}, which this branch changed (log-cycle-open): `
@@ -1028,55 +1053,124 @@ function checkGraph(cfg, worktree, noGate, changedFiles = [], baseTree = null) {
   if (res.ok && !cycles.length) return { ok: true, note: `${res.command} green${res.summary ? ` — ${res.summary}` : ''}` };
   if (res.ok) return { ok: false, logCycleOpen: cycles, note: `${res.command} green${cycleNote}` };
 
+  // Whose each blocking finding is. The parent is read only when there is something to compare.
+  let split = { introduced: [], inherited: [], alsoOnParent: [] };
+  let parentNote = '';
+  if (blockingFindings(res.doc).length) {
+    let baseDoc = null;
+    if (baseTree) {
+      const base = fillDeterministic(cfg, baseTree);
+      baseDoc = base.doc || null;
+      if (!baseDoc) parentNote = ` (the parent's tree could not be read — ${base.summary || `\`${base.command}\` gave no document`} — so every finding counts as this branch's)`;
+    }
+    split = splitFindings(res.doc, baseDoc);
+  }
+  const ignore = new Set(split.inherited.map((f) => f.index));
+  const onParent = [...split.inherited, ...split.alsoOnParent];
+  const inherited = onParent.length ? renderFindings(res.doc, onParent) : [];
+  const inheritedNote = inherited.length
+    ? `\n${onParent.length} finding(s) already on the parent — not this branch's, and not held against it; the trunk's to clear:\n${inherited.join('\n')}`
+    : '';
+  const errorsHere = asArray(res.doc.issues).filter((i, index) => i && i.severity === 'error' && !ignore.has(index));
+  if (!errorsHere.length && !cycles.length) {
+    return {
+      ok: true,
+      inherited,
+      note: `${res.command} — nothing this branch brought is refused${inheritedNote}`,
+    };
+  }
+
+  const { architecture, worker } = routeFindings(res.doc, split.introduced);
+  const pending = pendingProsePairs(cfg, worktree, res);
+  // Red only on dependencies the architecture forbids: no worker can declare them, so the landing
+  // waits on the user (remove the import, or approve the architecture change the architect files).
+  const architectureOnly = !cycles.length && architecture.length > 0 && worker.length === 0
+    && !pending.pairs.length && !pending.scriptPending.length
+    && errorsHere.every((i) => split.introduced.some((f) => f.issue === i));
   // Whether what is red here is a decision only the user can make — no reviewer configured, or one
-  // that could not be reached — read off the graph's own buckets and causes. Carried on every red
-  // answer below: a refusal like that is nobody's fix round (see run()).
-  // An open log cycle this branch owes is the worker's to close, so a tree red with one is never the
-  // user's alone, whatever else in it waits on them.
-  const userOnly = cycles.length ? null : userOnlyRefusal(res.doc);
+  // that could not be reached — read off the graph's own buckets and causes, the parent's findings
+  // left out. Carried on every red answer below: a refusal like that is nobody's fix round (see
+  // run()). An open log cycle this branch owes is the worker's to close, so a tree red with one is
+  // never the user's alone, whatever else in it waits on them.
+  const userOnly = cycles.length ? null
+    : architectureOnly ? architectureDecision(res.doc, architecture)
+      : userOnlyRefusal(res.doc, { ignore });
   const reviewerMissing = reviewerMissingIn(res.doc);
-  const red = (item) => ({
-    ...item,
-    note: `${item.note}${cycleNote}`,
+
+  const parts = [];
+  if (pending.scriptPending.length) {
+    const causeOf = (p) => {
+      const hit = asArray(res.doc.issues).find((i) => i && i.aspect === p.aspect && i.unit === `${p.unitKind}:${p.unit}`);
+      return hit && hit.cause ? ` (${hit.cause})` : '';
+    };
+    parts.push(`${pending.scriptPending.length} script rule(s) still have no verdict after the free fill: `
+      + pending.scriptPending.map((p) => `${p.aspect} on ${p.unitKind}:${p.unit}${causeOf(p)}`).join(' · '));
+  }
+  if (pending.pairs.length) {
+    parts.push(`the script rules are recorded (free, no key), and ${pending.pairs.length} prose rule(s) still wait on a judgement: `
+      + pending.pairs.map((p) => `${p.aspect} on ${p.unitKind}:${p.unit}`).join(' · '));
+  }
+  if (worker.length) parts.push(`the graph refuses what this branch brought${parentNote}:\n${renderFindings(res.doc, worker).join('\n')}`);
+  if (architecture.length) {
+    parts.push(`the architecture forbids a dependency this branch brought — not a worker's to declare; remove the import, or the user approves an architecture change the architect files:\n${renderFindings(res.doc, architecture).join('\n')}`);
+  }
+  if (!parts.length) parts.push(`the graph refuses this tree${res.summary ? `: ${res.summary}` : ''}`);
+
+  // Whether the pending judgements are ALL this graph says is wrong here: every blocking finding the
+  // branch brought is one of those pairs, and none of them is waiting on a reviewer that does not
+  // exist. Only then is a red graph nothing but verdicts to refresh — what a catch-up merge leaves
+  // behind when it moves the code a verdict was recorded over (see run()'s "rejudge").
+  const onlyProsePending = pending.pairs.length > 0 && errorsHere.length > 0
+    && errorsHere.every((i) => i.aspect && i.cause !== 'reviewer-missing'
+      && pending.pairs.some((p) => p.aspect === i.aspect && `${p.unitKind}:${p.unit}` === i.unit));
+  return {
+    ok: false,
+    ...(pending.pairs.length ? { pending: pending.pairs } : {}),
+    onlyProsePending,
+    ...(inherited.length ? { inherited } : {}),
     ...(userOnly ? { userOnly } : {}),
     ...(cycles.length ? { logCycleOpen: cycles } : {}),
     reviewerMissing,
-  });
+    note: `${res.command} exited ${res.exit} — ${parts.join('\n')}${userOnly ? `\n— waiting on a user decision: ${userOnly.text}` : ''}${cycleNote}${inheritedNote}`,
+  };
+}
 
-  const pending = pendingProsePairs(cfg, worktree, res);
-  if (pending.scriptPending.length) {
-    // The free half did not take — a graph the CLI refuses to fill at all, most often because a
-    // judgement rule has no judge configured. Nobody should be sent to read a script rule, so the
-    // item hands over the CLI's own words instead of naming pairs it cannot classify.
-    return red({
+// A fill that stopped at a gate before recording anything. Nothing about the graph can be judged
+// past it, so the item names the gate, what stopped it and the step the document gives — the log
+// gate's `yg log add` for each component named, or the structural problems themselves.
+function abortedFill(res, display) {
+  const { stage, issues } = res.aborted;
+  const firstStep = (i) => String(i.next || '').split('\n')[0].trim();
+  if (stage === 'log-gate') {
+    const nodes = [...new Set(issues.map((i) => i.node).filter(Boolean))].sort();
+    const steps = [...new Set(issues.map(firstStep).filter(Boolean))];
+    const docStep = res.doc.next && res.doc.next.text;
+    return {
       ok: false,
-      note: `${filled.command} left ${pending.scriptPending.length} script rule(s) with no verdict — `
-        + `the free half did not take, and until it does nothing else about the graph can be judged:\n${filled.out.trim()}`,
-    });
+      aborted: stage,
+      note: `${res.command} stopped at the log gate and recorded nothing — ${nodes.length ? nodes.map((n) => `"${n}"`).join(', ') : 'a component'} changed with no log entry. `
+        + `Record why this branch changed it (${steps.length ? steps.join(' · ') : docStep || `${display} log add --node <node> --reason "…"`}), commit the entry, and land again`,
+    };
   }
-  if (pending.pairs.length) {
-    const named = pending.pairs.map((p) => `${p.aspect} on ${p.unitKind}:${p.unit}`);
-    // Whether the pending judgements are ALL this graph says is wrong: every blocking finding is one
-    // of those pairs, and none of them is waiting on a reviewer that does not exist. Only then is a
-    // red graph nothing but verdicts to refresh — what a catch-up merge leaves behind when it moves
-    // the code a verdict was recorded over (see run()'s "rejudge").
-    const errors = asArray(res.doc && res.doc.issues).filter((i) => i && i.severity === 'error');
-    const onlyProsePending = errors.length > 0 && errors.every((i) => i.aspect && i.cause !== 'reviewer-missing'
-      && pending.pairs.some((p) => p.aspect === i.aspect && `${p.unitKind}:${p.unit}` === i.unit));
-    return red({
-      ok: false,
-      pending: pending.pairs,
-      onlyProsePending,
-      note: `${res.command} exited ${res.exit} — the script rules are recorded (free, no key), and `
-        + `${named.length} prose rule(s) still wait on a judgement: ${named.join(' · ')}`
-        + (userOnly ? ` — waiting on a user decision: ${userOnly.text}` : ''),
-    });
-  }
-  return red({
+  const named = issues.map((i) => `${i.code}${i.node ? ` on ${i.node}` : ''}: ${String(i.what || '').split('\n')[0]}${firstStep(i) ? ` — ${firstStep(i)}` : ''}`);
+  return {
     ok: false,
-    note: `${res.command} exited ${res.exit} — the graph refuses this tree${res.summary ? `: ${res.summary}` : ''}; a red graph is a red gate, whatever the level's gate command said`
-      + (userOnly ? ` — waiting on a user decision: ${userOnly.text}` : ''),
-  });
+    aborted: stage || 'unknown',
+    note: `${res.command} stopped at the ${stage || 'unknown'} gate and recorded nothing — ${named.length ? named.join(' · ') : (res.doc.exit && res.doc.exit.reason) || 'the document names no finding'}`,
+  };
+}
+
+// The user decision a forbidden dependency waits on, in the shape userOnlyRefusal answers with.
+function architectureDecision(doc, findings) {
+  const edges = findings.flatMap((f) => (f.edges.length ? f.edges.map((e) => `${e.file}${e.line ? `:${e.line}` : ''} → ${e.target}`)
+    : [String(f.issue.what || f.issue.code).split('\n')[0]]));
+  return {
+    text: `the architecture allows no dependency for ${edges.join(', ')} — have the import removed, or approve an architecture change (a new allowed relation or a different component type), which the architect then files`,
+    reviewerMissing: false,
+    architecture: true,
+    causes: [...new Set(findings.map((f) => f.issue.code))].sort(),
+    rules: [],
+  };
 }
 
 // The `log_required` components this branch changed whose log cycle is open on its tree: the graph's
@@ -3815,6 +3909,7 @@ function runMany(horde, root, cfg, tickets, level, noGate, flags) {
       }
       // How long the shared gate took, once — every member's result carries it, marked as shared.
       shared.gateMs = Date.now() - sharedStart;
+      noteInherited(horde, group.parentBranch, combined.surviving.map((c) => c.ticketId).join(","), shared.graph);
       const sharedOk = shared.gate.ok && shared.graph.ok && shared.mapping.ok && shared.judge.ok;
       if (!sharedOk) {
         // Design: on red, do not bisect. Fall back to landing every member of this group on its
@@ -3974,8 +4069,8 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       [...law.used, ...protection.used].forEach((answer) => consumeAnswer(horde, answer, ticketId, branchSha));
     }
 
-    // The lock covers the repository's own gate command and both `yg check` runs, and nothing
-    // else: those are what two landings at once would run over each other.
+    // The lock covers the repository's own gate command and the graph item's `yg check` runs, and
+    // nothing else: those are what two landings at once would run over each other.
     const lock = noGate ? { ok: true, notes: [], release: () => {} } : acquireGateLock(ticketId, branch, { waitMs: lockWait(cfg) });
     lockNotes = lock.notes || [];
     if (!lock.ok) fail(lock.note);
@@ -3995,6 +4090,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     const gateMs = noGate ? null : Date.now() - gateStart;
     const timing = () => ({ gateMs, landingMs: Date.now() - landingStart, sharedBy: 1 });
     results.judge = checkJudge(cfg, head.path, results.graph, noGate);
+    if (!noGate) noteInherited(horde, parentBranch, ticketId, results.graph);
 
     const checks = CHECK_ORDER.map((name) => ({ name, ok: !!results[name].ok, note: results[name].note }));
     const allOk = checks.every((c) => c.ok);
@@ -4058,6 +4154,22 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     }, head, flags, parent, level);
   } finally {
     cleaner.runAll();
+  }
+}
+
+// The findings the parent tree already carries, as the last landing read them: one director item
+// for the whole horde (cache/inherited.json, shown by status.mjs), never a round on the ticket that
+// met them. A landing whose graph item is green outright read a tree that carries none, so it clears
+// the item; one that could not tell leaves it as it was.
+function noteInherited(horde, parentBranch, ticketId, graph) {
+  if (!graph) return;
+  const path = hordePath(horde, 'cache', 'inherited.json');
+  if (graph.inherited && graph.inherited.length) {
+    writeJSON(path, {
+      parent: parentBranch, findings: graph.inherited, ticket: ticketId, at: nowIso(),
+    });
+  } else if (graph.ok && !graph.inherited && existsSync(path)) {
+    rmSync(path, { force: true });
   }
 }
 

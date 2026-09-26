@@ -636,17 +636,24 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     );
     assert.equal(run('tk.mjs', ['status', '001', 'merged'], dir).json.status, 'merged');
 
-    // A catalogue row is marked reproduced by the person who reproduced it, by name. Nothing
-    // infers it from a recorded verdict — a claim about evidence is made by somebody, or not made.
-    assert.equal(run('wave.mjs', ['evidence', 'E1', '--by', workerName], dir).code, 0);
-    assert.equal(run('wave.mjs', ['evidence', 'E2', '--by', workerName], dir).code, 0);
+    // A catalogue row is filled by something the tool checks, never by a name typed into it: these
+    // two rows name no kind of proof, so each is filled by a command the tool runs at the trunk
+    // tip itself, and only because it passed there. A typed name is refused.
+    const typed = run('wave.mjs', ['evidence', 'E1', '--by', workerName], dir);
+    assert.equal(typed.code, 1);
+    assert.match(typed.stderr, /not filled by what is typed/);
+    const e1 = run('wave.mjs', ['evidence', 'E1', '--run', 'node --test src/orders/discount.test.mjs'], dir);
+    assert.equal(e1.code, 0, e1.stderr);
+    const e2 = run('wave.mjs', ['evidence', 'E2', '--run', `node ${GATE.join(' ')}`], dir);
+    assert.equal(e2.code, 0, e2.stderr);
 
     const close = run('wave.mjs', ['close', '--gate', 'green', '--sha', trunkSha.slice(0, 7)], dir);
     assert.equal(close.code, 0, close.stderr);
 
     const charter = readFileSync(join(dir, '.horde', 'hordes', 'family', 'charter.md'), 'utf8');
-    assert.match(charter, new RegExp(`\\| E1 \\|[^|]*\\|[^|]*\\| ${workerName} \\|`));
-    assert.match(charter, new RegExp(`\\| E2 \\|[^|]*\\|[^|]*\\| ${workerName} \\|`));
+    const tip = trunkSha.slice(0, 7);
+    assert.match(charter, new RegExp(`\\| E1 \\|[^|]*\\|[^|]*\\| \`node --test src/orders/discount\\.test\\.mjs\` passed at ${tip} \\|`));
+    assert.match(charter, new RegExp(`\\| E2 \\|[^|]*\\|[^|]*\\| \`node --test\` passed at ${tip} \\|`));
 
     // Closing a wave writes what the mission has done to the law so far — read off two real trees
     // through the real CLI, never scraped from anything's output. A wave that raised nothing still
