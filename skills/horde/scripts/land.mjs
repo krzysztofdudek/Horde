@@ -143,9 +143,10 @@ team you can name: passing --level team is refused outright rather than read as 
 A landing whose parent was brought in cleanly and whose only red is prose verdicts left pending by
 that merge (the reviewer configured, and nothing else the graph refuses) writes no round and says
 "rejudge": true in its result — the ticket goes back to refresh the verdicts, not for a fix. The
-merge is what left them pending only when the branch had recorded a verdict for every one of them
-before it (in its committed lock), or when the merge took the lock file from the parent; a prose
-rule the branch never had judged is its own red, and costs its round.
+merge is what left them pending only when every one of them carried a verdict that still held on
+the branch's own tip before it (Yggdrasil, asked there, reports none of them unverified or stale),
+or when the merge took the lock file from the parent; a prose rule the branch never had judged, or
+whose verdict its own later edits had already left stale, is its own red, and costs its round.
 A landing whose only red is a decision the user has to make — the graph and judge items alone, and
 Yggdrasil's own reading says nothing in the tree is fixable or fillable but something waits on the
 user or the reviewer, or every blocking finding is a reviewer that is missing, unreachable or
@@ -3129,6 +3130,25 @@ function verdictsRecordedAt(root, sha, pairs) {
   return pairs.every((p) => !!(verdicts[p.aspect] && verdicts[p.aspect][`${p.unitKind}:${p.unit}`]));
 }
 
+// Whether every one of `pairs` carried a verdict that still HELD at `sha` — the branch's own tip
+// before the catch-up merge. A verdict recorded once and left behind by the branch's own later edits
+// is present in the lock and pending all the same; that red is the ticket's own, and the merge that
+// followed did not cause it. Asked of the graph itself, in a scratch tree at `sha`: none of the pairs
+// may be among the prose pairs Yggdrasil reports unverified or stale there. A graph that could not be
+// read there answers no — the round is counted, as for any red the landing cannot attribute.
+function verdictsCurrentAt(root, cfg, sha, pairs) {
+  if (!verdictsRecordedAt(root, sha, pairs)) return false;
+  const info = resolveTree({ scratch: sha }, { cwd: root });
+  try {
+    const before = pendingProsePairs(cfg, info.path);
+    if (!before.available) return false;
+    const pendingThen = new Set(before.pairs.map((p) => `${p.aspect}\u0000${p.unitKind}:${p.unit}`));
+    return pairs.every((p) => !pendingThen.has(`${p.aspect}\u0000${p.unitKind}:${p.unit}`));
+  } finally {
+    cleanupTree(info, root);
+  }
+}
+
 // ---- trailers -----------------------------------------------------------------------------
 //
 // Who worked what, and when, belongs to git — not to `.horde/`, which is uncommitted and gone the
@@ -4168,7 +4188,8 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     // round is written; tick sends the ticket back with a narrow brief to refresh the verdicts.
     const redNames = checks.filter((c) => !c.ok).map((c) => c.name);
     // It is the merge that left them pending only when the branch had them judged before it came
-    // in — every pending pair carried a verdict in the lock the branch committed — or when the merge
+    // in — every pending pair carried a verdict that still held on the branch's own tip, not merely
+    // one recorded in its lock at some point — or when the merge
     // took the lock file whole from the parent, dropping the branch's own verdicts. Otherwise the
     // prose was never judged at all, which is the ticket's own red, and a parent that keeps moving
     // would hand it a free round every time.
@@ -4176,7 +4197,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       && redNames.includes('judge') && redNames.every((n) => n === 'judge' || n === 'graph')
       && !!(results.graph && results.graph.onlyProsePending) && !results.graph.reviewerMissing
       && (asArray(pulled.resolved).some((r) => YG_LOCK_FILE.test(r.file))
-        || verdictsRecordedAt(root, preMergeSha, asArray(results.graph.pending)));
+        || verdictsCurrentAt(root, cfg, preMergeSha, asArray(results.graph.pending)));
     // Red only because of a decision the user has to make — no reviewer to judge the prose rules, or
     // one that could not be reached. No worker can clear that, so no round is counted: the result says
     // so and tick holds the ticket on one question to the user for the whole horde.

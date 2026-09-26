@@ -1016,3 +1016,49 @@ test('_lib.mjs runGateAt: a timeout stops the gate command and every process it 
     rmRepo(dir);
   }
 });
+
+// Issue 389: a gate interrupted at the terminal is stopped whole. The command runs in a process group
+// of its own, which a Ctrl-C (SIGINT to the foreground group) or a SIGTERM/SIGHUP aimed at the caller
+// never reaches; the supervisor passes each of them on. The caller here is a detached node process
+// (its own group, standing in for the terminal's foreground group), signalled as a group.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  test(`_lib.mjs runCommandGroup: ${sig} to the caller's group stops the gate command and what it started`, { timeout: 30000 }, async () => {
+    const dir = makeRepo();
+    const pidFile = join(dir, '..', `${dir.split('/').pop()}-${sig}.pid`);
+    const lib = join(dirname(dirname(fileURLToPath(import.meta.url))), '_lib.mjs');
+    const caller = spawn(process.execPath, ['--input-type=module', '-e', `
+      const { runCommandGroup } = await import(${JSON.stringify(lib)});
+      runCommandGroup(${JSON.stringify(`sleep 30 & echo $! > "${pidFile}"; wait`)}, ${JSON.stringify(dir)}, 60000);
+    `], { detached: true, stdio: 'ignore' });
+    try {
+      for (let i = 0; i < 100 && !existsSync(pidFile); i += 1) await new Promise((r) => { setTimeout(r, 100); });
+      assert.ok(existsSync(pidFile), 'the gate command started');
+      const pid = Number(readFileSync(pidFile, 'utf8').trim());
+      process.kill(-caller.pid, sig);
+      let alive = true;
+      for (let i = 0; i < 50 && alive; i += 1) {
+        try { process.kill(pid, 0); await new Promise((r) => { setTimeout(r, 100); }); } catch { alive = false; }
+      }
+      if (alive) { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }
+      assert.equal(alive, false, `the child the gate started (pid ${pid}) was stopped by ${sig}`);
+    } finally {
+      try { process.kill(-caller.pid, 'SIGKILL'); } catch { /* gone */ }
+      rmSync(pidFile, { force: true });
+      rmRepo(dir);
+    }
+  });
+}
+
+// Issue 389: the command line reaches the supervisor as an argument whatever it begins with. Before the
+// `--`, node read a command starting with a dash as its own option — `--version` printed node's version
+// and passed as a green gate without anything being run.
+test('_lib.mjs runCommandGroup: a command beginning with a dash is run by the shell, never read by node', async () => {
+  const { runCommandGroup } = await import('../_lib.mjs');
+  const dir = makeRepo();
+  try {
+    assert.equal(runCommandGroup('--version', dir).ok, false, 'sh refuses it; node never answers it');
+    assert.equal(runCommandGroup('true', dir).ok, true);
+  } finally {
+    rmRepo(dir);
+  }
+});

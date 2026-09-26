@@ -1883,24 +1883,41 @@ export function gateTimeoutOf(cfg) {
 // stopped. Whatever the group left running once the command itself ends is stopped too. Node's
 // synchronous spawn cannot make a group or signal one, so a small supervisor does it: it starts the
 // command detached (its own group), and on the deadline sends SIGTERM to the group, then SIGKILL.
+// Being its own group, the command is out of reach of a Ctrl-C at the terminal (SIGINT goes to the
+// foreground group, which holds the caller and this supervisor, not the command) and of a hangup
+// or a SIGTERM aimed at the supervisor. So the supervisor passes SIGINT, SIGTERM and SIGHUP on to
+// the command's group, SIGKILL after two seconds, and exits as that signal would have ended it:
+// an interrupted landing leaves no gate running and holding its worktree.
+// The command line and the directory follow `--`, so a value that begins with a dash is an argument
+// to the supervisor and never an option to node itself.
 const GROUP_SUPERVISOR = `
 const { spawn } = require('node:child_process');
+const { constants } = require('node:os');
 const [cmd, cwd, ms] = process.argv.slice(1);
 const child = spawn('sh', ['-c', cmd], { cwd, detached: true, stdio: 'ignore' });
 const group = (sig) => { try { process.kill(-child.pid, sig); } catch {} };
 let timedOut = false;
+let signalled = null;
 const timer = Number(ms) > 0 ? setTimeout(() => { timedOut = true; group('SIGTERM'); setTimeout(() => group('SIGKILL'), 2000).unref(); }, Number(ms)) : null;
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => {
+    if (!signalled) signalled = sig;
+    group(sig);
+    setTimeout(() => group('SIGKILL'), 2000).unref();
+  });
+}
 child.on('error', () => process.exit(127));
 child.on('exit', (code) => {
   if (timer) clearTimeout(timer);
   group('SIGKILL');
   if (timedOut) process.stdout.write('HORDE-GATE-TIMED-OUT');
+  if (signalled) process.exit(128 + (constants.signals[signalled] || 1));
   process.exit(timedOut ? 1 : (code ?? 1));
 });
 `;
 
 export function runCommandGroup(cmd, cwd, timeoutMs = null) {
-  const res = spawnSync(process.execPath, ['-e', GROUP_SUPERVISOR, cmd, cwd, String(timeoutMs || 0)], {
+  const res = spawnSync(process.execPath, ['-e', GROUP_SUPERVISOR, '--', cmd, cwd, String(timeoutMs || 0)], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
     ...(timeoutMs ? { timeout: timeoutMs + 10000, killSignal: 'SIGKILL' } : {}),
   });

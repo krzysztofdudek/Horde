@@ -1094,10 +1094,12 @@ the JSON, and every item below is measured against it:
    1 brought the parent in cleanly and the only red items are this one and the graph's, both about
    prose verdicts that merge left pending (a reviewer configured, nothing else refused), the result
    carries `rejudge: true` and no round is written — the merge moved the code under the verdicts,
-   the ticket did not. That holds only when the branch had a verdict recorded for every one of
-   those pairs before the merge (its committed `yg-lock.nondeterministic.json`, read by field), or
-   the merge took the lock file from the parent; prose the branch never had judged is its own red
-   and costs its round, or every move of the parent would hand it another free one;
+   the ticket did not. That holds only when every one of those pairs carried a verdict that still
+   held on the branch's own tip before the merge — recorded in its committed
+   `yg-lock.nondeterministic.json` (read by field), and not reported unverified or stale by
+   `yg check` run in a scratch tree at that tip — or the merge took the lock file from the parent;
+   prose the branch never had judged, or whose verdict its own later edits had already left stale,
+   is its own red and costs its round, or every move of the parent would hand it another free one;
 3. scope — the diff stays inside the files the ticket declared in `**Files:**`; a ticket that
    declared none falls back to the union of its node boundaries (from `node.mjs`). Either way it
    touches no protected path, and Yggdrasil's committed lock files (`.yggdrasil/yg-lock.*.json`) are
@@ -1120,7 +1122,9 @@ the JSON, and every item below is measured against it:
    ticket's log is a claim about a run this gate did not see. A command that hangs is stopped at
    `config.gateTimeoutMs` (default 15 minutes) and the limit is named, rather than a stuck process
    left behind a checklist that never finishes — and a stopped command ends the item there, with
-   nothing below it asked anything. Otherwise the exit code is only half the item: when
+   nothing below it asked anything. The command runs as a process group of its own, and everything
+   in it is stopped with it: at the timeout, and when the landing itself is interrupted (Ctrl-C,
+   SIGTERM or SIGHUP), so no gate outlives the run that started it. Otherwise the exit code is only half the item: when
    `config.gates.report` names the report the command's own runner wrote, every live promise's own
    paired case has to be in it, passing, or the gate is red and names the promise. See
    [the gate's own report](#the-gates-own-report) below. Once the branch actually merges, what this

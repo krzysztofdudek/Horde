@@ -3981,9 +3981,9 @@ test('land.mjs: a catch-up conflict outside the files that merge by rule is stil
 // A catch-up merge moves the code a branch's prose verdicts were recorded over, so a landing that is
 // red only for those pending verdicts was made red by somebody else's landing. Its result says
 // "rejudge" and no round is written.
-// The branch had its prose judged before the parent came in: its committed lock carries a verdict for
-// the pair the catch-up then leaves pending (the entry's hash is beside the point — what the merge
-// changed is exactly whether it still holds).
+// A verdict written into the branch's lock by hand: present, and — its hash being no hash of anything
+// in the tree — never current. What "the branch had it judged" looks like to a reader of the lock
+// alone, and what it is not to the graph.
 function recordVerdictOnBranch(dir, branch, aspect, unitKey) {
   git(['checkout', '-q', branch], dir);
   writeFileSync(join(dir, '.yggdrasil', 'yg-lock.nondeterministic.json'), `${JSON.stringify({
@@ -3997,12 +3997,27 @@ function recordVerdictOnBranch(dir, branch, aspect, unitKey) {
 test('land.mjs: after a clean catch-up, a landing red only for pending prose verdicts is "rejudge" and counts no round', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  const { branch, issueDir: dst } = setupLandable(dir, '191', { prose: true, reviewer: true });
-  recordVerdictOnBranch(dir, branch, 'reads-well', 'node:feature');
-  // The parent moves on under the branch, cleanly.
+  const mock = await startMockReviewer();
+  t.after(() => mock.close());
+  const { branch, issueDir: dst } = setupLandable(dir, '191', {
+    prose: true,
+    reviewer: mock.endpoint,
+    mapping: ['feature-191.mjs', 'feature-191.test.mjs', 'feature-shared.mjs'],
+    trunkFiles: { 'feature-shared.mjs': 'export const shared = 1;\n' },
+  });
+  // The worker's step: the reviewer judges the prose on the branch, and the verdicts are committed —
+  // current on the branch's own tip.
+  const wt = join(dir, 'approve-tree');
+  git(['worktree', 'add', wt, branch], dir);
+  const approved = await ygAsync(wt, ['check', '--approve']);
+  assert.equal(approved.code, 0, approved.out);
+  git(['add', '.yggdrasil'], wt);
+  git(['commit', '-qm', 'graph: the reviewer judged the prose rules'], wt);
+  git(['worktree', 'remove', '--force', wt], dir);
+  // The parent moves on under the branch, cleanly, and changes code the verdicts were recorded over.
   git(['checkout', '-q', 'mission1/trunk'], dir);
-  writeFileSync(join(dir, 'elsewhere.txt'), 'a sibling landed\n');
-  git(['add', 'elsewhere.txt'], dir);
+  writeFileSync(join(dir, 'feature-shared.mjs'), 'export const shared = 2;\n');
+  git(['add', 'feature-shared.mjs'], dir);
   git(['commit', '-qm', 'a sibling landed'], dir);
   writeTicketLog(dst);
 
@@ -4023,6 +4038,31 @@ test('land.mjs: after a clean catch-up, a landing red only for pending prose ver
   assert.equal(own.code, 1);
   assert.notEqual(own.json.rejudge, true);
   assert.match(ticketLog(other, '192'), /round 1\//);
+});
+
+// Issue 389: a verdict in the branch's lock is not the same as a verdict that held there. One the
+// branch recorded and then left stale by its own later edits was pending before the parent came in;
+// the catch-up did not cause that red, so it costs the ticket its round.
+test('land.mjs: after a clean catch-up, a verdict the branch recorded but had already left stale is its own red, not "rejudge"', async () => {
+  const dir = makeRepo();
+  try {
+    const { branch, issueDir: dst } = setupLandable(dir, '194', { prose: true, reviewer: true });
+    // Present in the lock, and stale on the branch's own tip: the hash is no hash of anything there.
+    recordVerdictOnBranch(dir, branch, 'reads-well', 'node:feature');
+    git(['checkout', '-q', 'mission1/trunk'], dir);
+    writeFileSync(join(dir, 'elsewhere.txt'), 'a sibling landed\n');
+    git(['add', 'elsewhere.txt'], dir);
+    git(['commit', '-qm', 'a sibling landed'], dir);
+    writeTicketLog(dst);
+
+    const r = run('land.mjs', [branch], dir);
+    assert.equal(r.code, 1, r.stdout + r.stderr);
+    assert.match(byName(r)['base freshness'].note, /brought mission1\/trunk into mission1\/t-194/);
+    assert.notEqual(r.json.rejudge, true, JSON.stringify(r.json.checks));
+    assert.match(ticketLog(dir, '194'), /round 1\//, 'the round is counted');
+  } finally {
+    rmRepo(dir);
+  }
 });
 
 // Issue 359: a catch-up is what left the prose pending only when the branch had it judged before the
