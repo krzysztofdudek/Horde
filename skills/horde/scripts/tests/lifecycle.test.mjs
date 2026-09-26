@@ -251,7 +251,8 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     assert.equal(running2.code, 0, running2.stderr);
     writeFileSync(join(running2.json.worktree, 'scratch.txt'), 'uncommitted work\n');
 
-    const reconcileQueue = run('queue.mjs', ['reconcile'], dir);
+    // The worker came back without its "landed" line, so the director says it ended.
+    const reconcileQueue = run('queue.mjs', ['reconcile', '--reclaim', ticket2Id], dir);
     assert.equal(reconcileQueue.code, 0, reconcileQueue.stderr);
     const result2 = reconcileQueue.json.find((r) => r.ticket === ticket2Id);
     assert.equal(result2.state, 'queued');

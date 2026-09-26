@@ -3,8 +3,9 @@
 //
 // One channel to the client, and exactly four things travel down it. `stop` — a worker ran out of
 // spec and wrote down the question instead of guessing; the ticket stays where it was. `stuck` — a
-// ticket exhausted its fix rounds and tick (017) put it on "blocked"; tick files this one, not an
-// agent, and it carries the gate's last words and the ticket's log path. `lower` — a request to
+// ticket exhausted its fix rounds, or its catch-up merge stopped on the same files twice, and tick put
+// it on "blocked"; tick files this one, not an agent, and it carries the gate's last words (or the
+// files) and the ticket's log path. `lower` — a request to
 // weaken something that protects the work: a rule (demote, an added yg-suppress marker, a moved
 // review_by, an aspect detached from a node), the proof (a promise put back to planned, a test
 // file or an assertion taken out, a skip marker added), or a gate (the script a gate command runs,

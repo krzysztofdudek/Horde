@@ -140,7 +140,8 @@ test('tick.mjs reconcile: a branch past the tip lands, a dirty tree is committed
   git(['-C', pastRun.json.worktree, 'commit', '--allow-empty', '-qm', 'work'], dir);
   writeFileSync(join(dirtyRun.json.worktree, 'scratch.txt'), 'dirty work\n');
 
-  const r = tick(dir);
+  // The three workers came back without a "landed" line — the director says they ended.
+  const r = tick(dir, ['--reclaim', [past, clean, dirty].join(',')]);
   assert.equal(r.code, 0, r.stderr);
   const settled = Object.fromEntries(r.json.reconciled.map((x) => [x.ticket, x]));
 
@@ -196,7 +197,7 @@ test('tick.mjs reconcile: a running item with no branch is skipped without an ex
   const worktree = itemOf(dir, vanished).worktree;
   execFileSync('rm', ['-rf', worktree]);
 
-  const r = tick(dir);
+  const r = tick(dir, ['--reclaim', vanished]);
   assert.equal(r.code, 0, r.stderr);
 
   await t.test('the branchless running item is left exactly as it was', () => {
@@ -566,6 +567,7 @@ test('tick.mjs review: one per ticket — a fix round goes to the gate without a
   // A review that came back late: its finding reaches the log after the loop has already moved on.
   logOn(dir, id, `review: core changes by r-${id} — Critical: src/second.ts:1 — the total is never rounded — every invoice is a cent off`);
   git(['-C', running.json.worktree, 'commit', '--allow-empty', '-qm', 'fix'], dir);
+  logOn(dir, id, `landed ${git(['-C', running.json.worktree, 'rev-parse', 'HEAD'], dir)} — fixed`);
 
   const again = tick(dir);
   assert.equal(again.code, 0, again.stderr);
@@ -1274,7 +1276,8 @@ test('tick.mjs --runner external: a horde name is never handed to a shell, even 
   run('queue.mjs', ['add', id], dir);
   run('queue.mjs', ['set', id, 'running', '--agent', 'w'], dir);
 
-  const r = tick(dir, ['--runner', 'external']);
+  // The hand-started worker never ran; the director reclaims it, and tick starts one itself.
+  const r = tick(dir, ['--runner', 'external', '--reclaim', id]);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.json.external.length, 1, `one worker started (${JSON.stringify(r.json.external)})`);
   const started = r.json.external[0];
@@ -1805,4 +1808,298 @@ test('tick.mjs: an item whose record lost its branch is named an orphan and left
     assert.equal(r.code, 1);
     assert.match(r.stderr, new RegExp(`branch already exists: mission1/t-${lost} — .*set ${lost} running --adopt`));
   });
+});
+
+// ---- the worker's lease ------------------------------------------------------------------------
+//
+// A ticket handed out is its worker's until there is evidence the worker ended: its own "landed <sha>"
+// line, the process tick started for it gone, or the director's --reclaim. A tick run in between —
+// every --watch interval, every periodic wake-up of a session — must leave a live worker's tree, its
+// branch and its ticket alone.
+
+function workingOf(r, id) {
+  return (r.json.working || []).find((w) => w.ticket === id);
+}
+
+test('tick.mjs lease: a worker still working keeps its ticket — its tree is not committed, its ticket not handed out again, its half-done branch not reviewed — until it logs "landed"', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const id = mkTicket(dir, 'long-work', { files: 'src/long.ts' });
+  run('queue.mjs', ['add', id], dir);
+
+  const first = tick(dir);
+  assert.equal(first.code, 0, first.stderr);
+  const handed = first.json.spawn.find((s) => s.ticket === id);
+  assert.ok(handed, 'the ticket is handed out');
+  const { worktree } = handed;
+  const lease = itemOf(dir, id).worker;
+  assert.ok(lease && lease.startedAt && lease.name === `w-${id}`, `the start records who holds it and since when: ${JSON.stringify(lease)}`);
+
+  await t.test('a dirty tree mid-work is left exactly as it is, and the ticket is not handed out twice', () => {
+    writeFileSync(join(worktree, 'half-written.ts'), 'export const x = \n');
+    const r = tick(dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(workingOf(r, id), `listed as working: ${JSON.stringify(r.json)}`);
+    assert.match(workingOf(r, id).note, /tick\.mjs --reclaim/);
+    assert.ok(!r.json.reconciled.some((x) => x.ticket === id), 'nothing was settled for it');
+    assert.ok(!r.json.spawn.some((s) => s.ticket === id), 'no second worker');
+    assert.notEqual(git(['-C', worktree, 'log', '-1', '--format=%s'], dir), 'wip: reclaimed');
+    assert.match(git(['-C', worktree, 'status', '--porcelain'], dir), /half-written\.ts/, 'the half-written file is still uncommitted');
+    assert.equal(itemOf(dir, id).state, 'running');
+  });
+
+  await t.test('a stage commit on the way ("red test first") is not a finished branch: no review is raised on it', () => {
+    git(['-C', worktree, 'add', '-A'], dir);
+    git(['-C', worktree, 'commit', '-qm', 'red test first'], dir);
+    const r = tick(dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(workingOf(r, id));
+    assert.ok(!r.json.landed.some((l) => l.ticket === id), 'nothing about it reached the gate or its review');
+    assert.ok(!r.json.review.some((e) => e.ticket === id));
+    assert.equal(itemOf(dir, id).state, 'running');
+  });
+
+  await t.test('its own "landed <sha>" line ends it: the next run settles the branch and raises its review', () => {
+    const sha = git(['-C', worktree, 'rev-parse', 'HEAD'], dir);
+    logOn(dir, id, `landed ${sha} — the long work is done`);
+    const r = tick(dir);
+    assert.equal(r.code, 0, r.stderr);
+    const settled = r.json.reconciled.find((x) => x.ticket === id);
+    assert.equal(settled && settled.state, 'landed', JSON.stringify(r.json.reconciled));
+    assert.match(settled.note, new RegExp(`logged "landed ${sha}"`));
+    assert.equal(r.json.landed.find((l) => l.ticket === id).action, 'review');
+  });
+});
+
+test('tick.mjs lease: a "landed" line from before the worker started is not its end, and --reclaim is refused for a ticket nobody holds', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const id = mkTicket(dir, 'second-round', { files: 'src/second.ts' });
+  run('queue.mjs', ['add', id], dir);
+  // A previous round's line, logged before this worker was handed the ticket.
+  logOn(dir, id, 'landed abcdef1 — the previous round');
+  const first = tick(dir);
+  assert.equal(first.code, 0, first.stderr);
+  assert.ok(first.json.spawn.some((s) => s.ticket === id));
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(workingOf(r, id), 'the old line does not end the new worker');
+
+  const refused = tick(dir, ['--reclaim', '999']);
+  assert.equal(refused.code, 1);
+  assert.match(refused.stderr, /--reclaim 999: no queue item 999/);
+
+  const reclaimed = tick(dir, ['--reclaim', id]);
+  assert.equal(reclaimed.code, 0, reclaimed.stderr);
+  const settled = reclaimed.json.reconciled.find((x) => x.ticket === id);
+  assert.equal(settled.state, 'queued');
+  assert.match(settled.note, /reclaimed by the director/);
+});
+
+test('tick.mjs lease: under the external runner a worker whose process lives is never started twice, and a gone one is settled', async (t) => {
+  const dir = makeRepo();
+  const pids = [];
+  t.after(async () => {
+    for (const pid of pids) { try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ } }
+    await quietRm(dir);
+  });
+  initHorde(dir);
+  const id = mkTicket(dir, 'slow-external', { files: 'src/slow.ts' });
+  run('queue.mjs', ['add', id], dir);
+  // The worker the operator's headless CLI would start, standing in for a real one: it runs for a
+  // long time and does nothing.
+  run('horde.mjs', ['config', 'set', 'runner.spawn', 'sleep 600'], dir);
+
+  const first = tick(dir, ['--runner', 'external']);
+  assert.equal(first.code, 0, first.stderr);
+  const started = first.json.external.find((e) => e.ticket === id && e.role === 'worker');
+  assert.ok(started && Number.isInteger(started.pid), JSON.stringify(first.json.external));
+  pids.push(started.pid);
+  const lease = itemOf(dir, id).worker;
+  assert.equal(lease.pid, started.pid, 'the lease carries the pid of the process tick started');
+  assert.ok(existsSync(lease.log), 'and the path of its own output log, which exists');
+
+  await t.test('while it lives, every run lists it as working and starts nothing for it', () => {
+    for (let i = 0; i < 2; i += 1) {
+      const r = tick(dir, ['--runner', 'external']);
+      assert.equal(r.code, 0, r.stderr);
+      assert.ok(workingOf(r, id), JSON.stringify(r.json));
+      assert.match(workingOf(r, id).note, new RegExp(`pid ${started.pid}, still alive`));
+      assert.deepEqual(r.json.external.filter((e) => e.ticket === id), [], 'no second worker on the same ticket');
+    }
+    assert.equal(git(['branch', '--list', `mission1/t-${id}`], dir).split('\n').filter(Boolean).length, 1);
+  });
+
+  await t.test('once its process is gone, the next run settles it', async () => {
+    process.kill(-started.pid, 'SIGKILL');
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      try { process.kill(started.pid, 0); } catch { break; }
+      await new Promise((resolve) => { setTimeout(resolve, 100); });
+    }
+    const r = tick(dir, ['--runner', 'external']);
+    assert.equal(r.code, 0, r.stderr);
+    const settled = r.json.reconciled.find((x) => x.ticket === id);
+    assert.ok(settled, JSON.stringify(r.json));
+    assert.match(settled.note, new RegExp(`pid ${started.pid}\\) is gone`));
+    for (const e of r.json.external) if (Number.isInteger(e.pid)) pids.push(e.pid);
+  });
+});
+
+test('tick.mjs lease: a worker that ended mid-merge has the merge aborted before its branch is read, and the files are named', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const id = mkTicket(dir, 'stopped-mid-merge', { files: 'src/clash.ts' });
+  run('queue.mjs', ['add', id], dir);
+  const first = tick(dir);
+  const { worktree } = first.json.spawn.find((s) => s.ticket === id);
+
+  // The worker commits its own version of a file…
+  mkdirSync(join(worktree, 'src'), { recursive: true });
+  writeFileSync(join(worktree, 'src', 'clash.ts'), 'export const who = "worker";\n');
+  git(['-C', worktree, 'add', 'src/clash.ts'], dir);
+  git(['-C', worktree, 'commit', '-qm', 'the worker\'s version'], dir);
+  // …the trunk gets another…
+  const trunkTree = join(dir, '..', `${dir.split('/').pop()}-trunk-edit`);
+  git(['worktree', 'add', '-q', trunkTree, 'mission1/trunk'], dir);
+  mkdirSync(join(trunkTree, 'src'), { recursive: true });
+  writeFileSync(join(trunkTree, 'src', 'clash.ts'), 'export const who = "trunk";\n');
+  git(['-C', trunkTree, 'add', 'src/clash.ts'], dir);
+  git(['-C', trunkTree, 'commit', '-qm', 'the trunk\'s version'], dir);
+  git(['worktree', 'remove', '--force', trunkTree], dir);
+  // …and the worker stops in the middle of bringing the trunk in.
+  assert.throws(() => git(['-C', worktree, 'merge', 'mission1/trunk'], dir));
+  assert.ok(git(['-C', worktree, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'], dir));
+
+  const r = tick(dir, ['--reclaim', id]);
+  assert.equal(r.code, 0, r.stderr);
+  const settled = r.json.reconciled.find((x) => x.ticket === id);
+  assert.equal(settled.state, 'landed', 'its own commit goes to the gate as it was committed');
+  assert.match(settled.note, /stopped in the middle of a merge conflicted in src\/clash\.ts, and the merge was aborted/);
+  assert.throws(() => git(['-C', worktree, 'rev-parse', '-q', '--verify', 'MERGE_HEAD'], dir), 'no merge is left in progress');
+  assert.equal(git(['-C', worktree, 'status', '--porcelain'], dir), '', 'no conflict markers are left behind');
+});
+
+// ---- a catch-up that conflicts ------------------------------------------------------------------
+//
+// A branch the parent does not merge into goes back with no round counted — and used to come back the
+// same way forever: the worker stops at the conflict, the branch goes to the gate, stale again, no
+// round, nobody asked. Now the next worker is handed the files to resolve, and the same files stopping
+// it a second time ask the client, once.
+
+test('tick.mjs: a catch-up conflict nobody resolves ends in exactly one open ask within three runs, not a loop', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const { id } = landedTicket(dir, 'behind-and-conflicting', { files: 'src/conflict.ts' });
+  throughReview(dir, id);
+  const staleResult = () => writeLandResult(dir, id, {
+    ticket: id, branch: itemOf(dir, id).branch, sha: git(['rev-parse', '--verify', itemOf(dir, id).branch], dir), ok: false, stale: true,
+    conflictFiles: ['src/conflict.ts'],
+    checks: [{ name: 'base freshness', ok: false, note: 'STALE — merge-base a1b2c3d vs mission1/trunk tip e4f5a6b. merging mission1/trunk into it conflicts in src/conflict.ts' }],
+    pairs: [], landed: null,
+  });
+  staleResult();
+
+  const runs = [];
+  runs.push(tick(dir));
+  assert.equal(runs[0].code, 0, runs[0].stderr);
+
+  await t.test('the first stale return costs no round, and the next worker\'s brief names the files it is to resolve', () => {
+    const step = runs[0].json.landed.find((l) => l.ticket === id);
+    assert.equal(step.action, 'changes');
+    assert.equal(step.round, null);
+    const handed = runs[0].json.spawn.find((s) => s.ticket === id);
+    assert.ok(handed, 'handed out again, to resolve it');
+    const [, script, ...args] = handed.brief.split(' ');
+    const brief = JSON.parse(execFileSync('node', [script, ...args, '--json'], { cwd: dir, encoding: 'utf8' })).brief;
+    assert.match(brief, /## Catch-up conflict/);
+    assert.match(brief, /- `src\/conflict\.ts`/);
+    assert.match(brief, /log merge-resolve --node/);
+  });
+
+  // The worker stops at the same conflict without resolving it, and the director says so.
+  runs.push(tick(dir, ['--reclaim', id]));
+  assert.equal(runs[1].code, 0, runs[1].stderr);
+  runs.push(tick(dir));
+  assert.equal(runs[2].code, 0, runs[2].stderr);
+
+  await t.test('the second return on the same files blocks the ticket and asks the client exactly once, naming them', () => {
+    const blocked = runs[1].json.landed.find((l) => l.ticket === id);
+    assert.equal(blocked.action, 'blocked', JSON.stringify(runs[1].json.landed));
+    assert.equal(itemOf(dir, id).state, 'blocked');
+    const asks = runs[2].json.askClient.filter((a) => a.kind === 'stuck');
+    assert.equal(asks.length, 1, JSON.stringify(runs[2].json.askClient));
+    assert.match(asks[0].why, /src\/conflict\.ts/);
+    const changes = runs.flatMap((r) => r.json.landed).filter((l) => l.ticket === id && l.action === 'changes');
+    assert.equal(changes.length, 1, 'one stale return, not one per run');
+    assert.ok(!runs[2].json.spawn.some((s) => s.ticket === id), 'nothing is handed out for it while the client decides');
+  });
+});
+
+test('tick.mjs: a "rejudge" result goes back with no round and a brief to refresh the verdicts; a second in a row counts its round', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const { id } = landedTicket(dir, 'verdicts-moved', { files: 'src/moved.ts' });
+  throughReview(dir, id);
+  const rejudge = () => writeLandResult(dir, id, {
+    ticket: id, branch: itemOf(dir, id).branch, sha: git(['rev-parse', '--verify', itemOf(dir, id).branch], dir), ok: false, rejudge: true,
+    checks: [{ name: 'judge', ok: false, note: '1 prose rule(s) have no verdict from this repository\'s reviewer: reads-well on node:core' }],
+    pairs: [{ aspect: 'reads-well', unitKind: 'node', unit: 'core' }], landed: null,
+  });
+  rejudge();
+
+  const first = tick(dir);
+  assert.equal(first.code, 0, first.stderr);
+  const step = first.json.landed.find((l) => l.ticket === id);
+  assert.equal(step.action, 'changes');
+  assert.equal(step.round, null);
+  assert.match(step.note, /rejudge after catch-up, no round counted/);
+  const handed = first.json.spawn.find((s) => s.ticket === id);
+  const [, script, ...args] = handed.brief.split(' ');
+  const brief = JSON.parse(execFileSync('node', [script, ...args, '--json'], { cwd: dir, encoding: 'utf8' })).brief;
+  assert.match(brief, /## Refresh the verdicts/);
+  assert.match(brief, /reads-well on node:core/);
+  assert.doesNotMatch(readFileSync(ticketLogPath(dir, id), 'utf8'), /round \d+\//);
+
+  // The worker comes back with a new commit, and the landing of it finds the same verdicts pending.
+  git(['-C', handed.worktree, 'commit', '--allow-empty', '-qm', 'did not refresh'], dir);
+  logOn(dir, id, `landed ${git(['-C', handed.worktree, 'rev-parse', 'HEAD'], dir)} — back`);
+  rejudge();
+  const second = tick(dir);
+  assert.equal(second.code, 0, second.stderr);
+  assert.equal(second.json.reconciled.find((x) => x.ticket === id).state, 'landed');
+  const counted = second.json.landed.find((l) => l.ticket === id);
+  assert.equal(counted.action, 'changes');
+  assert.equal(counted.round, 1, JSON.stringify(counted));
+  assert.match(readFileSync(ticketLogPath(dir, id), 'utf8'), /round 1\//);
+});
+
+test('tick.mjs lease: a worker\'s own "stopped: <why>" line ends it too, and what it left is settled with no reclaim', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const id = mkTicket(dir, 'cannot-do-it', { files: 'src/cannot.ts' });
+  run('queue.mjs', ['add', id], dir);
+  const first = tick(dir);
+  const { worktree } = first.json.spawn.find((s) => s.ticket === id);
+  writeFileSync(join(worktree, 'notes.txt'), 'what I found before stopping\n');
+
+  const working = tick(dir);
+  assert.ok(workingOf(working, id), 'still working before it says it stopped');
+
+  logOn(dir, id, 'stopped: the ticket needs a port the node does not have');
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(!workingOf(r, id), 'no longer working');
+  const settled = r.json.reconciled.find((x) => x.ticket === id);
+  assert.ok(settled, JSON.stringify(r.json));
+  assert.equal(settled.state, 'queued');
+  assert.match(settled.note, /logged "stopped: the ticket needs a port the node does not have"/);
+  assert.equal(git(['-C', worktree, 'log', '-1', '--format=%s'], dir), 'wip: reclaimed', 'what it left is kept for the next worker');
 });

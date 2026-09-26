@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `tick` no longer takes a ticket from a worker that is still working. A ticket handed out stays with its worker until the worker logs its last `landed <sha>` line (or `stopped: <why>` when it stops without landing), until the process `tick` started for it under the external runner has ended, or until the director runs `tick.mjs --reclaim <ticket>` for a worker that came back without that line. Until then `tick` lists the ticket as `working` and leaves it alone. Before, a `tick` run while a worker was still busy committed its half-written work, handed the same ticket to a second worker, or sent a half-finished branch to review, so `--watch` and the session's periodic ticks could not run beside a long worker. `queue.mjs reconcile` takes `--reclaim` too.
+- A landing whose catch-up merge conflicts no longer loops forever. The ticket still goes back with no round counted, and the next worker is told which files the merge stopped on and how to resolve them. If the same files stop it a second time, the ticket is blocked and the client gets one question naming them. A worker that stopped in the middle of a merge has that merge undone before anything reads its branch.
+- A landing that is red only because its own catch-up merge left prose verdicts to refresh no longer costs a fix round. The worker is sent back to run `yg check --approve` and commit. A second return for the same reason counts a round.
+
+### Added
+
+- The conflicts that parallel tickets on one node always meet are resolved at landing instead of refused: a node's `log.md` through `yg log merge-resolve`, Yggdrasil's lock files by taking the parent's side, and the files `config.appendOnly` lists when both sides only added lines. This works both when a landing brings the parent into a branch and when a batch of tickets is combined for one shared gate. Any other conflict is refused as before. `horde init` lists a changelog it finds at the repository root in `appendOnly`, and the plan and the dispatch list no longer hold tickets back for touching an append-only file.
+- Under the external runner, each worker's and review's output goes to a log of its own, and `tick` prints the process id and the log path of everything it starts.
+
 ## [6.1.0] - 2026-09-25
 
 Needs Yggdrasil 6.0.0 or newer; an older one is refused with the release to install. Installing the `promises` package as a tagged version needs Yggdrasil 6.1.0.

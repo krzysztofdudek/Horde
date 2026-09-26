@@ -147,7 +147,8 @@ test('cold boot: queue reconcile sorts three running tickets by their actual git
   // C: clean, no commit — left exactly as queue.mjs set it up.
 
   await t.test('queue reconcile: A lands, B is reclaimed with a wip commit and kept worktree, C goes queued with its worktree gone', () => {
-    const reconciled = run('queue.mjs', ['reconcile'], dir);
+    // Cold boot: the workers are gone and left no "landed" line, so the director reclaims them.
+    const reconciled = run('queue.mjs', ['reconcile', '--reclaim', [ids['ticket-a'], ids['ticket-b'], ids['ticket-c']].join(',')], dir);
     assert.equal(reconciled.code, 0, reconciled.stderr);
     const byTicket = Object.fromEntries(reconciled.json.map((r) => [r.ticket, r.state]));
     assert.equal(byTicket[ids['ticket-a']], 'landed');

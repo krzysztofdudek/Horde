@@ -15,7 +15,7 @@ import {
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 import {
   parseReport, sameFile, sameCase, promiseFrontmatter, pairingAdapter, pairingOf, pairingKind,
-  evidencePinAt, promisesIn,
+  evidencePinAt, promisesIn, appendOnlyMerge,
 } from '../land.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -3617,4 +3617,194 @@ test('land.mjs --background with a batch: a ticket with no queue item is refused
     if (!bothLanded) execFileSync('sleep', ['0.25']);
   }
   assert.ok(bothLanded, 'the two real tickets landed despite the third being unresolvable');
+});
+
+// ---- the family's known conflicts, resolved by rule ------------------------------------------------
+//
+// Parallel tickets on one node collide in the same files every time: the node's own log.md, and the
+// repository's CHANGELOG. Both only ever grow, so neither collision is a question for anybody; the
+// landing resolves them by rule (yg log merge-resolve for the log, both sides' added lines for a file
+// config.appendOnly names) instead of refusing the second ticket as stale.
+
+const CHANGELOG_BASE = [
+  '# Changelog', '', '## [Unreleased]', '', '### Added', '', '## [1.0.0]', '', '- the first release', '',
+].join('\n');
+
+// Three tickets on ONE node, cut from the same trunk tip. Each adds its own source file and a test
+// that fails without it, a line under "### Added" in the CHANGELOG, and an entry in the node's log —
+// the collision every one of them has with every other one.
+function setupSharedNodeTickets(dir, ids) {
+  // The CHANGELOG is on the base before init, so init finds it and lists it as append-only.
+  writeFileSync(join(dir, 'CHANGELOG.md'), CHANGELOG_BASE);
+  git(['add', 'CHANGELOG.md'], dir);
+  git(['commit', '-qm', 'a changelog'], dir);
+  git(['branch', '-f', 'develop', 'HEAD'], dir);
+  initHorde(dir);
+  addAspect(dir, 'no-marker', { description: 'Source files must not carry an unfinished-work marker.', check: MARKER_CHECK });
+  addNode(dir, 'feature', { mapping: ['src'], aspects: ['no-marker'] });
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'base.mjs'), 'export const base = 1;\n');
+  git(['add', '.yggdrasil', 'src/base.mjs'], dir);
+  git(['commit', '-qm', 'graph: the node every ticket works in'], dir);
+
+  const branches = {};
+  for (const id of ids) {
+    git(['checkout', '-q', '-b', `mission1/t-${id}`, 'mission1/trunk'], dir);
+    writeFileSync(join(dir, 'src', `f${id}.mjs`), `export function f${id}() { return ${Number(id)}; }\n`);
+    writeFileSync(join(dir, 'src', `f${id}.test.mjs`), [
+      "import test from 'node:test';",
+      "import assert from 'node:assert/strict';",
+      `import { f${id} } from './f${id}.mjs';`,
+      `test('f${id}', () => { assert.equal(f${id}(), ${Number(id)}); });`,
+      '',
+    ].join('\n'));
+    writeFileSync(join(dir, 'CHANGELOG.md'), CHANGELOG_BASE.replace('### Added\n', `### Added\n- ticket ${id}\n`));
+    assert.equal(yg(dir, ['log', 'add', '--node', 'feature', '--reason', `function f${id} is added for its callers`]).code, 0);
+    git(['add', '--', `src/f${id}.mjs`, `src/f${id}.test.mjs`, 'CHANGELOG.md', '.yggdrasil/model/feature/log.md'], dir);
+    git(['commit', '-qm', `ticket ${id}`], dir);
+    git(['checkout', '-q', 'mission1/trunk'], dir);
+    const dst = writeIssue(dir, 'trunk', id, {
+      node: 'feature', files: [`src/f${id}.mjs`, `src/f${id}.test.mjs`, 'CHANGELOG.md', '.yggdrasil/model/feature/log.md'],
+    });
+    writeTicketLog(dst);
+    seedQueueItem(dir, 'trunk', id, `mission1/t-${id}`);
+    branches[id] = `mission1/t-${id}`;
+  }
+  return branches;
+}
+
+function assertAllThreeOnTrunk(dir, ids) {
+  const changelog = git(['show', 'mission1/trunk:CHANGELOG.md'], dir);
+  for (const id of ids) assert.match(changelog, new RegExp(`^- ticket ${id}$`, 'm'), `the CHANGELOG line of ${id} survived`);
+  assert.match(changelog, /## \[1\.0\.0\]\n\n- the first release/, 'nothing the base held was lost');
+  const log = git(['show', 'mission1/trunk:.yggdrasil/model/feature/log.md'], dir);
+  for (const id of ids) assert.match(log, new RegExp(`function f${id} is added`), `the log entry of ${id} survived`);
+  const check = yg(dir, ['check', '--no-approve']);
+  assert.doesNotMatch(check.out, /log-integrity|prefix_modified/, 'the merged log is one Yggdrasil accepts');
+}
+
+test('land.mjs appendOnlyMerge: both sides\' added lines are kept, the parent\'s first; a side that removed a line is refused', () => {
+  const parent = CHANGELOG_BASE.replace('### Added\n', '### Added\n- one\n');
+  const branch = CHANGELOG_BASE.replace('### Added\n', '### Added\n- two\n');
+  assert.equal(appendOnlyMerge(CHANGELOG_BASE, parent, branch), CHANGELOG_BASE.replace('### Added\n', '### Added\n- one\n- two\n'));
+  assert.equal(appendOnlyMerge(CHANGELOG_BASE, parent, CHANGELOG_BASE.replace('- the first release\n', '')), null);
+  assert.equal(appendOnlyMerge(CHANGELOG_BASE, parent, CHANGELOG_BASE.replace('- the first release', '- the 1st release')), null);
+  assert.equal(appendOnlyMerge(CHANGELOG_BASE, parent, `${CHANGELOG_BASE}- tail\n`), `${parent}- tail\n`);
+});
+
+test('land.mjs: three parallel tickets on one node, each adding a log entry and a CHANGELOG line, land in one batch with no stale refusal', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ids = ['161', '162', '163'];
+  setupSharedNodeTickets(dir, ids);
+  assert.deepEqual(run('horde.mjs', ['config', 'get', 'appendOnly'], dir).json.value, ['CHANGELOG.md'], 'init found the changelog');
+  const gateLog = join(dir, 'gate-calls.log');
+  run('horde.mjs', ['config', 'set', 'gates.team', `echo run >> "${gateLog}"`], dir);
+
+  await t.test('the plan holds none of them back for the CHANGELOG or the log, and names neither as a hub file', () => {
+    const plan = run('queue.mjs', ['plan'], dir);
+    assert.equal(plan.code, 0, plan.stderr);
+    assert.ok(!plan.json.hubFiles.some((h) => h.file === 'CHANGELOG.md'), JSON.stringify(plan.json.hubFiles));
+    assert.ok(!plan.json.lockConflicts.some((c) => c.files.includes('CHANGELOG.md')), JSON.stringify(plan.json.lockConflicts));
+  });
+
+  const r = run('land.mjs', [ids.join(',')], dir);
+  await t.test('all three land, sharing one gate run, and none is refused as stale', () => {
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    for (const id of ids) {
+      const res = resultFor(r, id);
+      assert.equal(res.ok, true, JSON.stringify(res && res.full && res.full.checks));
+      assert.notEqual(res.full.stale, true);
+      assert.equal(run('queue.mjs', ['list'], dir).json.find((i) => i.ticket === id).state, 'merged');
+      assert.doesNotMatch(ticketLog(dir, id), /round \d+\//, `no round was counted on ${id}`);
+    }
+    assert.equal(gateCallCount(gateLog), 1, 'one shared gate for the three');
+    const notes = ids.map((id) => resultFor(r, id).full.checks.find((c) => c.name === 'merge').note).join('\n');
+    assert.match(notes, /resolved by rule: .*CHANGELOG\.md \(append-only/);
+    assert.match(notes, /\.yggdrasil\/model\/feature\/log\.md \(node log: yg log merge-resolve\)/);
+  });
+
+  await t.test('the trunk carries every CHANGELOG line and every log entry, and the log is whole', () => {
+    assertAllThreeOnTrunk(dir, ids);
+  });
+});
+
+test('land.mjs: tickets on one node landed one after another are caught up by rule, never refused as stale', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ids = ['171', '172', '173'];
+  const branches = setupSharedNodeTickets(dir, ids);
+  const gateLog = join(dir, 'gate-calls.log');
+  run('horde.mjs', ['config', 'set', 'gates.team', `echo run >> "${gateLog}"`], dir);
+
+  for (const id of ids) {
+    const r = run('land.mjs', [branches[id]], dir);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal(r.json.ok, true);
+    assert.notEqual(r.json.stale, true);
+    if (id !== ids[0]) assert.match(byName(r)['base freshness'].note, /conflicts resolved by rule: .*CHANGELOG\.md/);
+  }
+  assert.equal(gateCallCount(gateLog), 3);
+  assertAllThreeOnTrunk(dir, ids);
+});
+
+test('land.mjs: a catch-up conflict outside the files that merge by rule is still refused, and the result names the files', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const branches = setupSharedNodeTickets(dir, ['181', '182']);
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+  const first = run('land.mjs', [branches['181']], dir);
+  assert.equal(first.code, 0, JSON.stringify(first.json && first.json.checks) + first.stderr);
+  // Trunk now also rewrites a line of the CHANGELOG's history: not an addition, so no rule covers it.
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  writeFileSync(join(dir, 'CHANGELOG.md'), readFileSync(join(dir, 'CHANGELOG.md'), 'utf8').replace('- the first release', '- the 1st release'));
+  git(['commit', '-qam', 'history rewritten'], dir);
+  // …and the ticket touched the same line.
+  git(['checkout', '-q', branches['182']], dir);
+  writeFileSync(join(dir, 'CHANGELOG.md'), readFileSync(join(dir, 'CHANGELOG.md'), 'utf8').replace('- the first release', '- the one and only release'));
+  git(['commit', '-qam', 'history rewritten differently'], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  writeTicketLog(issueDir(dir, 'trunk', '182'));
+  const tipBefore = git(['rev-parse', branches['182']], dir);
+
+  const r = run('land.mjs', [branches['182']], dir);
+  assert.equal(r.code, 1);
+  assert.equal(r.json.stale, true);
+  assert.deepEqual(r.json.conflictFiles, ['CHANGELOG.md']);
+  assert.equal(git(['rev-parse', branches['182']], dir), tipBefore, 'the branch is untouched');
+  assert.doesNotMatch(ticketLog(dir, '182'), /round \d+\//, 'no fix round was counted');
+});
+
+// A catch-up merge moves the code a branch's prose verdicts were recorded over, so a landing that is
+// red only for those pending verdicts was made red by somebody else's landing. Its result says
+// "rejudge" and no round is written.
+test('land.mjs: after a clean catch-up, a landing red only for pending prose verdicts is "rejudge" and counts no round', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch, issueDir: dst } = setupLandable(dir, '191', { prose: true, reviewer: true });
+  // The parent moves on under the branch, cleanly.
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  writeFileSync(join(dir, 'elsewhere.txt'), 'a sibling landed\n');
+  git(['add', 'elsewhere.txt'], dir);
+  git(['commit', '-qm', 'a sibling landed'], dir);
+  writeTicketLog(dst);
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, r.stdout + r.stderr);
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.rejudge, true, JSON.stringify(r.json.checks));
+  assert.match(byName(r)['base freshness'].note, /brought mission1\/trunk into mission1\/t-191/);
+  const red = r.json.checks.filter((c) => !c.ok).map((c) => c.name).sort();
+  assert.deepEqual(red, ['graph', 'judge']);
+  assert.doesNotMatch(ticketLog(dir, '191'), /round \d+\//, 'no fix round was counted');
+
+  // Without the catch-up the same red is the ticket's own, and costs its round as always.
+  const other = makeRepo();
+  t.after(() => rmRepo(other));
+  const mine = setupLandable(other, '192', { prose: true, reviewer: true });
+  const own = run('land.mjs', [mine.branch], other);
+  assert.equal(own.code, 1);
+  assert.notEqual(own.json.rejudge, true);
+  assert.match(ticketLog(other, '192'), /round 1\//);
 });

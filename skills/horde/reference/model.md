@@ -156,7 +156,7 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
 2. **Refining** — `refine.mjs`'s four steps: cut the mission into territories; consult, one agent
    per territory, all at once, writing tickets and law as proposals; review, the architect ruling
    the whole plan once; frame, what the client is shown before the one "go".
-3. **Ticking** — `tick.mjs`, one run: reconcile what came back since the last run, land what is
+3. **Ticking** — `tick.mjs`, one run: reconcile what ended workers left since the last run, land what is
    ready — raising a ticket's one review before its first gate, and holding that gate until the
    review logs its closing line or the director skips it — print the next dispatch list, and say when
    a wave is ready to close. Nothing lives between runs.
@@ -235,7 +235,9 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
   is stacked on a dependency that has not merged yet, from that dependency's own branch — see
   `queue.mjs set --on` in `scripts/README.md`). First action, always: check the place (`git -C <worktree> rev-parse --show-toplevel` and `branch --show-current` must print the worktree and the ticket's branch, or stop), then `git -C <worktree> merge <parent>`, then
   `git status` must be clean — a worktree that is not clean after the merge is a stale base or
-  somebody else's diff, and the worker stops and reports.
+  somebody else's diff, and the worker stops and reports. The one exception is a ticket sent back
+  because the landing's own catch-up merge stopped on files no rule resolves: its brief names those
+  files, and resolving them is that worker's first job.
 - A worktree is a checkout and nothing more: no `node_modules`, no tool install. Horde runs the Yggdrasil
   CLI with the tree it is reading as its working directory, so a relative `ygCommand` resolves from there —
   to nothing, or to a parent directory's install, which can be another version than the trunk's graph was
@@ -373,3 +375,14 @@ review's closing line (`tk.mjs review-close`) or the director's skip with a reas
 review-skip`). There is no timer under either runner — a review that has not closed shows as
 waiting on every run, and deciding it never will is the director's call, made out loud and recorded.
 Anything the review logs after the line that ended it is not acted on.
+
+A worker holds its ticket the same way under both, on evidence and never on a clock: until the
+ticket's log carries the worker's own `landed <sha>` or `stopped: <why>` line (logged since it was
+handed the ticket),
+the process tick started for it under `external` is gone, or the director reclaims it (`tick.mjs
+--reclaim NNN`), reconcile lists the ticket as `working` and leaves its branch and worktree alone.
+Every start records the lease on the queue item — `worker: {name, startedAt, pid, log}` — and under
+`external` tick writes the pid and the path of the run's own output log (`runs/<ticket>.log`) the
+moment it starts the process. So `--watch` can tick every interval while a long worker runs, and the
+session runner can tick between returns, without either one committing a half-written tree, handing
+the ticket to a second worker, or sending half a branch to review.
