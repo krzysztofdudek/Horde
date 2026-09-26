@@ -45,7 +45,7 @@ import {
 } from './node.mjs';
 import {
   ticketFiles, ticketEvidence, ticketKind, prototypeBranchOf, ticketReopens, findTicket,
-  changesRoundInfo, transitionStatus,
+  changesRoundInfo, transitionStatus, ticketReverts, mergeFiles,
 } from './tk.mjs';
 import { recordMerged, buildPlan } from './queue.mjs';
 import { noteFate } from './wave.mjs';
@@ -165,8 +165,17 @@ exactly as queue.mjs plan/quality and tick.mjs already read it. This is usually 
 spawns every gate run with cwd already pointed at the tree it resolved — and matters only when land
 is run directly, by hand, with --horde and no --tree.
 
+A revert ticket ("**Kind:** revert", filed with tk.mjs new --reverts NNN) lands through the same
+items, with three differences. Item 4 asks that t-NNN's change is gone: every file its merge changed
+stands on the branch as before that merge (unless a later landing changed it again). The guards do
+not refuse taking back what t-NNN brought — a test, a promise, a rule — where the branch returns it
+to exactly what the mission started with; anything that was already there at the start still needs
+its "lower" ask. And on merge t-NNN's fate is recorded as reverted by that merge. A revert always
+lands on its own, never in a shared run.
+
 --fate records what became of a ticket AFTER it landed, and runs no gate: "reverted" when the merge
-was undone (--by names the commit that undid it), "reopened" when the evidence the ticket claimed
+was undone (--by names the commit that undid it: it must be on the trunk, after the merge, and at it
+every file the merge changed must stand as it did before the merge), "reopened" when the evidence the ticket claimed
 went red again and a new ticket was filed to earn it back (--by names that ticket, which has to say
 "**Reopens:** t-NNN" itself). It goes to the ticket's own result file and to the wave journal, where
 the wave close counts it and the retrospective reads it as its own kind of input. Nothing in the
@@ -2371,8 +2380,11 @@ function gateGuard(cfg, horde, baseTree, headTree, touched) {
 // to it. Without that confinement a branch merely left behind by its parent would read as having
 // deleted every test the parent has added since: two trees differ for two reasons, and only one of
 // them is this branch's doing. (The other is item 1's to report, which it does.)
-function protectionGuards(cfg, horde, baseTree, headTree, changedFiles) {
-  const touched = new Set(changedFiles);
+// `exempt` — paths a revert may take back without an ask (see revertOf below): each is a file the
+// reverted ticket's merge changed and that this branch returns to exactly what the mission found
+// there when it started. No refusal about such a path, or about a promise kept in one, is raised.
+function protectionGuards(cfg, horde, baseTree, headTree, changedFiles, exempt = new Set()) {
+  const touched = new Set(changedFiles.filter((f) => !exempt.has(f)));
   if (!touched.size) return { refusals: [], used: [] };
   const evidence = evidenceGuard(cfg, horde, baseTree, headTree, touched);
   const gates = gateGuard(cfg, horde, baseTree, headTree, touched);
@@ -3149,6 +3161,102 @@ function verdictsCurrentAt(root, cfg, sha, pairs) {
   }
 }
 
+// ---- a revert: taking back one landing ----------------------------------------------------
+//
+// A revert ticket ("**Kind:** revert", "**Reverts:** t-NNN", filed with `tk.mjs new --reverts`)
+// lands through the same gate as any other, with three differences, all here:
+//
+//   what it proves    it adds no test: item 4 asks instead that the change it takes back is gone —
+//                     every file the reverted merge changed stands on this branch as it stood
+//                     before that merge, unless a later landing changed it again (then the gate's
+//                     own run is what measures it, and the item says so).
+//   what it may take  the guards compare the branch with its parent, and a revert necessarily
+//                     removes what the reverted ticket brought: its tests, its promises. Those are
+//                     measured against where the mission STARTED instead — a path the reverted
+//                     merge changed and that the branch returns to exactly its state at the start
+//                     is not weakened, and needs no ask. Anything that was already there when the
+//                     mission started, taken away, still needs one, file by file.
+//   what it records   on merge, the reverted ticket's fate: reverted, by this merge.
+
+// Where the mission started: the trunk as `init` cut it (start.json), or — for a mission from before
+// that file — where its trunk and its base last met.
+export function missionStartSha(horde, cfg, root) {
+  const recorded = readJSON(hordePath(horde, 'start.json'), null);
+  if (recorded && recorded.sha && git(['rev-parse', '--verify', `${recorded.sha}^{commit}`], root)) return recorded.sha;
+  const base = cfg && cfg.base;
+  return base ? git(['merge-base', `${horde}/trunk`, base], root) : null;
+}
+
+// The reverted ticket, its merge and what that merge changed; refused when there is nothing landed
+// to take back.
+function revertOf(horde, issueText, root) {
+  const id = ticketReverts(issueText);
+  if (!id) fail('this ticket is a revert and names no ticket it takes back — "**Reverts:** t-NNN" is written by tk.mjs new --reverts');
+  const found = findQueueItem(horde, id);
+  if (!found || found.item.state !== 'merged' || !found.item.sha) {
+    fail(`t-${id} is ${found ? found.item.state : 'not in the queue'}, not merged — there is no landing for this revert to take back`);
+  }
+  const sha = found.item.sha;
+  return { id: String(found.item.ticket), team: found.team, sha, files: mergeFiles(sha, root) };
+}
+
+// Paths the file mergers resolve by rule (node logs, lock files, append-only files) are not the
+// change a revert takes back: they only ever grow.
+function revertedPaths(revert, cfg) {
+  return revert.files.filter((f) => !mergesByRule(f, cfg));
+}
+
+// Item 4 for a revert: the change is gone.
+function checkUndone(root, cfg, revert, branchSha, parentTip) {
+  const still = [];
+  const movedSince = [];
+  for (const path of revertedPaths(revert, cfg)) {
+    const before = gitBlob(`${revert.sha}^1:${path}`, root);
+    const here = gitBlob(`${branchSha}:${path}`, root);
+    if (before === here) continue;
+    const later = git(['diff', '--name-only', revert.sha, parentTip, '--', path], root);
+    if (later) { movedSince.push(path); continue; }
+    still.push(path);
+  }
+  if (still.length) {
+    return {
+      ok: false,
+      note: `t-${revert.id}'s change is still on this branch in ${still.join(', ')} — undo its merge here (git revert -m 1 --no-edit ${short(revert.sha)}), resolving any conflict to the tree as it stood before that merge`,
+    };
+  }
+  const moved = movedSince.length ? `; changed again since by later landings, measured by the gate's own run: ${movedSince.join(', ')}` : '';
+  return { ok: true, note: `a revert — t-${revert.id}'s merge ${short(revert.sha)} is undone on this branch${moved}` };
+}
+
+// The paths a revert may take back without an ask: changed by the reverted merge, and returned by
+// this branch to exactly what they were when the mission started (absent then and absent now
+// included).
+function revertExempt(root, cfg, horde, revert, branchSha) {
+  const start = missionStartSha(horde, cfg, root);
+  if (!start) return new Set();
+  const out = new Set();
+  for (const path of revertedPaths(revert, cfg)) {
+    if (gitBlob(`${start}:${path}`, root) === gitBlob(`${branchSha}:${path}`, root)) out.add(path);
+  }
+  return out;
+}
+
+// The law guard for a revert: what it refuses against the parent, kept only where it also refuses
+// against the mission's start. Taking back a rule, a reach or an attachment the reverted ticket
+// brought is returning to what the mission found; weakening one that was there at the start still
+// needs its ask.
+function revertLawRefusals(root, cfg, horde, revert, law, headPath, cleaner) {
+  if (!law.refusals.length) return [];
+  const start = missionStartSha(horde, cfg, root);
+  if (!start) return law.refusals;
+  const startTree = resolveTree({ scratch: start }, { cwd: root });
+  cleaner.add(() => cleanupTree(startTree, root));
+  const fromStart = lawGuard(cfg, horde, startTree.path, headPath);
+  if (fromStart.stopped) return law.refusals;
+  const still = new Set(fromStart.refusals.map((r) => `${r.aspect}\u0000${r.case}`));
+  return law.refusals.filter((r) => still.has(`${r.aspect}\u0000${r.case}`));
+}
+
 // ---- trailers -----------------------------------------------------------------------------
 //
 // Who worked what, and when, belongs to git — not to `.horde/`, which is uncommitted and gone the
@@ -3462,6 +3570,25 @@ function runFate(horde, root, arg, flags) {
     if (!by) {
       fail(`--by ${rawBy}: this repository has no such commit — the revert is the evidence that the merge was undone, so it has to be one anybody reading this later can look at`);
     }
+    // Checked against the trunk, not taken on the caller's word: the commit is on the trunk, it
+    // comes after the merge it undoes, and at it every file that merge changed stands as it stood
+    // before the merge.
+    const trunk = `${horde}/trunk`;
+    if (git(['merge-base', '--is-ancestor', by, trunk], root) === null) {
+      fail(`--by ${rawBy}: ${short(by)} is not on ${trunk} — a revert the trunk does not carry has not undone anything the mission delivers`);
+    }
+    const merge = item.sha || null;
+    if (merge) {
+      if (git(['merge-base', '--is-ancestor', merge, by], root) === null) {
+        fail(`--by ${rawBy}: ${short(by)} does not come after t-${ticketId}'s merge ${short(merge)} — it cannot be what undid it`);
+      }
+      const cfg = readConfig() || {};
+      const still = revertedPaths({ files: mergeFiles(merge, root) }, cfg)
+        .filter((path) => gitBlob(`${by}:${path}`, root) !== gitBlob(`${merge}^1:${path}`, root));
+      if (still.length) {
+        fail(`--by ${rawBy}: at ${short(by)}, ${still.join(', ')} still differ from how they stood before t-${ticketId}'s merge ${short(merge)} — that commit does not undo it. Name the commit that does, or land a revert ticket (tk.mjs new <slug> … --reverts ${ticketId})`);
+      }
+    }
   } else {
     let reopening = null;
     try { reopening = findTicket(horde, rawBy); } catch { reopening = null; }
@@ -3584,6 +3711,9 @@ function resolveBatchCandidate(horde, root, cfg, arg, level) {
     const nodes = ticketNodes(issueText);
     const declaredFiles = ticketFiles(issueText);
     const kind = ticketKind(issueText);
+    // A revert is measured against the mission's start as well as its parent, which a shared run
+    // does not do: it always lands on its own.
+    if (kind === 'revert') return { ok: false, arg, note: `t-${ticketId} is a revert, which lands on its own` };
 
     const parentResolved = parentBranchOf(horde, team, item, { cwd: root });
     const parentBranch = prototypeGuard(horde, kind, ticketId, branch, parentResolved);
@@ -4072,6 +4202,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
   // Read before the parent is resolved, because for one kind of ticket it decides what the parent
   // IS. Every other item below is measured against whatever that answer turns out to be.
   const kind = ticketKind(issueText);
+  const revert = kind === 'revert' ? revertOf(horde, issueText, root) : null;
 
   const parentResolved = parentBranchOf(horde, team, item, { cwd: root });
   const parentBranch = prototypeGuard(horde, kind, ticketId, branch, parentResolved);
@@ -4160,7 +4291,9 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       }, head, flags, parent, level);
     }
     results.scope = checkScope(root, cfg, nodes, changedFiles, declaredFiles, proposalBoundaryOf(horde, issueText, nodes));
-    results['revert test'] = checkRevertTest(horde, root, cfg, branch, parentBranch, changedFiles, issueText);
+    results['revert test'] = revert
+      ? checkUndone(root, cfg, revert, branchSha, parentTip)
+      : checkRevertTest(horde, root, cfg, branch, parentBranch, changedFiles, issueText);
     results.journal = checkJournal(logText, branch, parentBranch);
     results['graph text'] = checkGraphText(root, branch, parentBranch, changedFiles);
 
@@ -4170,10 +4303,11 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       // that took away the proof or the gate would be measured by what it left behind.
       const law = lawGuard(cfg, horde, base.path, head.path);
       if (law.stopped) fail(law.stopped);
-      guards.push(...law.refusals);
+      guards.push(...(revert ? revertLawRefusals(root, cfg, horde, revert, law, head.path, cleaner) : law.refusals));
       const conflict = conflictGuard(cfg, base.path, head.path, changedFiles, law);
       guards.push(...conflict.refusals);
-      const protection = protectionGuards(cfg, horde, base.path, head.path, changedFiles);
+      const exempt = revert ? revertExempt(root, cfg, horde, revert, branchSha) : new Set();
+      const protection = protectionGuards(cfg, horde, base.path, head.path, changedFiles, exempt);
       guards.push(...protection.refusals);
       if (guards.length) {
         fail(`${guards.length} refusal(s) — this branch may not land as it stands:\n${guards.map((g) => `- ${g.aspect} (${g.case}): ${g.note}`).join('\n')}`);
@@ -4251,6 +4385,11 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       // a sha `done` and `close` can actually find on the branch they read. See checkGate's comment.
       if (results.gate.cache) recordGateCache(horde, level, { ...results.gate.cache, sha: merged.sha }, ticketId, branch, cfg);
       checks.push({ name: 'merge', ok: true, note: `${merged.note} — ${short(merged.sha)}` });
+      // A revert that lands is the reverted ticket's fate, recorded by the merge that carries it.
+      if (revert) {
+        const fate = recordFate(horde, revert.team, revert.id, 'reverted', merged.sha);
+        checks.push({ name: 'fate', ok: true, note: `t-${revert.id} recorded as reverted by ${short(merged.sha)}${fate.recorded ? '' : ' (already recorded)'}` });
+      }
     } else if (waitingOnUser) {
       recordWaiting(horde, ticketId, waitingOnUser);
     } else if (!allOk && !noGate && !rejudge) {

@@ -16,7 +16,7 @@ import {
   writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
   readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
   qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES, parseEvidenceRows, asArray,
-  runGateAt, gateTimeoutOf, GATE_RAN,
+  runGateAt, gateTimeoutOf, GATE_RAN, nowIso,
   runMain,
 } from './_lib.mjs';
 import { nodesOf, padId } from './tk.mjs';
@@ -642,6 +642,10 @@ function cmdInit(positional, flags) {
   const branch = `${name}/trunk`;
   const created = git(['branch', branch, flags.base], root);
   if (created === null) fail(`could not create branch "${branch}" off "${flags.base}" — does that base exist?`);
+  // Where the mission started: the commit its trunk was cut at. What "no weaker than it found them"
+  // is measured against when a revert takes back a landing (land.mjs), so it is written once, now,
+  // and never moved.
+  const startSha = git(['rev-parse', '--verify', branch], root);
 
   // Already cleared above; this call cannot itself conflict (barring a concurrent claim in the
   // instant between the check and here, which a single CLI invocation never races against).
@@ -660,6 +664,7 @@ function cmdInit(positional, flags) {
   writeFileSync(join(dest, 'charter.md'), charter);
 
   writeText(join(dest, 'decisions.md'), '# Decisions\n\n');
+  if (startSha) writeText(join(dest, 'start.json'), `${JSON.stringify({ sha: startSha, base: flags.base, at: nowIso() }, null, 2)}\n`);
   writeText(join(dest, 'plan.md'), '# Plan\n\n');
   // No dissents.json: the dissent channel folded into ask.mjs, and this wrote an empty file that
   // nothing in the tool set has read since. A pre-6.0.0 mission's own copy is left where it is.

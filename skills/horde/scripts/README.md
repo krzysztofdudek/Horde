@@ -1529,9 +1529,33 @@ thing is one record however often it is reported. Nothing in the queue moves —
 still stands, and a reopening is its own ticket with its own landing ahead of it.
 
 Both references are checkable by whoever reads the record later, and neither is taken on the
-caller's word: a revert names a commit this repository actually has, and a reopening names a ticket
+caller's word: a revert names a commit the trunk carries, that comes after the ticket's merge, and at
+which every file that merge changed stands as it stood before it (the files that only ever grow — a
+node's log, the lock files, `config.appendOnly` — aside); a reopening names a ticket
 that says `**Reopens:** t-NNN` itself (`tk.mjs new … --reopens NNN` writes that field). `wave.mjs
 close` counts both off the journal, and `retro.mjs` reads them as a source of their own.
+
+### a revert ticket — the way back from a bad landing
+
+`tk.mjs new <slug> --title … --node … --class … --reverts NNN` files a ticket of kind `revert`
+carrying `**Reverts:** t-NNN`: refused unless t-NNN is merged with a recorded merge commit. Its
+`**Files:**` are what that merge changed (unless `--files` names them — a revert that must also take
+a path out of a component's mapping names that `yg-node.yaml` too), it declares `**No new tests:**`,
+and its one acceptance line is the merge undone on the branch with `git revert -m 1 --no-edit <sha>`,
+conflicts resolved to the tree as it stood before that merge. It is dispatched and worked like any
+other ticket, and lands through the same nine items, always on its own (never in a shared run):
+
+- item 4 (`revert test`) asks that the change is gone — every file the reverted merge changed stands
+  on the branch as it did before that merge; a file a later landing changed again is left to the
+  gate's own run and named in the note;
+- the guards measure the paths the reverted merge changed against where the mission started
+  (`hordes/<h>/start.json`, the trunk `horde init` cut; for a mission from before that file, where
+  its trunk and base last met). A test file, a promise or a gate script the reverted ticket brought
+  in, which the branch returns to exactly its state at the start, is not refused; the law guard's
+  refusals stand only where they also stand against the start tree. Anything the mission found
+  already there, taken away, is refused as before and needs its `lower` ask, file by file;
+- on merge, t-NNN's fate is recorded as `reverted` by the revert's own merge commit (a `fate` line
+  in the result's checks), exactly as `--fate reverted --by <that sha>` would.
 
 ## blame.mjs — chain of custody
 

@@ -217,9 +217,13 @@ through its consultants — so what is left for you to spawn is the agents that 
   and a branch that sharpens a rule while changing the code that rule refuses. The first goes
   through only on the **client's** recorded answer, naming that one thing — put it to them, never
   rule on it yourself.
-- **A landing is not the end of a ticket.** When a merge is undone, or the evidence a ticket claimed
-  goes red again and you file a new ticket for it (`tk.mjs new … --reopens NNN`), say so:
-  `land.mjs NNN --fate reverted --by <sha>`, or `land.mjs NNN --fate reopened --by <the new
+- **A landing is not the end of a ticket.** To take a bad landing back, file a revert ticket
+  (`tk.mjs new … --reverts NNN`): a worker undoes the merge on its branch and it lands through the
+  same gate; what NNN itself brought in may go with it without an ask, anything the mission started
+  with may not, and NNN is recorded as reverted when it merges. When a merge is undone some other
+  way, or the evidence a ticket claimed goes red again and you file a new ticket for it (`tk.mjs new …
+  --reopens NNN`), say so: `land.mjs NNN --fate reverted --by <sha>` (checked against the trunk: the
+  commit has to be there and has to undo the merge), or `land.mjs NNN --fate reopened --by <the new
   ticket>`. The wave close counts what came back beside what merged, and the retrospective reads it
   as its own kind of input — a return is the plainest thing a mission can tell you about whether its
   own evidence was ever enough.

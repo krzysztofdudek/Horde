@@ -4333,3 +4333,123 @@ test('land.mjs graph item: the same finding with no detail is the branch\'s once
   assert.equal(graph.ok, false, graph.note);
   assert.match(graph.note.split('already on the parent')[0], /the graph refuses what this branch brought:[\s\S]*relation-broken/);
 });
+
+// ---- a revert: taking back one landing (issue 304) ----------------------------------------------
+//
+// A revert ticket (tk.mjs new --reverts NNN) lands through the same gate. The tests and promises the
+// reverted ticket brought in go with it without an ask — measured against where the mission started,
+// not against the parent — while a test that was there when the mission started still needs one. On
+// merge the reverted ticket's fate is recorded, and --fate reverted by hand is checked against the
+// trunk.
+const KEPT_TEST = [
+  "import test from 'node:test';",
+  "import assert from 'node:assert/strict';",
+  "test('kept', () => { assert.equal(1, 1); });",
+  '',
+].join('\n');
+
+function landedThenRevertTicket(dir) {
+  const { branch } = setupLandable(dir, '001', {
+    trunkFiles: { 'kept.test.mjs': KEPT_TEST },
+    mapping: ['feature-001.mjs', 'feature-001.test.mjs', 'kept.test.mjs'],
+  });
+  // The mission started here, with kept.test.mjs already in the repository.
+  writeFileSync(join(dir, '.horde', 'hordes', 'mission1', 'start.json'), JSON.stringify({ sha: git(['rev-parse', 'mission1/trunk'], dir) }));
+  const landed = run('land.mjs', [branch], dir);
+  assert.equal(landed.code, 0, landed.stdout + landed.stderr);
+  const mergeSha = git(['rev-parse', 'mission1/trunk'], dir);
+  // The fixture wrote t-001 by hand, past the id counter; the next id the tool hands out is 002.
+  writeFileSync(join(dir, '.horde', 'hordes', 'mission1', 'counter.json'), JSON.stringify({ next: 2 }));
+  // The revert also takes the two files out of the component's mapping, so the graph maps nothing
+  // that is gone: its files are the merge's own, and the component's yg-node.yaml.
+  const files = ['feature-001.mjs', 'feature-001.test.mjs', '.yggdrasil/model/feature/log.md', '.yggdrasil/model/feature/yg-node.yaml'];
+  const created = run('tk.mjs', ['new', 'take-back-001', '--title', 'Take back 001', '--node', 'feature', '--class', 'standard', '--reverts', '001', '--files', files.join(',')], dir);
+  assert.equal(created.code, 0, created.stderr);
+  return { mergeSha, created: created.json };
+}
+
+function revertBranch(dir, id, mergeSha, { alsoDelete = [] } = {}) {
+  git(['checkout', '-q', '-b', `mission1/t-${id}`, 'mission1/trunk'], dir);
+  git(['revert', '-m', '1', '--no-edit', mergeSha], dir);
+  const nodeYaml = join(dir, '.yggdrasil', 'model', 'feature', 'yg-node.yaml');
+  writeFileSync(nodeYaml, readFileSync(nodeYaml, 'utf8').replace(/  - "feature-001\.mjs"\n  - "feature-001\.test\.mjs"\n/, ''));
+  git(['commit', '-qam', 'graph: the component no longer maps what the revert took back'], dir);
+  if (alsoDelete.length) {
+    git(['rm', '-q', ...alsoDelete], dir);
+    git(['commit', '-qm', 'and the rest'], dir);
+  }
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  seedQueueItem(dir, 'trunk', id, `mission1/t-${id}`);
+  writeTicketLog(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${id}-take-back-001`));
+  return `mission1/t-${id}`;
+}
+
+test('tk.mjs new --reverts: a revert ticket names the landing it takes back, its files and its one acceptance line', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { mergeSha, created } = landedThenRevertTicket(dir);
+  assert.equal(created.kind, 'revert');
+  assert.equal(created.reverts, 't-001');
+  assert.ok(created.files.includes('feature-001.mjs') && created.files.includes('feature-001.test.mjs'), JSON.stringify(created.files));
+  const byDefault = run('tk.mjs', ['new', 'take-back-again', '--title', 'Again', '--node', 'feature', '--class', 'standard', '--reverts', '001'], dir);
+  assert.equal(byDefault.code, 0, byDefault.stderr);
+  assert.deepEqual([...byDefault.json.files].sort(), ['.yggdrasil/model/feature/log.md', 'feature-001.mjs', 'feature-001.test.mjs'], 'without --files: what the merge changed');
+  const text = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${created.id}-take-back-001`, 'issue.md'), 'utf8');
+  assert.match(text, /\*\*Kind:\*\* revert/);
+  assert.match(text, /\*\*Reverts:\*\* t-001/);
+  assert.match(text, new RegExp(`git revert -m 1 --no-edit ${mergeSha}`));
+  const notLanded = run('tk.mjs', ['new', 'nope', '--title', 'Nope', '--node', 'feature', '--class', 'standard', '--reverts', created.id], dir);
+  assert.equal(notLanded.code, 1);
+  assert.match(notLanded.stderr, /not merged/);
+});
+
+test('land.mjs: a revert ticket lands through the gate with no ask, takes the reverted ticket\'s own tests with it, and records the fate', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { mergeSha, created } = landedThenRevertTicket(dir);
+
+  await t.test('--fate reverted by hand is checked against the trunk: a commit that undoes nothing is refused', () => {
+    const tip = git(['rev-parse', 'mission1/trunk'], dir);
+    const r = run('land.mjs', ['001', '--fate', 'reverted', '--by', tip], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /still differ from how they stood before t-001's merge/);
+  });
+
+  const branch = revertBranch(dir, created.id, mergeSha);
+
+  await t.test('a revert commit that is not on the trunk is refused as the fate\'s evidence', () => {
+    const r = run('land.mjs', ['001', '--fate', 'reverted', '--by', git(['rev-parse', branch], dir)], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /is not on mission1\/trunk/);
+  });
+
+  await t.test('it lands: item 4 reads "undone", the removed test file needs no ask, and 001 is recorded as reverted', () => {
+    const r = run('land.mjs', [branch], dir);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    const checks = byName(r);
+    assert.match(checks['revert test'].note, /a revert — t-001's merge .* is undone/);
+    assert.match(checks.fate.note, /t-001 recorded as reverted by /);
+    const trunk = git(['rev-parse', 'mission1/trunk'], dir);
+    const result = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'land', '001.json'), 'utf8'));
+    assert.deepEqual(result.fates.map((f) => [f.fate, f.by]), [['reverted', trunk]]);
+    assert.ok(!existsSync(join(dir, 'feature-001.test.mjs')), 'the reverted ticket\'s own test is gone from the trunk');
+    assert.equal(run('ask.mjs', ['list', '--open'], dir).json.length, 0, 'no ask was needed');
+  });
+
+  await t.test('--fate reverted by hand with the commit that did undo it is accepted', () => {
+    const r = run('land.mjs', ['001', '--fate', 'reverted', '--by', git(['rev-parse', 'mission1/trunk'], dir)], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.recorded, false, 'already recorded by the landing');
+  });
+});
+
+test('land.mjs: a revert that also takes away a test the mission found already there is still refused, naming that file', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { mergeSha, created } = landedThenRevertTicket(dir);
+  const branch = revertBranch(dir, created.id, mergeSha, { alsoDelete: ['kept.test.mjs'] });
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /evidence:kept\.test\.mjs \(test removed\)/);
+  assert.doesNotMatch(r.stderr, /evidence:feature-001\.test\.mjs/, 'the reverted ticket\'s own test is not refused');
+});
