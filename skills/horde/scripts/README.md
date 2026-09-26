@@ -1602,8 +1602,8 @@ read it in one place.
 The second run validates that file — every key classified exactly once, a `rule` carrying its
 sentence, its component and `check`/`prose`, a `taste` carrying a component and no rule, an
 `inexpressible` carrying neither — and writes `hordes/<h>/retro.json` (`horde-retro/1`) with
-`retro.md` beside it: `{schema, horde, at, state, items, law, returns, taste, inexpressible, logged,
-threshold, notes}`. A `taste` item leaves one line in its component's own log through
+`retro.md` beside it: `{schema, horde, at, noEvidenceLayer, state, items, law, returns, taste,
+inexpressible, logged, threshold, notes}`. A `taste` item leaves one line in its component's own log through
 `yg log add` and nowhere else; a key already on the previous document is never logged twice, and one
 retrospective runs at a time (`hordes/<h>/retro.lock`, taken over when the pid holding it is gone).
 That `yg log add` write runs against the tree `--tree` names;
