@@ -241,7 +241,8 @@ architect is never resumed, only replaced; the fresh one rebuilds its context fr
 reconcile every `running` item whose worker has ended against its actual branch, land what its result file already says is
 ready (raising a ticket's one review before its first gate, and calling `land.mjs` itself where a
 fresh check is needed), print the dispatch list at
-`config.parallelism`, and say when the queue holds nothing but `merged` items so you know to close
+`config.parallelism` (beside it, once a gate time is measured, how many landings the gate drains per
+tick interval — the figure to set the parallelism against; workers beyond it wait at landing), and say when the queue holds nothing but `merged` items so you know to close
 the wave. Nothing lives between runs, because nothing has to: a run that starts cold reads the same
 state a run that never stopped would have. If the harness gives you a wake-up mechanism (a loop with
 `ScheduleWakeup`, or a scheduled run), use it at 20–30 minute intervals to call `tick.mjs` again;

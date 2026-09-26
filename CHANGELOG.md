@@ -34,6 +34,7 @@ Needs Yggdrasil 6.1.0 or newer; an older one is refused with the release to inst
 
 - The conflicts that parallel tickets on one node always meet are resolved at landing instead of refused: a node's `log.md` through `yg log merge-resolve`, Yggdrasil's lock files by taking the parent's side, and the files `config.appendOnly` lists when both sides only added lines. This works both when a landing brings the parent into a branch and when a batch of tickets is combined for one shared gate. Any other conflict is refused as before. When both sides open the same new heading at the same place, the merged file has that heading once, with both sides' lines under it. `horde init` lists a changelog it finds at the repository root in `appendOnly`, and the plan and the dispatch list no longer hold tickets back for touching an append-only file.
 - Under the external runner, each worker's and review's output goes to a log of its own, and `tick` prints the process id and the log path of everything it starts.
+- `tick` prints, beside the list of workers to start, how many landings the gate gets through in one tick interval at its measured speed, and how many of the workers you run at once would wait at landing. It is a reading to set the number of parallel workers against, not a limit.
 
 ### Changed
 
@@ -41,6 +42,10 @@ Needs Yggdrasil 6.1.0 or newer; an older one is refused with the release to inst
 - `horde done` trusts only what it runs itself. It runs the trunk gate at the trunk tip every time, and runs the command of every row filled by a command again there, refusing a row whose command fails now. What Horde recorded about earlier runs no longer counts as proof, because it is a file anyone can edit. `wave close --gate green --sha <sha>` now runs the gate at that commit, which must be on the trunk, and refuses to close the wave when it fails. `--gate red` is recorded as said. `--evidence` on a wave close needs `--gate green --sha`, and never fills a client-testimony or artifact row.
 - `wave evidence` no longer takes `--by`. A row is filled by what its kind of proof names: `--ask <id>` with an answered question that names the row for client testimony, `--artifact <path>` with a file on the trunk for an artifact, and `--run "<command>"` for anything else. The command must be one the row itself names in backticks; Horde runs it on the trunk and records it only when it passes. `horde done` checks every filled row again against what proved it, and refuses a row whose "reproduced by" was typed into the charter by hand. `charter edit` warns about such a row.
 - `horde init --json` no longer reports `reviewer: true|false`. It reports `reviewerGap` instead, which says whether prose rules wait on a reviewer that is missing or unreachable, which rules those are, and what settles it. A script that read `reviewer` should read `reviewerGap.gap`.
+
+### Removed
+
+- `queue.mjs plan` no longer prints a weight estimate or carries `weight` in its JSON. The figure multiplied each ticket's class weight by two runs and measured nothing since cost tracking was removed.
 
 ## [6.1.0] - 2026-09-25
 

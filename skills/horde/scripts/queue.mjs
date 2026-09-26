@@ -1542,7 +1542,6 @@ export function buildPlan(horde, team, cfg, { tree } = {}) {
       ticket: t.id, lines: t.size.lines, files: t.size.files, rank: t.size.rank, of: t.size.of,
     }));
 
-  const weightEstimate = tickets.reduce((sum, t) => sum + weightOf(t.class) * 2, 0);
   const parallelism = cfg.parallelism || 6;
   const waves = layers.reduce((sum, l) => sum + Math.ceil(l.length / parallelism), 0);
 
@@ -1565,7 +1564,6 @@ export function buildPlan(horde, team, cfg, { tree } = {}) {
     consumesWithoutProducer,
     cycles,
     uncoveredEvidence,
-    weight: { estimate: weightEstimate, runsPerTicket: 2 },
     waves: { estimated: waves, parallelism },
   };
 }
@@ -1672,7 +1670,7 @@ export function renderPlan(plan) {
   lines.push(plan.uncoveredEvidence.length
     ? `evidence nobody is building: ${plan.uncoveredEvidence.map((e) => e.id).join(', ')}`
     : 'evidence nobody is building: none');
-  lines.push(`weight estimate: ${plan.weight.estimate} (class weight × 2 runs per ticket) · waves: ${plan.waves.estimated} at parallelism ${plan.waves.parallelism}`);
+  lines.push(`waves: ${plan.waves.estimated} at parallelism ${plan.waves.parallelism}`);
   return lines.join('\n');
 }
 

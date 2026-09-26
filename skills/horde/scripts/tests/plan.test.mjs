@@ -124,8 +124,11 @@ test('queue.mjs plan: the six-ticket worked example — layers, critical path, o
     assert.deepEqual(t106.approvals, ['web']);
   });
 
-  await t.test('weight and waves are counted, not guessed', () => {
-    assert.equal(plan.weight.estimate, 36); // six standard tickets, weight 3, two runs each
+  await t.test('waves are counted, not guessed, and no class-weight "estimate" is offered', () => {
+    // Issue 307: the weight estimate (class weight × 2 runs) outlived the cost it was part of and
+    // measured nothing — no field for it, and no line.
+    assert.equal(plan.weight, undefined);
+    assert.doesNotMatch(run('queue.mjs', ['plan'], dir, { json: false }).stdout, /weight estimate/);
     assert.equal(plan.waves.estimated, 3);
     assert.equal(plan.waves.parallelism, 6);
   });

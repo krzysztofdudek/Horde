@@ -1757,6 +1757,8 @@ test('tick.mjs: says how loaded the landing gate is — branches waiting, and wh
     assert.deepEqual(r.json.landing, { ready: 0, measured: 0, lastMs: null, meanMs: null, maxMs: null, forecastMs: null });
     const text = run('tick.mjs', [], dir, { json: false });
     assert.match(text.stdout, /landing: 0 branch\(es\) ready to land; no gate time measured yet/);
+    assert.equal(r.json.drain, null, 'no drain before a gate time is measured');
+    assert.doesNotMatch(text.stdout, /gate drain/);
   });
 
   await t.test('the shared gate time of a batch is split over its members, so a group of four reads as the per-landing cost it is and not as four slow landings', () => {
@@ -1781,6 +1783,17 @@ test('tick.mjs: says how loaded the landing gate is — branches waiting, and wh
     });
     const text = run('tick.mjs', [], dir, { json: false });
     assert.match(text.stdout, /landing: 2 branch\(es\) ready to land; gate per landing: last 20s, mean 50s over 4 run\(s\), max 1m 0s; about 1m 40s if landed one after another/);
+  });
+
+  // Issue 307: the parallelism knob gets its one measured figure beside it — how many landings the
+  // gate gets through per tick interval — a reading, never a limit, and nothing before a gate time.
+  await t.test('beside the dispatch list: how many landings the gate drains per tick interval, set against parallelism', () => {
+    const r = tick(dir);
+    assert.deepEqual(r.json.drain, { perInterval: 6, intervalMs: 300000, meanMs: 50000, parallelism: 6 });
+    run('horde.mjs', ['config', 'set', 'parallelism', '9'], dir);
+    const text = run('tick.mjs', [], dir, { json: false });
+    assert.match(text.stdout, /gate drain: about 6 landing\(s\) per tick interval \(5m 0s\) at the mean gate time of 50s; at parallelism 9, workers finishing within one interval beyond 6 wait at landing/);
+    run('horde.mjs', ['config', 'set', 'parallelism', '6'], dir);
   });
 
   await t.test('status.mjs prints the same line, and holds nothing back because of it', () => {

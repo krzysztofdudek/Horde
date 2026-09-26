@@ -3353,6 +3353,30 @@ export function landingLoad(horde, items) {
   };
 }
 
+// How many landings the gate gets through in one tick interval at its measured mean — a reading set
+// beside the dispatch list, never a limit: `config.parallelism` workers finish faster than that and
+// the rest wait at landing. The one sourced figure behind the parallelism knob; null until a gate
+// time has been measured.
+export function landingDrain(load, intervalSeconds, parallelism) {
+  if (!load || !load.measured || !(load.meanMs > 0)) return null;
+  const seconds = Number(intervalSeconds);
+  const intervalMs = (Number.isFinite(seconds) && seconds > 0 ? seconds : 300) * 1000;
+  return {
+    perInterval: Math.floor(intervalMs / load.meanMs),
+    intervalMs,
+    meanMs: load.meanMs,
+    parallelism: Number(parallelism),
+  };
+}
+
+export function drainLine(drain) {
+  if (!drain) return null;
+  const queue = drain.parallelism > drain.perInterval
+    ? `; at parallelism ${drain.parallelism}, workers finishing within one interval beyond ${drain.perInterval} wait at landing`
+    : `; parallelism ${drain.parallelism} is within it`;
+  return `gate drain: about ${drain.perInterval} landing(s) per tick interval (${formatDuration(drain.intervalMs)}) at the mean gate time of ${formatDuration(drain.meanMs)}${queue}`;
+}
+
 export function formatDuration(ms) {
   const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds}s`;

@@ -381,9 +381,8 @@ earning no row at all claims nothing — neither is a mismatch.
   and files, against the branch it was cut from) with its rank among the others of this same plan
   and the biggest quarter of them offered as splits worth considering — a reading recomputed from
   the tickets in play every call, never a size written down anywhere, and nothing here acts on it;
-  a ticket with no branch yet has nothing to measure and is reported as such. Then the weight
-  estimate (Σ class weight × 2 runs per ticket) and the waves that many layers need at
-  `config.parallelism`. Merged and dropped tickets are out of the plan — it is what remains to do.
+  a ticket with no branch yet has nothing to measure and is reported as such. Then the waves
+  that many layers need at `config.parallelism`. Merged and dropped tickets are out of the plan — it is what remains to do.
   A circle of dependencies is a refusal, with the circle printed. `--json` is a `horde-plan/1`
   document carrying all of it. `--apply-order` records the order `plan` proposed for a file clash
   as an ordinary dependency on the queue item, with a note saying why — one edge per adjacent pair
@@ -1735,7 +1734,12 @@ inherits whatever tree the session's shell is already in.
    member's share is the gate time over that size). `forecastMs` is `ready` times the mean: how long
    the queue would take landed one after another. It measures and reports and holds nothing back —
    no threshold, no limit; what counts as too long is the director's call. Nothing measured yet
-   gives nulls and the line says so. `status.mjs` prints the same line.
+   gives nulls and the line says so. `status.mjs` prints the same line. `drain` sets that mean
+   against the loop's own pace: `{perInterval, intervalMs, meanMs, parallelism}`, `perInterval`
+   being how many landings the gate gets through in one `config.tick.interval` at the mean gate
+   time. Workers finishing within one interval beyond that many wait at landing, so the line printed
+   beside the dispatch list names both numbers. A reading for the director, never a cap on the
+   dispatch list; null (and no line) until a gate time is measured.
 4. **Close.** A queue holding nothing but `merged` items gives `close: true` and the command that
    closes the wave. Tick prints that command and never runs it.
 
@@ -1811,9 +1815,9 @@ others — where a number has that kind of backing and where it does not.
 
 | Constant | Value | Set in | Where it comes from |
 | --- | --- | --- | --- |
-| `parallelism` | 6 | `horde.mjs` `defaultConfig()` | Not recorded. No comment or history explains this count; it has carried the same value since the plugin's first release. |
-| `fixRounds.resume` | 3 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | Not recorded. The comment explains the two-phase mechanism — resume the same worker, then a fresh one a class up — never why three rounds of the first phase. |
-| `fixRounds.fresh` | 2 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | Not recorded, same comment as the resume count above — the fresh-worker round count is equally unexplained. |
+| `parallelism` | 6 | `horde.mjs` `defaultConfig()` | The 6 itself is not recorded: it has carried the same value since the plugin's first release, with no comment or history behind it. What the knob costs is measured, every run: `tick` prints beside the dispatch list how many landings the gate drains per tick interval at its mean gate time (`drain`), so a director sets this against that figure, not against the default. |
+| `fixRounds.resume` | 3 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | Adopted from the fix loop of the Superpowers skill set's subagent-driven development (five rounds at most: rounds 1–3 resume the same implementer, 4–5 take a fresh one a class up). A design borrowed from another tool, not a measurement on Horde's own missions. |
+| `fixRounds.fresh` | 2 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | The same source as the resume count above: rounds 4–5 of that five-round loop. |
 | `tick.interval` | 300 (seconds) | `horde.mjs` `defaultConfig()`, read by `tick.mjs --watch` | Not recorded. The comment says what the setting is for (an unattended loop's own pace), not why five minutes rather than one or ten. |
 | `territory.maxBytes` | 400000 (bytes) | `horde.mjs` `defaultConfig()`, read by `refine.mjs --step cut` | Not recorded. The comment lists what counts toward the budget — code, rule text, logs — never why 400000 specifically; unlike the promises reference row below, nothing ties it to a reviewer's own limit or any other measured ceiling. |
 | `law.retireAfterWaves` | 2 (waves) | `horde.mjs` `defaultConfig()` | Not recorded. The comment explains the policy — a rule that judges nothing loses its place — not why two waves earn that judgment. |

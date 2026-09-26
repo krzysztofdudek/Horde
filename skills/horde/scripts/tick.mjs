@@ -50,7 +50,9 @@ import {
 import {
   findTicket, parseField, changesRoundInfo, lastChangesRoundInfo, transitionStatus, ticketEvidence, readReview,
 } from './tk.mjs';
-import { readLandResult, acquireGateLock, gateLockWaitMs, landingLoad, landingLine } from './land.mjs';
+import {
+  readLandResult, acquireGateLock, gateLockWaitMs, landingLoad, landingLine, landingDrain, drainLine,
+} from './land.mjs';
 import { asksPath, loadAsks, addAsk } from './ask.mjs';
 import { mentionsEvidenceId } from './wave.mjs';
 
@@ -1024,6 +1026,7 @@ function runOnce(horde, cfg, flags, runner) {
     const close = emptied && !closeHeld.length;
     const external = runner === 'external' ? externalStart(horde, cfg, [...spawn.out, ...landed.reviews], root) : [];
 
+    const landing = landingLoad(horde, doc.items);
     return withProvenance({
       horde,
       runner,
@@ -1038,7 +1041,8 @@ function runOnce(horde, cfg, flags, runner) {
         ticket: r.ticket, model: r.model, name: r.name, brief: r.brief,
       })),
       askClient: openAsks(horde),
-      landing: landingLoad(horde, doc.items),
+      landing,
+      drain: landingDrain(landing, cfg.tick && cfg.tick.interval, Number(cfg.parallelism ?? 6)),
       close,
       closeCommand: close ? closeCommand(horde) : null,
       external,
@@ -1072,6 +1076,7 @@ function render(out) {
   for (const a of out.askClient) lines.push(`ask client ${a.id} (${a.kind}): ${a.why}`);
   for (const e of out.external) lines.push(`started ${e.ticket} (${e.role}): ${e.started ? e.command : e.note}`);
   lines.push(landingLine(out.landing));
+  if (out.drain) lines.push(drainLine(out.drain));
   const closeHeld = out.held.find((h) => h.holds === 'close');
   if (out.close) lines.push(`close: the queue holds nothing unmerged — ${out.closeCommand}`);
   else lines.push(closeHeld ? `close: held — ${closeHeld.note}` : 'close: not yet');
