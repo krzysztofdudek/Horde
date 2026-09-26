@@ -219,8 +219,8 @@ through its consultants — so what is left for you to spawn is the agents that 
   rule on it yourself.
 - **A landing is not the end of a ticket.** To take a bad landing back, file a revert ticket
   (`tk.mjs new … --reverts NNN`): a worker undoes the merge on its branch and it lands through the
-  same gate; what NNN itself brought in may go with it without an ask, anything the mission started
-  with may not, and NNN is recorded as reverted when it merges. When a merge is undone some other
+  same gate; what NNN itself brought in may go with it without an ask, but a later ticket's work in
+  the same files, or anything the mission started with, may not, and NNN is recorded as reverted when it merges. When a merge is undone some other
   way, or the evidence a ticket claimed goes red again and you file a new ticket for it (`tk.mjs new …
   --reopens NNN`), say so: `land.mjs NNN --fate reverted --by <sha>` (checked against the trunk: the
   commit has to be there and has to undo the merge), or `land.mjs NNN --fate reopened --by <the new

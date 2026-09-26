@@ -168,9 +168,11 @@ is run directly, by hand, with --horde and no --tree.
 A revert ticket ("**Kind:** revert", filed with tk.mjs new --reverts NNN) lands through the same
 items, with three differences. Item 4 asks that t-NNN's change is gone: every file its merge changed
 stands on the branch as before that merge (unless a later landing changed it again). The guards do
-not refuse taking back what t-NNN brought — a test, a promise, a rule — where the branch returns it
-to exactly what the mission started with; anything that was already there at the start still needs
-its "lower" ask. And on merge t-NNN's fate is recorded as reverted by that merge. A revert always
+not refuse taking back a test, a promise or a gate script t-NNN brought, in a file the branch returns
+to exactly its state before that merge and that no later landing touched; nor a rule weakening that
+does not stand against the mission's start and is about what t-NNN's merge brought (the rule's own
+files, or reach over files that merge changed). Anything else — a later ticket's work in a shared
+file, what was already there at the start — still needs its "lower" ask. And on merge t-NNN's fate is recorded as reverted by that merge. A revert always
 lands on its own, never in a shared run.
 
 --fate records what became of a ticket AFTER it landed, and runs no gate: "reverted" when the merge
@@ -1688,12 +1690,13 @@ function lawGuard(cfg, horde, baseTree, headTree) {
 
   const refusals = [];
   const answered = (aspect) => findAnswer(horde, 'lower', aspect);
-  const refuse = (aspect, kase, what) => {
+  const refuse = (aspect, kase, what, units = null) => {
     const answer = answered(aspect);
     if (answer) return answer;
     refusals.push({
       aspect,
       case: kase,
+      ...(units ? { units } : {}),
       note: `${what} The rules a change is judged by are not the change's to weaken. If this really is right, it is the client's call, not this gate's: `
         + `ask.mjs add "<why>" --kind lower --aspect "${aspect}", then ask.mjs answer <id> "<answer>" [--scope once|mission] — `
         + 'once for this landing, mission to stand until the mission closes. The answer lands in decisions.md, which is what this guard reads.',
@@ -1730,9 +1733,9 @@ function lawGuard(cfg, horde, baseTree, headTree) {
       // The same lost pairs mean two different things, and the fix differs: a narrowed predicate
       // is a rewritten rule, an unhooked node is a node that stopped declaring it.
       if (textChanged) {
-        take(refuse(id, 'narrowed', `The rule "${id}" has a changed when/scope on this branch and reaches ${headSet.size} of the ${baseSet.size} unit(s) it reached on the base — no longer: ${lost.slice(0, 5).join(', ')}${lost.length > 5 ? '…' : ''}.`));
+        take(refuse(id, 'narrowed', `The rule "${id}" has a changed when/scope on this branch and reaches ${headSet.size} of the ${baseSet.size} unit(s) it reached on the base — no longer: ${lost.slice(0, 5).join(', ')}${lost.length > 5 ? '…' : ''}.`, lost));
       } else {
-        take(refuse(id, 'detached', `The rule "${id}" is unchanged, but ${lost.length} unit(s) that declared it on the base no longer do on this branch: ${lost.slice(0, 5).join(', ')}${lost.length > 5 ? '…' : ''}.`));
+        take(refuse(id, 'detached', `The rule "${id}" is unchanged, but ${lost.length} unit(s) that declared it on the base no longer do on this branch: ${lost.slice(0, 5).join(', ')}${lost.length > 5 ? '…' : ''}.`, lost));
       }
     }
   }
@@ -3171,11 +3174,12 @@ function verdictsCurrentAt(root, cfg, sha, pairs) {
 //                     before that merge, unless a later landing changed it again (then the gate's
 //                     own run is what measures it, and the item says so).
 //   what it may take  the guards compare the branch with its parent, and a revert necessarily
-//                     removes what the reverted ticket brought: its tests, its promises. Those are
-//                     measured against where the mission STARTED instead — a path the reverted
-//                     merge changed and that the branch returns to exactly its state at the start
-//                     is not weakened, and needs no ask. Anything that was already there when the
-//                     mission started, taken away, still needs one, file by file.
+//                     removes what the reverted ticket brought: its tests, its promises. A path the
+//                     reverted merge changed, returned by the branch to exactly its state before
+//                     that merge, and touched by no landing since, needs no ask. A rule refusal is
+//                     dropped only where it does not stand against the mission's START and is about
+//                     what the merge brought. A later ticket's work in a shared file, or anything
+//                     that was there when the mission started, taken away, still needs its ask.
 //   what it records   on merge, the reverted ticket's fate: reverted, by this merge.
 
 // Where the mission started: the trunk as `init` cut it (start.json), or — for a mission from before
@@ -3228,23 +3232,27 @@ function checkUndone(root, cfg, revert, branchSha, parentTip) {
   return { ok: true, note: `a revert — t-${revert.id}'s merge ${short(revert.sha)} is undone on this branch${moved}` };
 }
 
-// The paths a revert may take back without an ask: changed by the reverted merge, and returned by
-// this branch to exactly what they were when the mission started (absent then and absent now
-// included).
-function revertExempt(root, cfg, horde, revert, branchSha) {
-  const start = missionStartSha(horde, cfg, root);
-  if (!start) return new Set();
+// The paths a revert may take back without an ask: changed by the reverted merge, returned by this
+// branch to exactly what they were before that merge, and touched by no landing since. A path a
+// later ticket changed carries that ticket's work too — its code, its evidence — and the revert
+// taking it back to before t-NNN would take that work away with it; such a path is measured by the
+// ordinary guards, and its asks, like any other.
+function revertExempt(root, cfg, horde, revert, branchSha, parentTip) {
   const out = new Set();
   for (const path of revertedPaths(revert, cfg)) {
-    if (gitBlob(`${start}:${path}`, root) === gitBlob(`${branchSha}:${path}`, root)) out.add(path);
+    if (gitBlob(`${revert.sha}^1:${path}`, root) !== gitBlob(`${branchSha}:${path}`, root)) continue;
+    const later = git(['diff', '--name-only', revert.sha, parentTip, '--', path], root);
+    if (later === null || later) continue;
+    out.add(path);
   }
   return out;
 }
 
-// The law guard for a revert: what it refuses against the parent, kept only where it also refuses
-// against the mission's start. Taking back a rule, a reach or an attachment the reverted ticket
-// brought is returning to what the mission found; weakening one that was there at the start still
-// needs its ask.
+// The law guard for a revert. A refusal against the parent is dropped only when it does not also
+// stand against the mission's start AND it is about something the reverted merge itself brought: a
+// file of the rule's own (`.yggdrasil/aspects/<id>/`), or — for a rule that lost reach — units every
+// one of which the reverted merge introduced or changed. A rule weakened anywhere else, or reach
+// lost over code the merge never touched, keeps its refusal and needs its ask.
 function revertLawRefusals(root, cfg, horde, revert, law, headPath, cleaner) {
   if (!law.refusals.length) return [];
   const start = missionStartSha(horde, cfg, root);
@@ -3254,7 +3262,21 @@ function revertLawRefusals(root, cfg, horde, revert, law, headPath, cleaner) {
   const fromStart = lawGuard(cfg, horde, startTree.path, headPath);
   if (fromStart.stopped) return law.refusals;
   const still = new Set(fromStart.refusals.map((r) => `${r.aspect}\u0000${r.case}`));
-  return law.refusals.filter((r) => still.has(`${r.aspect}\u0000${r.case}`));
+  const merged = revert.files;
+  const brought = (r) => {
+    if (merged.some((f) => f.startsWith(`.yggdrasil/aspects/${r.aspect}/`))) return true;
+    if (!Array.isArray(r.units) || !r.units.length) return false;
+    return r.units.every((u) => {
+      const [kind, ...rest] = String(u).split(':');
+      const path = rest.join(':');
+      if (kind === 'node') {
+        const boundary = ticketBoundary(root, cfg, [path]);
+        return boundary.length > 0 && merged.some((f) => pathInBoundary(f, boundary));
+      }
+      return merged.includes(path);
+    });
+  };
+  return law.refusals.filter((r) => still.has(`${r.aspect}\u0000${r.case}`) || !brought(r));
 }
 
 // ---- trailers -----------------------------------------------------------------------------
@@ -4306,7 +4328,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       guards.push(...(revert ? revertLawRefusals(root, cfg, horde, revert, law, head.path, cleaner) : law.refusals));
       const conflict = conflictGuard(cfg, base.path, head.path, changedFiles, law);
       guards.push(...conflict.refusals);
-      const exempt = revert ? revertExempt(root, cfg, horde, revert, branchSha) : new Set();
+      const exempt = revert ? revertExempt(root, cfg, horde, revert, branchSha, parentTip) : new Set();
       const protection = protectionGuards(cfg, horde, base.path, head.path, changedFiles, exempt);
       guards.push(...protection.refusals);
       if (guards.length) {

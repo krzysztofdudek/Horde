@@ -116,7 +116,8 @@ commands:
       t-NNN" on the ticket, its files the ones that merge changed (unless --files names them), no
       test of its own, and one acceptance line — the merge undone on the branch with git revert.
       It lands through the same gate; a test file or a promise the reverted ticket brought in may
-      go with it without an ask, anything the mission found already there may not. On merge the
+      go with it without an ask where no later landing touched that file, anything else may not.
+      A --files entry beyond the merge's own is held to the node boundary. On merge the
       reverted ticket is recorded as reverted. Refused unless NNN is merged.
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
       the merge checklist refuses a diff that reaches past them). --boundary-proposal <id> names an approved
@@ -747,8 +748,8 @@ export function createTicket(horde, spec) {
   }
 
   // What a revert takes back: the reverted ticket's own landed merge, found on its queue item. Its
-  // files are the ticket's scope unless --files names them, and they already passed a node
-  // boundary once, when that ticket landed, so they are not asked to again.
+  // files are the ticket's scope unless --files names them; the merge's own files already passed a
+  // node boundary once, when that ticket landed, and are not asked to again — any other file is.
   let revertOf = null;
   if (reverts) {
     let reverted = null;
@@ -767,7 +768,9 @@ export function createTicket(horde, spec) {
   const consumes = parsePortList(consumesRaw, 'Consumes');
   const produces = parsePortList(producesRaw, 'Produces');
   const proposal = boundaryProposal ? approvedBoundaryProposal(horde, boundaryProposal, nodes) : null;
-  if (!revertOf) checkFilesInBoundary(nodes, declared, proposal ? proposal.boundary : []);
+  // A revert's own merge files passed a boundary when that ticket landed; anything named beyond them
+  // (a component's yg-node.yaml, say) is held to the named nodes' boundary like any other ticket's.
+  checkFilesInBoundary(nodes, revertOf ? declared.filter((f) => !revertOf.files.includes(f)) : declared, proposal ? proposal.boundary : []);
   const files = withNodeLogs(nodes, declared);
   checkConsumesHaveProducers(horde, consumes, null);
 

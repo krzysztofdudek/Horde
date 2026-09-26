@@ -1548,12 +1548,15 @@ other ticket, and lands through the same nine items, always on its own (never in
 - item 4 (`revert test`) asks that the change is gone — every file the reverted merge changed stands
   on the branch as it did before that merge; a file a later landing changed again is left to the
   gate's own run and named in the note;
-- the guards measure the paths the reverted merge changed against where the mission started
-  (`hordes/<h>/start.json`, the trunk `horde init` cut; for a mission from before that file, where
-  its trunk and base last met). A test file, a promise or a gate script the reverted ticket brought
-  in, which the branch returns to exactly its state at the start, is not refused; the law guard's
-  refusals stand only where they also stand against the start tree. Anything the mission found
-  already there, taken away, is refused as before and needs its `lower` ask, file by file;
+- the evidence and gate guards do not refuse a path the reverted merge changed when the branch
+  returns it to exactly its state before that merge and no landing has touched it since (`git diff
+  <merge>..<parent tip> -- <path>` empty). A path a later ticket also changed carries that ticket's
+  work, and is guarded as usual. The law guard drops a refusal only when it does not also stand
+  against where the mission started (`hordes/<h>/start.json`, the trunk `horde init` cut; for a
+  mission from before that file, where its trunk and base last met) AND it is about what the merge
+  brought: a file of the rule's own under `.yggdrasil/aspects/<id>/` changed by it, or lost reach
+  whose every unit covers files it changed. Anything else is refused as before and needs its `lower`
+  ask. `tk.mjs new --reverts` holds any `--files` beyond the merge's own to the node boundary;
 - on merge, t-NNN's fate is recorded as `reverted` by the revert's own merge commit (a `fate` line
   in the result's checks), exactly as `--fate reverted --by <that sha>` would.
 

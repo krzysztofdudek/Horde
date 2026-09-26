@@ -4456,3 +4456,66 @@ test('land.mjs: a revert that also takes away a test the mission found already t
   assert.match(r.stderr, /evidence:kept\.test\.mjs \(test removed\)/);
   assert.doesNotMatch(r.stderr, /evidence:feature-001\.test\.mjs/, 'the reverted ticket\'s own test is not refused');
 });
+
+// Review of 304: a revert may not take back, without an ask, what a LATER landing put in a file the
+// reverted ticket also changed. Here t-002's evidence (a new case in kept.test.mjs, and the code it
+// checks in feature-001.mjs) sits on top of t-001's changes to the same files; a revert that returns
+// those files to the mission's start removes t-002's work with them, and is refused naming the test.
+test('land.mjs: a revert that would strip a later ticket\'s evidence from a shared file is refused, not waved through', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const T = (lines) => ["import test from 'node:test';", "import assert from 'node:assert/strict';", ...lines, ''].join('\n');
+  const KEPT0 = T(["test('kept', () => { assert.equal(1, 1); });"]);
+  const KEPT1 = T(["test('kept', () => { assert.equal(1, 1); });", "test('from001', async () => { const m = await import('./feature-001.mjs'); assert.equal(m.add(1, 1), 2); });"]);
+  const KEPT2 = T(["test('kept', () => { assert.equal(1, 1); });", "test('from001', async () => { const m = await import('./feature-001.mjs'); assert.equal(m.add(1, 1), 2); });", "test('from002', async () => { const m = await import('./feature-001.mjs'); assert.equal(m.two, 2); });"]);
+  const { branch } = setupLandable(dir, '001', {
+    trunkFiles: { 'kept.test.mjs': KEPT0 },
+    extraFiles: { 'kept.test.mjs': KEPT1 },
+    mapping: ['feature-001.mjs', 'feature-001.test.mjs', 'kept.test.mjs'],
+  });
+  writeFileSync(join(dir, '.horde', 'hordes', 'mission1', 'start.json'), JSON.stringify({ sha: git(['rev-parse', 'mission1/trunk'], dir) }));
+  const l1 = run('land.mjs', [branch], dir);
+  assert.equal(l1.code, 0, l1.stdout + l1.stderr);
+  git(['checkout', '-q', '-b', 'mission1/t-002', 'mission1/trunk'], dir);
+  writeFileSync(join(dir, 'feature-001.mjs'), 'export function add(a, b) { return a + b; }\nexport const two = 2;\n');
+  writeFileSync(join(dir, 'kept.test.mjs'), KEPT2);
+  git(['add', 'feature-001.mjs', 'kept.test.mjs'], dir);
+  git(['commit', '-qm', 'ticket 002'], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  const d2 = writeIssue(dir, 'trunk', '002', { files: ['feature-001.mjs', 'kept.test.mjs'] });
+  writeTicketLog(d2);
+  seedQueueItem(dir, 'trunk', '002', 'mission1/t-002');
+  const l2 = run('land.mjs', ['mission1/t-002'], dir);
+  assert.equal(l2.code, 0, l2.stdout + l2.stderr);
+  writeFileSync(join(dir, '.horde', 'hordes', 'mission1', 'counter.json'), JSON.stringify({ next: 3 }));
+  const c = run('tk.mjs', ['new', 'take-back-001', '--title', 'Take back 001', '--node', 'feature', '--class', 'standard', '--reverts', '001', '--files', 'feature-001.mjs,feature-001.test.mjs,kept.test.mjs,.yggdrasil/model/feature/log.md,.yggdrasil/model/feature/yg-node.yaml'], dir);
+  assert.equal(c.code, 0, c.stderr);
+  const id = c.json.id;
+  git(['checkout', '-q', '-b', `mission1/t-${id}`, 'mission1/trunk'], dir);
+  git(['rm', '-q', 'feature-001.mjs', 'feature-001.test.mjs'], dir);
+  writeFileSync(join(dir, 'kept.test.mjs'), KEPT0);
+  const ny = join(dir, '.yggdrasil', 'model', 'feature', 'yg-node.yaml');
+  writeFileSync(ny, readFileSync(ny, 'utf8').replace(/  - "feature-001\.mjs"\n  - "feature-001\.test\.mjs"\n/, ''));
+  git(['commit', '-qam', 'revert 001'], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  seedQueueItem(dir, 'trunk', id, `mission1/t-${id}`);
+  writeTicketLog(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${id}-take-back-001`));
+  const trunkBefore = git(['rev-parse', 'mission1/trunk'], dir);
+
+  const r = run('land.mjs', [`mission1/t-${id}`], dir);
+  assert.equal(r.code, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /evidence:kept\.test\.mjs/, 'the later ticket\'s evidence is guarded');
+  assert.equal(git(['rev-parse', 'mission1/trunk'], dir), trunkBefore, 'nothing merged');
+});
+
+test('tk.mjs new --reverts: a file beyond the reverted merge\'s own is held to the node boundary', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '001');
+  const landed = run('land.mjs', [branch], dir);
+  assert.equal(landed.code, 0, landed.stdout + landed.stderr);
+  writeFileSync(join(dir, '.horde', 'hordes', 'mission1', 'counter.json'), JSON.stringify({ next: 2 }));
+  const r = run('tk.mjs', ['new', 'take-back', '--title', 'Take back', '--node', 'feature', '--class', 'standard', '--reverts', '001', '--files', 'feature-001.mjs,somewhere/else.mjs'], dir);
+  assert.equal(r.code, 1);
+  assert.match(r.stderr, /outside the boundary of feature: somewhere\/else\.mjs/);
+});
