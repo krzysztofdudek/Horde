@@ -12,6 +12,16 @@ import {
 } from './helpers.mjs';
 
 const hordeDir = (dir) => join(dir, '.horde', 'hordes', 'mission1');
+
+// The hook runs detached, so what it wrote arrives after the call that started it returned.
+async function waitForText(path, re, ms = 10000) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if (existsSync(path) && re.test(readFileSync(path, 'utf8'))) return readFileSync(path, 'utf8');
+    await new Promise((r) => { setTimeout(r, 100); });
+  }
+  return existsSync(path) ? readFileSync(path, 'utf8') : '';
+}
 const reportText = (dir) => readFileSync(join(hordeDir(dir), 'report.md'), 'utf8');
 
 function withRows(dir) {
@@ -92,20 +102,51 @@ test('config.notify: run with the event filled in when a question is filed, whoe
   const log = join(dir, 'notified.log');
   run('horde.mjs', ['config', 'set', 'notify', `printf '%s|%s|%s|%s|%s\\n' <event> <kind> <id> <horde> <text> >> "${log}"`], dir);
 
-  await t.test('one line per question, the text passed as one argument whatever it holds', () => {
+  await t.test('one line per question, the text passed as one argument whatever it holds', async () => {
     const r = run('ask.mjs', ['add', "It's the client's call: keep the old API? $(touch pwned)", '--kind', 'charter'], dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.equal(readFileSync(log, 'utf8'), `ask|charter|${r.json.id}|mission1|It's the client's call: keep the old API? $(touch pwned)\n`);
+    const text = await waitForText(log, /\n$/);
+    assert.equal(text, `ask|charter|${r.json.id}|mission1|It's the client's call: keep the old API? $(touch pwned)\n`);
     assert.ok(!existsSync(join(dir, 'pwned')), 'nothing in the text was run');
   });
 
-  await t.test('a hook that fails is named, and the question is filed all the same', () => {
+  await t.test('a hook that fails is written down, and the question is filed all the same', async () => {
     run('horde.mjs', ['config', 'set', 'notify', 'exit 3'], dir);
     const r = run('ask.mjs', ['add', 'A second question', '--kind', 'stop'], dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.notified.ok, false);
-    assert.match(r.json.notified.note, /exited 3/);
+    assert.equal(r.json.notified.started, true);
+    assert.match(await waitForText(join(hordeDir(dir), 'notify.log'), /exited 3/), /exited 3/);
     assert.equal(run('ask.mjs', ['list', '--open'], dir).json.length, 2);
+  });
+
+  await t.test('a hook that takes its time holds nothing up: the filing returns at once', () => {
+    run('horde.mjs', ['config', 'set', 'notify', 'sleep 8'], dir);
+    const started = Date.now();
+    const r = run('ask.mjs', ['add', 'A third question', '--kind', 'stop'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(Date.now() - started < 5000, `returned in ${Date.now() - started}ms`);
+  });
+
+  // Review of 306: inside quotes of the template's own, the filled-in quoting would end the quote
+  // and hand the question's text to the shell. Refused where it is set, and never run.
+  await t.test('a placeholder inside quotes is refused where it is set', () => {
+    for (const bad of ["echo '<text>'", 'notify-send "Horde: <text>"']) {
+      const r = run('horde.mjs', ['config', 'set', 'notify', bad], dir);
+      assert.equal(r.code, 1, bad);
+      assert.match(r.stderr, /inside (single|double) quotes in config\.notify — .*write it bare/);
+    }
+  });
+
+  await t.test('and one written into the config by hand is not run', () => {
+    const cfgPath = join(dir, '.horde', 'config.json');
+    const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+    cfg.notify = `echo '<text>' > "${join(dir, 'ran.txt')}"`;
+    writeFileSync(cfgPath, JSON.stringify(cfg));
+    const r = run('ask.mjs', ['add', 'A fourth question', '--kind', 'stop'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.notified.started, false);
+    assert.match(r.json.notified.note, /inside single quotes/);
+    assert.ok(!existsSync(join(dir, 'ran.txt')));
   });
 });
 
@@ -119,7 +160,7 @@ test('wave.mjs close: the client is told and the page rewritten; the two pre-6.0
   const r = run('wave.mjs', ['close'], dir);
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.json.report, /\/\.horde\/hordes\/mission1\/report\.md$/);
-  assert.match(readFileSync(log, 'utf8'), /^wave-close\|wave\|1\|wave 1 closed — \d+\/\d+ evidence rows proven, gate /m);
+  assert.match(await waitForText(log, /wave-close/), /^wave-close\|wave\|1\|wave 1 closed — \d+\/\d+ evidence rows proven, gate /m);
   const plan = readFileSync(join(hordeDir(dir), 'plan.md'), 'utf8');
   const block = plan.slice(plan.lastIndexOf('# Wave 1 — close'));
   assert.doesNotMatch(block, /Escalated \(pre-6\.0\.0 legacy\)/);
@@ -156,3 +197,4 @@ test('report.mjs: what landed since the last report, once, and a row whose lande
     assert.match(reportText(dir), /## Landed since the last report\n\nNothing new since /);
   });
 });
+

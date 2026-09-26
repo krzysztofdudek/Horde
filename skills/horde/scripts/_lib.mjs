@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync, execSync, spawnSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
 const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'templates');
@@ -1922,23 +1922,74 @@ child.on('exit', (code) => {
 // question filed (event "ask", whatever filed it) and a wave closed (event "wave-close"). It is the
 // hook an outer loop uses to reach a client who is not at the terminal — a chat message, a mail, a
 // line in a shared channel; what it does is the adopter's. `<event>`, `<kind>`, `<id>`, `<text>` and
-// `<horde>` are filled in, each quoted for the shell as one argument. It runs from the repository
-// root, for at most thirty seconds, with nothing on its input; a command that fails or hangs is
-// named in the result and never stops the step that called it. No template, nothing is run.
+// `<horde>` are filled in, each quoted for the shell as one argument — so a placeholder is written
+// bare, never inside quotes of the template's own: inside them the filled-in quoting would end the
+// template's quote and let the text be read by the shell. A template that does that is refused, by
+// `horde.mjs config set notify` and again here, and nothing is run.
+//
+// It never holds up the step that filed the question or closed the wave, nor whatever lock that step
+// holds (tick's gate lock included): it is started detached, under a small supervisor that stops it
+// at thirty seconds, and nothing waits for it. How it ended — exit code, a stop at the timeout, a
+// start that failed — is appended to `hordes/<horde>/notify.log`, one line per run. No template,
+// nothing is run.
 export const NOTIFY_TIMEOUT_MS = 30000;
+export const NOTIFY_PLACEHOLDERS = ['event', 'kind', 'id', 'text', 'horde'];
+
+// The placeholder a template puts inside quotes, or null when every one of them stands bare.
+export function notifyTemplateProblem(template) {
+  const text = String(template || '');
+  let quote = null;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (quote) {
+      if (c === quote) { quote = null; continue; }
+      if (quote === '"' && c === '\\') { i += 1; continue; }
+    } else if (c === '\\') { i += 1; continue; } else if (c === "'" || c === '"') { quote = c; continue; }
+    const m = /^<(event|kind|id|text|horde)>/.exec(text.slice(i));
+    if (m && quote) {
+      return `<${m[1]}> stands inside ${quote === "'" ? 'single' : 'double'} quotes in config.notify — each placeholder is filled in already quoted as one argument, so write it bare (… <${m[1]}> …); inside quotes of the template's own, the text it carries would reach the shell`;
+    }
+  }
+  return null;
+}
+
+const NOTIFY_SUPERVISOR = `
+const { spawn } = require('node:child_process');
+const { appendFileSync } = require('node:fs');
+const [cmd, cwd, ms, log] = process.argv.slice(1);
+const note = (line) => { try { appendFileSync(log, new Date().toISOString() + ' ' + line + '\\n'); } catch {} };
+const child = spawn('sh', ['-c', cmd], { cwd, detached: true, stdio: 'ignore' });
+let stopped = false;
+const timer = setTimeout(() => { stopped = true; try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, Number(ms));
+child.on('error', (e) => { clearTimeout(timer); note('could not be started: ' + e.message); });
+child.on('exit', (code, signal) => {
+  clearTimeout(timer);
+  if (stopped) note('did not finish within ' + (Number(ms) / 1000) + 's and was stopped');
+  else note(code === 0 ? 'ok' : 'exited ' + (code ?? signal));
+});
+`;
+
 export function notifyClient(horde, cfg, fields = {}) {
   const template = cfg && typeof cfg.notify === 'string' ? cfg.notify.trim() : '';
   if (!template) return null;
+  const problem = notifyTemplateProblem(template);
+  if (problem) return { ok: false, started: false, note: problem };
   const quote = (v) => `'${String(v ?? '').replace(/'/g, "'\\''")}'`;
   const values = { ...fields, horde };
   const command = template.replace(/<(event|kind|id|text|horde)>/g, (_, key) => quote(values[key]));
   let cwd;
   try { cwd = dirname(hordeRoot()); } catch { cwd = process.cwd(); }
-  const res = spawnSync('sh', ['-c', command], { cwd, stdio: 'ignore', timeout: NOTIFY_TIMEOUT_MS, killSignal: 'SIGKILL' });
-  if (res.error && res.error.code === 'ETIMEDOUT') return { ok: false, command, note: `config.notify did not finish within ${NOTIFY_TIMEOUT_MS / 1000}s and was stopped` };
-  if (res.error) return { ok: false, command, note: `config.notify could not be started: ${res.error.message}` };
-  if (res.status !== 0) return { ok: false, command, note: `config.notify exited ${res.status ?? res.signal}` };
-  return { ok: true, command };
+  const log = hordePath(horde, 'notify.log');
+  try {
+    const child = spawn(process.execPath, ['-e', NOTIFY_SUPERVISOR, '--', command, cwd, String(NOTIFY_TIMEOUT_MS), log], {
+      cwd, detached: true, stdio: 'ignore',
+    });
+    child.on('error', () => {});
+    child.unref();
+  } catch (e) {
+    return { ok: false, started: false, command, note: `config.notify could not be started: ${e.message}` };
+  }
+  return { ok: true, started: true, command, log };
 }
 
 export function runCommandGroup(cmd, cwd, timeoutMs = null) {

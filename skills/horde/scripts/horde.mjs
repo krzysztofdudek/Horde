@@ -16,7 +16,7 @@ import {
   writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
   readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
   qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES, parseEvidenceRows, asArray,
-  runGateAt, gateTimeoutOf, GATE_RAN, nowIso,
+  runGateAt, gateTimeoutOf, GATE_RAN, nowIso, notifyTemplateProblem,
   runMain,
 } from './_lib.mjs';
 import { nodesOf, padId } from './tk.mjs';
@@ -64,7 +64,8 @@ commands:
       (an untracked env file, a dependency cache); a path git already tracks is refused.
       "report.out" is one more path the client's plain-language report is written to (default:
       only hordes/<horde>/report.md); "notify" a command run when a question is filed and when a
-      wave closes, with <event>, <kind>, <id>, <text> and <horde> filled in (default: none).
+      wave closes, with <event>, <kind>, <id>, <text> and <horde> filled in, each written bare,
+      never inside quotes (refused); it runs detached (default: none).
   charter show [--horde h]
   charter edit [--ask id] [--horde h]
       the mission charter: "show" prints it, "edit" replaces it with what arrives on stdin and
@@ -431,7 +432,9 @@ function defaultConfig(root) {
     // notifyClient). `report.out` is one more place the plain-language report is written besides
     // hordes/<horde>/report.md — "<horde>" in it names one file per horde. `notify` is a command
     // run when a question is filed and when a wave closes, with <event>, <kind>, <id>, <text> and
-    // <horde> filled in; how it reaches the client is the adopter's. Neither is set by default.
+    // <horde> filled in (each written bare — a placeholder inside quotes is refused); it is started
+    // detached, never waited on, and how it ended goes to hordes/<h>/notify.log. How it reaches the
+    // client is the adopter's. Neither is set by default.
     report: { out: null },
     notify: null,
     // Repository-root-relative paths copied into every worktree provisionTree makes (a ticket's,
@@ -850,6 +853,10 @@ function cmdConfig(positional, flags) {
   }
   if (sub === 'set') {
     if (!key || value === undefined) fail('config set requires <key> <value>');
+    if (key === 'notify') {
+      const problem = notifyTemplateProblem(value);
+      if (problem) fail(problem);
+    }
     setPath(cfg, key, value);
     writeConfig(cfg);
     emit({ key, value: getPath(cfg, key) }, flags, () => `${key} = ${JSON.stringify(getPath(cfg, key))}`);

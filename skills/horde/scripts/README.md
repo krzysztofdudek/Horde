@@ -913,10 +913,16 @@ waitingToMerge: {count, forecastMs}, previousAt, paths}`.
 whoever files it, a worker's `ask.mjs add`, `tick`'s `stuck`, a wave close's audit — and when a wave
 closes. `<event>` (`ask` or `wave-close`), `<kind>` (the question's kind, or `wave`), `<id>` (the
 question's id, or the wave's number), `<text>` (the question, or one line on the close) and
-`<horde>` are filled in, each quoted as one shell argument, so nothing in a question's text is run.
-It runs from the repository root for at most thirty seconds; a hook that fails or hangs is named
-(`notified: {ok, command, note}` on `ask.mjs add`'s result and a wave close's) and never stops the
-filing or the close. Unset by default: nothing is run.
+`<horde>` are filled in, each already quoted as one shell argument, so nothing in a question's text
+is run — which holds only while each placeholder is written bare in the template. One written inside
+quotes of the template's own (`echo '<text>'`) would end that quote and hand the text to the shell,
+so such a template is refused: by `horde.mjs config set notify`, and again when it would run (the
+result's `notified` then says why, and nothing starts). The hook is started detached from the
+repository root and nothing waits for it — not the filing, not the close, not a tick holding its
+lock; a small supervisor stops it at thirty seconds. How each run ended (`ok`, `exited <code>`, or
+stopped at the limit) is appended to `hordes/<horde>/notify.log`. `ask.mjs add` and a wave close
+carry `notified: {ok, started, command, log}` in their result, or `{ok: false, started: false,
+note}` for a refused template. Unset by default: nothing is run.
 
 ## escalate.mjs — the recurring-answer scan
 
