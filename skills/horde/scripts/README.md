@@ -1112,7 +1112,7 @@ the JSON, and every item below is measured against it:
    refusal: `log-cycle-open` on a `log_required` component that owns a file the branch changed —
    on the branch's tree, or on the base's for a file the branch deleted. Asked only when there is
    such a warning, and narrowly: one `yg node --json` per open component narrows the changed files
-   to its mapping, and only those go to `yg owner --file` (Yggdrasil answers one file per call). A
+   to its mapping, and only those are asked, one per call, which component holds them (Yggdrasil answers one file per call). A
    tree red with such a cycle is never read as waiting on the user alone. The free half never records a
    component's source baseline, so its first log entry would otherwise answer for every later edit
    and the log gate would never ask for another why; the item names the component and the way out —
