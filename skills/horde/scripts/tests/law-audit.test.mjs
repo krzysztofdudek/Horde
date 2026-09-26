@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import {
   makeRepo, rmRepo, run, initHorde, requireYg, git,
 } from './helpers.mjs';
-import { adviseKeys } from '../audit.mjs';
+import { adviseKeys, adviseRoute } from '../audit.mjs';
 
 // The hot-spot item under either name: before Yggdrasil 6.1.0 renamed the class, and after.
 const HOT_SPOT_IDS = ['uncovered-hot-spot:billing', 'unguarded-hot-spot:billing'];
@@ -612,6 +612,151 @@ test('the law audit: every read it cannot make is a note in the report, and the 
     assert.equal(closed.code, 1, 'the rule inventory is read once, by the law diff, and it is not optional there');
     assert.match(closed.stderr, /yg-aspects\/1/);
     // The audit never asks that question a second time; there is one reading of one commit.
+  });
+});
+
+// ---- where an attention item goes, and when it is filed again (issue 295) --------------------
+//
+// The feed is stubbed here, and only here, because the two classes this is about — a promotion and a
+// decorative rule — need a verdict history no fixture can earn, and an evidence hash that changes
+// between two closes is exactly what a real repository takes weeks to produce. Everything else about
+// the graph is the real CLI's. The feed is read off a file in the repository, so a test can move an
+// item's evidence between two closes by rewriting it.
+function feedItem(id, evidenceHash, what) {
+  return {
+    id,
+    what,
+    why: 'Read out of the fixture feed.',
+    next: 'Whatever Yggdrasil would say.',
+    evidenceHash,
+  };
+}
+
+function stubbedFeed(dir, yg, items) {
+  const feedPath = join(dir, '.git', 'advise-feed.json');
+  const writeFeed = (list) => writeFileSync(feedPath, JSON.stringify({
+    schema: 'yg-advise/1', attention: [], items: list, suppressed: [],
+  }));
+  writeFeed(items);
+  const stubbed = passthroughYg(
+    dir, yg, 'feed-yg.mjs',
+    "argv[0] === 'advise' && argv[1] === '--json'",
+    `  const { readFileSync } = await import('node:fs');\n  process.stdout.write(readFileSync(${JSON.stringify(feedPath)}, 'utf8'));\n  process.exit(0);`,
+  );
+  return { stubbed, writeFeed };
+}
+
+function closeWave(dir) {
+  run('wave.mjs', ['start'], dir);
+  const closed = run('wave.mjs', ['close', '--gate', 'green'], dir);
+  assert.equal(closed.code, 0, closed.stderr);
+  return closed.json.audit.advise;
+}
+
+test('the law audit: every attention class Yggdrasil names goes where its answer belongs', () => {
+  const table = {
+    'promotion:no-marker': 'ladder',
+    'decorative-rule:no-marker': 'client',
+    'dead-attach:no-marker': 'client',
+    'aspect-effective-nowhere:no-marker': 'client',
+    'orphaned-aspect:no-marker': 'client',
+    'suppress-anomaly:src/a.mjs:3': 'client',
+    'package-update:promises': 'client',
+    'unguarded-hot-spot:billing': 'ticket',
+    'uncovered-hot-spot:billing': 'ticket',
+    'family-without-law:handlers': 'ticket',
+    'type-covered-churn:src/a.mjs': 'ticket',
+    'sharpen:no-marker': 'ticket',
+    'drill-miss:no-marker/violates-x': 'ticket',
+    'architecture-cut:billing': 'ticket',
+    'something-new:x': 'ticket',
+  };
+  for (const [id, route] of Object.entries(table)) assert.equal(adviseRoute({ id }), route, id);
+});
+
+test('the law audit: a promotion and a lowering never become a worker\'s ticket; a changed evidence hash files once more', async (t) => {
+  const yg = requireYg();
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir, yg, { reviewBy: '2099-01-01' });
+  initHorde(dir);
+  assert.equal(run('node.mjs', ['bind', 'feature'], dir).code, 0);
+  assert.equal(run('node.mjs', ['bind', 'billing'], dir).code, 0);
+
+  const promotion = feedItem('promotion:no-marker', 'p-1', 'Promote a clean-record advisory rule');
+  const decorative = feedItem('decorative-rule:no-marker', 'd-1', 'A rule that has never once caught a violation');
+  const hotSpot = feedItem('unguarded-hot-spot:billing', 'h-1', "Node 'billing' is changing but has no rule guarding it");
+  const { stubbed, writeFeed } = stubbedFeed(dir, yg, [promotion, decorative, hotSpot]);
+  run('horde.mjs', ['config', 'set', 'ygCommand', stubbed], dir);
+
+  const first = closeWave(dir);
+  assert.deepEqual(first.filed.map((f) => f.item), ['unguarded-hot-spot:billing'], 'only the hot spot is a worker\'s ticket');
+  assert.deepEqual(first.ladder.map((p) => p.item), ['promotion:no-marker'], 'the promotion is reported for the ladder');
+  assert.equal(first.asked.length, 1);
+  assert.equal(first.asked[0].item, 'decorative-rule:no-marker');
+  assert.equal(first.asked[0].kind, 'lower', 'a lowering of one rule is asked as one, naming it');
+  assert.equal(first.asked[0].aspect, 'no-marker');
+  const queue = JSON.parse(readFileSync(queuePath(dir), 'utf8')).items;
+  assert.equal(queue.length, 1, 'one ticket on the queue, for the hot spot');
+  const asks = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json'), 'utf8')).items;
+  assert.equal(asks.length, 1);
+  assert.equal(asks[0].aspect, 'no-marker');
+  assert.match(asks[0].why, /decorative-rule:no-marker/);
+  assert.match(auditSection(dir), /put to the client rather than to a worker/);
+  assert.match(auditSection(dir), /node\.mjs promote no-marker/);
+
+  await t.test('the same evidence at the next close: nothing is filed or asked again', () => {
+    const again = closeWave(dir);
+    assert.deepEqual(again.filed, []);
+    assert.deepEqual(again.asked, []);
+    assert.ok(again.skipped.some((s) => s.key === 'advise:unguarded-hot-spot:billing' && /already filed as a ticket/.test(s.why)));
+    assert.ok(again.skipped.some((s) => s.key === 'advise:decorative-rule:no-marker' && /already put to the client/.test(s.why)));
+  });
+
+  await t.test('changed evidence while its ticket is still open: said, and not filed on top of it', () => {
+    writeFeed([promotion, decorative, { ...hotSpot, evidenceHash: 'h-2' }]);
+    const open = closeWave(dir);
+    assert.deepEqual(open.filed, []);
+    const skip = open.skipped.find((s) => s.key === 'advise:unguarded-hot-spot:billing');
+    assert.match(skip.why, /its evidence changed, and what was filed for it before is still open/);
+  });
+
+  await t.test('changed evidence after the director dropped the ticket: a decision, not filed again', () => {
+    const ticket = first.filed[0].ticket;
+    assert.equal(run('tk.mjs', ['status', ticket, 'dropped', 'the director took it off the work'], dir).code, 0);
+    const decided = closeWave(dir);
+    assert.deepEqual(decided.filed, []);
+    const skip = decided.skipped.find((s) => s.key === 'advise:unguarded-hot-spot:billing');
+    assert.match(skip.why, /was dropped — a decision/);
+    assert.match(skip.why, /yg advise dismiss unguarded-hot-spot:billing/);
+  });
+
+  await t.test('changed evidence once the earlier ticket merged: filed exactly once more', () => {
+    const ticket = first.filed[0].ticket;
+    assert.equal(run('tk.mjs', ['status', ticket, 'merged', 'the fixture merges it'], dir).code, 0);
+    const refiled = closeWave(dir);
+    assert.equal(refiled.filed.length, 1);
+    assert.equal(refiled.filed[0].item, 'unguarded-hot-spot:billing');
+    assert.notEqual(refiled.filed[0].ticket, ticket);
+    const graph = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'graph.json'), 'utf8'));
+    const entries = graph.audits.filter((a) => a.key === 'advise:unguarded-hot-spot:billing');
+    assert.deepEqual(entries.map((e) => e.evidenceHash), ['h-1', 'h-2']);
+    const last = closeWave(dir);
+    assert.deepEqual(last.filed, [], 'and never a third time over the same evidence');
+  });
+
+  await t.test('filed under a former class name, with a different hash: a rename is not new evidence', () => {
+    const graphPath = join(dir, '.horde', 'hordes', 'mission1', 'graph.json');
+    const graph = JSON.parse(readFileSync(graphPath, 'utf8'));
+    graph.audits.push({
+      key: 'advise:dead-attach:no-marker', kind: 'advise', item: 'dead-attach:no-marker', route: 'client', ask: 'a-999', evidenceHash: 'old', at: '2026-09-01T00:00:00.000Z',
+    });
+    writeFileSync(graphPath, JSON.stringify(graph, null, 2));
+    writeFeed([{ ...feedItem('aspect-effective-nowhere:no-marker', 'new', 'A rule effective nowhere'), aliases: [{ id: 'dead-attach:no-marker', evidenceHash: 'alias-new' }] }]);
+    const renamed = closeWave(dir);
+    assert.deepEqual(renamed.asked, [], 'not put to the client a second time');
+    const skip = renamed.skipped.find((s) => s.key === 'advise:aspect-effective-nowhere:no-marker');
+    assert.match(skip.why, /under its former id \(advise:dead-attach:no-marker\)/);
   });
 });
 

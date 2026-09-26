@@ -38,7 +38,7 @@ import {
   runMain,
 } from './_lib.mjs';
 import {
-  ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, hasReviewer,
+  ticketNodes, runYgCheck, ygCommand, fillDeterministic, pendingProsePairs, userOnlyRefusal, reviewerMissingIn,
   globToRegExp, pathInBoundary, ticketBoundary, proposalBoundaryOf, ygFileContext, ygAvailable, ygJson,
   NODE_LOG_FILE, YG_LOCK_FILE, mergesByRule, nodeOfLogFile, ygLogMergeResolve,
 } from './node.mjs';
@@ -135,6 +135,11 @@ team you can name: passing --level team is refused outright rather than read as 
 A landing whose parent was brought in cleanly and whose only red is prose verdicts left pending by
 that merge (the reviewer configured, and nothing else the graph refuses) writes no round and says
 "rejudge": true in its result — the ticket goes back to refresh the verdicts, not for a fix.
+A landing whose only red is a decision the user has to make — the graph and judge items alone, and
+Yggdrasil's own reading says nothing in the tree is fixable or fillable but something waits on the
+user or the reviewer, or every blocking finding is a reviewer that is missing, unreachable or
+failed — writes no round either: its result carries "waitingOnUser": {text, reviewerMissing,
+causes, rules}, and tick holds the ticket on one question for the whole horde.
 --background starts the run and prints the path of the result file it will write, immediately.
 
 Everything above — the scope check's own graph read included — runs against the tree --tree
@@ -990,7 +995,14 @@ function recordGateCache(horde, level, cache, ticketId, branch, cfg) {
 // rules, which only Yggdrasil's configured reviewer judges. So the item names those pairs rather
 // than approving them, and it is ✓ only when a full `yg check` is green; the judge item says who
 // owes them.
-function checkGraph(cfg, worktree, noGate) {
+//
+// One warning is read as a refusal here: `log-cycle-open` on a component this branch changed. The
+// free half never records a component's source baseline, so on a `log_required` component whose
+// only fills are free the first log entry goes on answering for every later edit, and the log gate
+// never asks for another why. A full `yg check --approve` closes the cycle — free when no reviewer
+// pair is pending — and a branch that changed such a component owes it: record why, run it, commit
+// the lock it writes. `changedFiles` is the branch's own diff (the whole batch's, for a shared gate).
+function checkGraph(cfg, worktree, noGate, changedFiles = [], baseTree = null) {
   const display = ygCommand(cfg).display;
   if (noGate) return { ok: true, note: `skipped (--no-gate) — \`${display} check\` was not run` };
 
@@ -1007,19 +1019,40 @@ function checkGraph(cfg, worktree, noGate) {
   if (filled.timedOut) return { ok: false, note: `\`${filled.command}\` — ${filled.out}` };
 
   const res = runYgCheck(cfg, worktree);
-  if (res.ok) return { ok: true, note: `${res.command} green${res.summary ? ` — ${res.summary}` : ''}` };
   if (res.timedOut) return { ok: false, note: `\`${res.command}\` — ${res.summary}` };
+  const cycles = openLogCycles(cfg, worktree, baseTree, res.doc, changedFiles);
+  const cycleNote = cycles.length
+    ? ` — and the log requirement is not measuring ${cycles.map((c) => `"${c}"`).join(', ')}, which this branch changed (log-cycle-open): `
+      + `record why (\`${display} log add --node <node> --reason "…"\`), run the full \`${display} check --approve\` (free while no reviewer pair is pending), and commit the lock it writes`
+    : '';
+  if (res.ok && !cycles.length) return { ok: true, note: `${res.command} green${res.summary ? ` — ${res.summary}` : ''}` };
+  if (res.ok) return { ok: false, logCycleOpen: cycles, note: `${res.command} green${cycleNote}` };
+
+  // Whether what is red here is a decision only the user can make — no reviewer configured, or one
+  // that could not be reached — read off the graph's own buckets and causes. Carried on every red
+  // answer below: a refusal like that is nobody's fix round (see run()).
+  // An open log cycle this branch owes is the worker's to close, so a tree red with one is never the
+  // user's alone, whatever else in it waits on them.
+  const userOnly = cycles.length ? null : userOnlyRefusal(res.doc);
+  const reviewerMissing = reviewerMissingIn(res.doc);
+  const red = (item) => ({
+    ...item,
+    note: `${item.note}${cycleNote}`,
+    ...(userOnly ? { userOnly } : {}),
+    ...(cycles.length ? { logCycleOpen: cycles } : {}),
+    reviewerMissing,
+  });
 
   const pending = pendingProsePairs(cfg, worktree, res);
   if (pending.scriptPending.length) {
     // The free half did not take — a graph the CLI refuses to fill at all, most often because a
     // judgement rule has no judge configured. Nobody should be sent to read a script rule, so the
     // item hands over the CLI's own words instead of naming pairs it cannot classify.
-    return {
+    return red({
       ok: false,
       note: `${filled.command} left ${pending.scriptPending.length} script rule(s) with no verdict — `
         + `the free half did not take, and until it does nothing else about the graph can be judged:\n${filled.out.trim()}`,
-    };
+    });
   }
   if (pending.pairs.length) {
     const named = pending.pairs.map((p) => `${p.aspect} on ${p.unitKind}:${p.unit}`);
@@ -1030,18 +1063,52 @@ function checkGraph(cfg, worktree, noGate) {
     const errors = asArray(res.doc && res.doc.issues).filter((i) => i && i.severity === 'error');
     const onlyProsePending = errors.length > 0 && errors.every((i) => i.aspect && i.cause !== 'reviewer-missing'
       && pending.pairs.some((p) => p.aspect === i.aspect && `${p.unitKind}:${p.unit}` === i.unit));
-    return {
+    return red({
       ok: false,
       pending: pending.pairs,
       onlyProsePending,
       note: `${res.command} exited ${res.exit} — the script rules are recorded (free, no key), and `
-        + `${named.length} prose rule(s) still wait on a judgement: ${named.join(' · ')}`,
-    };
+        + `${named.length} prose rule(s) still wait on a judgement: ${named.join(' · ')}`
+        + (userOnly ? ` — waiting on a user decision: ${userOnly.text}` : ''),
+    });
   }
-  return {
+  return red({
     ok: false,
-    note: `${res.command} exited ${res.exit} — the graph refuses this tree${res.summary ? `: ${res.summary}` : ''}; a red graph is a red gate, whatever the level's gate command said`,
+    note: `${res.command} exited ${res.exit} — the graph refuses this tree${res.summary ? `: ${res.summary}` : ''}; a red graph is a red gate, whatever the level's gate command said`
+      + (userOnly ? ` — waiting on a user decision: ${userOnly.text}` : ''),
+  });
+}
+
+// The `log_required` components this branch changed whose log cycle is open on its tree: the graph's
+// own `log-cycle-open` warnings, each kept only when that component owns a file the branch changed —
+// on the branch's tree, or, for a file the branch deleted, on the base's. Asked only when there is
+// such a warning at all, and only about the files that could be that component's: one `yg node` per
+// open component narrows the changed files to its mapping, and only those are put to `yg owner`
+// (Yggdrasil answers one file per call, and a deeper component can own a file inside a mapping).
+function openLogCycles(cfg, worktree, baseTree, doc, changedFiles) {
+  const open = [...new Set(asArray(doc && doc.issues)
+    .filter((i) => i && i.code === 'log-cycle-open' && i.node).map((i) => i.node))].sort();
+  if (!open.length) return [];
+  const code = changedFiles.filter((f) => !f.startsWith('.yggdrasil/'));
+  const mappingOf = (tree, node) => {
+    const res = ygJson(tree, cfg, ['node', node, '--json'], 'yg-node/1');
+    return res.state === 'ok' ? asArray(res.doc.mapping) : [];
   };
+  const ownedBy = (tree, file, node) => {
+    const res = ygJson(tree, cfg, ['owner', '--file', file, '--json'], 'yg-owner/1');
+    return res.state === 'ok' && res.doc.node === node;
+  };
+  const hit = [];
+  for (const node of open) {
+    const here = mappingOf(worktree, node);
+    const there = baseTree ? mappingOf(baseTree, node) : [];
+    const found = code.some((f) => {
+      if (existsSync(join(worktree, f))) return pathInBoundary(f, here) && ownedBy(worktree, f, node);
+      return !!baseTree && pathInBoundary(f, there) && ownedBy(baseTree, f, node);
+    });
+    if (found) hit.push(node);
+  }
+  return hit;
 }
 
 // Whether the prose rules are judged. They have one judge: the reviewer configured inside
@@ -1060,10 +1127,11 @@ function checkJudge(cfg, worktree, graphItem, noGate) {
   return {
     ok: false,
     pairs: pending,
-    note: hasReviewer(worktree)
+    note: !(graphItem && graphItem.reviewerMissing)
       ? `${pending.length} prose rule(s) have no verdict from this repository's reviewer: ${named}. Run \`${display} check --approve\` on the branch and commit what it records, then land again`
       : `${pending.length} prose rule(s) have no verdict, and this repository has no Yggdrasil reviewer to give one: ${named}. `
-        + 'Prose rules are judged by that reviewer only — configure one (yg init --provider <claude-code|codex|copilot-cli|…> --model <model>), run `yg check --approve`, then land again',
+        + 'Prose rules are judged by that reviewer only, and configuring one — or setting those rules to status: draft — is the user\'s decision, not a worker\'s: '
+        + 'no fix round is counted for it, and the ticket waits until the user has answered',
   };
 }
 
@@ -1315,21 +1383,108 @@ function suppressionsAt(tree, cfg) {
 // A rule's own applicability text, read off the tree rather than inferred. Only `when` and `scope`
 // matter here: they are what decides which units the rule reaches, so a change to either is what
 // turns a lost pair into "the rule was narrowed" rather than "the rule was unhooked from a node".
+// An installed rule's `scope` is the adopter's to adapt, so it may sit in `yg-aspect.adapt.yaml`
+// beside the copy rather than in the copy itself; both files are read, in that order.
 const TOP_LEVEL_KEY = /^[A-Za-z_][\w-]*:/;
-function aspectReachText(tree, aspectId) {
-  const path = join(tree, '.yggdrasil', 'aspects', aspectId, 'yg-aspect.yaml');
-  let text = '';
-  try { text = readFileSync(path, 'utf8'); } catch { return ''; }
+function yamlBlocks(text, keys) {
   const out = [];
   let inBlock = false;
-  for (const line of text.split('\n')) {
-    if (/^(when|scope):/.test(line)) { inBlock = true; out.push(line); continue; }
+  for (const line of String(text || '').split('\n')) {
+    const key = /^([A-Za-z_][\w-]*):/.exec(line);
+    if (key && keys.includes(key[1])) { inBlock = true; out.push(line); continue; }
     if (inBlock) {
       if (TOP_LEVEL_KEY.test(line)) { inBlock = false; continue; }
       out.push(line);
     }
   }
   return out.join('\n').trim();
+}
+
+function aspectReachText(tree, aspectId) {
+  const dir = join(tree, '.yggdrasil', 'aspects', aspectId);
+  return RULE_YAML_FILES
+    .map((name) => yamlBlocks(contentAt(dir, name), ['when', 'scope']))
+    .filter(Boolean)
+    .join('\n');
+}
+
+// ---- which rule a path under .yggdrasil/aspects/ belongs to ------------------------------------
+//
+// A rule id is its directory's path under `.yggdrasil/aspects/`, and it can hold `/` of its own: a
+// rule nested under another (`boundary/clean-core`), or one installed from a package
+// (`packages/<owner>/<repo>/<package>/<rule>`). So a changed path is never cut at its first segment
+// — it belongs to the longest id in the graph's own inventory that is a directory above it. A path
+// under no known rule belongs to none.
+const ASPECTS_DIR = '.yggdrasil/aspects/';
+const RULE_YAML_FILES = ['yg-aspect.yaml', 'yg-aspect.adapt.yaml'];
+
+export function ruleOfPath(path, ids) {
+  if (!String(path).startsWith(ASPECTS_DIR)) return null;
+  const rest = String(path).slice(ASPECTS_DIR.length);
+  let best = null;
+  for (const id of ids) {
+    if (!id || !rest.startsWith(`${id}/`)) continue;
+    if (!best || id.length > best.length) best = id;
+  }
+  return best === null ? null : { id: best, file: rest.slice(best.length + 1) };
+}
+
+// Whether a file inside a rule's own directory is part of what the rule SAYS. Everything there is —
+// the rule's text, its code, any helper or table its code reads, the adopter's adaptation — except
+// what describes or tests the rule rather than deciding a verdict: its history (`log.md`, and an
+// installed rule's `yg-aspect.adapt.log.md`), the `drills/` corpus it is measured against, and
+// dot-files. Code is the exception to the exception: a `.mjs`, `.js` or `.cjs` file is something the
+// rule's own code can import wherever it sits, so it counts even as a dot-file or under `drills/`.
+const EXECUTABLE = /\.(mjs|cjs|js)$/;
+export function isRuleText(file) {
+  if (EXECUTABLE.test(String(file))) return true;
+  const segs = String(file).split('/');
+  if (segs.some((s) => s.startsWith('.'))) return false;
+  if (segs.length > 1 && segs[0] === 'drills') return false;
+  if (segs.length === 1 && (file === 'log.md' || file === 'yg-aspect.adapt.log.md')) return false;
+  return true;
+}
+
+// A rule's definition file with the two keys that say how hard it bites and when it is next re-read
+// taken out, and comments and blank lines dropped — outside a block scalar (`key: |`, `key: >`),
+// whose every line, `#` and blank included, is the value itself and is kept verbatim. Those two
+// keys are the law guard's to judge (a lowering) or nobody's (a raise); everything else in the file
+// is what the rule is and what it reaches. This skill carries no YAML parser, so the block scalar is
+// told apart by its indentation, the way YAML itself does: every line indented deeper than the key
+// that opened it.
+export function ruleYamlSubstance(text) {
+  if (text === null) return null;
+  const kept = [];
+  let skipping = false;
+  let block = null;
+  for (const raw of String(text).split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    const indent = line.length - line.trimStart().length;
+    if (block !== null) {
+      if (line === '' || indent > block) {
+        if (!skipping) kept.push(line);
+        continue;
+      }
+      block = null;
+    }
+    if (line.trim() === '' || /^\s*#/.test(line)) continue;
+    const key = /^([A-Za-z_][\w-]*):/.exec(line);
+    if (key) skipping = key[1] === 'status' || key[1] === 'review_by';
+    else if (!/^\s/.test(line)) skipping = false;
+    if (/:\s*[|>][-+0-9]*\s*(#.*)?$/.test(line)) block = indent;
+    if (!skipping) kept.push(line);
+  }
+  return kept.join('\n').replace(/\n+$/, '');
+}
+
+// Whether this branch changed what the rule at `id` says, through the one file `file` inside its
+// directory. A definition or adaptation file counts only when something other than its status or
+// review date moved; any other rule text counts whenever it moved at all.
+function ruleTextChanged(baseTree, headTree, id, file) {
+  if (!isRuleText(file)) return false;
+  if (!RULE_YAML_FILES.includes(file)) return true;
+  const rel = join('.yggdrasil', 'aspects', id, file);
+  return ruleYamlSubstance(contentAt(baseTree, rel)) !== ruleYamlSubstance(contentAt(headTree, rel));
 }
 
 // ---- the law guard --------------------------------------------------------------------
@@ -1450,7 +1605,9 @@ function lawGuard(cfg, horde, baseTree, headTree) {
     take(refuse(aspect, 'suppressed', `This branch adds a yg-suppress marker for "${aspect}" on ${file}, which switches that rule off there.`));
   }
 
-  return { ok: refusals.length === 0, refusals, used, headReach };
+  return {
+    ok: refusals.length === 0, refusals, used, headReach, baseAspects, headAspects,
+  };
 }
 
 // ---- the conflict-of-interest guard ---------------------------------------------------
@@ -1460,24 +1617,30 @@ function lawGuard(cfg, horde, baseTree, headTree) {
 // needed it to. Adding a NEW rule is not this — it judged nothing before. Raising an existing
 // rule's status is not this either — the rule's text is the same one that already refused or
 // passed the code. Changing what the rule SAYS, while changing code it reaches, is.
-const ASPECT_TEXT_FILE = /^\.yggdrasil\/aspects\/([^/]+)\/(content\.md|check\.mjs|companion\.mjs|yg-aspect\.yaml)$/;
-
-function conflictGuard(cfg, baseTree, headTree, changedFiles, headReach) {
-  const baseAspects = aspectsById(baseTree, cfg);
+function conflictGuard(cfg, baseTree, headTree, changedFiles, law) {
+  const baseAspects = law.baseAspects || aspectsById(baseTree, cfg);
+  const headAspects = law.headAspects || aspectsById(headTree, cfg);
+  const headReach = law.headReach;
+  const baseIds = [...baseAspects.keys()];
+  const ids = [...new Set([...baseIds, ...headAspects.keys()])];
   const touched = new Map();
   for (const f of changedFiles) {
-    const m = ASPECT_TEXT_FILE.exec(f);
-    if (!m) continue;
-    const [, id, file] = m;
-    // A rule this branch invents judged nothing before it existed, so nothing it says about this
-    // code can be a rule bent around it.
-    if (!baseAspects.has(id)) continue;
-    // yg-aspect.yaml carries status and review_by as well as when/scope. Only the two that decide
-    // what the rule reaches count as its text here; a raised status is dealt with by the law guard
-    // on its way down, never up.
-    if (file === 'yg-aspect.yaml' && aspectReachText(baseTree, id) === aspectReachText(headTree, id)) continue;
-    if (!touched.has(id)) touched.set(id, new Set());
-    touched.get(id).add(file);
+    // Resolved twice: against every id either tree has, and against the base's alone. The second
+    // is what a rule was before this branch touched it, so a new rule dropped inside an existing
+    // rule's directory — a `yg-aspect.yaml` added over its helpers — cannot take a file out of the
+    // rule whose code reads it: that file, and the added definition itself, are still changes to the
+    // enclosing rule.
+    const owners = [ruleOfPath(f, ids), ruleOfPath(f, baseIds)].filter(Boolean);
+    for (const { id, file } of owners) {
+      // A rule this branch invents judged nothing before it existed, so nothing it says about this
+      // code can be a rule bent around it.
+      if (!baseAspects.has(id)) continue;
+      // A raised status or a moved review date is not what the rule says: the first is the law
+      // guard's to see on its way down and nobody's on its way up, the second the law guard's alone.
+      if (!ruleTextChanged(baseTree, headTree, id, file)) continue;
+      if (!touched.has(id)) touched.set(id, new Set());
+      touched.get(id).add(file);
+    }
   }
   if (touched.size === 0) return { ok: true, refusals: [] };
 
@@ -1669,11 +1832,14 @@ export function promiseFrontmatter(text) {
 //
 // A repository may pin one pairing for every promise, instead of each promise saying which it
 // uses: the SAME `evidence` setting `packages/promises/has-evidence/check.mjs`'s own `check(ctx)`
-// reads off `ctx.config?.evidence` (`DEFAULT_EVIDENCE = 'auto'`), installed on a tree's own
-// `.yggdrasil/aspects/has-evidence/yg-aspect.yaml` under a `config:` block. Duplicated here rather
-// than imported — this skill's own self-containment rule keeps the (separately installed)
-// `promises` package out of reach from `land.mjs`, the same reason `SKIP_MARKERS` above is a
-// hand-mirrored copy rather than an import.
+// reads off `ctx.config?.evidence` (`DEFAULT_EVIDENCE = 'auto'`). Where it is written depends on
+// how the rule got there. Installed with `yg pack add`, the rule lives at
+// `.yggdrasil/aspects/packages/<owner>/<repo>/<package>/has-evidence/` and its settings are the
+// adopter's `yg-aspect.adapt.yaml` beside the copy; copied in by hand, it lives wherever it was put
+// (most often `.yggdrasil/aspects/has-evidence/`) with the setting in its own `yg-aspect.yaml`.
+// Duplicated here rather than imported — this skill's own self-containment rule keeps the
+// (separately installed) `promises` package out of reach from `land.mjs`, the same reason
+// `SKIP_MARKERS` above is a hand-mirrored copy rather than an import.
 const EVIDENCE_ADAPTERS = ['mirror', 'named', 'self', 'artefact'];
 
 // A YAML file's own flat scalars plus one level of nesting — the same shape `promiseFrontmatter`
@@ -1707,19 +1873,50 @@ function flatYamlBlock(text) {
 // The has-evidence aspect's own pin on one tree — one of the four pairings, or null. Null covers
 // every shape of "auto" at once, on purpose, so a caller never has to branch on which: the aspect
 // is not installed on this tree at all (a repository that has not adopted the has-evidence rule —
-// the common, unaffected case); the file carries no `config:` block; the block carries no
-// `evidence:` key; the key is written out as `auto` explicitly; or the key names something that is
-// none of the four pairings and not `auto` either, which is a graph problem for `yg check` to
-// catch (the real rule refuses a setting outside its five recognised words) and never a promise
-// this guard would otherwise have to guess a pairing for. Read off the same tree-relative path
-// `aspectReachText` above reads aspect content from.
+// the common, unaffected case); no `config:` block carries an `evidence:` key; the key is written
+// out as `auto` explicitly; or the key names something that is none of the four pairings and not
+// `auto` either, which is a graph problem for `yg check` to catch (the real rule refuses a setting
+// outside its five recognised words) and never a promise this guard would otherwise have to guess
+// a pairing for.
+//
+// The rule is found by its id, never by a fixed path: the rule whose id is `has-evidence` or ends
+// in `/has-evidence`, read off the tree's own `.yggdrasil/aspects/` (a directory holding a
+// `yg-aspect.yaml` is a rule, and its path there is its id — the graph's own definition). The
+// adaptation wins over the copy, as it does in Yggdrasil: an installed rule's copy is never edited,
+// so a pin written anywhere but the adaptation would not be the adopter's.
 export function evidencePinAt(tree) {
-  const text = contentAt(tree, '.yggdrasil/aspects/has-evidence/yg-aspect.yaml');
-  if (text === null) return null;
-  const raw = flatYamlBlock(text).blocks.config?.evidence;
-  if (raw === undefined) return null;
-  const setting = String(raw).trim();
-  return EVIDENCE_ADAPTERS.includes(setting) ? setting : null;
+  const rule = hasEvidenceRuleDir(tree);
+  if (rule === null) return null;
+  for (const name of ['yg-aspect.adapt.yaml', 'yg-aspect.yaml']) {
+    const raw = flatYamlBlock(contentAt(rule, name)).blocks.config?.evidence;
+    if (raw === undefined) continue;
+    const setting = String(raw).trim();
+    return EVIDENCE_ADAPTERS.includes(setting) ? setting : null;
+  }
+  return null;
+}
+
+// The directory of the has-evidence rule on one tree, or null. Several would be a repository that
+// installed the package and kept a hand-copied one too; the first by id is read, the same order
+// `yg aspects` lists them in.
+function hasEvidenceRuleDir(tree) {
+  const root = join(tree, '.yggdrasil', 'aspects');
+  const found = [];
+  const walk = (dir, rel) => {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    if (rel && (rel === 'has-evidence' || rel.endsWith('/has-evidence'))
+      && entries.some((e) => e.isFile() && e.name === 'yg-aspect.yaml')) found.push(rel);
+    for (const e of entries) {
+      if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'drills' && e.name !== 'node_modules') {
+        walk(join(dir, e.name), rel ? `${rel}/${e.name}` : e.name);
+      }
+    }
+  };
+  walk(root, '');
+  if (!found.length) return null;
+  found.sort();
+  return join(root, found[0]);
 }
 
 // Which of the four pairings applies to a promise: the tree's own pin when it names one, or — same
@@ -1845,8 +2042,8 @@ export function promisesIn(tree, cfg) {
 //   evidence:<name>    a promise's own id, or a test file's path  (the evidence guard)
 //   gate:<path>        a file a gate, a hook or CI actually runs  (the gate guard)
 //
-// A rule id is a bare directory name under `.yggdrasil/aspects/`, so it can never carry the `:`
-// the other two open with; a promise id is a filename stem and a test file is a path, so the two
+// A rule id is its directory's path under `.yggdrasil/aspects/` — it may hold `/` (a nested or an
+// installed rule), never the `:` the other two open with; a promise id is a filename stem and a test file is a path, so the two
 // that share the `evidence:` prefix never spell each other either.
 //
 // Nothing here asks a model anything. Both guards read two trees and compare two numbers or two
@@ -2799,22 +2996,36 @@ function renderTrailers(entries) {
     .map(([key, value]) => `${key}: ${trailerValue(value)}`);
 }
 
-// What the branch did to the law, read off the files it changed: a rule's own directory under
-// `.yggdrasil/aspects/<id>/` appearing is a rule added, and a change inside one that was already
-// there is a rule changed. Read from the diff rather than by asking Yggdrasil twice — the gate has
-// already run `yg check` on this tree, and the question here is only which rules the diff touched.
+// What the branch did to the law, read off the files it changed. Each changed path under
+// `.yggdrasil/aspects/` belongs to the rule whose directory is the longest one above it (see
+// ruleOfPath) — a rule's id may hold `/` — and the rules are the directories holding a
+// `yg-aspect.yaml` on either side, the graph's own definition of one. A rule only the branch has
+// was added, one only the parent has was removed, any other was changed. Read from the two commits
+// rather than by asking Yggdrasil twice — the gate has already run `yg check` on this tree, and the
+// question here is only which rules the diff touched.
+function ruleIdsAt(root, ref) {
+  const out = git(['-c', 'core.quotepath=false', 'ls-tree', '-r', '--name-only', ref, '--', '.yggdrasil/aspects'], root) || '';
+  const ids = new Set();
+  for (const f of out.split('\n')) {
+    const m = /^\.yggdrasil\/aspects\/(.+)\/yg-aspect\.yaml$/.exec(f.trim());
+    if (m) ids.add(m[1]);
+  }
+  return ids;
+}
+
 function lawTrailers(root, branch, parentBranch) {
-  const rows = (git(['diff', '--name-status', `${parentBranch}...${branch}`], root) || '')
+  const rows = (git(['-c', 'core.quotepath=false', 'diff', '--name-only', `${parentBranch}...${branch}`], root) || '')
     .split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!rows.some((f) => f.startsWith(ASPECTS_DIR))) return [];
+  const before = ruleIdsAt(root, parentBranch);
+  const after = ruleIdsAt(root, branch);
+  const ids = [...new Set([...before, ...after])];
   const byAspect = new Map();
-  for (const row of rows) {
-    const [status, ...rest] = row.split(/\t/);
-    const m = /^\.yggdrasil\/aspects\/([^/]+)\//.exec(rest[rest.length - 1] || '');
-    if (!m) continue;
-    const added = status.startsWith('A');
-    const seen = byAspect.get(m[1]);
-    // One rule, one line: a rule whose diff both adds and edits files is a rule this branch added.
-    if (!seen || added) byAspect.set(m[1], added ? 'added' : 'changed');
+  for (const f of rows) {
+    const rule = ruleOfPath(f, ids);
+    if (!rule) continue;
+    const what = !before.has(rule.id) ? 'added' : (!after.has(rule.id) ? 'removed' : 'changed');
+    byAspect.set(rule.id, what);
   }
   return [...byAspect.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([id, what]) => ['Law', `${id} ${what}`]);
 }
@@ -3265,7 +3476,7 @@ function screenBatchMember(root, cfg, horde, ctx, basePath, cleaner) {
   const law = lawGuard(cfg, horde, basePath, head.path);
   if (law.stopped) return { ok: false, note: law.stopped };
   const refusals = [...law.refusals];
-  const conflict = conflictGuard(cfg, basePath, head.path, ctx.changedFiles, law.headReach);
+  const conflict = conflictGuard(cfg, basePath, head.path, ctx.changedFiles, law);
   refusals.push(...conflict.refusals);
   const protection = protectionGuards(cfg, horde, basePath, head.path, ctx.changedFiles);
   refusals.push(...protection.refusals);
@@ -3318,9 +3529,9 @@ function combineBatchGroup(root, cfg, group, cleaner) {
 // The caller holds the gate lock around this call and only this call, mirroring run()'s own
 // lock-around-the-expensive-half shape, now paid once for the whole group rather than once per
 // member.
-function runSharedGate(cfg, level, worktreePath, addedFiles) {
+function runSharedGate(cfg, level, worktreePath, addedFiles, changedFiles = [], baseTree = null) {
   const gate = checkGate(cfg, level, worktreePath, null, false);
-  const graph = checkGraph(cfg, worktreePath, false);
+  const graph = checkGraph(cfg, worktreePath, false, changedFiles, baseTree);
   const mapping = checkMapping(cfg, worktreePath, addedFiles, false);
   const judge = checkJudge(cfg, worktreePath, graph, false);
   return {
@@ -3597,7 +3808,8 @@ function runMany(horde, root, cfg, tickets, level, noGate, flags) {
       let shared;
       const sharedStart = Date.now();
       try {
-        shared = runSharedGate(cfg, level, combined.info.path, addedFiles);
+        const changedFiles = diffPaths(['diff', '--name-only', `${group.parentTip}...HEAD`], combined.info.path);
+        shared = runSharedGate(cfg, level, combined.info.path, addedFiles, changedFiles, baseTree.path);
       } finally {
         lock.release();
       }
@@ -3752,7 +3964,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       const law = lawGuard(cfg, horde, base.path, head.path);
       if (law.stopped) fail(law.stopped);
       guards.push(...law.refusals);
-      const conflict = conflictGuard(cfg, base.path, head.path, changedFiles, law.headReach);
+      const conflict = conflictGuard(cfg, base.path, head.path, changedFiles, law);
       guards.push(...conflict.refusals);
       const protection = protectionGuards(cfg, horde, base.path, head.path, changedFiles);
       guards.push(...protection.refusals);
@@ -3775,7 +3987,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     const gateStart = Date.now();
     try {
       results.gate = checkGate(cfg, level, head.path, branchSha, noGate);
-      results.graph = checkGraph(cfg, head.path, noGate);
+      results.graph = checkGraph(cfg, head.path, noGate, changedFiles, base.path);
       results.mapping = checkMapping(cfg, head.path, addedFiles, noGate);
     } finally {
       lock.release();
@@ -3793,7 +4005,13 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     const redNames = checks.filter((c) => !c.ok).map((c) => c.name);
     const rejudge = !allOk && !noGate && !!(pulled && pulled.ok)
       && redNames.includes('judge') && redNames.every((n) => n === 'judge' || n === 'graph')
-      && !!(results.graph && results.graph.onlyProsePending) && hasReviewer(head.path);
+      && !!(results.graph && results.graph.onlyProsePending) && !results.graph.reviewerMissing;
+    // Red only because of a decision the user has to make — no reviewer to judge the prose rules, or
+    // one that could not be reached. No worker can clear that, so no round is counted: the result says
+    // so and tick holds the ticket on one question to the user for the whole horde.
+    const waitingOnUser = !allOk && !noGate && !rejudge && redNames.length > 0
+      && redNames.every((n) => n === 'judge' || n === 'graph')
+      && !!(results.graph && results.graph.userOnly) ? results.graph.userOnly : null;
 
     if (allOk && !noGate) {
       // The sha the items were measured against has to be the sha that lands. A branch that moved
@@ -3817,6 +4035,8 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       // a sha `done` and `close` can actually find on the branch they read. See checkGate's comment.
       if (results.gate.cache) recordGateCache(horde, level, { ...results.gate.cache, sha: merged.sha }, ticketId, branch, cfg);
       checks.push({ name: 'merge', ok: true, note: `${merged.note} — ${short(merged.sha)}` });
+    } else if (waitingOnUser) {
+      recordWaiting(horde, ticketId, waitingOnUser);
     } else if (!allOk && !noGate && !rejudge) {
       recordChanges(horde, ticketId, checks);
     }
@@ -3828,6 +4048,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       sha: branchSha,
       ok: allOk,
       ...(rejudge ? { rejudge: true } : {}),
+      ...(waitingOnUser ? { waitingOnUser } : {}),
       checks,
       pairs: asArray(judge.pairs),
       landed,
@@ -3855,6 +4076,16 @@ function recordChanges(horde, ticketId, checks) {
     return;
   }
   transitionStatus(ticket, 'changes', `land refused: ${red.join(' · ')}`, roundInfo);
+}
+
+// A refusal only the user can clear is written into the ticket's history too — once per landing,
+// with no round and no change of status: the status is tick's to move (to "blocked", on the one
+// question it files for the whole horde), and a landing run by hand must not leave the queue and
+// the ticket disagreeing about where the ticket is.
+function recordWaiting(horde, ticketId, waiting) {
+  const ticket = findTicket(horde, ticketId);
+  if (!ticket) return;
+  appendTicketLine(ticket, `- ${nowIso()} land refused, waiting on a user decision, no round counted — ${waiting.text}\n`);
 }
 
 function appendTicketLine(ticket, line) {

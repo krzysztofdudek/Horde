@@ -27,7 +27,7 @@ import {
 } from './wave.mjs';
 import { writeLawDiff } from './law.mjs';
 import { RETRO_SCHEMA, collectRetroInput, missionState } from './retro.mjs';
-import { ygJson, hasReviewer } from './node.mjs';
+import { ygJson, reviewerGap } from './node.mjs';
 
 const USAGE = `usage: horde.mjs <command> [options]
 
@@ -573,18 +573,25 @@ function cmdInit(positional, flags) {
   // to make one is refused here, leaving nothing of this horde behind to clean up.
   const graph = ensureGraph(root, readConfig(), flags);
 
+  // Whether the prose rules here have a reviewer to judge them, asked of the graph itself: one
+  // read-only `yg check --json`, whose findings say when a reviewer rule has no reviewer
+  // (`config-reviewer-missing`) and how many pairs wait on one. That is the user's decision to make,
+  // and this — framing — is the phase the user is in the loop for, so it is said now rather than
+  // discovered by the first landing that meets it.
+  const initCfg = readConfig() || {};
+  const gap = reviewerGap({ ...initCfg, ygCommand: flags.yg || initCfg.ygCommand || 'yg' }, root);
+
   // Whether this repository's own commit hook can be satisfied at all. A hook that demands a full
-  // `yg check` in a repository with no reviewer refuses every commit a worker makes, because the
-  // prose rules have nobody to judge them, and the only thing anyone learns from that is
+  // `yg check` while a reviewer rule has no reviewer refuses every commit a worker makes, because
+  // those prose rules have nobody to judge them, and the only thing anyone learns from that is
   // `--no-verify`. Refused here, before a single file of this horde exists.
-  const reviewer = hasReviewer(root);
   const hook = detectCommitHook(root);
-  if (!reviewer && hook && !hook.deterministicOnly) {
+  if (gap.read && gap.gap && gap.reviewerMissing && hook && !hook.deterministicOnly) {
     fail(
-      `${hook.file} runs a full \`yg check\` on every commit, and this repository has no Yggdrasil reviewer configured.\n`
+      `${hook.file} runs a full \`yg check\` on every commit, and this repository has no Yggdrasil reviewer configured for its prose rules${gap.rules.length ? ` (${gap.rules.join(', ')})` : ''}.\n`
       + 'Prose rules are judged only by that reviewer, so every commit a worker makes would refuse — '
       + 'and the only thing that teaches is --no-verify, which switches off the gate this whole tool exists to keep.\n'
-      + 'Give the repository a reviewer: yg init --provider <claude-code|codex|copilot-cli|…> --model <model>',
+      + `That is the user's decision to make: ${gap.text}`,
     );
   }
 
@@ -668,9 +675,15 @@ function cmdInit(positional, flags) {
 
   // Said out loud at the one moment somebody is reading, because it changes what a worker is told
   // to run before committing and what the landing gate does with an unjudged rule.
-  const judgeNote = reviewer
-    ? 'prose rules are judged by the reviewer configured in this repository\'s graph — a worker runs `yg check --approve` before committing, and landing only checks that nothing came back unjudged.'
-    : 'this repository has no Yggdrasil reviewer, and prose rules are judged by no one else — a ticket whose tree carries a prose rule without a verdict will not land. Give it one: yg init --provider <claude-code|codex|copilot-cli|…> --model <model>';
+  let judgeNote;
+  if (!gap.read) {
+    judgeNote = `whether the prose rules here have a reviewer could not be read — ${gap.why}. The first landing on a prose-ruled node will say.`;
+  } else if (gap.gap) {
+    judgeNote = `prose rules here wait on a decision only the user can make — ${gap.text}${gap.rules.length ? ` (rules: ${gap.rules.join(', ')})` : ''}. `
+      + 'Until it is made, every ticket on a node those rules reach stops at the gate, with no fix round counted, on one question to the client. Put it to them now, while framing.';
+  } else {
+    judgeNote = 'no prose rule here waits on a reviewer that is not there: prose rules are judged by the reviewer configured in this repository\'s graph only — a worker runs `yg check --approve` before committing, and landing only checks that nothing came back unjudged.';
+  }
   const hookNote = hook
     ? `commit hook: ${hook.file} runs \`yg check\`${hook.deterministicOnly ? ' --only-deterministic (the free half — right for this repository)' : ' in full'}`
     : 'no commit hook runs `yg check` here — nothing checks the graph until landing does';
@@ -694,7 +707,7 @@ function cmdInit(positional, flags) {
       gates: cfg.gates,
       testGlobs: cfg.testGlobs,
       appendOnly: cfg.appendOnly || [],
-      reviewer,
+      reviewerGap: gap,
       commitHook: hook,
       leased,
     },

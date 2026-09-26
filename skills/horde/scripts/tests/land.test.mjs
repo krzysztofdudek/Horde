@@ -15,7 +15,7 @@ import {
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 import {
   parseReport, sameFile, sameCase, promiseFrontmatter, pairingAdapter, pairingOf, pairingKind,
-  evidencePinAt, promisesIn, appendOnlyMerge,
+  evidencePinAt, promisesIn, appendOnlyMerge, ruleOfPath, isRuleText, ruleYamlSubstance,
 } from '../land.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -368,52 +368,203 @@ test('land.mjs: once the reviewer has judged the pairs on the branch, the judge 
   assert.ok(green.json.landed, 'it landed');
 });
 
-test('horde.mjs init says whether the repository has a reviewer, and keeps no judge policy', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
-  assert.equal(r.code, 0, r.stderr);
-  // A fresh `yg init` with no --provider leaves no reviewer, and nothing else may judge a prose rule.
-  assert.match(r.stdout, /has no Yggdrasil reviewer, and prose rules are judged by no one else/);
-  assert.equal(JSON.parse(readFileSync(join(dir, '.horde', 'config.json'), 'utf8')).judge, undefined);
+// A prose rule attached to a component, committed on the branch a horde is cut from — the one shape
+// in which the graph itself says whether a reviewer is missing (`config-reviewer-missing`).
+function proseRuleOnMain(dir) {
+  addAspect(dir, 'reads-well', {
+    description: 'Every exported name reads as a sentence a stranger understands.',
+    content: '# Reads well\n\nAn exported name must read as something a stranger understands.\n',
+  });
+  addNode(dir, 'feature', { mapping: ['feature.mjs'], aspects: ['reads-well'] });
+  writeFileSync(join(dir, 'feature.mjs'), 'export const add = (a, b) => a + b;\n');
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'a component under a prose rule'], dir);
+  git(['branch', '-f', 'develop', 'HEAD'], dir);
+}
+
+test('horde.mjs init reads a missing reviewer off the graph, and names it as the client\'s decision', async (t) => {
+  await t.test('a prose rule and no reviewer: the gap is named, with the graph\'s own next step', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    assert.equal(yg(dir, ['init']).code, 0);
+    proseRuleOnMain(dir);
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /prose rules here wait on a decision only the user can make/);
+    assert.match(r.stdout, /configuring a reviewer/, 'the graph\'s own next step is carried');
+    assert.match(r.stdout, /rules: reads-well/);
+    assert.match(r.stdout, /with no fix round counted/);
+    assert.equal(JSON.parse(readFileSync(join(dir, '.horde', 'config.json'), 'utf8')).judge, undefined);
+  });
+
+  await t.test('no prose rule at all: nothing waits on a reviewer, and nothing is said to be missing', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.json.reviewerGap, { read: true, gap: false });
+  });
+
+  await t.test('a reviewer configured: no gap, whatever its config file looks like', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
+    proseRuleOnMain(dir);
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
+    assert.equal(r.code, 0, r.stderr);
+    assert.match(r.stdout, /prose rules are judged by the reviewer configured in this repository's graph/);
+    assert.doesNotMatch(r.stdout, /decision only the user can make/);
+  });
 });
 
-// A config whose `reviewer:` block is its LAST top-level key — Yggdrasil's own repository ends its
-// yg-config.yaml that way, and a reviewer added to an existing config lands there too. The
-// detection used to need another top-level key after the block, so it read such a config as having
-// no reviewer at all.
-test('horde.mjs init finds a reviewer block that ends the config file', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
-  const configPath = join(dir, '.yggdrasil', 'yg-config.yaml');
-  const lines = readFileSync(configPath, 'utf8').split('\n');
-  const start = lines.findIndex((l) => /^reviewer:\s*$/.test(l));
-  assert.ok(start >= 0, 'yg init --provider wrote a reviewer block');
-  let end = start + 1;
-  while (end < lines.length && !/^\S/.test(lines[end])) end += 1;
-  const block = lines.slice(start, end).join('\n').replace(/\s+$/, '');
-  const rest = [...lines.slice(0, start), ...lines.slice(end)].join('\n').replace(/\s+$/, '');
-  writeFileSync(configPath, `${rest}\n${block}\n`);
-
-  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
-  assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /prose rules are judged by the reviewer configured in this repository's graph/);
-});
-
-test('horde.mjs init refuses a commit hook that runs a full check in a repository with no reviewer', async (t) => {
+test('horde.mjs init refuses a commit hook that runs a full check while a prose rule has no reviewer', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   assert.equal(yg(dir, ['init']).code, 0);
+  proseRuleOnMain(dir);
   writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nyg check\n');
 
   const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir);
   assert.equal(r.code, 1);
-  assert.match(r.stderr, /runs a full `yg check` on every commit, and this repository has no Yggdrasil reviewer/);
+  assert.match(r.stderr, /runs a full `yg check` on every commit, and this repository has no Yggdrasil reviewer configured for its prose rules \(reads-well\)/);
   assert.match(r.stderr, /Prose rules are judged only by that reviewer/);
-  assert.match(r.stderr, /yg init --provider/);
+  assert.match(r.stderr, /the user's decision/);
   assert.doesNotMatch(r.stderr, /--no-verify is fine|use --no-verify/);
   assert.equal(existsSync(join(dir, '.horde', 'hordes')), false, 'nothing of the horde was created');
+});
+
+// ---- a refusal only the user can clear (issue 292) ---------------------------------------
+//
+// A prose rule no reviewer is configured to judge is not something a worker can fix: configuring
+// one, or putting the rule on hold, is the user's decision. The graph says so in its own buckets, so
+// two tickets that meet it both wait with no round counted, and the user is asked once.
+test('land + tick: two tickets on a prose-ruled node with no reviewer wait on one user decision, and no round is counted', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  // One glob for both tickets' files: a mapped path that is not on a branch yet would be a graph fix,
+  // which is a worker's, and this fixture is about the one thing that is not.
+  const mapping = ['feature-*.mjs'];
+  const first = setupLandable(dir, '311', { prose: true, mapping });
+  const secondBranch = makeTicketBranch(dir, '312');
+  const secondIssue = writeIssue(dir, 'trunk', '312');
+  writeTicketLog(secondIssue);
+  seedQueueItem(dir, 'trunk', '312', secondBranch);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+
+  for (const [id, branch, issue] of [['311', first.branch, first.issueDir], ['312', secondBranch, secondIssue]]) {
+    const r = run('land.mjs', [branch, '--result'], dir);
+    assert.equal(r.code, 1, `${id}: ${r.stdout}${r.stderr}`);
+    const checks = byName(r);
+    assert.equal(checks.judge.ok, false);
+    assert.match(checks.judge.note, /the user's decision, not a worker's/);
+    assert.ok(r.json.waitingOnUser, `${id} is waiting on the user: ${JSON.stringify(r.json)}`);
+    assert.equal(r.json.waitingOnUser.reviewerMissing, true);
+    assert.match(r.json.waitingOnUser.text, /configuring a reviewer/);
+    const log = readFileSync(join(issue, 'log.md'), 'utf8');
+    assert.match(log, /waiting on a user decision, no round counted/);
+    assert.doesNotMatch(log, /round \d+\//, `${id}: no round was counted`);
+    assert.doesNotMatch(log, /status: changes/, `${id}: the landing does not send it back for a fix`);
+  }
+
+  const ticked = run('tick.mjs', [], dir);
+  assert.equal(ticked.code, 0, ticked.stderr);
+  const steps = ticked.json.landed.filter((l) => ['311', '312'].includes(l.ticket));
+  assert.equal(steps.length, 2, JSON.stringify(ticked.json.landed));
+  for (const step of steps) {
+    assert.equal(step.action, 'waiting', JSON.stringify(step));
+    assert.equal(step.round, null);
+  }
+  const asks = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json'), 'utf8')).items;
+  assert.equal(asks.length, 1, `exactly one question for the whole horde: ${JSON.stringify(asks)}`);
+  assert.equal(asks[0].kind, 'stuck');
+  assert.equal(asks[0].ticket, undefined, 'it names no ticket — it is the horde\'s question');
+  assert.match(asks[0].why, /decision only you can make/);
+  assert.ok(steps.every((s) => s.ask === asks[0].id), 'both tickets point at the same question');
+
+  const queue = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json'), 'utf8'));
+  for (const [id, issue] of [['311', first.issueDir], ['312', secondIssue]]) {
+    const item = queue.items.find((i) => i.ticket === id);
+    assert.equal(item.state, 'blocked');
+    assert.equal(item.returnReason.kind, 'waiting-on-user');
+    assert.equal(item.returnReason.ask, asks[0].id);
+    assert.match(readFileSync(join(issue, 'issue.md'), 'utf8'), /\*\*Status:\*\* blocked/);
+    const log = readFileSync(join(issue, 'log.md'), 'utf8');
+    assert.match(log, /status: blocked — waiting on a user decision/);
+    assert.doesNotMatch(log, /round \d+\//, `${id}: still no round`);
+  }
+
+  // Answered once, both go back to a worker — still with no round — and the brief carries the answer.
+  assert.equal(run('ask.mjs', ['answer', asks[0].id, 'set reads-well to draft for this mission'], dir).code, 0);
+  const released = run('tick.mjs', [], dir);
+  assert.equal(released.code, 0, released.stderr);
+  const back = released.json.landed.filter((l) => l.action === 'released').map((l) => l.ticket).sort();
+  assert.deepEqual(back, ['311', '312']);
+  const after = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'queue.json'), 'utf8'));
+  for (const id of ['311', '312']) {
+    const item = after.items.find((i) => i.ticket === id);
+    assert.notEqual(item.state, 'blocked');
+    assert.equal(item.returnReason.kind, 'user-decided');
+    assert.match(item.returnReason.answer, /draft/);
+  }
+  const brief = run('brief.mjs', ['worker', '311', '--name', 'w-311'], dir, { json: false });
+  assert.equal(brief.code, 0, brief.stderr);
+  assert.match(brief.stdout, /## The user decided/);
+  assert.match(brief.stdout, /set reads-well to draft for this mission/);
+  for (const issue of [first.issueDir, secondIssue]) {
+    assert.doesNotMatch(readFileSync(join(issue, 'log.md'), 'utf8'), /round \d+\//, 'released with no round');
+  }
+});
+
+// ---- the log gate that went quiet (issue 293) -------------------------------------------
+//
+// On a `log_required` component the free fill never records a source baseline, so the first log
+// entry goes on answering for every later edit and Yggdrasil only warns (`log-cycle-open`). A
+// branch that changed such a component is refused until the cycle is closed: a full
+// `yg check --approve` — free here, with no prose rule — and its lock committed.
+test('land.mjs: a changed log_required component whose log cycle is open is refused until the full fill closes it', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const architecture = [
+    'node_types:',
+    '  module:',
+    '    description: A unit of the product.',
+    '    log_required: true',
+    '    when:',
+    '      path: "feature-*.mjs"',
+    '',
+  ].join('\n');
+  const files = ['feature-321.mjs', 'feature-321.test.mjs', '.yggdrasil/model/feature/log.md'];
+  const { branch, issueDir: dst } = setupLandable(dir, '321', {
+    mapping: ['feature-*.mjs'], files, trunkFiles: { '.yggdrasil/yg-architecture.yaml': architecture },
+  });
+  // The worker's own why, recorded the way the log gate asks for it — and nothing but the free fill.
+  git(['checkout', '-q', branch], dir);
+  assert.equal(yg(dir, ['log', 'add', '--node', 'feature', '--reason', 'Adding two numbers is the first thing the product does.']).code, 0);
+  yg(dir, ['check', '--approve', '--only-deterministic']);
+  git(['add', '.yggdrasil/model/feature/log.md'], dir);
+  git(['commit', '-qm', 'why the feature exists'], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  writeTicketLog(dst);
+
+  const red = run('land.mjs', [branch], dir);
+  assert.equal(red.code, 1, `${red.stdout}${red.stderr}`);
+  const graph = byName(red).graph;
+  assert.equal(graph.ok, false, graph.note);
+  assert.match(graph.note, /log-cycle-open/);
+  assert.match(graph.note, /"feature"/);
+  assert.match(graph.note, /check --approve/);
+
+  // The full fill, free here, records the baseline in the committed lock; committed, it lands.
+  git(['checkout', '-q', branch], dir);
+  const full = yg(dir, ['check', '--approve']);
+  assert.equal(full.code, 0, full.out);
+  git(['add', '.yggdrasil'], dir);
+  git(['commit', '-qm', 'the full fill recorded the baseline'], dir);
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  writeTicketLog(dst);
+  const green = run('land.mjs', [branch], dir);
+  assert.equal(green.code, 0, `${green.stdout}${green.stderr}`);
+  assert.ok(green.json.landed, 'it landed once the cycle was closed');
 });
 
 // ---- the items, one refusal each -------------------------------------------------------
@@ -1932,6 +2083,50 @@ test('land.mjs evidencePinAt: a setting outside the five the real rule recognise
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('land.mjs evidencePinAt: an installed rule is found by its id, and the pin in its adaptation wins over the copy', () => {
+  const dir = pinFixture('installed');
+  try {
+    const rule = join(dir, '.yggdrasil', 'aspects', 'packages', 'o', 'r', 'promises', 'has-evidence');
+    mkdirSync(rule, { recursive: true });
+    writeFileSync(join(rule, 'yg-aspect.yaml'), 'name: PromiseHasSomethingKeepingIt\nstatus: enforced\n');
+    writeFileSync(join(rule, 'yg-aspect.adapt.yaml'), '# Adaptation for the rule\n# config:\n#   evidence: "auto"    # string\n');
+    assert.equal(evidencePinAt(dir), null, 'an adaptation left as written pins nothing');
+    writeFileSync(join(rule, 'yg-aspect.adapt.yaml'), '# Adaptation for the rule\nconfig:\n  evidence: "self"\n');
+    assert.equal(evidencePinAt(dir), 'self');
+    // A rule whose id merely contains the name is not it.
+    const other = join(dir, '.yggdrasil', 'aspects', 'not-has-evidence');
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, 'yg-aspect.yaml'), 'name: x\nconfig:\n  evidence: named\n');
+    assert.equal(evidencePinAt(dir), 'self');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('land.mjs ruleYamlSubstance: status, review date and comments are not what a rule says; a block scalar\'s own lines are', () => {
+  const base = ['name: r', 'status: advisory', 'review_by: 2099-01-01', '# a note', 'when:', '  aspect: x', ''].join('\n');
+  const raised = ['name: r', '# raised', 'status: enforced', 'review_by: 2100-01-01', 'when:', '  aspect: x', ''].join('\n');
+  assert.equal(ruleYamlSubstance(base), ruleYamlSubstance(raised));
+  const block = (line) => ['name: r', 'description: |', '  First line.', `  ${line}`, '', '  Last.', 'status: enforced', ''].join('\n');
+  assert.notEqual(ruleYamlSubstance(block('# keep this')), ruleYamlSubstance(block('# changed')), 'a # line inside a block scalar is the value');
+  assert.notEqual(ruleYamlSubstance(block('# keep this')), ruleYamlSubstance(block('')), 'and so is a blank one');
+  assert.equal(ruleYamlSubstance(block('x').replace('status: enforced', 'status: draft')), ruleYamlSubstance(block('x')), 'status after a block is still left out');
+});
+
+test('land.mjs ruleOfPath: a changed path belongs to the longest rule id above it, never to its first segment', () => {
+  const ids = ['boundary', 'boundary/clean-core', 'packages/o/r/promises/has-evidence', 'no-marker'];
+  assert.deepEqual(ruleOfPath('.yggdrasil/aspects/boundary/clean-core/content.md', ids), { id: 'boundary/clean-core', file: 'content.md' });
+  assert.deepEqual(ruleOfPath('.yggdrasil/aspects/boundary/check.mjs', ids), { id: 'boundary', file: 'check.mjs' });
+  assert.deepEqual(ruleOfPath('.yggdrasil/aspects/packages/o/r/promises/has-evidence/yg-aspect.adapt.yaml', ids), { id: 'packages/o/r/promises/has-evidence', file: 'yg-aspect.adapt.yaml' });
+  assert.equal(ruleOfPath('.yggdrasil/aspects/packages/o/r/promises/other/check.mjs', ids), null, 'a path under no known rule belongs to none');
+  assert.equal(ruleOfPath('.yggdrasil/aspects/no-marker-two/check.mjs', ids), null, 'a prefix of a directory name is not that directory');
+  assert.equal(ruleOfPath('src/a.mjs', ids), null);
+  assert.equal(isRuleText('helpers/table.mjs'), true);
+  assert.equal(isRuleText('yg-aspect.adapt.yaml'), true);
+  for (const not of ['log.md', 'yg-aspect.adapt.log.md', 'drills/violates-x/case.md', '.DS_Store']) assert.equal(isRuleText(not), false, not);
+  for (const code of ['drills/violates-x/a.mjs', '.hidden.mjs', 'lib/x.cjs', 'helper.js']) assert.equal(isRuleText(code), true, `code the rule can import counts wherever it sits: ${code}`);
 });
 
 test('land.mjs evidencePinAt: a quoted value, and comments/blocks around config: the way the shipped default is written', () => {

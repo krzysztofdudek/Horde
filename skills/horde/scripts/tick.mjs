@@ -29,9 +29,9 @@
 // What tick does write: the queue (reconcile's settlements, the gate's verdicts, when a ticket's one
 // review was raised, and the state of what it just handed out), the fix-round counter on a ticket
 // that came back red or was sent back by its review, and `asks.json` when a ticket's rounds are
-// spent. It holds the landing gate's own lock while it does — the same lock, not a second one,
-// because two ticks on one repository must not hand the same ticket to two workers, and a second
-// lock would not stop them.
+// spent or a landing waits on a decision only the user can make. It holds the landing gate's own
+// lock while it does — the same lock, not a second one, because two ticks on one repository must
+// not hand the same ticket to two workers, and a second lock would not stop them.
 
 import {
   readFileSync, writeFileSync, mkdirSync, openSync, closeSync,
@@ -107,7 +107,12 @@ counted, and its next worker is briefed on the files the merge stopped on. The s
 files stop it, the ticket goes to "blocked" and one "stuck" ask names them: nothing in the loop has
 resolved them twice, so it is the client's question now. A landing whose only red was the prose
 verdicts its own catch-up merge made stale ("rejudge") also goes back with no round, briefed to
-refresh those verdicts; a second one in a row counts its round like any red gate.
+refresh those verdicts; a second one in a row counts its round like any red gate. A landing red
+only on a decision the user has to make ("waitingOnUser" in its result: no reviewer configured for
+the prose rules, or one that could not be reached) counts no round either: the ticket goes to
+"blocked", and one "stuck" ask naming no ticket puts the decision to the client once for the whole
+horde. Once it is answered, the next run sends every ticket it held back to a worker, with the
+answer in its brief and still no round counted.
 
 An open ask holds only what depends on its answer, and "held" says what each one held: "stop"
 everything — the dispatch list, every landing and the close — "stuck" that one ticket, "charter"
@@ -164,6 +169,56 @@ function fileAsk(horde, { kind, ticket, why, log }) {
   if (existing) return { ask: existing, filed: false };
   const ask = addAsk(horde, { kind, ticket, why, log });
   return { ask, filed: true };
+}
+
+// A decision only the user can make — configuring a reviewer, or putting the rules it would judge on
+// hold — is asked once per horde, not once per ticket that meets it: it names no ticket, and every
+// ticket it holds points at it from its queue item. The same gap met again while the question is
+// open finds that question, by its words.
+function userDecisionWhy(waiting) {
+  return `Landings wait on a decision only you can make: ${waiting.text}. `
+    + 'Every ticket that meets it stops at the gate with no fix round counted, and goes back to its worker once this is answered.';
+}
+
+function fileUserDecision(horde, waiting) {
+  const why = userDecisionWhy(waiting);
+  const existing = loadAsksSafe(horde).items.find((a) => a && a.kind === 'stuck' && !a.ticket && a.state === 'open' && a.why === why);
+  if (existing) return { ask: existing, filed: false };
+  return { ask: addAsk(horde, { kind: 'stuck', why }), filed: true };
+}
+
+// The tickets a user decision held, released once it is answered: each goes back to a worker with
+// the answer in its brief (brief.mjs, "The user decided"), and no round is counted — the wait was
+// never the ticket's. Run before anything is landed or dispatched, so the same run hands them out.
+function releaseDecided(horde) {
+  const answered = new Map(loadAsksSafe(horde).items
+    .filter((a) => a && a.state === 'answered').map((a) => [a.id, a]));
+  const doc = readQueue(horde);
+  const waiting = doc.items.filter((i) => i.state === 'blocked' && i.returnReason
+    && i.returnReason.kind === 'waiting-on-user' && answered.has(i.returnReason.ask));
+  if (!waiting.length) return [];
+  const out = [];
+  withQueueLock(horde, TEAM, () => {
+    const fresh = readQueue(horde);
+    for (const item of fresh.items) {
+      const reason = item.returnReason;
+      if (item.state !== 'blocked' || !reason || reason.kind !== 'waiting-on-user') continue;
+      const ask = answered.get(reason.ask);
+      if (!ask) continue;
+      item.state = 'queued';
+      item.returnReason = {
+        kind: 'user-decided', text: reason.text, ask: ask.id, answer: ask.answer || '', at: nowIso(),
+      };
+      item.notes.push({ at: nowIso(), text: `tick: ${ask.id} answered — back to a worker, no round counted` });
+      const ticket = findTicket(horde, item.ticket);
+      if (ticket) transitionStatus(ticket, 'changes', `the user answered ${ask.id}: ${ask.answer || '(no words)'} — back to its worker, no round counted`);
+      out.push({
+        ticket: item.ticket, action: 'released', ask: ask.id, round: null, note: `the user answered ${ask.id} — back to its worker, no round counted`,
+      });
+    }
+    saveQueue(horde, TEAM, fresh);
+  });
+  return out;
 }
 
 // ---- what an open question holds up ---------------------------------------------------------
@@ -482,6 +537,7 @@ function landTheLanded(horde, cfg, root, holds) {
       stale: !!result.stale,
       conflictFiles: Array.isArray(result.conflictFiles) ? result.conflictFiles : [],
       rejudge: !!result.rejudge,
+      waitingOnUser: result.waitingOnUser && typeof result.waitingOnUser === 'object' ? result.waitingOnUser : null,
       pairs: Array.isArray(result.pairs) ? result.pairs : [],
       sha: result.sha,
       words: redWords(result),
@@ -629,6 +685,31 @@ function landTheLanded(horde, cfg, root, holds) {
           item.notes.push({ at: nowIso(), text: `tick: stale, no round counted — ${step.words}` });
           results.push({
             ticket: step.ticket, action: 'changes', round: null, note: `stale, no round counted — ${step.words}`,
+          });
+          continue;
+        }
+        // A landing whose only red is a decision the user has to make — no reviewer to judge the prose
+        // rules, or one that could not be reached. No worker can clear it, so it costs no round: the
+        // ticket waits on "blocked", and the user gets ONE question for the whole horde, however many
+        // tickets meet the same gap. Answering it sends every ticket it held back to a worker (see
+        // releaseDecided), still with no round counted.
+        if (step.waitingOnUser) {
+          const ticket = findTicket(horde, step.ticket);
+          const { ask, filed } = fileUserDecision(horde, step.waitingOnUser);
+          item.state = 'blocked';
+          item.returnReason = {
+            kind: 'waiting-on-user', text: step.waitingOnUser.text, ask: ask.id, at: nowIso(),
+          };
+          item.notes.push({ at: nowIso(), text: `tick: waiting on a user decision (${ask.id}), no round counted — ${step.waitingOnUser.text}` });
+          if (ticket && parseField(ticket.text, 'Status') !== 'blocked') {
+            transitionStatus(ticket, 'blocked', `waiting on a user decision (${ask.id}) — ${step.waitingOnUser.text}`);
+          }
+          results.push({
+            ticket: step.ticket,
+            action: 'waiting',
+            ask: ask.id,
+            round: null,
+            note: `waiting on a user decision, no round counted${filed ? ` — filed as ${ask.id} (stuck)` : ` — already asked as ${ask.id}`}: ${step.waitingOnUser.text}`,
           });
           continue;
         }
@@ -922,7 +1003,9 @@ function runOnce(horde, cfg, flags, runner) {
     const settled = reconcileRunning(horde, TEAM, { tree: root, reclaim });
     const reconciled = settled.filter((r) => r.state !== 'working');
     const working = settled.filter((r) => r.state === 'working').map((r) => ({ ticket: r.ticket, note: r.note }));
+    const released = releaseDecided(horde);
     const landed = landTheLanded(horde, cfg, root, holds);
+    landed.results.unshift(...released);
     const spawn = dispatch(horde, cfg, root, flags, holds);
 
     const doc = readQueue(horde);

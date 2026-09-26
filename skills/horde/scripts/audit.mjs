@@ -19,9 +19,14 @@
 //
 //   advise items  every item in `yg advise --json` this horde has neither queued nor already been
 //                 told to leave alone gets a ticket carrying Yggdrasil's own what/why/next
-//                 verbatim. An item a recorded decision already hides comes back in the document's
-//                 own `suppressed` list and is never re-raised — a dismissal is a decision, and
-//                 re-filing it once a wave is how a horde teaches its chairman to stop reading.
+//                 verbatim — unless its class says it is not a worker's: a promotion is reported
+//                 for the ladder, and a lowering is put to the client as one ask (see "where an
+//                 attention item goes"). An item counts as filed over the evidence it rests on
+//                 (`evidenceHash`): the same id over changed evidence is filed again once what was
+//                 filed for it before is closed. An item a recorded decision already hides comes
+//                 back in the document's own `suppressed` list and is never re-raised — a dismissal
+//                 is a decision, and re-filing it once a wave is how a horde teaches its chairman to
+//                 stop reading.
 //
 //   grain advice  `grain advise --json` from the territories this mission leases, down the same
 //                 path `queue.mjs quality` walks: `grain advise --json`, schema `grain-advice/1`,
@@ -73,7 +78,10 @@ import {
 import {
   ygJson, ygCommand, readAuditLedger, recordAudit, readAspectLedger, listAllNodes,
 } from './node.mjs';
-import { createTicket, setTicketBody, findTicket } from './tk.mjs';
+import {
+  createTicket, setTicketBody, findTicket, parseField,
+} from './tk.mjs';
+import { addAsk, loadAsks } from './ask.mjs';
 // queue.mjs imports wave.mjs, and wave.mjs imports this file — the same deliberate cycle wave.mjs
 // already documents at its own import of buildPlan, and safe for the same reason: every binding
 // crossing it is a hoisted function declaration and none of the three calls the others while a
@@ -494,11 +502,125 @@ function lastLogLine(aspect) {
   return `Last written to ${log.at} — ${moved}. Read it in full: \`yg aspects log read --aspect ${aspect.id} --json\`.`;
 }
 
-function sweepAdvise(horde, cfg, team, { advise, trunkReach, allNodes }) {
-  if (!advise.read) return { read: false, why: advise.why, filed: [], skipped: [] };
-  const already = new Set(readAuditLedger(horde).map((a) => a.key));
+// ---- where an attention item goes -------------------------------------------------------------
+//
+// Not every item in the feed is a worker's to act on. Two kinds never become a worker ticket:
+//
+//   promotion      raising a rule is the ladder's own step, taken on the ladder's own evidence
+//                  (`node.mjs promote`, which drills the rule and reads its corpus first). The close
+//                  reports the nomination and files nothing — a worker told to promote a rule would
+//                  be doing the ladder's job without its evidence.
+//   lowering       a rule decorating nothing, effective nowhere, referenced by nothing, a risky
+//                  waiver, an installed package with a newer version: each one's answer changes what
+//                  the work is judged by, and that is the client's call. The close files one ask for
+//                  the client — kind "lower" naming the rule when the item is about one, so an
+//                  approving answer is exactly what the landing's law guard then reads, and kind
+//                  "charter" when it is about a waiver or a package.
+//
+// Every other class is filed as a ticket, as before.
+export const ADVISE_ROUTES = {
+  promotion: 'ladder',
+  'decorative-rule': 'client',
+  'dead-attach': 'client',
+  'aspect-effective-nowhere': 'client',
+  'orphaned-aspect': 'client',
+  'suppress-anomaly': 'client',
+  'package-update': 'client',
+};
+
+export function adviseClass(item) {
+  const raw = String((item && item.id) || '');
+  const at = raw.indexOf(':');
+  return at === -1 ? raw : raw.slice(0, at);
+}
+
+export function adviseRoute(item) {
+  return ADVISE_ROUTES[adviseClass(item)] || 'ticket';
+}
+
+function adviseSubject(item) {
+  const raw = String((item && item.id) || '');
+  const at = raw.indexOf(':');
+  return at === -1 ? '' : raw.slice(at + 1);
+}
+
+// The evidence an item rests on, under its current id and every former one. Yggdrasil binds a
+// decision to it: the same id over changed evidence is a new item, and returns to the feed as one.
+function evidenceHashes(item) {
+  const out = new Set();
+  if (item && item.evidenceHash) out.add(String(item.evidenceHash));
+  for (const alias of asArray(item && item.aliases)) {
+    if (alias && typeof alias === 'object' && alias.evidenceHash) out.add(String(alias.evidenceHash));
+  }
+  return out;
+}
+
+// Where what an earlier close filed for an item stands: `open` while its ticket is not yet merged or
+// dropped and its ask not yet answered; `decided` when the director dropped its ticket — a ticket
+// taken off the work on purpose is an answer about the item, and filing it again over new evidence
+// would ask the same question of the same person; `closed` otherwise (merged, or answered). An item
+// whose evidence changed is filed again only once the earlier filing is closed — evidence that moves
+// every wave would otherwise pile a new ticket onto an open one each close.
+function filingState(horde, entry, askState) {
+  if (entry.ask) return askState.get(entry.ask) === 'open' ? 'open' : 'closed';
+  if (!entry.ticket) return 'closed';
+  const ticket = findTicket(horde, entry.ticket);
+  if (!ticket) return 'closed';
+  const status = parseField(ticket.text, 'Status');
+  if (status === 'dropped') return 'decided';
+  return status === 'merged' ? 'closed' : 'open';
+}
+
+// Whether this item is already answered for, and why — null when it is to be filed now. Filed under
+// its current id over the same evidence is filed. Filed under a former id — an alias the feed lists,
+// or the other name of a renamed class — is filed too, whatever hash that entry carries: a rename is
+// not new evidence, and Yggdrasil keeps a decision made under the old name for the renamed item. A
+// ledger entry that predates evidence hashes, or an item that carries none, reads as the same
+// evidence: nothing says it moved.
+function alreadyFiled(horde, item, ledger, askState) {
+  const keys = adviseKeys(item);
+  const entries = ledger.filter((e) => keys.includes(e.key));
+  if (!entries.length) return null;
+  const key = keys[0];
+  const hashes = evidenceHashes(item);
+  const same = entries.find((e) => e.key !== key || !e.evidenceHash || !hashes.size || hashes.has(String(e.evidenceHash)));
+  if (same) {
+    const what = same.ask ? `already put to the client as ${same.ask}` : 'already filed as a ticket';
+    return same.key === key ? what : `${what} under its former id (${same.key})`;
+  }
+  for (const e of entries) {
+    const state = filingState(horde, e, askState);
+    if (state === 'open') return `its evidence changed, and what was filed for it before is still open (${e.ask || e.ticket})`;
+    if (state === 'decided') {
+      return `its evidence changed, but its ticket ${e.ticket} was dropped — a decision; to take it off the feed as well, the client records it with \`yg advise dismiss ${item.id} --reason "…"\``;
+    }
+  }
+  return null;
+}
+
+function adviseAskWhy(item) {
+  return [
+    `The graph's own attention feed raised this at a wave close, and the answer is yours: it changes what the work is judged by. ${String(item.what || item.id).trim()}`,
+    String(item.why || '').trim(),
+    `What Yggdrasil says to do about it: ${String(item.next || '(the feed named no next step)').trim()}`,
+    `Attention item id: ${item.id}`,
+  ].filter(Boolean).join('\n');
+}
+
+function sweepAdvise(horde, cfg, team, {
+  advise, trunkReach, allNodes, trunkAspects,
+}) {
+  if (!advise.read) return { read: false, why: advise.why, filed: [], skipped: [], asked: [], ladder: [] };
+  const ledger = readAuditLedger(horde);
+  let askState = null;
+  const asksNow = () => {
+    if (!askState) askState = new Map(loadAsks(horde).items.map((a) => [a.id, a.state]));
+    return askState;
+  };
   const filed = [];
   const skipped = [];
+  const asked = [];
+  const ladder = [];
   const items = asArray(advise.doc.items);
   for (const item of items) {
     if (!item || !item.id) continue;
@@ -516,9 +638,39 @@ function sweepAdvise(horde, cfg, team, { advise, trunkReach, allNodes }) {
       skipped.push({ key, why: 'an imported proposal is filed from the producer\'s own document by `queue.mjs quality`' });
       continue;
     }
-    const filedAs = adviseKeys(item).find((k) => already.has(k));
+    const route = adviseRoute(item);
+    if (route === 'ladder') {
+      const aspect = adviseSubject(item);
+      ladder.push({ key, item: item.id, aspect });
+      skipped.push({ key, why: `a promotion is the ladder's own step, on its own evidence — \`node.mjs promote ${aspect}\` — never a worker's ticket` });
+      continue;
+    }
+    const filedAs = alreadyFiled(horde, item, ledger, asksNow());
     if (filedAs) {
-      skipped.push({ key, why: filedAs === key ? 'already filed as a ticket' : `already filed as a ticket under its former id (${filedAs})` });
+      skipped.push({ key, why: filedAs });
+      continue;
+    }
+    const evidenceHash = item.evidenceHash ? String(item.evidenceHash) : null;
+    if (route === 'client') {
+      const subject = adviseSubject(item);
+      const aspect = trunkAspects && trunkAspects.has(subject) ? subject : null;
+      // A rule is this mission's to ask about only when it reaches something the mission holds — the
+      // same line a ticket is filed on. A waiver or a package is about the repository's law as a
+      // whole, and is asked as it is.
+      if (aspect && !ownerFor(horde, subjectNodes(item, trunkReach, allNodes))) {
+        skipped.push({ key, why: 'it names nothing this mission holds, so there is no territory to hand it to' });
+        continue;
+      }
+      const ask = addAsk(horde, aspect ? { kind: 'lower', aspect, why: adviseAskWhy(item) } : { kind: 'charter', why: adviseAskWhy(item) });
+      const entry = {
+        key, kind: 'advise', item: item.id, route, ask: ask.id, ...(evidenceHash ? { evidenceHash } : {}),
+      };
+      recordAudit(horde, entry);
+      ledger.push(entry);
+      asksNow().set(ask.id, 'open');
+      asked.push({
+        key, item: item.id, ask: ask.id, kind: ask.kind, aspect,
+      });
       continue;
     }
     const owner = ownerFor(horde, subjectNodes(item, trunkReach, allNodes));
@@ -533,10 +685,11 @@ function sweepAdvise(horde, cfg, team, { advise, trunkReach, allNodes }) {
       territory: owner.territory,
       body: adviseTicketBody(item, owner.territory),
     });
-    recordAudit(horde, {
-      key, kind: 'advise', item: item.id, node: owner.node, territory: owner.territory, ticket,
-    });
-    already.add(key);
+    const entry = {
+      key, kind: 'advise', item: item.id, node: owner.node, territory: owner.territory, ticket, ...(evidenceHash ? { evidenceHash } : {}),
+    };
+    recordAudit(horde, entry);
+    ledger.push(entry);
     filed.push({
       key, item: item.id, node: owner.node, territory: owner.territory, ticket,
     });
@@ -548,6 +701,8 @@ function sweepAdvise(horde, cfg, team, { advise, trunkReach, allNodes }) {
     // reported and never re-raised: somebody signed a reason for it, and that is a decision.
     decided: asArray(advise.doc.suppressed).length,
     filed,
+    asked,
+    ladder,
     skipped,
   };
 }
@@ -697,15 +852,24 @@ export function auditBlock(result) {
   const a = result.advise;
   if (!a.read) {
     lines.push(`The graph's attention feed: not read — ${a.why}. Nothing was filed from it, and it will be read again at the next close.`);
-  } else if (a.filed.length === 0) {
+  } else if (a.filed.length === 0 && !asArray(a.asked).length) {
     lines.push(line('The graph\'s attention feed: ', [
       `${a.items} item(s) standing`,
       a.decided ? `${a.decided} already decided on and left alone` : null,
       'nothing new for this mission',
     ]));
   } else {
-    lines.push(`The graph's attention feed: ${a.filed.length} item(s) nobody here had answered, now on the queue.`);
-    for (const f of a.filed) lines.push(`- ${f.ticket} — ${f.item}, on ${f.territory ? `the territory "${f.territory}"` : f.node}.`);
+    if (a.filed.length) {
+      lines.push(`The graph's attention feed: ${a.filed.length} item(s) nobody here had answered, now on the queue.`);
+      for (const f of a.filed) lines.push(`- ${f.ticket} — ${f.item}, on ${f.territory ? `the territory "${f.territory}"` : f.node}.`);
+    }
+    if (asArray(a.asked).length) {
+      lines.push(`The graph's attention feed: ${a.asked.length} item(s) that change what the work is judged by, put to the client rather than to a worker.`);
+      for (const q of a.asked) lines.push(`- ${q.ask} (${q.kind}) — ${q.item}.`);
+    }
+  }
+  for (const p of asArray(a.ladder)) {
+    lines.push(`- ${p.item} — a promotion, which is the ladder's own step on its own evidence: \`node.mjs promote ${p.aspect}\`. Nothing was filed.`);
   }
 
   lines.push('');
@@ -755,7 +919,9 @@ export function auditLaw(horde, cfg, { team = 'trunk', trunk } = {}) {
       ran: false,
       why: policy === 'only-the-work' ? 'the charter sets quality to only-the-work' : 'the law diff read no trunk tree',
       reviewDates: { overdue: 0, filed: [], skipped: [] },
-      advise: { read: false, why: 'not read', filed: [], skipped: [] },
+      advise: {
+        read: false, why: 'not read', filed: [], skipped: [], asked: [], ladder: [],
+      },
       grain: { configured: false },
       health: { read: false, why: 'not read' },
       quiet: [],
@@ -767,7 +933,9 @@ export function auditLaw(horde, cfg, { team = 'trunk', trunk } = {}) {
   const reviewDates = sweepReviewDates(horde, cfg, team, {
     trunkAspects: trunk.aspects, trunkReach: trunk.reach, advise,
   });
-  const adviseSweep = sweepAdvise(horde, cfg, team, { advise, trunkReach: trunk.reach, allNodes });
+  const adviseSweep = sweepAdvise(horde, cfg, team, {
+    advise, trunkReach: trunk.reach, allNodes, trunkAspects: trunk.aspects,
+  });
   const grain = sweepGrain(horde, cfg, trunk.tree);
 
   const healthRead = readHealth(trunk.tree, cfg);

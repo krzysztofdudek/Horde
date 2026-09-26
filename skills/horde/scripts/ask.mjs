@@ -5,7 +5,9 @@
 // spec and wrote down the question instead of guessing; the ticket stays where it was. `stuck` — a
 // ticket exhausted its fix rounds, or its catch-up merge stopped on the same files twice, and tick put
 // it on "blocked"; tick files this one, not an agent, and it carries the gate's last words (or the
-// files) and the ticket's log path. `lower` — a request to
+// files) and the ticket's log path. One `stuck` names no ticket: a landing that waits on a decision
+// only the user can make (no reviewer for the prose rules), asked once for the whole horde however
+// many tickets meet it — each of them points at it from its own queue item. `lower` — a request to
 // weaken something that protects the work: a rule (demote, an added yg-suppress marker, a moved
 // review_by, an aspect detached from a node), the proof (a promise put back to planned, a test
 // file or an assertion taken out, a skip marker added), or a gate (the script a gate command runs,
@@ -38,8 +40,8 @@
 //   evidence:<name>    a promise's own id, or a test file's path
 //   gate:<path>        a file a gate command, a hook or CI actually runs
 //
-// A rule id is a bare directory name under `.yggdrasil/aspects/`, so it never carries the `:` the
-// other two open with. One answer lets one of these through and never a category: a mission that
+// A rule id is its directory's path under `.yggdrasil/aspects/` — it may hold `/` (a nested or an
+// installed rule), never the `:` the other two open with. One answer lets one of these through and never a category: a mission that
 // means to lower three things files three questions.
 
 import {

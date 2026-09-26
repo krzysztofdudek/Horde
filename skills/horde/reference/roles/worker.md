@@ -93,6 +93,13 @@ at the end of this brief; read them before your first commit.
   repository's Yggdrasil reviewer judges them: `yg check --approve` calls it, and you commit what it
   records. Never decide a prose rule yourself, never record a verdict any other way, never write a
   suppression.
+- **Before your last commit, close the log cycle.** Run `yg check --approve --dry-run --json`. When its
+  `next.cost.reviewerPairs` is 0, run the full `yg check --approve` anyway: it calls no reviewer and
+  costs nothing, and it is the only run that records a component's source baseline — the free run
+  never does, so on a component that requires a log entry the first entry would otherwise go on
+  answering for every later edit. Commit the lock it writes. The landing refuses a branch that changed
+  such a component while its cycle is still open (`log-cycle-open`). If the full run stops because no
+  reviewer is configured, that is the user's decision, not yours: say so in your log.
 - **Never weaken a rule to get past it.** Deleting a rule, lowering its status, moving its review
   date, narrowing what it reaches, unhooking it from a component, or writing a `yg-suppress` marker
   all refuse at landing, by name. So does sharpening a rule in the same change as the code that rule
