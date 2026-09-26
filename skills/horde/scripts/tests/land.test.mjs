@@ -2956,11 +2956,11 @@ test('land.mjs --fate reverted: the undone merge extends the run\'s own result f
   assert.equal(result.ok, true, JSON.stringify(result.checks));
   const mergeSha = result.landed.sha;
 
-  // A real revert of that real merge — the commit the record has to be able to point at.
-  git(['checkout', '-q', '-B', 'undo-070', mergeSha], dir);
+  // A real revert of that real merge, on the trunk — the commit the record has to be able to point
+  // at, and one --fate checks is there and undoes it (issue 304).
+  git(['checkout', '-q', 'mission1/trunk'], dir);
   git(['revert', '--no-edit', '-m', '1', mergeSha], dir);
   const revertSha = git(['rev-parse', 'HEAD'], dir);
-  git(['checkout', '-q', 'mission1/trunk'], dir);
 
   const r = run('land.mjs', ['070', '--fate', 'reverted', '--by', revertSha], dir);
   assert.equal(r.code, 0, `${r.stdout}${r.stderr}`);
@@ -3317,7 +3317,10 @@ test('land.mjs --fate: --horde written out resolves to that horde\'s own trunk t
   const { branch } = setupLandable(dir, '111', { files: ['feature-111.mjs', 'feature-111.test.mjs'] });
   const landed = run('land.mjs', [branch], dir);
   assert.equal(landed.code, 0, landed.stderr);
-  const revertSha = landed.json.landed.sha;
+  // A real revert of the merge, on the trunk: --fate reverted checks the commit undoes it (issue 304).
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  git(['revert', '--no-edit', '-m', '1', landed.json.landed.sha], dir);
+  const revertSha = git(['rev-parse', 'HEAD'], dir);
   git(['checkout', 'develop'], dir);
   const trunkWorktree = join(dir, '.horde', 'worktrees', 'mission1', 'trunk');
   assert.equal(existsSync(trunkWorktree), false);
