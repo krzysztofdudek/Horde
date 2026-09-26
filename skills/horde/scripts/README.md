@@ -917,7 +917,7 @@ question's id, or the wave's number), `<text>` (the question, or one line on the
 `<horde>` are filled in, each already quoted as one shell argument, so nothing in a question's text
 is run — which holds only while each placeholder is written bare in the template. One written inside
 quotes of the template's own (`echo '<text>'`) would end that quote and hand the text to the shell,
-so such a template is refused: by `horde.mjs config set notify`, and again when it would run (the
+and one in a heredoc body is expanded by the shell the same way, so such a template is refused: by `horde.mjs config set notify`, and again when it would run (the
 result's `notified` then says why, and nothing starts). The hook is started detached from the
 repository root and nothing waits for it — not the filing, not the close, not a tick holding its
 lock; a small supervisor stops it at thirty seconds. How each run ended (`ok`, `exited <code>`, or

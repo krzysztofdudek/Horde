@@ -137,6 +137,15 @@ test('config.notify: run with the event filled in when a question is filed, whoe
     }
   });
 
+  // Second review of 306: a heredoc body is expanded by the shell like the inside of double quotes.
+  await t.test('a placeholder inside a heredoc body is refused the same way; a here-string is not', () => {
+    const r = run('horde.mjs', ['config', 'set', 'notify', 'cat <<EOF | mail -s horde client@example.com\nNew question: <text>\nEOF'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /inside a heredoc body in config\.notify/);
+    const ok = run('horde.mjs', ['config', 'set', 'notify', 'mail -s horde client@example.com <<< <text>'], dir);
+    assert.equal(ok.code, 0, ok.stderr);
+  });
+
   await t.test('and one written into the config by hand is not run', () => {
     const cfgPath = join(dir, '.horde', 'config.json');
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));

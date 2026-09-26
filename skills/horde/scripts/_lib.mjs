@@ -1923,8 +1923,9 @@ child.on('exit', (code) => {
 // hook an outer loop uses to reach a client who is not at the terminal — a chat message, a mail, a
 // line in a shared channel; what it does is the adopter's. `<event>`, `<kind>`, `<id>`, `<text>` and
 // `<horde>` are filled in, each quoted for the shell as one argument — so a placeholder is written
-// bare, never inside quotes of the template's own: inside them the filled-in quoting would end the
-// template's quote and let the text be read by the shell. A template that does that is refused, by
+// bare, never inside quotes of the template's own or a heredoc body: inside them the filled-in
+// quoting would end the template's quote, or be read as text the shell expands. A template that does
+// that is refused, by
 // `horde.mjs config set notify` and again here, and nothing is run.
 //
 // It never holds up the step that filed the question or closed the wave, nor whatever lock that step
@@ -1938,6 +1939,20 @@ export const NOTIFY_PLACEHOLDERS = ['event', 'kind', 'id', 'text', 'horde'];
 // The placeholder a template puts inside quotes, or null when every one of them stands bare.
 export function notifyTemplateProblem(template) {
   const text = String(template || '');
+  // A heredoc body is text the shell expands like the inside of double quotes, so a placeholder
+  // there ends up just as exposed. `<<<` (a here-string) takes an ordinary word, which is fine.
+  const heredoc = /(^|[^<])<<(-?)[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\3(?!<)/g;
+  for (let m = heredoc.exec(text); m; m = heredoc.exec(text)) {
+    const bodyStart = text.indexOf('\n', m.index + m[0].length);
+    if (bodyStart === -1) continue;
+    const lines = text.slice(bodyStart + 1).split('\n');
+    const end = lines.findIndex((l) => (m[2] ? l.replace(/^\t+/, '') : l) === m[4]);
+    const body = (end === -1 ? lines : lines.slice(0, end)).join('\n');
+    const inBody = /<(event|kind|id|text|horde)>/.exec(body);
+    if (inBody) {
+      return `<${inBody[1]}> stands inside a heredoc body in config.notify — each placeholder is filled in already quoted as one argument, so write it bare on the command line (… <${inBody[1]}> …); inside a heredoc the text it carries would reach the shell`;
+    }
+  }
   let quote = null;
   for (let i = 0; i < text.length; i += 1) {
     const c = text[i];
