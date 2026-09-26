@@ -372,7 +372,7 @@ function slugify(s) {
 // Every team directory the horde has, as the short "parent/child" path strings teamPath()
 // expects — mirrors status.mjs's own recursive walk of teams/<team>/teams/… so a ticket can be
 // found by id alone, without the caller having to know which (sub-)team it lives under.
-function allTeamPaths(horde) {
+export function allTeamPaths(horde) {
   const root = hordePath(horde, 'teams');
   const out = [];
   const walk = (rel) => {

@@ -34,8 +34,7 @@ import {
 import { loadAsks } from './ask.mjs';
 import { evidenceCoverage } from './wave.mjs';
 import { landingLoad, readLandResult, formatDuration } from './land.mjs';
-import { findTicket } from './tk.mjs';
-import { loadQueue } from './queue.mjs';
+import { findTicket, allTeamPaths } from './tk.mjs';
 
 const USAGE = `usage: report.mjs [--out <path>] [--horde h] [--json]
 
@@ -93,8 +92,22 @@ function cameBack(horde, items) {
 }
 
 // buildReport(horde) — the report as data. Read-only.
+// Every team's queue items, not only trunk's — a mission with nested teams (one started before
+// 6.0.0) keeps work there too. Read straight off each team directory on disk, so a team the roster
+// no longer names is still counted rather than refused.
+function allItems(horde) {
+  let teams = ['trunk'];
+  try { teams = allTeamPaths(horde); } catch { teams = ['trunk']; }
+  if (!teams.length) teams = ['trunk'];
+  return teams.flatMap((team) => {
+    const path = hordePath(horde, ...team.split('/').flatMap((seg) => ['teams', seg]), 'queue.json');
+    const doc = readJSON(path, null);
+    return asArray(doc && doc.items);
+  });
+}
+
 export function buildReport(horde) {
-  const items = asArray(loadQueue(horde, 'trunk').items);
+  const items = allItems(horde);
   const asks = asArray(loadAsks(horde).items).filter((a) => a && a.state === 'open');
   let rows = [];
   try { rows = evidenceCoverage(horde); } catch { rows = []; }
@@ -182,7 +195,7 @@ export function writeReport(horde, { out = null, cfg = readConfig() || {} } = {}
 }
 
 function readMerged(horde) {
-  return asArray(loadQueue(horde, 'trunk').items).filter((i) => i.state === 'merged').map((i) => i.ticket);
+  return allItems(horde).filter((i) => i.state === 'merged').map((i) => i.ticket);
 }
 
 // The form tick, a wave close and a filed question call: never throws, and says what went wrong.

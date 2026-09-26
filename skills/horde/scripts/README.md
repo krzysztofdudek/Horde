@@ -898,7 +898,8 @@ when it was asked and what kind of decision it is; every row of the charter's ev
 the client's words (not started, planned, being worked on, tried as a prototype, landed but not yet
 proven, proven — and "came back" for a row whose landed work was reverted or reopened, read off the
 landing results' own fates); what landed since the last report was written (`report.json` keeps
-only which merged tickets the last one already counted) and how much in all; the work in progress,
+only which merged tickets the last one already counted) and how much in all, over every team's queue (a nested team of a mission from before 6.0.0
+included); the work in progress,
 and how many finished branches wait to be merged, with the forecast `tick` measures.
 
 It is rewritten, never appended to: by every `tick` pass (`report: {path, paths}` in its result, or

@@ -198,3 +198,22 @@ test('report.mjs: what landed since the last report, once, and a row whose lande
   });
 });
 
+// Review of 306: the report reads every team's queue, not only trunk's.
+test('report.mjs: work in a sub-team queue is counted too', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  // A nested team, the shape a mission started before 6.0.0 carries: a steward in the roster, and
+  // the team's own directory under trunk's.
+  writeFileSync(join(hordeDir(dir), 'roster.json'), JSON.stringify({ entries: [{ role: 'steward', team: 'web', parent: 'trunk' }] }));
+  const sub = join(hordeDir(dir), 'teams', 'trunk', 'teams', 'web');
+  mkdirSync(sub, { recursive: true });
+  writeFileSync(join(sub, 'queue.json'), JSON.stringify({ items: [
+    { ticket: '010', state: 'running', class: 'standard', branch: 'mission1/t-010', dependsOn: [], notes: [] },
+    { ticket: '011', state: 'merged', class: 'standard', branch: 'mission1/t-011', dependsOn: [], notes: [] },
+  ] }));
+  const r = run('report.mjs', [], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.json.inWork, 1);
+  assert.equal(r.json.landed.total, 1);
+});
