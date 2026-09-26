@@ -81,8 +81,10 @@ commands:
       has delivered, so none of it counts toward the catalogue.
       And it audits the law, because nobody here does that from a seat of their own: a ticket per
       rule whose review date has passed ("renew or retire", ending in a proposal and never in an
-      edit to the date), a ticket per item in "yg advise" nobody has queued or decided on, what
-      Grain says about this mission's own territories, and the rules nothing has hit — that last
+      edit to the date), a ticket per item in "yg advise" nobody has queued or decided on (a
+      promotion is reported for the ladder instead, and a lowering is put to the client as one
+      ask; an item is filed again when its evidence changed and what was filed before is closed),
+      what Grain says about this mission's own territories, and the rules nothing has hit — that last
       one in Yggdrasil's own words from "yg aspects --health", or not at all. Every read it
       cannot make is a note in the report; none of them stops the close.
   evidence <id> --by "<who/what>" [--horde h]
@@ -1231,6 +1233,10 @@ function cmdClose(horde, positional, flags) {
     const audited = [...audit.reviewDates.filed, ...audit.advise.filed];
     if (audited.length) {
       lines.push(`the law audit filed ${audited.length} ticket(s): ${audited.map((f) => f.ticket).join(', ')}`);
+    }
+    const askedClient = Array.isArray(audit.advise.asked) ? audit.advise.asked : [];
+    if (askedClient.length) {
+      lines.push(`the law audit put ${askedClient.length} question(s) to the client: ${askedClient.map((q) => q.ask).join(', ')}`);
     }
     for (const q of audit.quiet) {
       lines.push(`nothing has hit ${q.aspect}: ${q.reading || q.signal || `nothing new against it in ${q.quietWaves} closed wave(s)`}`);

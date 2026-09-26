@@ -782,7 +782,18 @@ Three sweeps and one line.
   id, under any former id the feed lists in its `aliases`, and under the other name of a class
   Yggdrasil renamed (`uncovered-hot-spot` ↔ `unguarded-hot-spot`, `dead-attach` ↔
   `aspect-effective-nowhere`), so a rename never files the same finding twice. New filings are recorded
-  under the current id.
+  under the current id, with the `evidenceHash` the item rests on. An item is filed again when that
+  evidence changed (the hash under its current id and its aliases' hashes are all different from the
+  one on file) **and** what was filed for it before is closed — its ticket merged or dropped, its ask
+  answered; while it is still open the close says so and files nothing. A ledger entry from before
+  hashes were recorded, or an item with no hash, reads as the same evidence. Two classes never become
+  a worker ticket (`ADVISE_ROUTES` in `audit.mjs`): `promotion:` is reported for the ladder, whose own
+  step is `node.mjs promote <rule>` on its own evidence, and files nothing; `decorative-rule:`,
+  `dead-attach:`/`aspect-effective-nowhere:`, `orphaned-aspect:`, `suppress-anomaly:` and
+  `package-update:` change what the work is judged by, so each is put to the client as one ask —
+  kind `lower` naming the rule when the item is about a rule this mission's territories reach (an
+  approving answer is then exactly what the landing's law guard reads), kind `charter` for a waiver
+  or a package. `--json` carries them as `advise.asked` and `advise.ladder`.
 - **What the repository says about itself.** `grain advise --json` from the trunk, down the same path
   `queue.mjs quality` walks — same command, same `grain-advice/1` schema, same lease filter. It
   **reports and files nothing**: one filer, one ledger. The close says how many advisories stand on
