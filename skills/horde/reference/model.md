@@ -365,7 +365,10 @@ the same under both. Under the default runner the driver is the session itself �
 `tick.mjs`, reads its dispatch list, and spawns each worker and each review on it as a subagent of
 yours. `--runner external` drives the loop outside any agent altogether — a cron job, a script,
 whatever calls `tick.mjs`, which then starts one worker at a time itself from `config.runner.spawn`
-— so the loop survives a closed session, at the cost of nobody being there to answer an ask. That is
+— so the loop survives a closed session, at the cost of nobody being there to answer an ask. What
+reaches the client then is outside the chat: `report.mjs`'s plain page, which every tick, every wave
+close and every filed question rewrites, and `config.notify`, the command run when a question is
+filed or a wave closes, for whatever outer loop carries it to them. That is
 the whole of the difference the two make: **who starts what the loop hands out**, never whether a
 mission can run at all. Under `session`, tick never spawns — the caller does; under `external`,
 tick.mjs spawns each worker itself, and each review from the same command. That command has to keep

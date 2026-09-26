@@ -1916,6 +1916,31 @@ child.on('exit', (code) => {
 });
 `;
 
+// ---- telling the client, outside the chat -------------------------------------------------
+//
+// `config.notify` is a command template this tool set runs when something reaches the client: a
+// question filed (event "ask", whatever filed it) and a wave closed (event "wave-close"). It is the
+// hook an outer loop uses to reach a client who is not at the terminal — a chat message, a mail, a
+// line in a shared channel; what it does is the adopter's. `<event>`, `<kind>`, `<id>`, `<text>` and
+// `<horde>` are filled in, each quoted for the shell as one argument. It runs from the repository
+// root, for at most thirty seconds, with nothing on its input; a command that fails or hangs is
+// named in the result and never stops the step that called it. No template, nothing is run.
+export const NOTIFY_TIMEOUT_MS = 30000;
+export function notifyClient(horde, cfg, fields = {}) {
+  const template = cfg && typeof cfg.notify === 'string' ? cfg.notify.trim() : '';
+  if (!template) return null;
+  const quote = (v) => `'${String(v ?? '').replace(/'/g, "'\\''")}'`;
+  const values = { ...fields, horde };
+  const command = template.replace(/<(event|kind|id|text|horde)>/g, (_, key) => quote(values[key]));
+  let cwd;
+  try { cwd = dirname(hordeRoot()); } catch { cwd = process.cwd(); }
+  const res = spawnSync('sh', ['-c', command], { cwd, stdio: 'ignore', timeout: NOTIFY_TIMEOUT_MS, killSignal: 'SIGKILL' });
+  if (res.error && res.error.code === 'ETIMEDOUT') return { ok: false, command, note: `config.notify did not finish within ${NOTIFY_TIMEOUT_MS / 1000}s and was stopped` };
+  if (res.error) return { ok: false, command, note: `config.notify could not be started: ${res.error.message}` };
+  if (res.status !== 0) return { ok: false, command, note: `config.notify exited ${res.status ?? res.signal}` };
+  return { ok: true, command };
+}
+
 export function runCommandGroup(cmd, cwd, timeoutMs = null) {
   const res = spawnSync(process.execPath, ['-e', GROUP_SUPERVISOR, '--', cmd, cwd, String(timeoutMs || 0)], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],

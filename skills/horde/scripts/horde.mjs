@@ -62,6 +62,9 @@ commands:
       list of repository-root-relative paths copied into every ticket, trunk or scratch tree the
       moment it is made — for whatever a worker's tools need that git itself does not check out
       (an untracked env file, a dependency cache); a path git already tracks is refused.
+      "report.out" is one more path the client's plain-language report is written to (default:
+      only hordes/<horde>/report.md); "notify" a command run when a question is filed and when a
+      wave closes, with <event>, <kind>, <id>, <text> and <horde> filled in (default: none).
   charter show [--horde h]
   charter edit [--ask id] [--horde h]
       the mission charter: "show" prints it, "edit" replaces it with what arrives on stdin and
@@ -424,6 +427,13 @@ function defaultConfig(root) {
     // through `spawn`, the host's own headless CLI, with "<class>" filled in from the ticket and
     // "<brief>" with the path of the rendered brief. Nothing else in this tool set reads either key.
     runner: { kind: 'session', spawn: null },
+    // The client's side of the mission, outside the chat (report.mjs, and the hook in _lib.mjs's
+    // notifyClient). `report.out` is one more place the plain-language report is written besides
+    // hordes/<horde>/report.md — "<horde>" in it names one file per horde. `notify` is a command
+    // run when a question is filed and when a wave closes, with <event>, <kind>, <id>, <text> and
+    // <horde> filled in; how it reaches the client is the adopter's. Neither is set by default.
+    report: { out: null },
+    notify: null,
     // Repository-root-relative paths copied into every worktree provisionTree makes (a ticket's,
     // trunk's, or a landing script's scratch tree) — for whatever a worker's tools need that git
     // itself does not put on a fresh checkout (an untracked env file, a dependency cache). A path

@@ -19,8 +19,11 @@ import {
   nowIso, fail, parseArgs, emit, isMain, resolveHorde, renderTemplate, qualityPolicy, resolveTree,
   markdownSection, markdownTableCells, parseEvidenceRows, parseVerdictBlocks, diffSize, sizeRanks,
   noEvidenceLayerNote, EVIDENCE_CLASSES, git, runGateAt, gateTimeoutOf, GATE_RAN, GATE_ASSERTED,
-  runMain,
+  runMain, notifyClient,
 } from './_lib.mjs';
+// report.mjs reads this file (evidenceCoverage) and a close rewrites the report — the same kind of
+// cycle as queue.mjs's below, safe for the same reason: functions only, called after both load.
+import { refreshReport } from './report.mjs';
 // The charter section's heading lives with the readers of it, and is handed on from here because
 // this is where everything else about the charter's shape is taken from.
 export { EVIDENCE_SECTION } from './_lib.mjs';
@@ -1374,6 +1377,10 @@ function cmdClose(horde, positional, flags) {
     date: today(),
     merged,
     escalated,
+    // Two lines left from before 6.0.0: nothing counts either any more but a journal that still
+    // carries them. Printed only then — never as a zero every close repeats.
+    escalatedPart: escalated ? ` · **Escalated (pre-6.0.0 legacy):** ${escalated}` : '',
+    keysTransferredLine: keysTransferred ? `\n**Keys transferred:** ${keysTransferred} without re-review` : '',
     open,
     gate,
     green,
@@ -1407,6 +1414,11 @@ function cmdClose(horde, positional, flags) {
     fail(e.message);
   }
   append(path, `\n${rendered}`);
+  // The close reaches the client too: their page rewritten, and their hook told.
+  const report = refreshReport(horde, { cfg });
+  const notified = notifyClient(horde, cfg, {
+    event: 'wave-close', kind: 'wave', id: String(n), text: `wave ${n} closed — ${green}/${total} evidence rows proven, gate ${gate}`,
+  });
   // Shown to the chairman now, so the next close does not list them again and none is ever missed
   // by falling between one wave's close and the next one's start.
   markPromotionsReported(horde, promotions);
@@ -1440,6 +1452,8 @@ function cmdClose(horde, positional, flags) {
     aspectsObserved: observed,
     law: { path: law.path, added: law.doc.added.length, raised: law.doc.raised.length, attached: law.doc.attached.length },
     audit,
+    report: report.ok ? report.paths[0] : null,
+    ...(notified ? { notified } : {}),
   }, flags, () => {
     const lines = [`wave ${n} closed — gate ${gate}, ${green}/${total} evidence green`];
     if (noEvidenceLayer) lines.push(noEvidenceLayer);
@@ -1481,6 +1495,8 @@ function cmdClose(horde, positional, flags) {
     for (const q of audit.quiet) {
       lines.push(`nothing has hit ${q.aspect}: ${q.reading || q.signal || `nothing new against it in ${q.quietWaves} closed wave(s)`}`);
     }
+    lines.push(report.ok ? `client report: ${report.paths[0]}` : report.note);
+    if (notified && !notified.ok) lines.push(`the client was not notified: ${notified.note}`);
     return lines.join('\n');
   });
 }

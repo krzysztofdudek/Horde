@@ -288,6 +288,13 @@ record their answers (`ask.mjs answer <id> "…"`), and close waves (`wave.mjs c
 queue is ready. You do not: merge by hand, run the test suite yourself to decide a ticket is done, or
 write a brief `brief.mjs` did not render.
 
+**The client can see the mission without you.** `report.mjs` writes one plain-language page per
+horde — the questions waiting on them, every evidence row and how far it has got, what landed since
+the last report, what waits to be merged — and every tick, wave close and filed question rewrites it
+(`hordes/<horde>/report.md`, and `config.report.out` when the client should find it somewhere else).
+`config.notify` is the command run when a question is filed or a wave closes, for whatever reaches
+the client when they are not at the terminal. Point the client at the page; do not paraphrase it.
+
 **Answers that recur are law you have not written down yet.** Run `escalate.mjs recurring` at each
 close. The same answer given three times to the same kind of question on the same territory is not a
 fourth decision waiting to happen — it is a rule, and the tool hands the territory's own agent the

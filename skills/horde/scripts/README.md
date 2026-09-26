@@ -889,6 +889,35 @@ only what depends on the answer — `stop` everything, `stuck` that ticket, `cha
 earning the evidence rows it names, `lower` that branch's landing. The table is in the `tick.mjs`
 section below.
 
+## report.mjs — the mission as the client sees it
+
+`report [--out <path>] [--horde h] [--json]`. One page of plain language for the client who never
+opens the terminal — the frame's rule, no tool names, no commands, no branches — answering what is
+waiting on them and what has been proven. It holds the open questions, each in its own words with
+when it was asked and what kind of decision it is; every row of the charter's evidence catalogue in
+the client's words (not started, planned, being worked on, tried as a prototype, landed but not yet
+proven, proven — and "came back" for a row whose landed work was reverted or reopened, read off the
+landing results' own fates); what landed since the last report was written (`report.json` keeps
+only which merged tickets the last one already counted) and how much in all; the work in progress,
+and how many finished branches wait to be merged, with the forecast `tick` measures.
+
+It is rewritten, never appended to: by every `tick` pass (`report: {path, paths}` in its result, or
+`{path: null, note}` when it could not be written — the pass goes on), by every `wave close`
+(`report` in its result), and by `ask.mjs add`. It lands at `hordes/<horde>/report.md`, and also at
+`config.report.out` when set (`<horde>` in the path names one file per horde; a relative path is
+from the repository root), and at `--out` for a run by hand. `--json` is a `horde-report/1`
+document: `{horde, title, at, waiting[], evidence[], landed: {total, sinceLastReport[]}, inWork,
+waitingToMerge: {count, forecastMs}, previousAt, paths}`.
+
+**`config.notify`** is the hook beside it: a command template run when a question is filed —
+whoever files it, a worker's `ask.mjs add`, `tick`'s `stuck`, a wave close's audit — and when a wave
+closes. `<event>` (`ask` or `wave-close`), `<kind>` (the question's kind, or `wave`), `<id>` (the
+question's id, or the wave's number), `<text>` (the question, or one line on the close) and
+`<horde>` are filled in, each quoted as one shell argument, so nothing in a question's text is run.
+It runs from the repository root for at most thirty seconds; a hook that fails or hangs is named
+(`notified: {ok, command, note}` on `ask.mjs add`'s result and a wave close's) and never stops the
+filing or the close. Unset by default: nothing is run.
+
 ## escalate.mjs — the recurring-answer scan
 
 Everything else the old escalation channel did — a build decision (a contract, a boundary, a

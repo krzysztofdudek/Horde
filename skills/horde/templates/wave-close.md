@@ -1,10 +1,9 @@
 # Wave {{n}} — close {{date}}
 
-**Merged:** {{merged}} tickets · **Escalated (pre-6.0.0 legacy):** {{escalated}} · **Open:** {{open}} · **Gate on trunk:** {{gate}}
+**Merged:** {{merged}} tickets{{escalatedPart}} · **Open:** {{open}} · **Gate on trunk:** {{gate}}
 **After landing:** {{reverted}} reverted · {{reopened}} reopened
 **Evidence catalogue:** {{green}}/{{total}} green (Δ {{delta}} since wave {{n-1}}){{evidenceLayerLine}}
-**Parallelism:** planned {{plannedParallelism}} · achieved {{achievedParallelism}}
-**Keys transferred:** {{keysTransferred}} without re-review
+**Parallelism:** planned {{plannedParallelism}} · achieved {{achievedParallelism}}{{keysTransferredLine}}
 **Decisions per merged ticket:** {{decisionsLine}}
 **Change size (lines/files, biggest first):** {{changeSizeLine}}
 **Quality index:** {{qualityLine}}
