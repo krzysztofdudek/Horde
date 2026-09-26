@@ -148,7 +148,9 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   (first promoting whatever a merged ticket's own verdict already proved, mission-wide and
   regardless of wave, into the charter's "reproduced by" cell — the same reading `wave.mjs close`
   uses for one wave, stretched over the whole mission); the trunk branch does not exist, or
-  `config.gates.trunk` is not configured, or it is not green at the trunk branch's tip (a recorded
+  a filled row no longer holds against the proof recorded when it was filled (`evidence.json`; a
+  cell typed into the charter holds against nothing); `config.gates.trunk` is not configured, or it
+  is not green at the trunk branch's tip (a recorded
   green in `cache/last-gate.json` is accepted only when it was run — `kind: "ran"`, by a landing or
   by `wave.mjs close --gate green --sha` — on that very sha; anything else, a typed claim or an
   entry older than the field included, is run fresh in a scratch worktree); no retrospective has been run on this mission at all, or the one on file was taken over
@@ -930,15 +932,20 @@ Appends to `hordes/<horde>/plan.md` (team waves to `teams/<team>/plan.md`): `sta
 `note "…"`, `merged NNN <sha>`,
 `close [--gate green|red] [--sha <tip>]
 [--evidence E5,…] [--team t]` (renders `templates/wave-close.md` with counts from the queue
-and the evidence catalogue; `--gate green --sha` runs the level's gate command at that tip, refuses
+and the evidence catalogue; `--gate green --sha` runs the level's gate command at that commit (which
+must be on the trunk), refuses
 the close when it does not pass, and records the run in `cache/last-gate.json` as `kind: "ran"`;
 `--gate red --sha` is recorded as said, `kind: "asserted"`; `--evidence` fills catalogue rows a gate
 run here proves — never a "client testimony" or "artifact" row),
 `evidence <id> (--ask <id> | --artifact <path> | --run "<command>")` (fills one row no ticket
-verdict can fill, with what the tool checks and by the row's kind of proof: an answered ask for
-"client testimony", a file the trunk tip carries for "artifact" — recorded with the commit and its
-object id — and for any other kind a command the tool runs at the trunk tip, recorded only when it
-passes; a typed `--by` is refused),
+verdict can fill, with what the tool checks and by the row's kind of proof: an answered ask naming
+the row's id for "client testimony", a file the trunk tip carries for "artifact" — recorded with the
+commit and its object id — and for any other kind one of the commands the row states in backticks,
+run by the tool at the trunk tip and recorded only when it passes; a typed `--by` is refused). Every
+tool that fills a cell records what it was proved by in `hordes/<h>/evidence.json` — the ticket
+verdict, the gate run and its commit, the command and its commit, the file and its object, or the
+ask — and the mission's final gate (`horde.mjs done`) checks every filled cell against that record
+again; `horde.mjs charter edit` warns about a filled cell with no record, and the final gate refuses it,
 `current [--team t]`. Every close also writes the mission's `horde-law/1` document (see `law.mjs`) and
 prints its path, and runs the law audit off that same reading (see `audit.mjs`). Its one-team,
 one-wave judgement of "does a ticket prove this row" is also
@@ -985,16 +992,18 @@ Beyond the counts it always carried, `close` states seven figures the chairman r
   it merged, with the trend across the closes before it. It is meant to fall: a horde needing as
   many rulings per ticket in wave six as in wave one has learned nothing.
 - **the quality index** — read from the graph's own CLI (`config.ygCommand`) on the tree the close
-  runs on, through its two machine documents: `check --json` (`yg-check/1`, for its findings,
-  `coverage` and `judges`) and `aspects --json` (`yg-aspects/1`, for each rule's status). Five
+  runs on, through its two machine documents: the free fill `check --approve --only-deterministic
+  --json` (`yg-check/1`, for its findings, `coverage` and `judges` — it writes only the gitignored
+  script cache, and it is the one run that sees a check that failed to run) and `aspects --json` (`yg-aspects/1`, for each rule's status). Five
   figures — enforced rules, advisory rules with nothing recorded against them, blocking violations,
   the standing noise floor, and file coverage — each print with their delta
   from the previous wave, plus a sixth, the number of distinct external judges a verdict in force
   rests on, shown for the record but never part of what "fell" means. What is only the state of a
   cache or of the horde's own process is counted apart and never as the graph getting weaker: a
-  pair with no verdict yet (a script pair this checkout has not run, one an earlier release keyed
-  differently, a verdict left stale when a merge moved its code, a prose pair nobody judged) is
-  neither a violation nor something against an advisory rule, and a `log-cycle-open` warning is
+  pair with no verdict yet for a cache reason (cause `deterministic-not-run`,
+  `keyed-by-earlier-release`, `stale` or `never-reviewed`) is neither a violation nor something
+  against an advisory rule — any other cause, a check that failed to run or a reviewer that failed
+  among them, counts like a finding — and a `log-cycle-open` warning is
   not noise — the close says both beside the index (`unfilled`, `unfilledScript`,
   `logCyclesOpen` in `--json`). A CLI that runs but does not
   answer with `schema: "yg-check/1"` (or `"yg-aspects/1"`) — too old, or answering something else
@@ -1129,9 +1138,15 @@ the JSON, and every item below is measured against it:
    a fill that did run is named with its cause. On a red tree only what the branch brought is its
    round: the parent's tree is filled and read the same way (on a red landing only), each blocking
    finding is keyed by its code, rule, subject and component and then by each edge, violation or
-   file it names, and a finding the parent already carries is inherited — named apart, never held
-   against the ticket, and kept for the director in `cache/inherited.json` (shown by `status.mjs`);
-   a tree whose every blocking finding is inherited is ✓. Every block of what the branch brought is
+   file it names, and the parent's keys are counted, not merely looked up — a second violation
+   identical to one the parent has (same rule, file and message) is the branch's own. A finding that
+   names none of those (a prose refusal, a structural finding) is the parent's only when the parent
+   has as many of it and the branch touched neither the rule, nor the unit's file, nor the
+   component's graph directory or mapped files. A finding the parent already carries is inherited —
+   named apart, never held against the ticket, and kept for the director in `cache/inherited.json`
+   (shown by `status.mjs`); the item is ✓ over a non-zero exit only when every blocking finding the
+   document counts is listed and inherited. A fill whose document says `aborted` with no stage is
+   still a stop. Every block of what the branch brought is
    listed with its label, subject and step. An undeclared dependency the architecture allows — a
    type-only import is one, since Yggdrasil 6.1.0 — names each edge `file:line → component` and the
    relation to declare in the importing component's own `yg-node.yaml` (inside the ticket's

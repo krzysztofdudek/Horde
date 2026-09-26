@@ -22,7 +22,7 @@ import {
 import { nodesOf, padId } from './tk.mjs';
 import {
   currentWaveNumber, lastWaveNumber, mentionsEvidenceId, wave1Started,
-  stampMissionEvidence,
+  stampMissionEvidence, readProofs, verifyEvidence, evidenceWay,
 } from './wave.mjs';
 import { writeLawDiff } from './law.mjs';
 import { RETRO_SCHEMA, collectRetroInput, missionState } from './retro.mjs';
@@ -83,7 +83,8 @@ commands:
       belongs to its own territory, in its own brief (refine.mjs --step consult).
   done [--tree p] [--horde h]
       the mission's final gate. Refuses, listing every reason, when any evidence row is not
-      reproduced, the trunk gate (config.gates.trunk) is not green at the trunk tip, or the
+      reproduced, any filled row no longer holds against what it was proved by (a cell typed by
+      hand holds against nothing), the trunk gate (config.gates.trunk) is not green at the trunk tip, or the
       retrospective (retro.mjs) has not been run over the mission as it now stands. Otherwise
       stamps the charter, appends the completion block to the mission journal, archives the
       horde the way "archive" does, and prints what to do next (push — that decision is the
@@ -946,11 +947,19 @@ function cmdCharter(positional, flags) {
       id: b.id, by: a.reproducedBy, was: b.evidence, now: a.evidence, wasClass: b.evidenceClass, nowClass: a.evidenceClass,
     }));
 
+  // A cell this text fills (or rewrites) that no tool proved: it is written, because the charter is
+  // the client's document, but it proves nothing — `done` refuses it until a tool fills it.
+  const proofs = readProofs(horde);
+  const unproven = rowsAfter
+    .filter((r) => r.reproducedBy && !(proofs[r.id] && proofs[r.id].by === r.reproducedBy))
+    .map((r) => ({ id: r.id, by: r.reproducedBy, flag: evidenceWay(r.evidenceClass).flag }));
+
   writeText(path, content);
   const result = {
     horde,
     path,
     bytes: content.length,
+    unprovenEvidence: unproven,
     evidenceRows: rowsAfter.length,
     evidenceReproduced: rowsAfter.filter((r) => r.reproducedBy).length,
     droppedEvidence: dropped,
@@ -959,7 +968,8 @@ function cmdCharter(positional, flags) {
   };
   emit(result, flags, () => [
     `charter written: ${horde} (${content.length} bytes) — evidence catalogue: ${result.evidenceRows} row(s), ${result.evidenceReproduced} reproduced · quality ${result.quality}`,
-    ...dropped.map((d) => `warning: ${d.id} was recorded as reproduced by ${d.was} and this text drops that — put it back with: wave.mjs evidence ${d.id} --by "${d.was}"`),
+    ...dropped.map((d) => `warning: ${d.id} was recorded as reproduced by ${d.was} and this text drops that — put it back by proving it again: wave.mjs evidence ${d.id} ${evidenceWay((afterById.get(d.id) || rowsBefore.find((r) => r.id === d.id) || {}).evidenceClass).flag}`),
+    ...unproven.map((u) => `warning: ${u.id} says it is reproduced by "${u.by}", and no tool proved that — a typed cell proves nothing, and horde.mjs done refuses it; fill it with: wave.mjs evidence ${u.id} ${u.flag}`),
     ...redrafted.map((r) => `warning: ${r.id} is still recorded as reproduced by ${r.by}, but this text changed its evidence — the stamp may no longer match what it now promises`),
   ].join('\n'));
 }
@@ -1330,6 +1340,8 @@ function cmdDone(positional, flags) {
   if (red.length) {
     reasons.push(`evidence row(s) not reproduced: ${red.map((r) => `${r.id} (${r.state})`).join(', ')} — see status.mjs --horde ${horde} for what each is waiting on`);
   }
+  // Every filled cell, checked again against what it was proved by when it was filled.
+  for (const problem of verifyEvidence(horde, root)) reasons.push(problem);
 
   // 2. The trunk gate green at the trunk tip — a recorded green is accepted only when a tool here
   // ran it (kind "ran": a landing, or a wave close that ran the gate itself) on this very sha;

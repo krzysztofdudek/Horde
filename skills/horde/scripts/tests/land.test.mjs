@@ -4182,3 +4182,71 @@ test('land.mjs graph item: what the branch brought is its round, and the parent\
   assert.doesNotMatch(brought, /feature-old\.mjs/);
   assert.match(parent, /feature-old\.mjs:1 unfinished-work marker left behind/);
 });
+
+// Counted, not looked up: a second violation identical to one the parent already has (same rule,
+// file and message, another line) is the branch's own, and the inherited note never carries it.
+test('land.mjs graph item: a second identical violation in a file the parent already refuses is the branch\'s', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '407', {
+    mapping: ['feature-*.mjs'],
+    trunkFiles: { 'feature-old.mjs': 'export const old = 1; // UNFINISHED\n' },
+    extraFiles: { 'feature-old.mjs': 'export const old = 1; // UNFINISHED\nexport const more = 2; // UNFINISHED\n' },
+  });
+
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, `${r.stdout}${r.stderr}`);
+  const graph = byName(r).graph;
+  assert.equal(graph.ok, false, graph.note);
+  const [brought, parent] = graph.note.split('already on the parent');
+  assert.match(brought, /the graph refuses what this branch brought/);
+  assert.match(brought, /feature-old\.mjs:2 unfinished-work marker left behind/, 'the new line is the branch\'s');
+  assert.doesNotMatch(brought, /feature-old\.mjs:1 /, 'the old one is not');
+  assert.match(parent, /feature-old\.mjs:1 unfinished-work marker left behind/);
+  assert.doesNotMatch(parent, /feature-old\.mjs:2 /);
+  assert.equal(existsSync(join(dir, '.horde', 'hordes', 'mission1', 'cache', 'inherited.json')), true);
+  const item = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'cache', 'inherited.json'), 'utf8'));
+  assert.ok(item.findings.every((l) => !/feature-old\.mjs:2 /.test(l)), 'the branch\'s own violation never goes to the director as the parent\'s');
+});
+
+// A finding that names no edge, violation or file of its own is the parent's only while the branch
+// leaves what it is about alone.
+const TWO_MODULES = [
+  'node_types:',
+  '  module:',
+  '    description: A unit of the product.',
+  '    when:',
+  '      path: "{feature-*.mjs,other/**}"',
+  '',
+].join('\n');
+
+test('land.mjs graph item: a finding with no detail of its own is inherited while the branch leaves its component alone', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '408', {
+    mapping: ['feature-*.mjs'],
+    nodes: [{ path: 'other', spec: { mapping: ['other/**'], relations: [{ target: 'ghost', type: 'uses' }] } }],
+    trunkFiles: { '.yggdrasil/yg-architecture.yaml': TWO_MODULES, 'other/o.mjs': 'export const o = 1;\n' },
+  });
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 0, `${r.stdout}${r.stderr}`);
+  const graph = byName(r).graph;
+  assert.match(graph.note, /already on the parent/);
+  assert.match(graph.note, /relation-broken/);
+});
+
+test('land.mjs graph item: the same finding with no detail is the branch\'s once the branch touches its component', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = setupLandable(dir, '409', {
+    mapping: ['feature-*.mjs'],
+    nodes: [{ path: 'other', spec: { mapping: ['other/**'], relations: [{ target: 'ghost', type: 'uses' }] } }],
+    trunkFiles: { '.yggdrasil/yg-architecture.yaml': TWO_MODULES, 'other/o.mjs': 'export const o = 1;\n' },
+    extraFiles: { 'other/o.mjs': 'export const o = 2;\n' },
+  });
+  const r = run('land.mjs', [branch], dir);
+  assert.equal(r.code, 1, `${r.stdout}${r.stderr}`);
+  const graph = byName(r).graph;
+  assert.equal(graph.ok, false, graph.note);
+  assert.match(graph.note.split('already on the parent')[0], /the graph refuses what this branch brought:[\s\S]*relation-broken/);
+});

@@ -1063,7 +1063,7 @@ function checkGraph(cfg, worktree, noGate, changedFiles = [], baseTree = null) {
       baseDoc = base.doc || null;
       if (!baseDoc) parentNote = ` (the parent's tree could not be read — ${base.summary || `\`${base.command}\` gave no document`} — so every finding counts as this branch's)`;
     }
-    split = splitFindings(res.doc, baseDoc);
+    split = splitFindings(res.doc, baseDoc, { touched: touchedBy(cfg, worktree, changedFiles) });
   }
   const ignore = new Set(split.inherited.map((f) => f.index));
   const onParent = [...split.inherited, ...split.alsoOnParent];
@@ -1072,7 +1072,13 @@ function checkGraph(cfg, worktree, noGate, changedFiles = [], baseTree = null) {
     ? `\n${onParent.length} finding(s) already on the parent — not this branch's, and not held against it; the trunk's to clear:\n${inherited.join('\n')}`
     : '';
   const errorsHere = asArray(res.doc.issues).filter((i, index) => i && i.severity === 'error' && !ignore.has(index));
-  if (!errorsHere.length && !cycles.length) {
+  // Green over a non-zero exit only when that exit is wholly explained by findings the parent
+  // already carries: every blocking finding the document lists is one of them, and the document
+  // lists every blocking finding it counts. A red exit with nothing listed to explain it stays red.
+  const listedErrors = asArray(res.doc.issues).filter((i) => i && i.severity === 'error').length;
+  const counted = res.doc.totals && Number.isInteger(res.doc.totals.errors) ? res.doc.totals.errors : listedErrors;
+  const explained = ignore.size > 0 && !errorsHere.length && counted === listedErrors;
+  if (explained && !cycles.length) {
     return {
       ok: true,
       inherited,
@@ -1114,6 +1120,9 @@ function checkGraph(cfg, worktree, noGate, changedFiles = [], baseTree = null) {
   if (architecture.length) {
     parts.push(`the architecture forbids a dependency this branch brought — not a worker's to declare; remove the import, or the user approves an architecture change the architect files:\n${renderFindings(res.doc, architecture).join('\n')}`);
   }
+  if (!parts.length && errorsHere.length === 0 && ignore.size > 0) {
+    parts.push(`the graph counts ${counted} blocking finding(s) and lists only ${listedErrors}, all already on the parent — what it does not list cannot be read as the parent's`);
+  }
   if (!parts.length) parts.push(`the graph refuses this tree${res.summary ? `: ${res.summary}` : ''}`);
 
   // Whether the pending judgements are ALL this graph says is wrong here: every blocking finding the
@@ -1132,6 +1141,34 @@ function checkGraph(cfg, worktree, noGate, changedFiles = [], baseTree = null) {
     ...(cycles.length ? { logCycleOpen: cycles } : {}),
     reviewerMissing,
     note: `${res.command} exited ${res.exit} — ${parts.join('\n')}${userOnly ? `\n— waiting on a user decision: ${userOnly.text}` : ''}${cycleNote}${inheritedNote}`,
+  };
+}
+
+// Whether the branch changed what a finding is about: the rule it names (anything under the rule's
+// directory), its unit when that is a file, the component it names (its yg-node.yaml and the rest
+// of its directory in the graph, or any file its mapping reaches). Asked only of a finding that
+// names no edge, violation or file of its own, where the parent's having "the same finding" says
+// nothing about whether the branch's inputs still earn it. A mapping the graph cannot answer for
+// reads as touched: the gate never waves a finding through on a reading it could not take.
+function touchedBy(cfg, worktree, changedFiles) {
+  const mappings = new Map();
+  const mappingOf = (node) => {
+    if (!mappings.has(node)) {
+      const res = ygJson(worktree, cfg, ['node', node, '--json'], 'yg-node/1');
+      mappings.set(node, res.state === 'ok' ? asArray(res.doc.mapping) : null);
+    }
+    return mappings.get(node);
+  };
+  return (issue) => {
+    if (issue.aspect && changedFiles.some((f) => f.startsWith(`.yggdrasil/aspects/${issue.aspect}/`))) return true;
+    const unit = String(issue.unit || '');
+    if (unit.startsWith('file:') && changedFiles.includes(unit.slice(5))) return true;
+    const node = issue.node || (unit.startsWith('node:') ? unit.slice(5) : null);
+    if (!node) return false;
+    if (changedFiles.some((f) => f.startsWith(`.yggdrasil/model/${node}/`))) return true;
+    const mapping = mappingOf(node);
+    if (mapping === null) return true;
+    return changedFiles.some((f) => pathInBoundary(f, mapping));
   };
 }
 

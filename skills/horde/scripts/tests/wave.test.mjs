@@ -706,10 +706,12 @@ test('wave.mjs evidence: each row is filled by what its kind of proof names, and
   t.after(() => rmRepo(dir));
   initHorde(dir);
   const charter = readFileSync(charterPath(dir), 'utf8').replace('| | | | |', [
-    '| E1 | the suite passes at the tip | api | | hermetic test |',
+    '| E1 | `node -e "process.exit(0)"` passes at the tip | api | | hermetic test |',
     '| E2 | the client says the report reads right | web | | client testimony |',
     '| E3 | the readme ships with the release | docs | | artifact |',
-    '| E4 | a row that names no kind of proof | api | |',
+    '| E4 | a row that names no kind of proof, run as `node -e "process.exit(0)"` | api | |',
+    '| E5 | `node -e "process.exit(3)"` passes | api | | hermetic test |',
+    '| E6 | a row that states no command | api | | hermetic test |',
   ].join('\n'));
   writeFileSync(charterPath(dir), charter);
   const cell = (id) => {
@@ -722,17 +724,24 @@ test('wave.mjs evidence: each row is filled by what its kind of proof names, and
     const r = run('wave.mjs', ['evidence', 'E1', '--by', 'looks fine'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /not filled by what is typed/);
-    assert.match(r.stderr, /--run "<command>"/);
+    assert.match(r.stderr, /--run "<command the row states>"/);
     assert.equal(cell('E1'), '', 'nothing was written');
     const typedTestimony = run('wave.mjs', ['evidence', 'E2', '--by', 'the client said so'], dir);
     assert.equal(typedTestimony.code, 1);
     assert.match(typedTestimony.stderr, /--ask <id>/);
   });
 
-  await t.test('any other kind: a command the tool runs at the trunk tip, recorded only when it passes', () => {
-    const failing = run('wave.mjs', ['evidence', 'E1', '--run', 'node -e "process.exit(3)"'], dir);
+  await t.test('any other kind: the command the row states, run at the trunk tip, recorded only when it passes', () => {
+    const failing = run('wave.mjs', ['evidence', 'E5', '--run', 'node -e "process.exit(3)"'], dir);
     assert.equal(failing.code, 1);
     assert.match(failing.stderr, /failed at the trunk tip/);
+    assert.equal(cell('E5'), '');
+    const other = run('wave.mjs', ['evidence', 'E1', '--run', 'node -e "process.exit(0)" && true'], dir);
+    assert.equal(other.code, 1, 'a command the row does not state proves nothing about it');
+    assert.match(other.stderr, /is reproduced by the command it states/);
+    const none = run('wave.mjs', ['evidence', 'E6', '--run', 'node -e "process.exit(0)"'], dir);
+    assert.equal(none.code, 1);
+    assert.match(none.stderr, /states no command of its own/);
     assert.equal(cell('E1'), '');
     const wrongWay = run('wave.mjs', ['evidence', 'E1', '--ask', 'a-001'], dir);
     assert.equal(wrongWay.code, 1, 'an ask does not prove a hermetic test');
@@ -744,7 +753,12 @@ test('wave.mjs evidence: each row is filled by what its kind of proof names, and
   });
 
   await t.test('client testimony: an answered ask, and only an answered one', () => {
-    const asked = run('ask.mjs', ['add', 'does the report read right to you?', '--kind', 'stop'], dir);
+    const elsewhere = run('ask.mjs', ['add', 'is the colour right?', '--kind', 'stop'], dir);
+    run('ask.mjs', ['answer', elsewhere.json.id, 'yes'], dir);
+    const unrelated = run('wave.mjs', ['evidence', 'E2', '--ask', elsewhere.json.id], dir);
+    assert.equal(unrelated.code, 1, 'an answer about something else is no testimony for E2');
+    assert.match(unrelated.stderr, /does not name E2/);
+    const asked = run('ask.mjs', ['add', 'E2: does the report read right to you?', '--kind', 'stop'], dir);
     const open = run('wave.mjs', ['evidence', 'E2', '--ask', asked.json.id], dir);
     assert.equal(open.code, 1);
     assert.match(open.stderr, /not answered yet/);
@@ -807,6 +821,18 @@ test('wave.mjs close: "--gate green --sha" is run, not taken — a red gate refu
     assert.match(r.stderr, /only a gate run here proves anything/);
   });
 
+  await t.test('a commit the trunk does not carry is refused', () => {
+    git(['checkout', '-q', '-b', 'elsewhere', 'mission1/trunk'], dir);
+    writeFileSync(join(dir, 'elsewhere.txt'), 'x\n');
+    git(['add', 'elsewhere.txt'], dir);
+    git(['commit', '-qm', 'off the trunk'], dir);
+    const off = git(['rev-parse', 'HEAD'], dir);
+    git(['checkout', '-q', '-'], dir);
+    const r = run('wave.mjs', ['close', '--gate', 'green', '--sha', off], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /is not on mission1\/trunk/);
+  });
+
   await t.test('a gate that passes is recorded as ran, on the commit it ran on', () => {
     const r = run('wave.mjs', ['close', '--gate', 'green', '--sha', tip.slice(0, 7), '--evidence', 'E1'], dir);
     assert.equal(r.code, 0, r.stderr);
@@ -828,23 +854,21 @@ test('wave.mjs close: "--gate green --sha" is run, not taken — a red gate refu
 
 // Issue 294: the quality index measures the graph, not the state of a cache. The script verdicts
 // live in a gitignored cache the landing fills in a throwaway tree, so after every merge the trunk's
-// own script pairs read as having no verdict for the code as it stands — free to fill, and nothing
-// about any rule. Two closes with no rule and no code-quality change between them must read the
-// same baseline and the same noise floor, with the unfilled pairs said beside the index.
-test('wave.mjs close: pairs with no verdict yet after a merge are not "the graph got weaker"', () => {
+// own script pairs read as having no verdict for the code as it stands. The close fills them first
+// (free) and reads its own fill's document, so two closes with no rule and no code-quality change
+// between them read the same baseline and noise floor — and a check that fails to run is counted,
+// never read as the graph holding steady.
+test('wave.mjs close: a merge the trunk never filled is not "the graph got weaker", and a check that fails to run is', () => {
   const yg = requireYg();
   const dir = makeRepo();
   try {
     graphFixture(dir, yg);
     initHorde(dir);
-    // Filled once, so the first reading has every script verdict in hand.
-    const parts = yg.split(/\s+/);
-    execFileSync(parts[0], [...parts.slice(1), 'check', '--approve', '--only-deterministic'], { cwd: dir, stdio: 'ignore' });
 
     run('wave.mjs', ['start'], dir);
     const first = run('wave.mjs', ['close', '--gate', 'green'], dir);
     assert.equal(first.code, 0, first.stderr);
-    assert.equal(first.json.quality.unfilled, 0, 'everything was filled');
+    assert.equal(first.json.quality.unfilled, 0, 'the close filled what it reads');
 
     // A merge lands a clean change; nothing fills this tree afterwards, exactly as on a trunk.
     writeFileSync(join(dir, 'other.mjs'), 'export const other = 1;\n');
@@ -853,8 +877,6 @@ test('wave.mjs close: pairs with no verdict yet after a merge are not "the graph
     run('wave.mjs', ['start'], dir);
     const second = run('wave.mjs', ['close', '--gate', 'green'], dir);
     assert.equal(second.code, 0, second.stderr);
-    assert.ok(second.json.quality.unfilled >= 1, `the moved script pair is counted apart: ${JSON.stringify(second.json.quality)}`);
-    assert.ok(second.json.quality.unfilledScript >= 1, 'and it is a script pair, free to fill');
     assert.equal(second.json.quality.baseline, first.json.quality.baseline, 'Δ baseline 0');
     assert.equal(second.json.quality.noiseFloor, first.json.quality.noiseFloor, 'Δ noise floor 0');
     assert.equal(second.json.quality.advisoryClean, first.json.quality.advisoryClean);
@@ -862,7 +884,19 @@ test('wave.mjs close: pairs with no verdict yet after a merge are not "the graph
     const plan = readFileSync(planPath(dir), 'utf8');
     const block = plan.slice(plan.lastIndexOf('# Wave 2 — close'));
     assert.match(block, /Δ enforced \+0 · advisory clean \+0 · baseline \+0 · noise floor \+0/);
-    assert.match(block, /beside it, not counted: \d+ pair\(s\) with no verdict yet \(\d+ script, free to fill\)/);
+
+    // The rule's own check now throws on this tree: no verdict, for a reason no fill clears.
+    const checkFile = join(dir, '.yggdrasil', 'aspects', 'no-marker', 'check.mjs');
+    writeFileSync(checkFile, "export function check(ctx) { for (const f of ctx.files) if (f.content.includes('BOOM')) throw new Error('boom'); return []; }\n");
+    writeFileSync(join(dir, 'other.mjs'), 'export const other = 2; // BOOM\n');
+    git(['commit', '-qam', 'a change the rule cannot run over'], dir);
+
+    run('wave.mjs', ['start'], dir);
+    const third = run('wave.mjs', ['close', '--gate', 'green'], dir);
+    assert.equal(third.code, 0, third.stderr);
+    assert.equal(third.json.quality.unfilled, 0, 'a check that failed to run is not the state of a cache');
+    assert.ok(third.json.quality.baseline > second.json.quality.baseline, JSON.stringify(third.json.quality));
+    assert.ok(third.json.qualityDeclined.some((d) => /blocking violations/.test(d)), 'and it reads as a fall');
   } finally {
     rmRepo(dir);
   }

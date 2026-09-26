@@ -340,21 +340,53 @@ test('horde.mjs charter edit: a rewrite that drops a recorded verifier says so',
   const withRow = [
     '# Mission · m', '', '## Acceptance — the evidence catalogue', '',
     '| id | evidence | node | reproduced by |', '|---|---|---|---|',
-    '| E1 | the suite is green | api | |', '',
+    '| E1 | `true` is green | api | |', '',
   ].join('\n');
   const charterEdit = (input) => JSON.parse(execFileSync(
     'node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit', '--json'],
     { cwd: dir, input, encoding: 'utf8' },
   ));
   charterEdit(withRow);
-  run('wave.mjs', ['evidence', 'E1', '--by', 'verifier1'], dir);
+  const proved = run('wave.mjs', ['evidence', 'E1', '--run', 'true'], dir);
+  assert.equal(proved.code, 0, proved.stderr);
+  const by = proved.json.by;
 
-  const kept = charterEdit(withRow.replace('| api | |', '| api | verifier1 |'));
+  const kept = charterEdit(withRow.replace('| api | |', `| api | ${by} |`));
   assert.equal(kept.evidenceReproduced, 1);
   assert.deepEqual(kept.droppedEvidence, []);
+  assert.deepEqual(kept.unprovenEvidence, [], 'the cell is the one the tool proved');
 
   const dropped = charterEdit(withRow);
-  assert.deepEqual(dropped.droppedEvidence, [{ id: 'E1', was: 'verifier1' }]);
+  assert.deepEqual(dropped.droppedEvidence, [{ id: 'E1', was: by }]);
+});
+
+// Issue 303: a cell typed into the charter proves nothing. The charter still takes the text — it is
+// the client's document — but says so, and `done` refuses the row until a tool fills it.
+test('horde.mjs: a reproduced-by cell typed by hand is flagged by charter edit and refused by done; the proved one passes', () => {
+  const dir = makeRepo();
+  try {
+    initHorde(dir);
+    run('horde.mjs', ['config', 'set', 'gates.trunk', 'true'], dir);
+    const typed = [
+      '# Mission · m', '', '## Acceptance — the evidence catalogue', '',
+      '| id | evidence | node | reproduced by |', '|---|---|---|---|',
+      '| E1 | `true` is green | api | looks fine |', '',
+    ].join('\n');
+    const edited = execFileSync('node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit'], { cwd: dir, input: typed, encoding: 'utf8' });
+    assert.match(edited, /warning: E1 says it is reproduced by "looks fine", and no tool proved that/);
+
+    const refused = run('horde.mjs', ['done'], dir);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /E1 says "looks fine", and nothing recorded proves it/);
+
+    execFileSync('node', [join(SCRIPTS_DIR, 'horde.mjs'), 'charter', 'edit'], { cwd: dir, input: typed.replace('| looks fine |', '| |'), encoding: 'utf8' });
+    assert.equal(run('wave.mjs', ['evidence', 'E1', '--run', 'true'], dir).code, 0);
+    const next = run('horde.mjs', ['done'], dir);
+    assert.equal(next.code, 1, 'still no retrospective');
+    assert.doesNotMatch(next.stderr, /E1/, 'the proved row holds');
+  } finally {
+    rmRepo(dir);
+  }
 });
 
 test('horde.mjs charter edit: rewording a stamped row\'s evidence or class leaves the stamp and warns, since the stamp no longer says what it proved', async (t) => {

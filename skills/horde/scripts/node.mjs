@@ -579,9 +579,13 @@ export function reviewerGap(cfg, cwd) {
 // checked) — and the answer carries that as `aborted`, so a caller names the gate instead of guessing
 // why the script pairs are still open.
 export function fillDeterministic(cfg, cwd, { compact = true } = {}) {
+  return checkAnswer(ygJson(cwd, cfg, fillArgs(cfg, cwd, compact), 'yg-check/1'));
+}
+
+function fillArgs(cfg, cwd, compact) {
   const args = ['check', '--approve', '--only-deterministic', '--json'];
   if (compact && cliAtLeast(cfg, cwd, YG_COMPACT_FROM)) args.push('--compact');
-  return checkAnswer(ygJson(cwd, cfg, args, 'yg-check/1'));
+  return args;
 }
 
 // `--compact` arrived with 6.1.0; an older CLI refuses the flag, so it is only asked of one that has it.
@@ -619,8 +623,9 @@ function checkAnswer(res) {
   if (res.state === 'ok') {
     const { doc } = res;
     const exit = doc.exit && Number.isInteger(doc.exit.code) ? doc.exit.code : null;
-    const aborted = doc.exit && doc.exit.status === 'aborted' && doc.aborted
-      ? { stage: doc.aborted.stage || null, issues: asArray(doc.aborted.issues) }
+    // A stop the document names without saying where is still a stop: nothing was recorded.
+    const aborted = doc.exit && doc.exit.status === 'aborted'
+      ? { stage: (doc.aborted && doc.aborted.stage) || null, issues: asArray(doc.aborted && doc.aborted.issues) }
       : null;
     return {
       available: true, ok: exit === 0, exit, command, doc, aborted, summary: checkSummary(doc),
@@ -721,41 +726,84 @@ function edgeKey(issue, edge) {
   return `${findingBase(issue)}|${edge.file}->${edge.target}`;
 }
 
-function findingKeys(issue) {
-  const edges = asArray(issue.edges);
-  if (edges.length) return edges.map((e) => edgeKey(issue, e));
+// What one finding is about, item by item: each edge, each violation, each file — or, for a
+// finding that names none of those (a prose refusal, a structural finding), the finding itself.
+// A key leaves the line out, because an edit above it moves it; the line is kept beside the key
+// so an item on the very same line is matched to its own first.
+function findingItems(issue) {
   const base = findingBase(issue);
+  const edges = asArray(issue.edges);
+  if (edges.length) return edges.map((e) => ({ kind: 'edge', key: edgeKey(issue, e), line: e.line ?? null, ref: e }));
   const violations = asArray(issue.violations);
-  if (violations.length) return violations.map((v) => `${base}|${v.file}|${v.message}`);
+  if (violations.length) {
+    return violations.map((v) => ({ kind: 'violation', key: `${base}|${v.file}|${v.message}`, line: v.line ?? null, ref: v }));
+  }
   const files = asArray(issue.files);
-  if (files.length) return files.map((f) => `${base}|${f}`);
-  return [base];
+  if (files.length) return files.map((f) => ({ kind: 'file', key: `${base}|${f}`, line: null, ref: f }));
+  return [{ kind: 'whole', key: base, line: null, ref: null }];
 }
 
 // The branch's blocking findings split into the ones it brought and the ones its parent already
-// has. `baseDoc` null (the parent could not be read) makes every finding introduced — the gate
-// never waves a finding through on a reading it could not take. An introduced finding keeps only
-// what is new in it: a relation finding its new edges, a refusal its new violations.
-export function splitFindings(doc, baseDoc) {
-  const onParent = new Set(baseDoc ? blockingFindings(baseDoc).flatMap(({ issue }) => findingKeys(issue)) : []);
+// has. Counted, not merely looked up: the parent's items are a multiset, and each branch item uses
+// one of them up — so a branch that adds a second violation identical to one its parent already
+// carries (same rule, file and message, another line) brings one, and it is the branch's. A
+// finding that names no item of its own — a prose refusal, a structural finding — is the parent's
+// only while the parent has as many of it AND the branch did not touch what it is about
+// (`touched(issue)`: the component's files, its yg-node.yaml, the rule): a verdict over inputs the
+// branch changed is the branch's, whatever the parent says. `baseDoc` null (the parent could not be
+// read) makes every finding introduced — the gate never waves a finding through on a reading it
+// could not take. An introduced finding keeps only what is new in it; the rest of it is named with
+// the parent's own (`alsoOnParent`).
+export function splitFindings(doc, baseDoc, { touched = () => true } = {}) {
+  const remaining = new Map();
+  const linesLeft = new Map();
+  if (baseDoc) {
+    for (const { issue } of blockingFindings(baseDoc)) {
+      for (const item of findingItems(issue)) {
+        remaining.set(item.key, (remaining.get(item.key) || 0) + 1);
+        if (item.line != null) {
+          if (!linesLeft.has(item.key)) linesLeft.set(item.key, []);
+          linesLeft.get(item.key).push(item.line);
+        }
+      }
+    }
+  }
+  const findings = blockingFindings(doc).map((f) => ({ f, items: findingItems(f.issue).map((i) => ({ ...i, old: false })) }));
+  const take = (item) => {
+    remaining.set(item.key, remaining.get(item.key) - 1);
+    item.old = true;
+  };
+  // Same key on the same line first, so a moved sibling never takes an unmoved item's match.
+  for (const { items } of findings) {
+    for (const item of items) {
+      const lines = linesLeft.get(item.key);
+      const at = item.line != null && lines ? lines.indexOf(item.line) : -1;
+      if (at >= 0 && (remaining.get(item.key) || 0) > 0) {
+        lines.splice(at, 1);
+        take(item);
+      }
+    }
+  }
+  for (const { f, items } of findings) {
+    for (const item of items) {
+      if (item.old || (remaining.get(item.key) || 0) <= 0) continue;
+      if (item.kind === 'whole' && touched(f.issue)) continue;
+      take(item);
+    }
+  }
   const introduced = [];
   const inherited = [];
   const alsoOnParent = [];
-  for (const f of blockingFindings(doc)) {
-    const fresh = findingKeys(f.issue).filter((k) => !onParent.has(k));
-    if (baseDoc && fresh.length === 0) {
+  const refsOf = (items, kind) => items.filter((i) => i.kind === kind).map((i) => i.ref);
+  for (const { f, items } of findings) {
+    const fresh = items.filter((i) => !i.old);
+    const old = items.filter((i) => i.old);
+    if (!fresh.length) {
       inherited.push({ ...f, edges: asArray(f.issue.edges), violations: asArray(f.issue.violations) });
       continue;
     }
-    const base = findingBase(f.issue);
-    const edges = asArray(f.issue.edges).filter((e) => !onParent.has(edgeKey(f.issue, e)));
-    const violations = asArray(f.issue.violations).filter((v) => !onParent.has(`${base}|${v.file}|${v.message}`));
-    introduced.push({ ...f, edges, violations });
-    // The part of a finding the branch did bring to that the parent already had: named with the
-    // inherited findings, never as the branch's own.
-    const oldEdges = asArray(f.issue.edges).filter((e) => onParent.has(edgeKey(f.issue, e)));
-    const oldViolations = asArray(f.issue.violations).filter((v) => onParent.has(`${base}|${v.file}|${v.message}`));
-    if (oldEdges.length || oldViolations.length) alsoOnParent.push({ ...f, edges: oldEdges, violations: oldViolations });
+    introduced.push({ ...f, edges: refsOf(fresh, 'edge'), violations: refsOf(fresh, 'violation') });
+    if (old.length) alsoOnParent.push({ ...f, edges: refsOf(old, 'edge'), violations: refsOf(old, 'violation') });
   }
   return { introduced, inherited, alsoOnParent };
 }
@@ -880,7 +928,9 @@ export function renderFindings(doc, findings) {
 //                  configured reviewer; not part of what "fell" means below, shown for the record
 //
 // Beside them, never part of what "fell" means: `unfilled` (findings that are a pair with no
-// verdict yet — `unfilledScript` of them script pairs one free fill clears) and `logCyclesOpen`.
+// verdict yet for a cache reason — stale, never reviewed, not run in this checkout, keyed by an
+// earlier release; `unfilledScript` of them script pairs) and `logCyclesOpen`. Any other cause an
+// unverified pair carries (a check that failed to run, a reviewer that failed) counts as a finding.
 // Those move with every merge and every fill — the landing fills in a throwaway tree, and the
 // script verdicts live in a cache no commit carries — so counting them as violations would report
 // the horde's own process as the graph getting weaker.
@@ -898,14 +948,22 @@ const YG_QUALITY_DOCUMENTS = 'yg-check/1 and yg-aspects/1';
 // code as it stands. And the causes an unverified script pair carries when one free fill clears it.
 const UNFILLED_VERDICTS = new Set(['unverified', 'stale']);
 const SCRIPT_UNFILLED_CAUSES = new Set(['deterministic-not-run', 'keyed-by-earlier-release']);
+// The causes that are only the state of a cache: a verdict never recorded here, or recorded over
+// inputs that have moved since. Nothing else an unverified pair can carry is.
+const CACHE_CAUSES = new Set(['stale', 'keyed-by-earlier-release', 'never-reviewed', 'deterministic-not-run']);
 
 // ygQualityIndex(cfg, cwd) — the reading above, taken on the tree at `cwd`. `available: false`
 // means the CLI could not be started at all, which is a different answer from a graph that
 // refuses the tree: a red check still yields a perfectly good index (that is what a baseline of
-// blocking findings IS). Never approves anything — `check --no-approve --json` and `aspects --json`
-// are both read-only and keyless, so this costs nothing and needs no key.
+// blocking findings IS). Records only what is free and keyless — the script verdicts, in the
+// gitignored cache — and never calls the reviewer; `aspects --json` is read-only.
 export function ygQualityIndex(cfg, cwd) {
-  const checkRes = ygJson(cwd, cfg, [...READ_ONLY_CHECK, '--json'], 'yg-check/1');
+  // The free fill first, and its own document is the reading: a script verdict lives in a cache no
+  // commit carries, so a tree nobody filled since the last merge reads its script pairs as having no
+  // verdict — and the run that fills them is the only one that sees a check that failed to run or a
+  // reviewer that failed, which a later plain read shows as merely unjudged again. It writes only the
+  // gitignored cache. A fill stopped at a gate still answers the read-only report of the same tree.
+  const checkRes = ygJson(cwd, cfg, fillArgs(cfg, cwd, false), 'yg-check/1');
   if (checkRes.state === 'no-cli') {
     return { available: false, command: checkRes.command, why: 'the Yggdrasil CLI could not be started' };
   }
@@ -934,8 +992,12 @@ export function ygQualityIndex(cfg, cwd) {
   // lock holds a finding for — refused, too large, a companion error — has something recorded
   // against it. A pair with no verdict yet (unverified, or stale over code that has since moved) is
   // not: that is the state of a cache, not a reading of the rule.
+  const causeOf = new Map(asArray(check.issues).filter((i) => i && i.code === 'unverified' && i.aspect)
+    .map((i) => [`${i.aspect} ${i.unit}`, i.cause]));
+  const cacheOnly = (p) => UNFILLED_VERDICTS.has(p.verdict)
+    && CACHE_CAUSES.has(causeOf.get(`${p.aspect} ${p.unit && p.unit.kind}:${p.unit && p.unit.path}`));
   const dirtyAdvisory = new Set(asArray(check.pairs)
-    .filter((p) => p.verdict !== 'approved' && !UNFILLED_VERDICTS.has(p.verdict)).map((p) => p.aspect));
+    .filter((p) => p.verdict !== 'approved' && !cacheOnly(p)).map((p) => p.aspect));
   const advisoryClean = advisory.filter((a) => !dirtyAdvisory.has(a.id)).length;
 
   // What blocks and what warns, counted in findings the way `totals` counts them, less what is only
@@ -943,10 +1005,13 @@ export function ygQualityIndex(cfg, cwd) {
   // this checkout has not run, one an earlier release keyed differently, a verdict left stale when a
   // merge moved its code, a prose pair nobody has judged — and a log cycle a free fill left open.
   // Those are counted apart, as `unfilled` and `logCyclesOpen`, and never read as the graph weaker.
+  // A pair whose cause is anything else — a check that failed to run, a reviewer that failed or
+  // could not be reached, a missing reviewer, a suppression with no reason, or no cause at all — is
+  // counted like any finding: it is not the state of a cache, and never reads as a stronger graph.
   const issues = asArray(check.issues).filter(Boolean);
-  const unfilledIssues = issues.filter((i) => i.code === 'unverified');
+  const unfilledIssues = issues.filter((i) => i.code === 'unverified' && CACHE_CAUSES.has(i.cause));
   const logCycles = issues.filter((i) => i.code === 'log-cycle-open');
-  const real = issues.filter((i) => i.code !== 'unverified' && i.code !== 'log-cycle-open');
+  const real = issues.filter((i) => !unfilledIssues.includes(i) && i.code !== 'log-cycle-open');
   const pairKind = new Map(asArray(check.pairs).map((p) => [`${p.aspect} ${p.unit && p.unit.kind}:${p.unit && p.unit.path}`, p.kind]));
   const unfilledScript = unfilledIssues.filter((i) => SCRIPT_UNFILLED_CAUSES.has(i.cause)
     || pairKind.get(`${i.aspect} ${i.unit}`) === 'deterministic').length;
@@ -963,6 +1028,7 @@ export function ygQualityIndex(cfg, cwd) {
     unfilled: unfilledIssues.length,
     unfilledScript,
     logCyclesOpen: logCycles.length,
+    fillStopped: check.exit && check.exit.status === 'aborted' ? ((check.aborted && check.aborted.stage) || 'unknown') : null,
     // coverage.covered also counts excluded files, so a repository whose init excluded its own
     // plumbing (Yggdrasil 6.1.0+) would read as covered by files no node owns. With the split
     // present, covered is what a node or a type answers for, out of the files not excluded.

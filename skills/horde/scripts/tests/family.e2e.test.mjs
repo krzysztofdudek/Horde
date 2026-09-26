@@ -255,7 +255,7 @@ const CHARTER = [
   '| id | evidence | node | reproduced by |',
   '|---|---|---|---|',
   '| E1 | `node --test src/orders/discount.test.mjs` passes on the merged tree | src/orders | |',
-  '| E2 | the repository gate is green at the trunk tip | src/orders | |',
+  '| E2 | the repository gate, `node --test`, is green at the trunk tip | src/orders | |',
   '',
 ].join('\n');
 

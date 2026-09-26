@@ -342,8 +342,9 @@ the horde's trunk, and the retrospective has been run over the mission as it now
 empty" is never "done" — `status.mjs` shows every charter row's own coverage
 (no ticket / queued / running / merged / reproduced) so you see what still stands in the way before you
 ask. Only what ran counts: a catalogue row is filled by what the tool checks (`wave.mjs evidence` — an
-answered ask for client testimony, a file the trunk carries for an artifact, a command it runs itself
-for anything else), never by a name you type, and a green gate is one a tool here ran (a landing,
+answered ask naming the row for client testimony, a file the trunk carries for an artifact, and for
+anything else the command the row itself states, which the tool runs), never by a name you type — a
+cell typed into the charter is taken as text and refused by `done`, and a green gate is one a tool here ran (a landing,
 `wave.mjs close --gate green --sha`, which runs it, or `done` itself). `horde.mjs done` is the gate
 itself: it refuses, listing every reason, until all three hold, then
 stamps the charter, appends the completion block to the mission journal, archives the horde, and tells
