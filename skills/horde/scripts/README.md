@@ -784,9 +784,13 @@ Three sweeps and one line.
   `aspect-effective-nowhere`), so a rename never files the same finding twice. New filings are recorded
   under the current id, with the `evidenceHash` the item rests on. An item is filed again when that
   evidence changed (the hash under its current id and its aliases' hashes are all different from the
-  one on file) **and** what was filed for it before is closed — its ticket merged or dropped, its ask
-  answered; while it is still open the close says so and files nothing. A ledger entry from before
-  hashes were recorded, or an item with no hash, reads as the same evidence. Two classes never become
+  one on file under the current id) **and** what was filed for it before is closed — its ticket
+  merged, its ask answered; while it is still open the close says so and files nothing. A ticket the
+  director dropped is a decision: the item is not filed again, and the close names
+  `yg advise dismiss` for taking it off the feed too. An entry filed under a former id (an alias, or
+  the other name of a renamed class) counts as the same evidence whatever its hash — a rename is not
+  new evidence. A ledger entry from before hashes were recorded, or an item with no hash, reads as the
+  same evidence. Two classes never become
   a worker ticket (`ADVISE_ROUTES` in `audit.mjs`): `promotion:` is reported for the ladder, whose own
   step is `node.mjs promote <rule>` on its own evidence, and files nothing; `decorative-rule:`,
   `dead-attach:`/`aspect-effective-nowhere:`, `orphaned-aspect:`, `suppress-anomaly:` and
@@ -1105,8 +1109,11 @@ the JSON, and every item below is measured against it:
    started the item is ✗ (never a quiet ✓) and names `config.ygCommand`; when the free run itself
    did not take — a judgement rule with no judge configured refuses it outright — the item hands
    over the CLI's own words rather than naming pairs it cannot classify. One warning is read as a
-   refusal: `log-cycle-open` on a `log_required` component that owns a file the branch changed
-   (asked of `yg context --file`, only when there is such a warning). The free half never records a
+   refusal: `log-cycle-open` on a `log_required` component that owns a file the branch changed —
+   on the branch's tree, or on the base's for a file the branch deleted. Asked only when there is
+   such a warning, and narrowly: one `yg node --json` per open component narrows the changed files
+   to its mapping, and only those go to `yg owner --file` (Yggdrasil answers one file per call). A
+   tree red with such a cycle is never read as waiting on the user alone. The free half never records a
    component's source baseline, so its first log entry would otherwise answer for every later edit
    and the log gate would never ask for another why; the item names the component and the way out —
    record why, run the full `yg check --approve` (free while no reviewer pair is pending), commit the
@@ -1337,8 +1344,12 @@ status is not this either — the text judging this code is the one that already
 what a rule *says* while changing a file it reaches is. What a rule says is every file in its own
 directory — its text, its code, any helper or table its code reads, the adopter's
 `yg-aspect.adapt.yaml` — except its history (`log.md`, `yg-aspect.adapt.log.md`), its `drills/`
-corpus and dot-files; its `yg-aspect.yaml` and its adaptation count only when something other than
-`status` and `review_by` moved. A changed path belongs to the rule whose id is the longest directory
+corpus and dot-files; a `.mjs`, `.js` or `.cjs` file counts wherever it sits, dot-files and `drills/`
+included, since the rule's code can import it. Its `yg-aspect.yaml` and its adaptation count only
+when something other than `status` and `review_by` moved (comments and blank lines aside, except
+inside a block scalar, whose lines are the value). A changed path is also resolved against the
+base's rules alone, so a new `yg-aspect.yaml` dropped inside an existing rule's directory does not
+take the files there — or itself — out of the enclosing rule. A changed path belongs to the rule whose id is the longest directory
 above it in the graph's own inventory (`yg aspects --json` on both trees), so a nested rule
 (`boundary/clean-core`) and an installed one (`packages/<publisher>/<repo>/<package>/<rule>`) are named
 by their full ids, never by their first path segment. The merge commit's `Law:` trailers read the

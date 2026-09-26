@@ -721,9 +721,19 @@ test('the law audit: a promotion and a lowering never become a worker\'s ticket;
     assert.match(skip.why, /its evidence changed, and what was filed for it before is still open/);
   });
 
-  await t.test('changed evidence once the earlier ticket is closed: filed exactly once more', () => {
+  await t.test('changed evidence after the director dropped the ticket: a decision, not filed again', () => {
     const ticket = first.filed[0].ticket;
-    assert.equal(run('tk.mjs', ['status', ticket, 'dropped', 'the fixture closes it'], dir).code, 0);
+    assert.equal(run('tk.mjs', ['status', ticket, 'dropped', 'the director took it off the work'], dir).code, 0);
+    const decided = closeWave(dir);
+    assert.deepEqual(decided.filed, []);
+    const skip = decided.skipped.find((s) => s.key === 'advise:unguarded-hot-spot:billing');
+    assert.match(skip.why, /was dropped — a decision/);
+    assert.match(skip.why, /yg advise dismiss unguarded-hot-spot:billing/);
+  });
+
+  await t.test('changed evidence once the earlier ticket merged: filed exactly once more', () => {
+    const ticket = first.filed[0].ticket;
+    assert.equal(run('tk.mjs', ['status', ticket, 'merged', 'the fixture merges it'], dir).code, 0);
     const refiled = closeWave(dir);
     assert.equal(refiled.filed.length, 1);
     assert.equal(refiled.filed[0].item, 'unguarded-hot-spot:billing');
@@ -733,6 +743,20 @@ test('the law audit: a promotion and a lowering never become a worker\'s ticket;
     assert.deepEqual(entries.map((e) => e.evidenceHash), ['h-1', 'h-2']);
     const last = closeWave(dir);
     assert.deepEqual(last.filed, [], 'and never a third time over the same evidence');
+  });
+
+  await t.test('filed under a former class name, with a different hash: a rename is not new evidence', () => {
+    const graphPath = join(dir, '.horde', 'hordes', 'mission1', 'graph.json');
+    const graph = JSON.parse(readFileSync(graphPath, 'utf8'));
+    graph.audits.push({
+      key: 'advise:dead-attach:no-marker', kind: 'advise', item: 'dead-attach:no-marker', route: 'client', ask: 'a-999', evidenceHash: 'old', at: '2026-09-01T00:00:00.000Z',
+    });
+    writeFileSync(graphPath, JSON.stringify(graph, null, 2));
+    writeFeed([{ ...feedItem('aspect-effective-nowhere:no-marker', 'new', 'A rule effective nowhere'), aliases: [{ id: 'dead-attach:no-marker', evidenceHash: 'alias-new' }] }]);
+    const renamed = closeWave(dir);
+    assert.deepEqual(renamed.asked, [], 'not put to the client a second time');
+    const skip = renamed.skipped.find((s) => s.key === 'advise:aspect-effective-nowhere:no-marker');
+    assert.match(skip.why, /under its former id \(advise:dead-attach:no-marker\)/);
   });
 });
 

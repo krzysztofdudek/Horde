@@ -1152,7 +1152,7 @@ test('conflict guard: an adaptation that only raises an installed rule\'s status
   assert.doesNotMatch(said(r), /conflict of interest/, said(r));
 });
 
-test('conflict guard: a nested rule\'s helper file counts as its text; its drill corpus and its history do not', async (t) => {
+test('conflict guard: a nested rule\'s helper file counts as its text; its history and its drill notes do not', async (t) => {
   const nested = (dir2, extra = {}) => {
     addAspect(dir2, 'boundary/no-marker', {
       description: 'Source files must not carry an unfinished-work marker.',
@@ -1168,7 +1168,7 @@ test('conflict guard: a nested rule\'s helper file counts as its text; its drill
   const declared = [...DECLARED,
     '.yggdrasil/aspects/boundary/no-marker/mark.mjs',
     '.yggdrasil/aspects/boundary/no-marker/log.md',
-    '.yggdrasil/aspects/boundary/no-marker/drills/violates-marker/src/a.mjs'];
+    '.yggdrasil/aspects/boundary/no-marker/drills/violates-marker/README.md'];
 
   await t.test('the helper the check imports changed beside the code it judges: refused', async () => {
     const dir = makeRepo();
@@ -1183,12 +1183,12 @@ test('conflict guard: a nested rule\'s helper file counts as its text; its drill
     assert.match(said(r), /mark\.mjs/);
   });
 
-  await t.test('only its history and its drill corpus changed beside the code: not a conflict', async () => {
+  await t.test('only its history and a drill note changed beside the code: not a conflict', async () => {
     const dir = makeRepo();
     t.after(() => rmRepo(dir));
     const { branch } = lawFixture(dir, '293', (dir2) => {
       write(dir2, '.yggdrasil/aspects/boundary/no-marker/log.md', '## 2026-09-26\n\nWhy the rule reads the marker from a table.\n');
-      write(dir2, '.yggdrasil/aspects/boundary/no-marker/drills/violates-marker/src/a.mjs', 'export const a = 1; // UNFINISHED\n');
+      write(dir2, '.yggdrasil/aspects/boundary/no-marker/drills/violates-marker/README.md', 'A case carrying the marker.\n');
       write(dir2, 'src/a.mjs', 'export const a = 11;\n');
     }, { declared, extraBase: (dir2) => nested(dir2) });
     const r = run('land.mjs', [branch], dir);
@@ -1212,5 +1212,55 @@ test('protection guards: a pin written in an installed rule\'s adaptation decide
     const { branch } = pinnedEvidenceFixture(dir, '295', null, { installed: true });
     const r = run('land.mjs', [branch], dir);
     assert.doesNotMatch(said(r), /evidence:named-target \(pairing gone\)/, said(r));
+  });
+});
+
+// A rule dropped inside another rule's directory does not take the files there out of the rule whose
+// code reads them, and code the rule can import counts wherever it sits (review of issue 290).
+test('conflict guard: a decoy rule over a helper directory, and a helper hidden as a dot-file, still count as the enclosing rule\'s text', async (t) => {
+  const nestedWith = (helperPath) => (dir2) => {
+    addAspect(dir2, 'boundary/no-marker', {
+      description: 'Source files must not carry an unfinished-work marker.',
+      check: `import { MARK } from './${helperPath}';\n${MARKER_CHECK.replace("'UNFINISHED'", 'MARK')}`,
+      scope: WIDE_SCOPE,
+    });
+    write(dir2, `.yggdrasil/aspects/boundary/no-marker/${helperPath}`, "export const MARK = 'UNFINISHED';\n");
+    addNode(dir2, 'feature', {
+      mapping: ['src/a.mjs', 'src/b.mjs', 'tests/feature.test.mjs'],
+      aspects: ['no-marker', 'boundary/no-marker'],
+    });
+  };
+
+  await t.test('a new yg-aspect.yaml over the helpers, with the helper changed beside reached code: refused', async () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const declared = [...DECLARED,
+      '.yggdrasil/aspects/boundary/no-marker/helpers/mark.mjs',
+      '.yggdrasil/aspects/boundary/no-marker/helpers/yg-aspect.yaml',
+      '.yggdrasil/aspects/boundary/no-marker/helpers/content.md'];
+    const { branch } = lawFixture(dir, '297', (dir2) => {
+      addAspect(dir2, 'boundary/no-marker/helpers', { description: 'A decoy rule.', content: 'Decoy.\n' });
+      write(dir2, '.yggdrasil/aspects/boundary/no-marker/helpers/mark.mjs', "export const MARK = 'TODO';\n");
+      write(dir2, 'src/a.mjs', 'export const a = 11;\n');
+    }, { declared, extraBase: nestedWith('helpers/mark.mjs') });
+    const r = run('land.mjs', [branch], dir);
+    assert.equal(r.code, 1, said(r));
+    assert.match(said(r), /boundary\/no-marker \(conflict of interest\)/, said(r));
+    assert.match(said(r), /helpers\/mark\.mjs/);
+    assert.equal(git(['rev-list', '--count', '--merges', 'mission1/trunk'], dir), '0');
+  });
+
+  await t.test('a dot-file helper the check imports, changed beside reached code: refused', async () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const declared = [...DECLARED, '.yggdrasil/aspects/boundary/no-marker/.mark.mjs'];
+    const { branch } = lawFixture(dir, '298', (dir2) => {
+      write(dir2, '.yggdrasil/aspects/boundary/no-marker/.mark.mjs', "export const MARK = 'TODO';\n");
+      write(dir2, 'src/a.mjs', 'export const a = 11;\n');
+    }, { declared, extraBase: nestedWith('.mark.mjs') });
+    const r = run('land.mjs', [branch], dir);
+    assert.equal(r.code, 1, said(r));
+    assert.match(said(r), /boundary\/no-marker \(conflict of interest\)/, said(r));
+    assert.match(said(r), /\.mark\.mjs/);
   });
 });

@@ -555,37 +555,45 @@ function evidenceHashes(item) {
   return out;
 }
 
-// Whether what an earlier close filed for an item is still in front of somebody: its ticket not yet
-// merged or dropped, its ask not yet answered. An item whose evidence changed is filed again only
-// once the earlier filing is closed — evidence that moves every wave would otherwise pile a new
-// ticket onto an open one each close.
-function filingOpen(horde, entry, askState) {
-  if (entry.ask) return askState.get(entry.ask) === 'open';
-  if (!entry.ticket) return false;
+// Where what an earlier close filed for an item stands: `open` while its ticket is not yet merged or
+// dropped and its ask not yet answered; `decided` when the director dropped its ticket — a ticket
+// taken off the work on purpose is an answer about the item, and filing it again over new evidence
+// would ask the same question of the same person; `closed` otherwise (merged, or answered). An item
+// whose evidence changed is filed again only once the earlier filing is closed — evidence that moves
+// every wave would otherwise pile a new ticket onto an open one each close.
+function filingState(horde, entry, askState) {
+  if (entry.ask) return askState.get(entry.ask) === 'open' ? 'open' : 'closed';
+  if (!entry.ticket) return 'closed';
   const ticket = findTicket(horde, entry.ticket);
-  if (!ticket) return false;
+  if (!ticket) return 'closed';
   const status = parseField(ticket.text, 'Status');
-  return status !== 'merged' && status !== 'dropped';
+  if (status === 'dropped') return 'decided';
+  return status === 'merged' ? 'closed' : 'open';
 }
 
 // Whether this item is already answered for, and why — null when it is to be filed now. Filed under
-// its current id or a former one (adviseKeys), over the same evidence, is filed. A ledger entry that
-// predates evidence hashes, or an item that carries none, reads as the same evidence: nothing says
-// it moved.
+// its current id over the same evidence is filed. Filed under a former id — an alias the feed lists,
+// or the other name of a renamed class — is filed too, whatever hash that entry carries: a rename is
+// not new evidence, and Yggdrasil keeps a decision made under the old name for the renamed item. A
+// ledger entry that predates evidence hashes, or an item that carries none, reads as the same
+// evidence: nothing says it moved.
 function alreadyFiled(horde, item, ledger, askState) {
   const keys = adviseKeys(item);
   const entries = ledger.filter((e) => keys.includes(e.key));
   if (!entries.length) return null;
   const key = keys[0];
   const hashes = evidenceHashes(item);
-  const same = entries.find((e) => !e.evidenceHash || !hashes.size || hashes.has(String(e.evidenceHash)));
+  const same = entries.find((e) => e.key !== key || !e.evidenceHash || !hashes.size || hashes.has(String(e.evidenceHash)));
   if (same) {
     const what = same.ask ? `already put to the client as ${same.ask}` : 'already filed as a ticket';
     return same.key === key ? what : `${what} under its former id (${same.key})`;
   }
-  const open = entries.find((e) => filingOpen(horde, e, askState));
-  if (open) {
-    return `its evidence changed, and what was filed for it before is still open (${open.ask || open.ticket})`;
+  for (const e of entries) {
+    const state = filingState(horde, e, askState);
+    if (state === 'open') return `its evidence changed, and what was filed for it before is still open (${e.ask || e.ticket})`;
+    if (state === 'decided') {
+      return `its evidence changed, but its ticket ${e.ticket} was dropped — a decision; to take it off the feed as well, the client records it with \`yg advise dismiss ${item.id} --reason "…"\``;
+    }
   }
   return null;
 }

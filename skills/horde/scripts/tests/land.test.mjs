@@ -15,7 +15,7 @@ import {
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 import {
   parseReport, sameFile, sameCase, promiseFrontmatter, pairingAdapter, pairingOf, pairingKind,
-  evidencePinAt, promisesIn, appendOnlyMerge, ruleOfPath, isRuleText,
+  evidencePinAt, promisesIn, appendOnlyMerge, ruleOfPath, isRuleText, ruleYamlSubstance,
 } from '../land.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -2105,6 +2105,16 @@ test('land.mjs evidencePinAt: an installed rule is found by its id, and the pin 
   }
 });
 
+test('land.mjs ruleYamlSubstance: status, review date and comments are not what a rule says; a block scalar\'s own lines are', () => {
+  const base = ['name: r', 'status: advisory', 'review_by: 2099-01-01', '# a note', 'when:', '  aspect: x', ''].join('\n');
+  const raised = ['name: r', '# raised', 'status: enforced', 'review_by: 2100-01-01', 'when:', '  aspect: x', ''].join('\n');
+  assert.equal(ruleYamlSubstance(base), ruleYamlSubstance(raised));
+  const block = (line) => ['name: r', 'description: |', '  First line.', `  ${line}`, '', '  Last.', 'status: enforced', ''].join('\n');
+  assert.notEqual(ruleYamlSubstance(block('# keep this')), ruleYamlSubstance(block('# changed')), 'a # line inside a block scalar is the value');
+  assert.notEqual(ruleYamlSubstance(block('# keep this')), ruleYamlSubstance(block('')), 'and so is a blank one');
+  assert.equal(ruleYamlSubstance(block('x').replace('status: enforced', 'status: draft')), ruleYamlSubstance(block('x')), 'status after a block is still left out');
+});
+
 test('land.mjs ruleOfPath: a changed path belongs to the longest rule id above it, never to its first segment', () => {
   const ids = ['boundary', 'boundary/clean-core', 'packages/o/r/promises/has-evidence', 'no-marker'];
   assert.deepEqual(ruleOfPath('.yggdrasil/aspects/boundary/clean-core/content.md', ids), { id: 'boundary/clean-core', file: 'content.md' });
@@ -2115,7 +2125,8 @@ test('land.mjs ruleOfPath: a changed path belongs to the longest rule id above i
   assert.equal(ruleOfPath('src/a.mjs', ids), null);
   assert.equal(isRuleText('helpers/table.mjs'), true);
   assert.equal(isRuleText('yg-aspect.adapt.yaml'), true);
-  for (const not of ['log.md', 'yg-aspect.adapt.log.md', 'drills/violates-x/a.mjs', '.DS_Store']) assert.equal(isRuleText(not), false, not);
+  for (const not of ['log.md', 'yg-aspect.adapt.log.md', 'drills/violates-x/case.md', '.DS_Store']) assert.equal(isRuleText(not), false, not);
+  for (const code of ['drills/violates-x/a.mjs', '.hidden.mjs', 'lib/x.cjs', 'helper.js']) assert.equal(isRuleText(code), true, `code the rule can import counts wherever it sits: ${code}`);
 });
 
 test('land.mjs evidencePinAt: a quoted value, and comments/blocks around config: the way the shipped default is written', () => {

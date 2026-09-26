@@ -1002,7 +1002,7 @@ function recordGateCache(horde, level, cache, ticketId, branch, cfg) {
 // never asks for another why. A full `yg check --approve` closes the cycle — free when no reviewer
 // pair is pending — and a branch that changed such a component owes it: record why, run it, commit
 // the lock it writes. `changedFiles` is the branch's own diff (the whole batch's, for a shared gate).
-function checkGraph(cfg, worktree, noGate, changedFiles = []) {
+function checkGraph(cfg, worktree, noGate, changedFiles = [], baseTree = null) {
   const display = ygCommand(cfg).display;
   if (noGate) return { ok: true, note: `skipped (--no-gate) — \`${display} check\` was not run` };
 
@@ -1020,7 +1020,7 @@ function checkGraph(cfg, worktree, noGate, changedFiles = []) {
 
   const res = runYgCheck(cfg, worktree);
   if (res.timedOut) return { ok: false, note: `\`${res.command}\` — ${res.summary}` };
-  const cycles = openLogCycles(cfg, worktree, res.doc, changedFiles);
+  const cycles = openLogCycles(cfg, worktree, baseTree, res.doc, changedFiles);
   const cycleNote = cycles.length
     ? ` — and the log requirement is not measuring ${cycles.map((c) => `"${c}"`).join(', ')}, which this branch changed (log-cycle-open): `
       + `record why (\`${display} log add --node <node> --reason "…"\`), run the full \`${display} check --approve\` (free while no reviewer pair is pending), and commit the lock it writes`
@@ -1031,7 +1031,9 @@ function checkGraph(cfg, worktree, noGate, changedFiles = []) {
   // Whether what is red here is a decision only the user can make — no reviewer configured, or one
   // that could not be reached — read off the graph's own buckets and causes. Carried on every red
   // answer below: a refusal like that is nobody's fix round (see run()).
-  const userOnly = userOnlyRefusal(res.doc);
+  // An open log cycle this branch owes is the worker's to close, so a tree red with one is never the
+  // user's alone, whatever else in it waits on them.
+  const userOnly = cycles.length ? null : userOnlyRefusal(res.doc);
   const reviewerMissing = reviewerMissingIn(res.doc);
   const red = (item) => ({
     ...item,
@@ -1078,21 +1080,35 @@ function checkGraph(cfg, worktree, noGate, changedFiles = []) {
 }
 
 // The `log_required` components this branch changed whose log cycle is open on its tree: the graph's
-// own `log-cycle-open` warnings, each kept only when a changed file is owned by that component
-// (Yggdrasil's own answer, `yg context --file`). Asked only when there is such a warning at all.
-function openLogCycles(cfg, worktree, doc, changedFiles) {
-  const open = new Set(asArray(doc && doc.issues)
-    .filter((i) => i && i.code === 'log-cycle-open' && i.node).map((i) => i.node));
-  if (!open.size) return [];
-  const hit = new Set();
-  for (const f of changedFiles) {
-    if (f.startsWith('.yggdrasil/') || !existsSync(join(worktree, f))) continue;
-    const res = ygJson(worktree, cfg, ['context', '--file', f, '--json'], 'yg-context/1');
-    const owner = res.state === 'ok' && res.doc.owner && res.doc.owner.kind === 'node' ? res.doc.owner.path : null;
-    if (owner && open.has(owner)) hit.add(owner);
-    if (hit.size === open.size) break;
+// own `log-cycle-open` warnings, each kept only when that component owns a file the branch changed —
+// on the branch's tree, or, for a file the branch deleted, on the base's. Asked only when there is
+// such a warning at all, and only about the files that could be that component's: one `yg node` per
+// open component narrows the changed files to its mapping, and only those are put to `yg owner`
+// (Yggdrasil answers one file per call, and a deeper component can own a file inside a mapping).
+function openLogCycles(cfg, worktree, baseTree, doc, changedFiles) {
+  const open = [...new Set(asArray(doc && doc.issues)
+    .filter((i) => i && i.code === 'log-cycle-open' && i.node).map((i) => i.node))].sort();
+  if (!open.length) return [];
+  const code = changedFiles.filter((f) => !f.startsWith('.yggdrasil/'));
+  const mappingOf = (tree, node) => {
+    const res = ygJson(tree, cfg, ['node', node, '--json'], 'yg-node/1');
+    return res.state === 'ok' ? asArray(res.doc.mapping) : [];
+  };
+  const ownedBy = (tree, file, node) => {
+    const res = ygJson(tree, cfg, ['owner', '--file', file, '--json'], 'yg-owner/1');
+    return res.state === 'ok' && res.doc.node === node;
+  };
+  const hit = [];
+  for (const node of open) {
+    const here = mappingOf(worktree, node);
+    const there = baseTree ? mappingOf(baseTree, node) : [];
+    const found = code.some((f) => {
+      if (existsSync(join(worktree, f))) return pathInBoundary(f, here) && ownedBy(worktree, f, node);
+      return !!baseTree && pathInBoundary(f, there) && ownedBy(baseTree, f, node);
+    });
+    if (found) hit.push(node);
   }
-  return [...hit].sort();
+  return hit;
 }
 
 // Whether the prose rules are judged. They have one judge: the reviewer configured inside
@@ -1417,8 +1433,11 @@ export function ruleOfPath(path, ids) {
 // the rule's text, its code, any helper or table its code reads, the adopter's adaptation — except
 // what describes or tests the rule rather than deciding a verdict: its history (`log.md`, and an
 // installed rule's `yg-aspect.adapt.log.md`), the `drills/` corpus it is measured against, and
-// dot-files. The same line Yggdrasil draws when it decides which bytes a verdict rests on.
+// dot-files. Code is the exception to the exception: a `.mjs`, `.js` or `.cjs` file is something the
+// rule's own code can import wherever it sits, so it counts even as a dot-file or under `drills/`.
+const EXECUTABLE = /\.(mjs|cjs|js)$/;
 export function isRuleText(file) {
+  if (EXECUTABLE.test(String(file))) return true;
   const segs = String(file).split('/');
   if (segs.some((s) => s.startsWith('.'))) return false;
   if (segs.length > 1 && segs[0] === 'drills') return false;
@@ -1427,20 +1446,35 @@ export function isRuleText(file) {
 }
 
 // A rule's definition file with the two keys that say how hard it bites and when it is next re-read
-// taken out, comments and blank lines dropped. Those two are the law guard's to judge (a lowering)
-// or nobody's (a raise); everything else in the file is what the rule is and what it reaches.
-function ruleYamlSubstance(text) {
+// taken out, and comments and blank lines dropped — outside a block scalar (`key: |`, `key: >`),
+// whose every line, `#` and blank included, is the value itself and is kept verbatim. Those two
+// keys are the law guard's to judge (a lowering) or nobody's (a raise); everything else in the file
+// is what the rule is and what it reaches. This skill carries no YAML parser, so the block scalar is
+// told apart by its indentation, the way YAML itself does: every line indented deeper than the key
+// that opened it.
+export function ruleYamlSubstance(text) {
   if (text === null) return null;
   const kept = [];
   let skipping = false;
-  for (const line of String(text).split('\n')) {
+  let block = null;
+  for (const raw of String(text).split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    const indent = line.length - line.trimStart().length;
+    if (block !== null) {
+      if (line === '' || indent > block) {
+        if (!skipping) kept.push(line);
+        continue;
+      }
+      block = null;
+    }
     if (line.trim() === '' || /^\s*#/.test(line)) continue;
     const key = /^([A-Za-z_][\w-]*):/.exec(line);
     if (key) skipping = key[1] === 'status' || key[1] === 'review_by';
     else if (!/^\s/.test(line)) skipping = false;
-    if (!skipping) kept.push(line.replace(/\s+$/, ''));
+    if (/:\s*[|>][-+0-9]*\s*(#.*)?$/.test(line)) block = indent;
+    if (!skipping) kept.push(line);
   }
-  return kept.join('\n');
+  return kept.join('\n').replace(/\n+$/, '');
 }
 
 // Whether this branch changed what the rule at `id` says, through the one file `file` inside its
@@ -1587,20 +1621,26 @@ function conflictGuard(cfg, baseTree, headTree, changedFiles, law) {
   const baseAspects = law.baseAspects || aspectsById(baseTree, cfg);
   const headAspects = law.headAspects || aspectsById(headTree, cfg);
   const headReach = law.headReach;
-  const ids = [...new Set([...baseAspects.keys(), ...headAspects.keys()])];
+  const baseIds = [...baseAspects.keys()];
+  const ids = [...new Set([...baseIds, ...headAspects.keys()])];
   const touched = new Map();
   for (const f of changedFiles) {
-    const rule = ruleOfPath(f, ids);
-    if (!rule) continue;
-    const { id, file } = rule;
-    // A rule this branch invents judged nothing before it existed, so nothing it says about this
-    // code can be a rule bent around it.
-    if (!baseAspects.has(id)) continue;
-    // A raised status or a moved review date is not what the rule says: the first is the law
-    // guard's to see on its way down and nobody's on its way up, the second the law guard's alone.
-    if (!ruleTextChanged(baseTree, headTree, id, file)) continue;
-    if (!touched.has(id)) touched.set(id, new Set());
-    touched.get(id).add(file);
+    // Resolved twice: against every id either tree has, and against the base's alone. The second
+    // is what a rule was before this branch touched it, so a new rule dropped inside an existing
+    // rule's directory — a `yg-aspect.yaml` added over its helpers — cannot take a file out of the
+    // rule whose code reads it: that file, and the added definition itself, are still changes to the
+    // enclosing rule.
+    const owners = [ruleOfPath(f, ids), ruleOfPath(f, baseIds)].filter(Boolean);
+    for (const { id, file } of owners) {
+      // A rule this branch invents judged nothing before it existed, so nothing it says about this
+      // code can be a rule bent around it.
+      if (!baseAspects.has(id)) continue;
+      // A raised status or a moved review date is not what the rule says: the first is the law
+      // guard's to see on its way down and nobody's on its way up, the second the law guard's alone.
+      if (!ruleTextChanged(baseTree, headTree, id, file)) continue;
+      if (!touched.has(id)) touched.set(id, new Set());
+      touched.get(id).add(file);
+    }
   }
   if (touched.size === 0) return { ok: true, refusals: [] };
 
@@ -3489,9 +3529,9 @@ function combineBatchGroup(root, cfg, group, cleaner) {
 // The caller holds the gate lock around this call and only this call, mirroring run()'s own
 // lock-around-the-expensive-half shape, now paid once for the whole group rather than once per
 // member.
-function runSharedGate(cfg, level, worktreePath, addedFiles, changedFiles = []) {
+function runSharedGate(cfg, level, worktreePath, addedFiles, changedFiles = [], baseTree = null) {
   const gate = checkGate(cfg, level, worktreePath, null, false);
-  const graph = checkGraph(cfg, worktreePath, false, changedFiles);
+  const graph = checkGraph(cfg, worktreePath, false, changedFiles, baseTree);
   const mapping = checkMapping(cfg, worktreePath, addedFiles, false);
   const judge = checkJudge(cfg, worktreePath, graph, false);
   return {
@@ -3769,7 +3809,7 @@ function runMany(horde, root, cfg, tickets, level, noGate, flags) {
       const sharedStart = Date.now();
       try {
         const changedFiles = diffPaths(['diff', '--name-only', `${group.parentTip}...HEAD`], combined.info.path);
-        shared = runSharedGate(cfg, level, combined.info.path, addedFiles, changedFiles);
+        shared = runSharedGate(cfg, level, combined.info.path, addedFiles, changedFiles, baseTree.path);
       } finally {
         lock.release();
       }
@@ -3947,7 +3987,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     const gateStart = Date.now();
     try {
       results.gate = checkGate(cfg, level, head.path, branchSha, noGate);
-      results.graph = checkGraph(cfg, head.path, noGate, changedFiles);
+      results.graph = checkGraph(cfg, head.path, noGate, changedFiles, base.path);
       results.mapping = checkMapping(cfg, head.path, addedFiles, noGate);
     } finally {
       lock.release();
