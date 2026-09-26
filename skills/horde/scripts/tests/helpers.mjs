@@ -9,6 +9,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { YG_DOCUMENTS_AFTER } from '../node.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -189,10 +190,9 @@ export async function writeEvidenceJudgement(dir, layer, horde = 'mission1') {
 export function requireYg() {
   const found = findRealYg();
   if (!found) {
-    throw new Error(
+    throw new Error(ygFloorRefusal() || (
       'no Yggdrasil CLI on this machine — Horde requires it, and so does this suite. Put `yg` on '
-      + 'PATH, set HORDE_TEST_YG to a command line, or check out Yggdrasil beside this repository.',
-    );
+      + 'PATH, set HORDE_TEST_YG to a command line, or check out Yggdrasil beside this repository.'));
   }
   return found;
 }
@@ -327,7 +327,14 @@ export const MARKER_CHECK = [
 // this repository — the layout of a machine that has both repos out). Returns the command line
 // to put in `config.ygCommand`, or null when there is none. A test that gets null asserts the
 // honest "not measured" answer the tools give without a CLI; it never fabricates a report.
+//
+// Only a CLI at or above Horde's own floor (YG_DOCUMENTS_AFTER) counts. Horde refuses an older one
+// by design, so a suite run against it fails in every test that touches a graph — hundreds of
+// failures that all say the same thing. An older `yg` on PATH is passed over for a sibling build
+// that meets the floor; HORDE_TEST_YG is taken as meant, never second-guessed. When the only CLI
+// found is too old, findRealYg answers null and ygFloorRefusal() says which one and what to do.
 let resolvedYg;
+let belowFloor = null;
 export function findRealYg() {
   // Resolved once per process: the probe starts a process, and a machine running the whole suite
   // at once can fail to start one for a moment. Answering "there is no CLI" to that would be a
@@ -337,13 +344,36 @@ export function findRealYg() {
   return resolvedYg;
 }
 
+// The one refusal for a machine whose Yggdrasil is older than Horde's floor, or null when it is not.
+export function ygFloorRefusal() {
+  findRealYg();
+  if (!belowFloor) return null;
+  return `the Yggdrasil CLI this suite found is too old: \`${belowFloor.cmdline}\` reports ${belowFloor.version}, `
+    + `and Horde needs ${YG_DOCUMENTS_AFTER} or newer, so every test that touches a graph would fail on it. `
+    + `Install a newer one (npm i -g @chrisdudek/yg), or point the suite at a build: `
+    + `HORDE_TEST_YG="node <path to Yggdrasil>/source/cli/dist/bin.js".`;
+}
+
+// Whether a reported version string is at or above the floor. One that cannot be read is not held
+// against the CLI: the tools check every document they read by its schema anyway.
+function meetsFloor(version) {
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(version || '');
+  if (!m) return true;
+  const floor = YG_DOCUMENTS_AFTER.split('.').map(Number);
+  const have = m.slice(1, 4).map(Number);
+  for (let i = 0; i < 3; i++) {
+    if (have[i] !== floor[i]) return have[i] > floor[i];
+  }
+  return true;
+}
+
 function locateRealYg() {
   const probe = (cmdline) => {
     const parts = String(cmdline).trim().split(/\s+/).filter(Boolean);
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        execFileSync(parts[0], [...parts.slice(1), '--version'], { stdio: 'ignore' });
-        return cmdline;
+        const out = execFileSync(parts[0], [...parts.slice(1), '--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+        return { cmdline, version: String(out).trim() };
       } catch (e) {
         // A program that is not there is not there; a machine that could not start one right now
         // is worth one more ask.
@@ -352,16 +382,40 @@ function locateRealYg() {
     }
     return null;
   };
-  if (process.env.HORDE_TEST_YG) return probe(process.env.HORDE_TEST_YG);
-  const onPath = probe('yg');
+  const accept = (found) => {
+    if (!found) return null;
+    if (meetsFloor(found.version)) return found.cmdline;
+    if (!belowFloor) belowFloor = { cmdline: found.cmdline, version: found.version };
+    return null;
+  };
+  if (process.env.HORDE_TEST_YG) return accept(probe(process.env.HORDE_TEST_YG));
+  const onPath = accept(probe('yg'));
   if (onPath) return onPath;
   let dir = SCRIPTS_DIR;
   for (let i = 0; i < 12; i++) {
     const candidate = join(dir, 'Yggdrasil', 'source', 'cli', 'dist', 'bin.js');
-    if (existsSync(candidate)) return probe(`node ${candidate}`);
+    if (existsSync(candidate)) {
+      const sibling = accept(probe(`node ${candidate}`));
+      if (sibling) belowFloor = null;
+      return sibling;
+    }
     const up = resolve(dir, '..');
     if (up === dir) break;
     dir = up;
   }
   return null;
+}
+
+// ---- the suite's one refusal for a Yggdrasil below the floor ----------------------------------
+//
+// Asked once, as each test file loads, rather than left to the tests: a CLI older than Horde's floor
+// fails every test that touches a graph, and hundreds of failures that all mean "wrong Yggdrasil"
+// hide the one sentence that says so. The file stops before any test runs, naming the CLI it found
+// and the release to install. `tests/yg-floor.mjs` asks the same question once for the whole suite.
+{
+  const refusal = ygFloorRefusal();
+  if (refusal) {
+    process.stderr.write(`\nerror: ${refusal}\n\n`);
+    process.exit(1);
+  }
 }

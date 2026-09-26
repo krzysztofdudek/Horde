@@ -16,7 +16,7 @@ import {
   writeJSON, readText, appendText, git, today, fail, parseArgs, emit, isMain, renderTemplate, resolveHorde,
   readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
   qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES, parseEvidenceRows, asArray,
-  runGateAt, gateTimeoutOf, GATE_RAN,
+  runGateAt, gateTimeoutOf, GATE_RAN, nowIso, notifyTemplateProblem,
   runMain,
 } from './_lib.mjs';
 import { nodesOf, padId } from './tk.mjs';
@@ -62,6 +62,10 @@ commands:
       list of repository-root-relative paths copied into every ticket, trunk or scratch tree the
       moment it is made — for whatever a worker's tools need that git itself does not check out
       (an untracked env file, a dependency cache); a path git already tracks is refused.
+      "report.out" is one more path the client's plain-language report is written to (default:
+      only hordes/<horde>/report.md); "notify" a command run when a question is filed and when a
+      wave closes, with <event>, <kind>, <id>, <text> and <horde> filled in, each written bare,
+      never inside quotes (refused); it runs detached (default: none).
   charter show [--horde h]
   charter edit [--ask id] [--horde h]
       the mission charter: "show" prints it, "edit" replaces it with what arrives on stdin and
@@ -424,6 +428,15 @@ function defaultConfig(root) {
     // through `spawn`, the host's own headless CLI, with "<class>" filled in from the ticket and
     // "<brief>" with the path of the rendered brief. Nothing else in this tool set reads either key.
     runner: { kind: 'session', spawn: null },
+    // The client's side of the mission, outside the chat (report.mjs, and the hook in _lib.mjs's
+    // notifyClient). `report.out` is one more place the plain-language report is written besides
+    // hordes/<horde>/report.md — "<horde>" in it names one file per horde. `notify` is a command
+    // run when a question is filed and when a wave closes, with <event>, <kind>, <id>, <text> and
+    // <horde> filled in (each written bare — a placeholder inside quotes is refused); it is started
+    // detached, never waited on, and how it ended goes to hordes/<h>/notify.log. How it reaches the
+    // client is the adopter's. Neither is set by default.
+    report: { out: null },
+    notify: null,
     // Repository-root-relative paths copied into every worktree provisionTree makes (a ticket's,
     // trunk's, or a landing script's scratch tree) — for whatever a worker's tools need that git
     // itself does not put on a fresh checkout (an untracked env file, a dependency cache). A path
@@ -632,6 +645,10 @@ function cmdInit(positional, flags) {
   const branch = `${name}/trunk`;
   const created = git(['branch', branch, flags.base], root);
   if (created === null) fail(`could not create branch "${branch}" off "${flags.base}" — does that base exist?`);
+  // Where the mission started: the commit its trunk was cut at. What "no weaker than it found them"
+  // is measured against when a revert takes back a landing (land.mjs), so it is written once, now,
+  // and never moved.
+  const startSha = git(['rev-parse', '--verify', branch], root);
 
   // Already cleared above; this call cannot itself conflict (barring a concurrent claim in the
   // instant between the check and here, which a single CLI invocation never races against).
@@ -650,6 +667,7 @@ function cmdInit(positional, flags) {
   writeFileSync(join(dest, 'charter.md'), charter);
 
   writeText(join(dest, 'decisions.md'), '# Decisions\n\n');
+  if (startSha) writeText(join(dest, 'start.json'), `${JSON.stringify({ sha: startSha, base: flags.base, at: nowIso() }, null, 2)}\n`);
   writeText(join(dest, 'plan.md'), '# Plan\n\n');
   // No dissents.json: the dissent channel folded into ask.mjs, and this wrote an empty file that
   // nothing in the tool set has read since. A pre-6.0.0 mission's own copy is left where it is.
@@ -835,6 +853,10 @@ function cmdConfig(positional, flags) {
   }
   if (sub === 'set') {
     if (!key || value === undefined) fail('config set requires <key> <value>');
+    if (key === 'notify') {
+      const problem = notifyTemplateProblem(value);
+      if (problem) fail(problem);
+    }
     setPath(cfg, key, value);
     writeConfig(cfg);
     emit({ key, value: getPath(cfg, key) }, flags, () => `${key} = ${JSON.stringify(getPath(cfg, key))}`);

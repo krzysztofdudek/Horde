@@ -65,7 +65,9 @@ jobs:
         working-directory: skills/horde/scripts
         env:
           HORDE_TEST_RATATOSKR_DIR: ${{ github.workspace }}/ratatoskr
-        run: node --test tests/*.test.mjs
+        run: |
+          node tests/yg-floor.mjs
+          node --test tests/*.test.mjs
 
   # This repository also publishes law: `packages/promises`, offered to a repository that has no
   # evidence layer of its own. Publishing runs somebody else's code in somebody else's repository,

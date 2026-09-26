@@ -245,7 +245,7 @@ test('horde.mjs: a mission with an old on-disk config.classes (Claude model name
     assert.equal(plan.code, 0, plan.stderr);
     const weighed = plan.json.tickets.find((t) => t.id === oldSchemeId);
     assert.equal(weighed.class, 'sonnet');
-    assert.equal(plan.json.weight.estimate, 6, 'the old config\'s own "sonnet": 3 weight × 2 runs, unchanged by DEFAULT_CLASSES');
+    assert.equal(weighed.remainingPath, 3, 'the old config\'s own "sonnet": 3 weight, unchanged by DEFAULT_CLASSES');
   });
 });
 

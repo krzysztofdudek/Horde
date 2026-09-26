@@ -217,9 +217,13 @@ through its consultants — so what is left for you to spawn is the agents that 
   and a branch that sharpens a rule while changing the code that rule refuses. The first goes
   through only on the **client's** recorded answer, naming that one thing — put it to them, never
   rule on it yourself.
-- **A landing is not the end of a ticket.** When a merge is undone, or the evidence a ticket claimed
-  goes red again and you file a new ticket for it (`tk.mjs new … --reopens NNN`), say so:
-  `land.mjs NNN --fate reverted --by <sha>`, or `land.mjs NNN --fate reopened --by <the new
+- **A landing is not the end of a ticket.** To take a bad landing back, file a revert ticket
+  (`tk.mjs new … --reverts NNN`): a worker undoes the merge on its branch and it lands through the
+  same gate; what NNN itself brought in may go with it without an ask, but a later ticket's work in
+  the same files, or anything the mission started with, may not, and NNN is recorded as reverted when it merges. When a merge is undone some other
+  way, or the evidence a ticket claimed goes red again and you file a new ticket for it (`tk.mjs new …
+  --reopens NNN`), say so: `land.mjs NNN --fate reverted --by <sha>` (checked against the trunk: the
+  commit has to be there and has to undo the merge), or `land.mjs NNN --fate reopened --by <the new
   ticket>`. The wave close counts what came back beside what merged, and the retrospective reads it
   as its own kind of input — a return is the plainest thing a mission can tell you about whether its
   own evidence was ever enough.
@@ -241,7 +245,8 @@ architect is never resumed, only replaced; the fresh one rebuilds its context fr
 reconcile every `running` item whose worker has ended against its actual branch, land what its result file already says is
 ready (raising a ticket's one review before its first gate, and calling `land.mjs` itself where a
 fresh check is needed), print the dispatch list at
-`config.parallelism`, and say when the queue holds nothing but `merged` items so you know to close
+`config.parallelism` (beside it, once a gate time is measured, how many landings the gate drains per
+tick interval — the figure to set the parallelism against; workers beyond it wait at landing), and say when the queue holds nothing but `merged` items so you know to close
 the wave. Nothing lives between runs, because nothing has to: a run that starts cold reads the same
 state a run that never stopped would have. If the harness gives you a wake-up mechanism (a loop with
 `ScheduleWakeup`, or a scheduled run), use it at 20–30 minute intervals to call `tick.mjs` again;
@@ -286,6 +291,13 @@ You do: read what `tick.mjs` prints, spawn the workers and the reviews it lists,
 record their answers (`ask.mjs answer <id> "…"`), and close waves (`wave.mjs close`) when it says the
 queue is ready. You do not: merge by hand, run the test suite yourself to decide a ticket is done, or
 write a brief `brief.mjs` did not render.
+
+**The client can see the mission without you.** `report.mjs` writes one plain-language page per
+horde — the questions waiting on them, every evidence row and how far it has got, what landed since
+the last report, what waits to be merged — and every tick, wave close and filed question rewrites it
+(`hordes/<horde>/report.md`, and `config.report.out` when the client should find it somewhere else).
+`config.notify` is the command run when a question is filed or a wave closes, for whatever reaches
+the client when they are not at the terminal. Point the client at the page; do not paraphrase it.
 
 **Answers that recur are law you have not written down yet.** Run `escalate.mjs recurring` at each
 close. The same answer given three times to the same kind of question on the same territory is not a

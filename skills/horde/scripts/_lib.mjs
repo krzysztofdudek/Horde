@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFileSync, execSync, spawnSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
 const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'templates');
@@ -1883,24 +1883,132 @@ export function gateTimeoutOf(cfg) {
 // stopped. Whatever the group left running once the command itself ends is stopped too. Node's
 // synchronous spawn cannot make a group or signal one, so a small supervisor does it: it starts the
 // command detached (its own group), and on the deadline sends SIGTERM to the group, then SIGKILL.
+// Being its own group, the command is out of reach of a Ctrl-C at the terminal (SIGINT goes to the
+// foreground group, which holds the caller and this supervisor, not the command) and of a hangup
+// or a SIGTERM aimed at the supervisor. So the supervisor passes SIGINT, SIGTERM and SIGHUP on to
+// the command's group, SIGKILL after two seconds, and exits as that signal would have ended it:
+// an interrupted landing leaves no gate running and holding its worktree.
+// The command line and the directory follow `--`, so a value that begins with a dash is an argument
+// to the supervisor and never an option to node itself.
 const GROUP_SUPERVISOR = `
 const { spawn } = require('node:child_process');
+const { constants } = require('node:os');
 const [cmd, cwd, ms] = process.argv.slice(1);
 const child = spawn('sh', ['-c', cmd], { cwd, detached: true, stdio: 'ignore' });
 const group = (sig) => { try { process.kill(-child.pid, sig); } catch {} };
 let timedOut = false;
+let signalled = null;
 const timer = Number(ms) > 0 ? setTimeout(() => { timedOut = true; group('SIGTERM'); setTimeout(() => group('SIGKILL'), 2000).unref(); }, Number(ms)) : null;
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(sig, () => {
+    if (!signalled) signalled = sig;
+    group(sig);
+    setTimeout(() => group('SIGKILL'), 2000).unref();
+  });
+}
 child.on('error', () => process.exit(127));
 child.on('exit', (code) => {
   if (timer) clearTimeout(timer);
   group('SIGKILL');
   if (timedOut) process.stdout.write('HORDE-GATE-TIMED-OUT');
+  if (signalled) process.exit(128 + (constants.signals[signalled] || 1));
   process.exit(timedOut ? 1 : (code ?? 1));
 });
 `;
 
+// ---- telling the client, outside the chat -------------------------------------------------
+//
+// `config.notify` is a command template this tool set runs when something reaches the client: a
+// question filed (event "ask", whatever filed it) and a wave closed (event "wave-close"). It is the
+// hook an outer loop uses to reach a client who is not at the terminal — a chat message, a mail, a
+// line in a shared channel; what it does is the adopter's. `<event>`, `<kind>`, `<id>`, `<text>` and
+// `<horde>` are filled in, each quoted for the shell as one argument — so a placeholder is written
+// bare, never inside quotes of the template's own or a heredoc body: inside them the filled-in
+// quoting would end the template's quote, or be read as text the shell expands. A template that does
+// that is refused, by
+// `horde.mjs config set notify` and again here, and nothing is run.
+//
+// It never holds up the step that filed the question or closed the wave, nor whatever lock that step
+// holds (tick's gate lock included): it is started detached, under a small supervisor that stops it
+// at thirty seconds, and nothing waits for it. How it ended — exit code, a stop at the timeout, a
+// start that failed — is appended to `hordes/<horde>/notify.log`, one line per run. No template,
+// nothing is run.
+export const NOTIFY_TIMEOUT_MS = 30000;
+export const NOTIFY_PLACEHOLDERS = ['event', 'kind', 'id', 'text', 'horde'];
+
+// The placeholder a template puts inside quotes, or null when every one of them stands bare.
+export function notifyTemplateProblem(template) {
+  const text = String(template || '');
+  // A heredoc body is text the shell expands like the inside of double quotes, so a placeholder
+  // there ends up just as exposed. `<<<` (a here-string) takes an ordinary word, which is fine.
+  const heredoc = /(^|[^<])<<(-?)[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\3(?!<)/g;
+  for (let m = heredoc.exec(text); m; m = heredoc.exec(text)) {
+    const bodyStart = text.indexOf('\n', m.index + m[0].length);
+    if (bodyStart === -1) continue;
+    const lines = text.slice(bodyStart + 1).split('\n');
+    const end = lines.findIndex((l) => (m[2] ? l.replace(/^\t+/, '') : l) === m[4]);
+    const body = (end === -1 ? lines : lines.slice(0, end)).join('\n');
+    const inBody = /<(event|kind|id|text|horde)>/.exec(body);
+    if (inBody) {
+      return `<${inBody[1]}> stands inside a heredoc body in config.notify — each placeholder is filled in already quoted as one argument, so write it bare on the command line (… <${inBody[1]}> …); inside a heredoc the text it carries would reach the shell`;
+    }
+  }
+  let quote = null;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (quote) {
+      if (c === quote) { quote = null; continue; }
+      if (quote === '"' && c === '\\') { i += 1; continue; }
+    } else if (c === '\\') { i += 1; continue; } else if (c === "'" || c === '"') { quote = c; continue; }
+    const m = /^<(event|kind|id|text|horde)>/.exec(text.slice(i));
+    if (m && quote) {
+      return `<${m[1]}> stands inside ${quote === "'" ? 'single' : 'double'} quotes in config.notify — each placeholder is filled in already quoted as one argument, so write it bare (… <${m[1]}> …); inside quotes of the template's own, the text it carries would reach the shell`;
+    }
+  }
+  return null;
+}
+
+const NOTIFY_SUPERVISOR = `
+const { spawn } = require('node:child_process');
+const { appendFileSync } = require('node:fs');
+const [cmd, cwd, ms, log] = process.argv.slice(1);
+const note = (line) => { try { appendFileSync(log, new Date().toISOString() + ' ' + line + '\\n'); } catch {} };
+const child = spawn('sh', ['-c', cmd], { cwd, detached: true, stdio: 'ignore' });
+let stopped = false;
+const timer = setTimeout(() => { stopped = true; try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, Number(ms));
+child.on('error', (e) => { clearTimeout(timer); note('could not be started: ' + e.message); });
+child.on('exit', (code, signal) => {
+  clearTimeout(timer);
+  if (stopped) note('did not finish within ' + (Number(ms) / 1000) + 's and was stopped');
+  else note(code === 0 ? 'ok' : 'exited ' + (code ?? signal));
+});
+`;
+
+export function notifyClient(horde, cfg, fields = {}) {
+  const template = cfg && typeof cfg.notify === 'string' ? cfg.notify.trim() : '';
+  if (!template) return null;
+  const problem = notifyTemplateProblem(template);
+  if (problem) return { ok: false, started: false, note: problem };
+  const quote = (v) => `'${String(v ?? '').replace(/'/g, "'\\''")}'`;
+  const values = { ...fields, horde };
+  const command = template.replace(/<(event|kind|id|text|horde)>/g, (_, key) => quote(values[key]));
+  let cwd;
+  try { cwd = dirname(hordeRoot()); } catch { cwd = process.cwd(); }
+  const log = hordePath(horde, 'notify.log');
+  try {
+    const child = spawn(process.execPath, ['-e', NOTIFY_SUPERVISOR, '--', command, cwd, String(NOTIFY_TIMEOUT_MS), log], {
+      cwd, detached: true, stdio: 'ignore',
+    });
+    child.on('error', () => {});
+    child.unref();
+  } catch (e) {
+    return { ok: false, started: false, command, note: `config.notify could not be started: ${e.message}` };
+  }
+  return { ok: true, started: true, command, log };
+}
+
 export function runCommandGroup(cmd, cwd, timeoutMs = null) {
-  const res = spawnSync(process.execPath, ['-e', GROUP_SUPERVISOR, cmd, cwd, String(timeoutMs || 0)], {
+  const res = spawnSync(process.execPath, ['-e', GROUP_SUPERVISOR, '--', cmd, cwd, String(timeoutMs || 0)], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
     ...(timeoutMs ? { timeout: timeoutMs + 10000, killSignal: 'SIGKILL' } : {}),
   });

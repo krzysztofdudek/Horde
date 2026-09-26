@@ -381,9 +381,8 @@ earning no row at all claims nothing — neither is a mismatch.
   and files, against the branch it was cut from) with its rank among the others of this same plan
   and the biggest quarter of them offered as splits worth considering — a reading recomputed from
   the tickets in play every call, never a size written down anywhere, and nothing here acts on it;
-  a ticket with no branch yet has nothing to measure and is reported as such. Then the weight
-  estimate (Σ class weight × 2 runs per ticket) and the waves that many layers need at
-  `config.parallelism`. Merged and dropped tickets are out of the plan — it is what remains to do.
+  a ticket with no branch yet has nothing to measure and is reported as such. Then the waves
+  that many layers need at `config.parallelism`. Merged and dropped tickets are out of the plan — it is what remains to do.
   A circle of dependencies is a refusal, with the circle printed. `--json` is a `horde-plan/1`
   document carrying all of it. `--apply-order` records the order `plan` proposed for a file clash
   as an ordinary dependency on the queue item, with a note saying why — one edge per adjacent pair
@@ -890,6 +889,42 @@ only what depends on the answer — `stop` everything, `stuck` that ticket, `cha
 earning the evidence rows it names, `lower` that branch's landing. The table is in the `tick.mjs`
 section below.
 
+## report.mjs — the mission as the client sees it
+
+`report [--out <path>] [--horde h] [--json]`. One page of plain language for the client who never
+opens the terminal — the frame's rule, no tool names, no commands, no branches — answering what is
+waiting on them and what has been proven. It holds the open questions, each in its own words with
+when it was asked and what kind of decision it is; every row of the charter's evidence catalogue in
+the client's words (not started, planned, being worked on, tried as a prototype, landed but not yet
+proven, proven — and "came back" for a row whose landed work was reverted or reopened, read off the
+landing results' own fates); what landed since the last report was written (`report.json` keeps
+only which merged tickets the last one already counted) and how much in all, over every team's queue (a nested team of a mission from before 6.0.0
+included); the work in progress,
+and how many finished branches wait to be merged, with the forecast `tick` measures.
+
+It is rewritten, never appended to: by every `tick` pass (`report: {path, paths}` in its result, or
+`{path: null, note}` when it could not be written — the pass goes on), by every `wave close`
+(`report` in its result), and by `ask.mjs add`. It lands at `hordes/<horde>/report.md`, and also at
+`config.report.out` when set (`<horde>` in the path names one file per horde; a relative path is
+from the repository root), and at `--out` for a run by hand. `--json` is a `horde-report/1`
+document: `{horde, title, at, waiting[], evidence[], landed: {total, sinceLastReport[]}, inWork,
+waitingToMerge: {count, forecastMs}, previousAt, paths}`.
+
+**`config.notify`** is the hook beside it: a command template run when a question is filed —
+whoever files it, a worker's `ask.mjs add`, `tick`'s `stuck`, a wave close's audit — and when a wave
+closes. `<event>` (`ask` or `wave-close`), `<kind>` (the question's kind, or `wave`), `<id>` (the
+question's id, or the wave's number), `<text>` (the question, or one line on the close) and
+`<horde>` are filled in, each already quoted as one shell argument, so nothing in a question's text
+is run — which holds only while each placeholder is written bare in the template. One written inside
+quotes of the template's own (`echo '<text>'`) would end that quote and hand the text to the shell,
+and one in a heredoc body is expanded by the shell the same way, so such a template is refused: by `horde.mjs config set notify`, and again when it would run (the
+result's `notified` then says why, and nothing starts). The hook is started detached from the
+repository root and nothing waits for it — not the filing, not the close, not a tick holding its
+lock; a small supervisor stops it at thirty seconds. How each run ended (`ok`, `exited <code>`, or
+stopped at the limit) is appended to `hordes/<horde>/notify.log`. `ask.mjs add` and a wave close
+carry `notified: {ok, started, command, log}` in their result, or `{ok: false, started: false,
+note}` for a refused template. Unset by default: nothing is run.
+
 ## escalate.mjs — the recurring-answer scan
 
 Everything else the old escalation channel did — a build decision (a contract, a boundary, a
@@ -1094,10 +1129,12 @@ the JSON, and every item below is measured against it:
    1 brought the parent in cleanly and the only red items are this one and the graph's, both about
    prose verdicts that merge left pending (a reviewer configured, nothing else refused), the result
    carries `rejudge: true` and no round is written — the merge moved the code under the verdicts,
-   the ticket did not. That holds only when the branch had a verdict recorded for every one of
-   those pairs before the merge (its committed `yg-lock.nondeterministic.json`, read by field), or
-   the merge took the lock file from the parent; prose the branch never had judged is its own red
-   and costs its round, or every move of the parent would hand it another free one;
+   the ticket did not. That holds only when every one of those pairs carried a verdict that still
+   held on the branch's own tip before the merge — recorded in its committed
+   `yg-lock.nondeterministic.json` (read by field), and not reported unverified or stale by
+   `yg check` run in a scratch tree at that tip — or the merge took the lock file from the parent;
+   prose the branch never had judged, or whose verdict its own later edits had already left stale,
+   is its own red and costs its round, or every move of the parent would hand it another free one;
 3. scope — the diff stays inside the files the ticket declared in `**Files:**`; a ticket that
    declared none falls back to the union of its node boundaries (from `node.mjs`). Either way it
    touches no protected path, and Yggdrasil's committed lock files (`.yggdrasil/yg-lock.*.json`) are
@@ -1120,7 +1157,9 @@ the JSON, and every item below is measured against it:
    ticket's log is a claim about a run this gate did not see. A command that hangs is stopped at
    `config.gateTimeoutMs` (default 15 minutes) and the limit is named, rather than a stuck process
    left behind a checklist that never finishes — and a stopped command ends the item there, with
-   nothing below it asked anything. Otherwise the exit code is only half the item: when
+   nothing below it asked anything. The command runs as a process group of its own, and everything
+   in it is stopped with it: at the timeout, and when the landing itself is interrupted (Ctrl-C,
+   SIGTERM or SIGHUP), so no gate outlives the run that started it. Otherwise the exit code is only half the item: when
    `config.gates.report` names the report the command's own runner wrote, every live promise's own
    paired case has to be in it, passing, or the gate is red and names the promise. See
    [the gate's own report](#the-gates-own-report) below. Once the branch actually merges, what this
@@ -1497,9 +1536,39 @@ thing is one record however often it is reported. Nothing in the queue moves —
 still stands, and a reopening is its own ticket with its own landing ahead of it.
 
 Both references are checkable by whoever reads the record later, and neither is taken on the
-caller's word: a revert names a commit this repository actually has, and a reopening names a ticket
+caller's word: a revert names a commit the trunk carries, that comes after the ticket's merge, and at
+which every file that merge changed stands as it stood before it (the files that only ever grow — a
+node's log, the lock files, `config.appendOnly` — aside); a reopening names a ticket
 that says `**Reopens:** t-NNN` itself (`tk.mjs new … --reopens NNN` writes that field). `wave.mjs
 close` counts both off the journal, and `retro.mjs` reads them as a source of their own.
+
+### a revert ticket — the way back from a bad landing
+
+`tk.mjs new <slug> --title … --node … --class … --reverts NNN` files a ticket of kind `revert`
+carrying `**Reverts:** t-NNN`: refused unless t-NNN is merged with a recorded merge commit. Its
+`**Files:**` are what that merge changed (unless `--files` names them — a revert that must also take
+a path out of a component's mapping names that `yg-node.yaml` too), it declares `**No new tests:**`,
+and its one acceptance line is the merge undone on the branch with `git revert -m 1 --no-edit <sha>`,
+conflicts resolved to the tree as it stood before that merge. It is dispatched and worked like any
+other ticket, and lands through the same nine items, always on its own (never in a shared run):
+
+- item 4 (`revert test`) asks that the change is gone — every file the reverted merge changed stands
+  on the branch as it did before that merge; a file a later landing changed again is left to the
+  gate's own run and named in the note;
+- the evidence and gate guards do not refuse a path the reverted merge changed when the branch
+  returns it to exactly its state before that merge and no landing has touched it since (`git diff
+  <merge>..<parent tip> -- <path>` empty). A path a later ticket also changed carries that ticket's
+  work, and is guarded as usual. The law guard drops a refusal only when all of these hold: it
+  does not stand against where the mission started (`hordes/<h>/start.json`, the trunk `horde init`
+  cut; for a mission from before that file, where its trunk and base last met); it does not stand
+  against the tree just before the reverted merge; the merge's clean inverse (the parent with `git
+  revert -m 1 <merge>` applied, nothing else) produces the same refusal; and the rule's own files and
+  every attachment of it (`- <id>` in a graph file) stand on the branch exactly as that inverse
+  leaves them. A rule a later change attached, or a rule file a later landing edited (the inverse then
+  conflicts, and explains nothing), keeps its refusal. Anything else is refused as before and needs its `lower`
+  ask. `tk.mjs new --reverts` holds any `--files` beyond the merge's own to the node boundary;
+- on merge, t-NNN's fate is recorded as `reverted` by the revert's own merge commit (a `fate` line
+  in the result's checks), exactly as `--fate reverted --by <that sha>` would.
 
 ## blame.mjs — chain of custody
 
@@ -1731,7 +1800,12 @@ inherits whatever tree the session's shell is already in.
    member's share is the gate time over that size). `forecastMs` is `ready` times the mean: how long
    the queue would take landed one after another. It measures and reports and holds nothing back —
    no threshold, no limit; what counts as too long is the director's call. Nothing measured yet
-   gives nulls and the line says so. `status.mjs` prints the same line.
+   gives nulls and the line says so. `status.mjs` prints the same line. `drain` sets that mean
+   against the loop's own pace: `{perInterval, intervalMs, meanMs, parallelism}`, `perInterval`
+   being how many landings the gate gets through in one `config.tick.interval` at the mean gate
+   time. Workers finishing within one interval beyond that many wait at landing, so the line printed
+   beside the dispatch list names both numbers. A reading for the director, never a cap on the
+   dispatch list; null (and no line) until a gate time is measured.
 4. **Close.** A queue holding nothing but `merged` items gives `close: true` and the command that
    closes the wave. Tick prints that command and never runs it.
 
@@ -1807,9 +1881,9 @@ others — where a number has that kind of backing and where it does not.
 
 | Constant | Value | Set in | Where it comes from |
 | --- | --- | --- | --- |
-| `parallelism` | 6 | `horde.mjs` `defaultConfig()` | Not recorded. No comment or history explains this count; it has carried the same value since the plugin's first release. |
-| `fixRounds.resume` | 3 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | Not recorded. The comment explains the two-phase mechanism — resume the same worker, then a fresh one a class up — never why three rounds of the first phase. |
-| `fixRounds.fresh` | 2 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | Not recorded, same comment as the resume count above — the fresh-worker round count is equally unexplained. |
+| `parallelism` | 6 | `horde.mjs` `defaultConfig()` | The 6 itself is not recorded: it has carried the same value since the plugin's first release, with no comment or history behind it. What the knob costs is measured, every run: `tick` prints beside the dispatch list how many landings the gate drains per tick interval at its mean gate time (`drain`), so a director sets this against that figure, not against the default. |
+| `fixRounds.resume` | 3 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | Adopted from the fix loop of the Superpowers skill set's subagent-driven development (five rounds at most: rounds 1–3 resume the same implementer, 4–5 take a fresh one a class up). A design borrowed from another tool, not a measurement on Horde's own missions. |
+| `fixRounds.fresh` | 2 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | The same source as the resume count above: rounds 4–5 of that five-round loop. |
 | `tick.interval` | 300 (seconds) | `horde.mjs` `defaultConfig()`, read by `tick.mjs --watch` | Not recorded. The comment says what the setting is for (an unattended loop's own pace), not why five minutes rather than one or ten. |
 | `territory.maxBytes` | 400000 (bytes) | `horde.mjs` `defaultConfig()`, read by `refine.mjs --step cut` | Not recorded. The comment lists what counts toward the budget — code, rule text, logs — never why 400000 specifically; unlike the promises reference row below, nothing ties it to a reviewer's own limit or any other measured ceiling. |
 | `law.retireAfterWaves` | 2 (waves) | `horde.mjs` `defaultConfig()` | Not recorded. The comment explains the policy — a rule that judges nothing loses its place — not why two waves earn that judgment. |
@@ -1836,7 +1910,12 @@ Every fixture repository has a real graph, made by the real Yggdrasil CLI: `hord
 one where there is none, and the suite tells it how to invoke that CLI the same way an adopter
 would. The suite finds it in `HORDE_TEST_YG`, on `PATH` as `yg`, or as a sibling checkout's build,
 and refuses to run with none of those — Horde requires Yggdrasil, and a suite measuring a stand-in
-instead would be proving something no adopter ever runs. Rules, ports, refusals and the verdicts
+instead would be proving something no adopter ever runs. Only a CLI at Horde's floor (6.1.0) or
+newer counts: an older `yg` on `PATH` is passed over for a sibling build that meets it, and when the
+only one found is older, every test file stops as it loads with one message naming that CLI, its
+version and what to install, instead of failing test by test. `npm test` asks the same once for the
+whole suite before any test file runs (a preflight in `tests/`, also run by CI), and prints which CLI
+the suite will run against. Rules, ports, refusals and the verdicts
 that clear a prose rule are all the CLI's own; nothing about the graph is stood in for.
 
 ### the family's contract test — `tests/family.e2e.test.mjs`

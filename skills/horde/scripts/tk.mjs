@@ -30,7 +30,7 @@ import {
   hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
   allocateId, latestChangesRound, parseAcceptanceLines, parseEvidenceRows, parseLogEntries,
-  runMain,
+  runMain, git,
 } from './_lib.mjs';
 import {
   ticketBoundary, pathInBoundary, portExists, nodeExists, nodeGraphPathPrefix,
@@ -75,7 +75,7 @@ const SEVERITIES = ['high', 'medium', 'low'];
 // outright) — its only evidence is the client's own acceptance, recorded against the one charter
 // row it was built to describe, and only once that answer exists does the row get the tickets
 // that build the real thing.
-const KINDS = ['work', 'quality', 'prototype'];
+const KINDS = ['work', 'quality', 'prototype', 'revert'];
 // A ticket's own answer to the charter's quality policy (ruling quality-always-authorised). The
 // mission's policy is the default; `tk.mjs new --no-quality` sets this one ticket to
 // "only-the-work" — the work it names, nothing beside it — which is how a single delicate change
@@ -90,7 +90,7 @@ commands:
   new <slug> --title "<t>" --node <n> [--node <n2> …] --class <c> [--severity high|medium|low]
       [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
       [--produces <node>/<port>,…] [--evidence "<…>"]… [--revert-base <ref>] [--mutate "<command>"]
-      [--reopens NNN] [--team t] [--horde h]
+      [--reopens NNN] [--reverts NNN] [--team t] [--horde h]
       renders templates/ticket.md; status starts "proposed". --node is repeatable, up to two —
       three or more is refused, since nobody holds the whole of such a diff.
       --kind defaults to "work"; "quality" marks a self-filed improvement outside a wave's
@@ -112,6 +112,13 @@ commands:
       --reopens names the ticket this one is the second attempt at: what NNN landed did not hold,
       so the evidence it claimed is red again. It writes "**Reopens:** t-NNN" on the ticket, and
       refuses a number this horde has never filed.
+      --reverts names a landed ticket whose merge this one takes back: kind "revert", "**Reverts:**
+      t-NNN" on the ticket, its files the ones that merge changed (unless --files names them), no
+      test of its own, and one acceptance line — the merge undone on the branch with git revert.
+      It lands through the same gate; a test file or a promise the reverted ticket brought in may
+      go with it without an ask where no later landing touched that file, anything else may not.
+      A --files entry beyond the merge's own is held to the node boundary. On merge the
+      reverted ticket is recorded as reverted. Refused unless NNN is merged.
       --files lists the paths the ticket touches (each must lie inside a named node's boundary;
       the merge checklist refuses a diff that reaches past them). --boundary-proposal <id> names an approved
       move-boundary proposal (node.mjs propose/approve) for one of the ticket's nodes: the files may then
@@ -226,6 +233,20 @@ export function ticketReopens(text) {
   const raw = parseField(text || '', 'Reopens');
   if (!raw || raw === 'none' || raw === '—') return '';
   try { return padId(raw); } catch { return ''; }
+}
+
+// The landed ticket a revert ticket takes back — "**Reverts:** t-NNN", written by `new --reverts`.
+// Normalized to the bare NNN like ticketReopens; empty on every other ticket.
+export function ticketReverts(text) {
+  const raw = parseField(text || '', 'Reverts');
+  if (!raw || raw === 'none' || raw === '—') return '';
+  try { return padId(raw); } catch { return ''; }
+}
+
+// The files a landed merge changed, from its first parent — what a revert of it takes back.
+export function mergeFiles(sha, cwd) {
+  const out = git(['diff', '--name-only', `${sha}^1`, sha], cwd);
+  return out ? out.split('\n').map((l) => l.trim()).filter(Boolean) : [];
 }
 
 // --- the four structural fields ----------------------------------------
@@ -351,7 +372,7 @@ function slugify(s) {
 // Every team directory the horde has, as the short "parent/child" path strings teamPath()
 // expects — mirrors status.mjs's own recursive walk of teams/<team>/teams/… so a ticket can be
 // found by id alone, without the caller having to know which (sub-)team it lives under.
-function allTeamPaths(horde) {
+export function allTeamPaths(horde) {
   const root = hordePath(horde, 'teams');
   const out = [];
   const walk = (rel) => {
@@ -666,12 +687,16 @@ function checkConsumesHaveProducers(horde, consumes, selfId) {
 // `revertBase`, hiding whichever one the author actually meant. Refused here instead, at the one
 // place a ticket comes into being, rather than left for land.mjs to discover at the far end.
 export function createTicket(horde, spec) {
-  const {
+  let {
     slug, title, nodes, cls, severity = 'medium', kind = 'work', quality = 'autonomous',
     team = 'trunk', evidence = [], files: fileList = [], consumes: consumesRaw,
     produces: producesRaw, depends = [], revertBase = null, mutate = null, reopens = null,
-    boundaryProposal = null,
+    boundaryProposal = null, reverts = null,
   } = spec;
+  // A revert ticket takes back one landed ticket's merge: its kind is "revert", whatever --kind
+  // said, and "revert" is never a kind a ticket takes without naming what it reverts.
+  if (kind === 'revert' && !reverts) fail('--kind revert needs --reverts NNN — a revert names the landed ticket it takes back');
+  if (reverts) kind = 'revert';
   if (!slug) fail('new requires <slug>');
   if (mutate && revertBase) {
     fail('a ticket names either --mutate or --revert-base, not both — --mutate replaces the revert-to-base check entirely, so a --revert-base alongside it would be silently unused by land.mjs\'s revert test. Pick the one variant this ticket actually needs');
@@ -722,11 +747,30 @@ export function createTicket(horde, spec) {
     reopensRef = `t-${reopened.id}`;
   }
 
-  const declared = listFlag(fileList);
+  // What a revert takes back: the reverted ticket's own landed merge, found on its queue item. Its
+  // files are the ticket's scope unless --files names them; the merge's own files already passed a
+  // node boundary once, when that ticket landed, and are not asked to again — any other file is.
+  let revertOf = null;
+  if (reverts) {
+    let reverted = null;
+    try { reverted = findTicket(horde, reverts); } catch { reverted = null; }
+    if (!reverted) fail(`--reverts ${reverts}: this horde has no ticket ${reverts}`);
+    const item = asArray(loadQueue(horde, reverted.team || team).items).find((i) => String(i.ticket) === reverted.id);
+    if (!item || item.state !== 'merged' || !item.sha) {
+      fail(`--reverts ${reverts}: t-${reverted.id} ${item ? `is ${item.state}` : 'has no queue item'}, not merged — a revert takes back a landing, and nothing has landed on it${item && item.state === 'merged' ? ' that this horde recorded a merge commit for' : ''}`);
+    }
+    const root = resolveTree({}).path;
+    revertOf = { id: reverted.id, sha: item.sha, files: mergeFiles(item.sha, root) };
+    if (!revertOf.files.length) fail(`--reverts ${reverts}: the merge ${item.sha} changed no file this repository can read — there is nothing to take back`);
+  }
+
+  const declared = revertOf && !listFlag(fileList).length ? revertOf.files : listFlag(fileList);
   const consumes = parsePortList(consumesRaw, 'Consumes');
   const produces = parsePortList(producesRaw, 'Produces');
   const proposal = boundaryProposal ? approvedBoundaryProposal(horde, boundaryProposal, nodes) : null;
-  checkFilesInBoundary(nodes, declared, proposal ? proposal.boundary : []);
+  // A revert's own merge files passed a boundary when that ticket landed; anything named beyond them
+  // (a component's yg-node.yaml, say) is held to the named nodes' boundary like any other ticket's.
+  checkFilesInBoundary(nodes, revertOf ? declared.filter((f) => !revertOf.files.includes(f)) : declared, proposal ? proposal.boundary : []);
   const files = withNodeLogs(nodes, declared);
   checkConsumesHaveProducers(horde, consumes, null);
 
@@ -757,6 +801,14 @@ export function createTicket(horde, spec) {
     ...(mutate ? { mutate } : {}),
   });
   if (proposal) text = setHeaderField(text, 'Boundary proposal', proposal.id);
+  if (revertOf) {
+    text = setHeaderField(text, 'Reverts', `t-${revertOf.id}`);
+    // A revert adds no test and needs none of its own: what it is checked by is that the change it
+    // takes back is gone from the tree, which the landing measures itself.
+    text = setHeaderField(text, 'No new tests', `a revert takes back t-${revertOf.id}'s landed change (${revertOf.sha.slice(0, 12)}); it adds no test of its own`);
+    acceptance.length = 0;
+    acceptance.push(`t-${revertOf.id}'s merge is undone on this branch: \`git revert -m 1 --no-edit ${revertOf.sha}\`, with any conflict resolved to the tree as it stood before that merge, and a log line saying why`);
+  }
   if (acceptance.length) {
     text = text.replace('- [ ] …', acceptance.map((e) => `- [ ] ${e}`).join('\n'));
   }
@@ -780,6 +832,7 @@ export function createTicket(horde, spec) {
     produces: produces.map((p) => p.ref),
     evidence: evidenceIds,
     reopens: reopensRef,
+    reverts: revertOf ? `t-${revertOf.id}` : null,
   };
 }
 
@@ -852,6 +905,7 @@ function cmdNew(horde, positional, flags) {
     revertBase: flags['revert-base'] || null,
     mutate: flags.mutate || null,
     reopens: flags.reopens || null,
+    reverts: flags.reverts || null,
     boundaryProposal: flags['boundary-proposal'] || null,
   });
   const cfg = readConfig() || {};
@@ -870,10 +924,12 @@ function cmdNew(horde, positional, flags) {
     produces: created.produces,
     evidence: created.evidence,
     reopens: created.reopens,
+    reverts: created.reverts,
     obligationWarnings: obligation.warnings,
   }, flags, () => [
     `${created.ref} created — ${created.dirName} (team ${created.team})`
-      + `${created.reopens ? `, reopening ${created.reopens}` : ''}`,
+      + `${created.reopens ? `, reopening ${created.reopens}` : ''}`
+      + `${created.reverts ? `, reverting ${created.reverts}` : ''}`,
     ...(obligation.checked ? [] : [`not checked: ${obligation.why}`]),
     ...obligation.warnings.map((w) => `warning: ${w.file} — Grain says a new file like this has come with ${w.companion} (${w.k} of ${w.n} such commits)`
       + `${w.owner ? `, owned by ${w.owner}` : ''}, outside this ticket's node(s) — file a ticket for it too, or widen --node`),

@@ -50,7 +50,10 @@ import {
 import {
   findTicket, parseField, changesRoundInfo, lastChangesRoundInfo, transitionStatus, ticketEvidence, readReview,
 } from './tk.mjs';
-import { readLandResult, acquireGateLock, gateLockWaitMs, landingLoad, landingLine } from './land.mjs';
+import {
+  readLandResult, acquireGateLock, gateLockWaitMs, landingLoad, landingLine, landingDrain, drainLine,
+} from './land.mjs';
+import { refreshReport } from './report.mjs';
 import { asksPath, loadAsks, addAsk } from './ask.mjs';
 import { mentionsEvidenceId } from './wave.mjs';
 
@@ -1024,6 +1027,10 @@ function runOnce(horde, cfg, flags, runner) {
     const close = emptied && !closeHeld.length;
     const external = runner === 'external' ? externalStart(horde, cfg, [...spawn.out, ...landed.reviews], root) : [];
 
+    const landing = landingLoad(horde, doc.items);
+    // The client's page, rewritten every pass: what waits on them, what has been proven, what
+    // landed. A page that could not be written is named, and the pass goes on.
+    const report = refreshReport(horde, { cfg });
     return withProvenance({
       horde,
       runner,
@@ -1038,10 +1045,12 @@ function runOnce(horde, cfg, flags, runner) {
         ticket: r.ticket, model: r.model, name: r.name, brief: r.brief,
       })),
       askClient: openAsks(horde),
-      landing: landingLoad(horde, doc.items),
+      landing,
+      drain: landingDrain(landing, cfg.tick && cfg.tick.interval, Number(cfg.parallelism ?? 6)),
       close,
       closeCommand: close ? closeCommand(horde) : null,
       external,
+      report: report.ok ? { path: report.paths[0], paths: report.paths } : { path: null, note: report.note },
     }, info);
   } finally {
     lock.release();
@@ -1072,9 +1081,11 @@ function render(out) {
   for (const a of out.askClient) lines.push(`ask client ${a.id} (${a.kind}): ${a.why}`);
   for (const e of out.external) lines.push(`started ${e.ticket} (${e.role}): ${e.started ? e.command : e.note}`);
   lines.push(landingLine(out.landing));
+  if (out.drain) lines.push(drainLine(out.drain));
   const closeHeld = out.held.find((h) => h.holds === 'close');
   if (out.close) lines.push(`close: the queue holds nothing unmerged — ${out.closeCommand}`);
   else lines.push(closeHeld ? `close: held — ${closeHeld.note}` : 'close: not yet');
+  if (out.report) lines.push(out.report.path ? `client report: ${out.report.path}` : out.report.note);
   lines.push(provenanceLine({ path: out.tree, branch: out.branch, sha: out.sha }));
   return lines.join('\n');
 }

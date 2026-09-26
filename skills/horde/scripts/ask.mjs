@@ -46,7 +46,7 @@
 
 import {
   hordePath, readJSON, writeJSON, allocateId, nowIso, fail, parseArgs, emit, isMain, resolveHorde,
-  runMain, withAsksLock,
+  runMain, withAsksLock, notifyClient, readConfig,
 } from './_lib.mjs';
 import { appendDecision } from './decide.mjs';
 
@@ -129,7 +129,7 @@ export function addAsk(horde, {
   if (typeof kind !== 'string' || !KINDS.includes(kind)) throw new Error(`kind must be one of: ${KINDS.join('|')}`);
   if (kind === 'lower' && !aspect) throw new Error('--aspect is required for kind "lower" — nothing to lower without naming it');
   if (kind !== 'lower' && aspect) throw new Error(`--aspect has no meaning for kind "${kind}" — only "lower" names something to weaken`);
-  return withAsksLock(horde, () => {
+  const filed = withAsksLock(horde, () => {
     const doc = loadAsks(horde);
     const { id } = allocateId(horde, 'ask');
     const item = {
@@ -143,6 +143,12 @@ export function addAsk(horde, {
     save(horde, doc);
     return item;
   });
+  // Every question filed reaches the client's own hook, whoever filed it — a worker, tick, the wave
+  // close's audit — once, as it is filed. Its outcome is returned beside the item, never stored.
+  const notified = notifyClient(horde, readConfig() || {}, {
+    event: 'ask', kind: filed.kind, id: filed.id, text: filed.why,
+  });
+  return notified ? Object.defineProperty(filed, 'notified', { value: notified, enumerable: false }) : filed;
 }
 
 // The decision body land.mjs's law guard already knows how to read: one line of bold fields, the
@@ -193,7 +199,7 @@ export function answerAsk(horde, id, { answer, scope } = {}) {
   });
 }
 
-function cmdAdd(horde, positional, flags) {
+async function cmdAdd(horde, positional, flags) {
   const why = positional[0];
   if (!why) fail('add requires "<why>"');
   if (typeof flags.kind !== 'string' || !KINDS.includes(flags.kind)) fail(`--kind is required, one of: ${KINDS.join('|')}`);
@@ -205,7 +211,15 @@ function cmdAdd(horde, positional, flags) {
   } catch (e) {
     fail(e.message);
   }
-  emit(item, flags, () => `ask ${item.id} opened (${item.kind})`);
+  // The client's report names the new question at once, not only at the next tick.
+  const { refreshReport } = await import('./report.mjs');
+  const report = refreshReport(horde);
+  const notified = item.notified || null;
+  emit({ ...item, ...(notified ? { notified } : {}), report: report.ok ? report.paths[0] : report.note }, flags, () => [
+    `ask ${item.id} opened (${item.kind})`,
+    ...(notified && !notified.ok ? [`the client was not notified: ${notified.note}`] : []),
+    ...(report.ok ? [] : [report.note]),
+  ].join('\n'));
 }
 
 function cmdList(horde, positional, flags) {
