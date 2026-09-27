@@ -5,7 +5,7 @@ import {
   existsSync, mkdirSync, writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { makeRepo, rmRepo, run, initHorde, requireYg } from './helpers.mjs';
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 
@@ -124,7 +124,7 @@ test('decide.mjs: a second writer waits out a held decisions lock rather than wr
   const markerPath = join(dir, '.lock-held-marker');
   const decidePath = join(SCRIPTS_DIR, 'decide.mjs');
   const holderScript = [
-    `import { withDecisionsLock } from ${JSON.stringify(decidePath)};`,
+    `import { withDecisionsLock } from ${JSON.stringify(pathToFileURL(decidePath).href)};`,
     `import { writeFileSync } from 'node:fs';`,
     `withDecisionsLock('mission1', () => {`,
     `  writeFileSync(${JSON.stringify(markerPath)}, 'held');`,
@@ -170,7 +170,7 @@ test('decide.mjs: a genuinely live holder past the wait deadline is refused, not
   const markerPath = join(dir, '.lock-held-marker');
   const decidePath = join(SCRIPTS_DIR, 'decide.mjs');
   const holderScript = [
-    `import { withDecisionsLock } from ${JSON.stringify(decidePath)};`,
+    `import { withDecisionsLock } from ${JSON.stringify(pathToFileURL(decidePath).href)};`,
     `import { writeFileSync } from 'node:fs';`,
     `withDecisionsLock('mission1', () => {`,
     `  writeFileSync(${JSON.stringify(markerPath)}, 'held');`,
@@ -190,7 +190,7 @@ test('decide.mjs: a genuinely live holder past the wait deadline is refused, not
   }
 
   const waiterScript = [
-    `import { withDecisionsLock } from ${JSON.stringify(decidePath)};`,
+    `import { withDecisionsLock } from ${JSON.stringify(pathToFileURL(decidePath).href)};`,
     'const started = Date.now();',
     'try {',
     "  withDecisionsLock('mission1', () => {}, { waitMs: 300 });",

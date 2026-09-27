@@ -5,8 +5,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('../../../../', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const read = (rel) => JSON.parse(readFileSync(join(ROOT, rel), 'utf8'));
 
 test('the portable plugin.json names the Agent Plugins schema and agrees with every host manifest', () => {

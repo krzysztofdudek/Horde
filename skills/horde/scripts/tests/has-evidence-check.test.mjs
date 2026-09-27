@@ -8,7 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CHECK_PATH = join(HERE, '..', '..', '..', '..', 'packages', 'promises', 'has-evidence', 'check.mjs');
@@ -28,7 +28,7 @@ const PROMISE = [
 ].join('\n');
 
 function run(suiteContent, config = {}) {
-  return import(CHECK_PATH).then(({ check }) => check({
+  return import(pathToFileURL(CHECK_PATH).href).then(({ check }) => check({
     files: [
       { path: 'promises/orders-are-confirmed.md', content: PROMISE },
       { path: 'suite/orders.mjs', content: suiteContent },

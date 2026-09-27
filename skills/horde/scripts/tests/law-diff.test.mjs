@@ -428,6 +428,10 @@ test('an unwritable law/ directory: a refusal naming the path', async (t) => {
     t.skip('root bypasses file-mode permissions — chmod cannot force a write to fail as root');
     return;
   }
+  if (process.platform === 'win32') {
+    t.skip('a directory\'s mode bits do not stop a write on Windows — chmod cannot make one unwritable there');
+    return;
+  }
   const yg = requireYg();
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

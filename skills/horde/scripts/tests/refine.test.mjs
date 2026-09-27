@@ -583,8 +583,8 @@ test('refine.mjs --step consult: a consultant is handed its own territory\'s his
   const numbersArchive = closeMission(dir, 'past-numbers', PAST_NUMBERS);
 
   await t.test('both missions really are in the archive, and nothing of them is left live', () => {
-    assert.match(frontArchive, /_archive\/past-front-/);
-    assert.match(numbersArchive, /_archive\/past-numbers-/);
+    assert.match(frontArchive, /_archive[\\/]past-front-/);
+    assert.match(numbersArchive, /_archive[\\/]past-numbers-/);
     assert.equal(existsSync(join(dir, '.horde', 'hordes', 'past-front')), false);
     assert.equal(existsSync(join(dir, '.horde', 'hordes', 'past-numbers')), false);
     assert.equal(existsSync(join(frontArchive, 'retro.json')), true);

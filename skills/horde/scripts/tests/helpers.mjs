@@ -391,8 +391,13 @@ function locateRealYg() {
     return null;
   };
   if (process.env.HORDE_TEST_YG) return accept(probe(process.env.HORDE_TEST_YG));
+  // On Windows `yg` on PATH is npm's yg.cmd shim, which nothing can start without a shell; the suite
+  // hands the tools, and splits for its own fixtures, the node line the shim stands for instead.
   const onPath = accept(probe('yg'));
-  if (onPath) return onPath;
+  if (onPath) {
+    const { cmd, prefix } = programFor(['yg']);
+    return cmd === 'yg' ? onPath : [cmd, ...prefix].map((w) => (/\s/.test(w) ? `"${w}"` : w)).join(' ');
+  }
   let dir = SCRIPTS_DIR;
   for (let i = 0; i < 12; i++) {
     const candidate = join(dir, 'Yggdrasil', 'source', 'cli', 'dist', 'bin.js');

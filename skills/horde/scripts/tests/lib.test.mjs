@@ -5,7 +5,7 @@ import {
   existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, rmSync,
 } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { makeRepo, rmRepo } from './helpers.mjs';
 import { raceTrunk, overlaps, describeRace } from './tree-race/harness.mjs';
 
@@ -448,7 +448,7 @@ test('_lib.mjs: EVIDENCE_CLASSES mirrors the promises package\'s CLASSES exactly
   );
 
   await t.test('the same six words, in the same order, as packages/promises/doc-shape/check.mjs\'s own CLASSES', async () => {
-    const { CLASSES } = await import(PACKAGE_CHECK);
+    const { CLASSES } = await import(pathToFileURL(PACKAGE_CHECK).href);
     assert.deepEqual(EVIDENCE_CLASSES, CLASSES);
   });
 
@@ -879,7 +879,7 @@ test('_lib.mjs qualityPolicy: reads a recognized value or the ruling\'s own defa
       const libPath = fileURLToPath(new URL('../_lib.mjs', import.meta.url));
       const script = join(dir, 'check-quality-policy.mjs');
       writeFileSync(script, [
-        `import { qualityPolicy } from ${JSON.stringify(libPath)};`,
+        `import { qualityPolicy } from ${JSON.stringify(pathToFileURL(libPath).href)};`,
         `qualityPolicy(${JSON.stringify(horde)});`,
         '',
       ].join('\n'));
@@ -915,11 +915,11 @@ test('_lib.mjs writeJSON: a reader racing a writer never sees a torn document', 
   // A document big enough that one write takes many syscalls, so an in-place write has a wide window;
   // built inside the writer, because a document this size does not fit on a command line.
   const writer = `
-    import { writeJSON } from ${JSON.stringify(lib)};
+    import { writeJSON } from ${JSON.stringify(pathToFileURL(lib).href)};
     const items = Array.from({ length: 20000 }, (_, i) => ({ ticket: 't-' + i, note: 'x'.repeat(40) }));
     for (let round = 0; round < 60; round += 1) writeJSON(${JSON.stringify(file)}, { round, items });
   `;
-  execFileSync(process.execPath, ['--input-type=module', '-e', `import { writeJSON } from ${JSON.stringify(lib)}; writeJSON(${JSON.stringify(file)}, { round: -1, items: [] });`]);
+  execFileSync(process.execPath, ['--input-type=module', '-e', `import { writeJSON } from ${JSON.stringify(pathToFileURL(lib).href)}; writeJSON(${JSON.stringify(file)}, { round: -1, items: [] });`]);
   const child = spawn(process.execPath, ['--input-type=module', '-e', writer], { stdio: 'ignore' });
   const done = new Promise((resolve) => { child.on('exit', resolve); });
   let reads = 0;
@@ -1032,7 +1032,7 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
     const pidFile = join(dir, '..', `${basename(dir)}-${sig}.pid`);
     const lib = join(dirname(dirname(fileURLToPath(import.meta.url))), '_lib.mjs');
     const caller = spawn(process.execPath, ['--input-type=module', '-e', `
-      const { runCommandGroup } = await import(${JSON.stringify(lib)});
+      const { runCommandGroup } = await import(${JSON.stringify(pathToFileURL(lib).href)});
       runCommandGroup(${JSON.stringify(`sleep 30 & echo $! > "${pidFile}"; wait`)}, ${JSON.stringify(dir)}, 60000);
     `], { detached: true, stdio: 'ignore' });
     try {

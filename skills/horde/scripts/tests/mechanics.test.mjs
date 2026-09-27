@@ -498,7 +498,7 @@ function seedLandableTicket(dir, id) {
   return branch;
 }
 
-test('land.mjs --background: the run is let go of, but not forgotten — the result file arrives and the process that wrote it is gone', async (t) => {
+test('land.mjs --background: the run is let go of, but not forgotten — the result file arrives and the process that wrote it is gone', { skip: process.platform === 'win32' && 'the test finds the detached process with pgrep, which Windows does not have' }, async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
 
@@ -573,7 +573,7 @@ function writeHangingYgStub(realYg) {
   return { stubDir, stub, command: `node ${stub}` };
 }
 
-test('land.mjs --background: a Yggdrasil CLI that hangs is stopped at config.ygTimeoutMs — the detached run ends instead of outliving the machine', async (t) => {
+test('land.mjs --background: a Yggdrasil CLI that hangs is stopped at config.ygTimeoutMs — the detached run ends instead of outliving the machine', { skip: process.platform === 'win32' && 'the test finds the detached process with pgrep, which Windows does not have' }, async (t) => {
   const dir = makeRepo();
   const { stubDir, stub, command } = writeHangingYgStub(requireYg());
   t.after(() => { rmRepo(dir); rmRepo(stubDir); });

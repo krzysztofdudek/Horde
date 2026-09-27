@@ -5,7 +5,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import {
   existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
@@ -2385,7 +2385,7 @@ test('land.mjs: --background returns a result-file path at once, and the file ha
   assert.equal(r.code, 0, r.stderr);
   assert.ok(elapsed < 3000, `it did not wait for the gate (${elapsed}ms)`);
   assert.equal(r.json.ticket, '024');
-  assert.match(r.json.resultFile, /\.horde\/hordes\/mission1\/land\/024\.json$/);
+  assert.match(r.json.resultFile, /\.horde[\\/]hordes[\\/]mission1[\\/]land[\\/]024\.json$/);
   assert.equal(existsSync(r.json.resultFile), false, 'nothing is written yet');
 
   const deadline = Date.now() + 90000;
@@ -2784,7 +2784,7 @@ test('land.mjs: a red gate puts the ticket on "changes" with the gate\'s own wor
   assert.match(run('tk.mjs', ['show', id], dir).json.text, /\*\*Status:\*\* changes/);
   const log = readFileSync(join(readdirSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues'))
     .map((d) => join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', d))
-    .find((d) => d.includes(`/${id}-`)), 'log.md'), 'utf8');
+    .find((d) => d.includes(`${sep}${id}-`)), 'log.md'), 'utf8');
   assert.match(log, /land refused: /);
   assert.match(log, /round 1\/5 — resume same worker/);
 });
@@ -3766,7 +3766,7 @@ test('land.mjs --background with two or more tickets starts one worker for the w
   assert.equal(r.json.items.length, 2);
   for (const it of r.json.items) {
     assert.equal(it.started, true, JSON.stringify(it));
-    assert.match(it.resultFile, /\.horde\/hordes\/mission1\/land\/1(41|42)\.json$/);
+    assert.match(it.resultFile, /\.horde[\\/]hordes[\\/]mission1[\\/]land[\\/]1(41|42)\.json$/);
     assert.equal(existsSync(it.resultFile), false, 'nothing is written yet');
   }
 

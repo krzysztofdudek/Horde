@@ -400,7 +400,7 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     assert.equal(asked.json.state, 'awaiting', 'the first run asks; it does not decide');
     // The answer goes wherever the pass says it goes — the test writes to the path it was handed,
     // never to one it composed itself.
-    assert.match(asked.json.file, /\.horde\/hordes\/family\/territories\.json$/);
+    assert.match(asked.json.file, /\.horde[\\/]hordes[\\/]family[\\/]territories\.json$/);
     assert.doesNotMatch(asked.json.brief, /\{\{/);
     // Asking takes nothing. The file already holds the node lease `init --nodes` took in step 3;
     // what must not be in it yet is a territory, because no territory has been named yet.

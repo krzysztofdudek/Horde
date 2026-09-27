@@ -1,16 +1,21 @@
 import { test } from 'node:test';
+import { killTree } from '../_lib.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
   existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, appendFileSync, utimesSync,
 } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, git,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
+
+// A path written into an sh command line bare: sh reads a backslash as an escape, and Windows paths
+// are full of them, so it goes in with forward slashes, which Git for Windows' sh reads the same.
+const shPath = (p) => p.replace(/\\/g, '/');
 
 function mkTicket(dir, slug, opts = {}) {
   const {
@@ -232,7 +237,7 @@ test('tick.mjs dispatch: what goes on the list, in what order, and what never go
   assert.equal(r.code, 0, r.stderr);
 
   await t.test('the output carries the tree it worked on, its branch and its sha', () => {
-    assert.equal(r.json.tree, git(['rev-parse', '--show-toplevel'], dir));
+    assert.equal(r.json.tree, resolve(git(['rev-parse', '--show-toplevel'], dir)), 'git prints C:/…, the tools the OS\'s own spelling');
     assert.equal(r.json.branch, git(['rev-parse', '--abbrev-ref', 'HEAD'], dir));
     assert.equal(r.json.sha, git(['rev-parse', 'HEAD'], dir));
   });
@@ -289,7 +294,7 @@ test('tick.mjs: no --horde stays on cwd; --horde written out resolves to that ho
   await t.test('no --horde at all: cwd, on whatever branch the main checkout is on', () => {
     const r = tick(dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.tree, git(['rev-parse', '--show-toplevel'], dir));
+    assert.equal(r.json.tree, resolve(git(['rev-parse', '--show-toplevel'], dir)), 'git prints C:/…, the tools the OS\'s own spelling');
     assert.equal(r.json.branch, 'develop');
     assert.equal(r.json.sha, git(['rev-parse', 'HEAD'], dir));
   });
@@ -721,7 +726,7 @@ test('tick.mjs --runner external: a review is started the way a worker is, throu
   t.after(() => quietRm(dir));
   initHorde(dir);
   const copied = join(dir, 'review-brief-copy.md');
-  run('horde.mjs', ['config', 'set', 'runner.spawn', `cp <brief> ${copied}`], dir);
+  run('horde.mjs', ['config', 'set', 'runner.spawn', `cp <brief> ${shPath(copied)}`], dir);
   const { id } = landedTicket(dir, 'reviewed-headless', { files: 'src/headless.ts', class: 'heavy' });
 
   const r = tick(dir, ['--runner', 'external']);
@@ -1204,7 +1209,7 @@ test('tick.mjs --runner external: the round-4 (takeover) worker is briefed with 
   initHorde(dir);
 
   const marker = join(dir, 'the-cli-ran-external.txt');
-  run('horde.mjs', ['config', 'set', 'runner.spawn', `touch ${marker}`], dir);
+  run('horde.mjs', ['config', 'set', 'runner.spawn', `touch ${shPath(marker)}`], dir);
 
   const id = mkTicket(dir, 'earns-a-heavier-worker-external', { files: 'src/hwx.ts', class: 'standard' });
   run('queue.mjs', ['add', id], dir);
@@ -1264,7 +1269,7 @@ test('tick.mjs --runner external: the round-4 (takeover) worker is briefed with 
 // second command. Fixed by running the brief through the same argv array dispatch() already built
 // (briefParts), never a shell. This proves the fix holds against the exact class of name that
 // would have triggered it, not just that the happy path still works.
-test('tick.mjs --runner external: a horde name is never handed to a shell, even one shaped like an injection', async (t) => {
+test('tick.mjs --runner external: a horde name is never handed to a shell, even one shaped like an injection', { skip: process.platform === 'win32' && 'a branch name with > cannot exist on a Windows file system' }, async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
   const horde = 'mission1;>INJECTED_MARKER';
@@ -1599,7 +1604,7 @@ test('tick.mjs runners: nothing but git and the configured CLI is ever started, 
   });
 
   await t.test('under the session runner the configured command is never run', () => {
-    run('horde.mjs', ['config', 'set', 'runner.spawn', `touch ${marker}`], dir);
+    run('horde.mjs', ['config', 'set', 'runner.spawn', `touch ${shPath(marker)}`], dir);
     const r = tick(dir);
     assert.equal(r.code, 0, r.stderr);
     assert.ok(r.json.spawn.length >= 1, 'something was handed out, so the run is a real one');
@@ -1647,7 +1652,7 @@ test('tick.mjs runners: a config seeded with the retired runner refuses rather t
   assert.equal(r.json, null, 'and nothing was handed out under the fallback');
 });
 
-test('tick.mjs --watch: a signal ends the loop without leaving the gate lock held', async (t) => {
+test('tick.mjs --watch: a signal ends the loop without leaving the gate lock held', { skip: process.platform === 'win32' && 'a signal cannot be sent to a process on Windows, only a stop' }, async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
   initHorde(dir);
@@ -1669,7 +1674,7 @@ test('tick.mjs --watch: a signal ends the loop without leaving the gate lock hel
   assert.ok(!readQueue(dir).items.some((i) => i.state === 'running' && !i.branch), 'and no running item without a branch');
 });
 
-test('tick.mjs --watch: a refusal in one pass is written down, not the end of the loop', async (t) => {
+test('tick.mjs --watch: a refusal in one pass is written down, not the end of the loop', { skip: process.platform === 'win32' && 'a signal cannot be sent to a process on Windows, only a stop' }, async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
   initHorde(dir);
@@ -1699,7 +1704,7 @@ test('tick.mjs --watch: a refusal in one pass is written down, not the end of th
 // Issue 359: --reclaim under --watch is said once — but only once a pass has actually read it. A pass
 // refused for something else settled nothing, and dropping the word there left the ticket held by a
 // worker the director had already said was gone.
-test('tick.mjs --watch: --reclaim survives a refused pass and is settled by the first pass that runs', async (t) => {
+test('tick.mjs --watch: --reclaim survives a refused pass and is settled by the first pass that runs', { skip: process.platform === 'win32' && 'a signal cannot be sent to a process on Windows, only a stop' }, async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
   initHorde(dir);
@@ -1728,7 +1733,7 @@ test('tick.mjs --watch: --reclaim survives a refused pass and is settled by the 
 
 // A refusal of the reclaim itself — a ticket nobody holds — would be the same on every pass, so it is
 // said once and the loop goes on without it. Decided by the refusal's reason, not its wording.
-test('tick.mjs --watch: a refused --reclaim is written down once, not refused again every pass', async (t) => {
+test('tick.mjs --watch: a refused --reclaim is written down once, not refused again every pass', { skip: process.platform === 'win32' && 'a signal cannot be sent to a process on Windows, only a stop' }, async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
   initHorde(dir);
@@ -1966,7 +1971,7 @@ test('tick.mjs lease: under the external runner a worker whose process lives is 
   const dir = makeRepo();
   const pids = [];
   t.after(async () => {
-    for (const pid of pids) { try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ } }
+    for (const pid of pids) { try { killTree(pid, 'SIGKILL'); } catch { /* already gone */ } }
     await quietRm(dir);
   });
   initHorde(dir);
@@ -1997,7 +2002,7 @@ test('tick.mjs lease: under the external runner a worker whose process lives is 
   });
 
   await t.test('once its process is gone, the next run settles it', async () => {
-    process.kill(-started.pid, 'SIGKILL');
+    killTree(started.pid, 'SIGKILL');
     const deadline = Date.now() + 10000;
     while (Date.now() < deadline) {
       try { process.kill(started.pid, 0); } catch { break; }
@@ -2015,7 +2020,9 @@ test('tick.mjs lease: under the external runner a worker whose process lives is 
 // Issue 359: a pid is the worker only while it is the same process. The lease records when the process
 // started; a live pid whose start differs is a number the system gave to someone else after the worker
 // ended, and the ticket is settled rather than held forever behind a stranger.
-test('tick.mjs lease: a live pid that started at another time than the worker\'s process is not the worker', async () => {
+// Windows has no `ps` to read a start time off (processStartedAt answers null there), so a reused pid
+// cannot be told apart and this case does not arise.
+test('tick.mjs lease: a live pid that started at another time than the worker\'s process is not the worker', { skip: process.platform === 'win32' && 'no process start time on Windows' }, async () => {
   const dir = makeRepo();
   const pids = [];
   try {
@@ -2043,7 +2050,7 @@ test('tick.mjs lease: a live pid that started at another time than the worker\'s
     assert.match(settled.note, /now belongs to a process started/);
     for (const e of r.json.external) if (Number.isInteger(e.pid)) pids.push(e.pid);
   } finally {
-    for (const pid of pids) { try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ } }
+    for (const pid of pids) { try { killTree(pid, 'SIGKILL'); } catch { /* already gone */ } }
     await quietRm(dir);
   }
 });

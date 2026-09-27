@@ -5,7 +5,7 @@ import {
   mkdirSync, readFileSync, writeFileSync, existsSync,
 } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode, git,
 } from './helpers.mjs';
@@ -100,7 +100,7 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
     const r = run('queue.mjs', ['set', id1, 'running', '--agent', 'worker1'], dir);
     assert.equal(r.code, 0);
     assert.equal(r.json.branch, `mission1/t-${id1}`);
-    assert.ok(r.json.worktree.endsWith(`worktrees/mission1/t-${id1}`));
+    assert.ok(r.json.worktree.replace(/\\/g, '/').endsWith(`worktrees/mission1/t-${id1}`));
     const branches = git(['branch', '--list', `mission1/t-${id1}`], dir);
     assert.match(branches, new RegExp(`mission1/t-${id1}`));
     const worktrees = git(['worktree', 'list'], dir);
@@ -880,7 +880,7 @@ test('queue.mjs add: a second writer waits out a held queue lock rather than wri
   const markerPath = join(dir, '.lock-held-marker');
   const libPath = join(SCRIPTS_DIR, '_lib.mjs');
   const holderScript = [
-    `import { withQueueLock } from ${JSON.stringify(libPath)};`,
+    `import { withQueueLock } from ${JSON.stringify(pathToFileURL(libPath).href)};`,
     `import { writeFileSync } from 'node:fs';`,
     `withQueueLock('mission1', 'trunk', () => {`,
     `  writeFileSync(${JSON.stringify(markerPath)}, 'held');`,
