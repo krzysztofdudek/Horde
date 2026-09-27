@@ -339,6 +339,10 @@ test('queue.mjs set merged: the merge is recorded in the wave journal by the sam
   const merged = run('queue.mjs', ['set', '001', 'merged', '--sha', 'abc1234'], dir);
   assert.equal(merged.code, 0, merged.stderr);
   assert.equal(merged.json.journal.appended, true);
+  // The ticket's own Status says merged too, so a reader of issue.md sees what the queue says.
+  const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-slug');
+  assert.match(readFileSync(join(ticketDir, 'issue.md'), 'utf8'), /^\*\*Status:\*\* merged$/m);
+  assert.match(readFileSync(join(ticketDir, 'log.md'), 'utf8'), /status: merged — merged as abc1234/);
 
   const plan = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
   assert.match(plan, /merged: 001 abc1234/);

@@ -23,14 +23,14 @@
 // ticket's status — doesn't reimplement the parsing.
 
 import {
-  existsSync, mkdirSync, readdirSync, renameSync, readFileSync,
+  existsSync, mkdirSync, readdirSync, renameSync, readFileSync, rmSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
   allocateId, latestChangesRound, parseAcceptanceLines, parseEvidenceRows, parseLogEntries,
-  runMain, git,
+  runMain, git, withTicketLock, updateTicketFile, appendTicketLog, withCharterLock,
 } from './_lib.mjs';
 import {
   ticketBoundary, pathInBoundary, portExists, nodeExists, nodeGraphPathPrefix,
@@ -348,11 +348,35 @@ export function lastChangesRoundInfo(horde, ticket) {
 
 // Writes the status and its log line for one transition, embedding the round suffix
 // changesRoundInfo computed (when given) so latestChangesRound can read it back later.
+// The Status line is set on issue.md as it stands now, under the ticket's lock, never on the copy
+// `ticket.text` holds: that copy was read whenever the caller found the ticket, and writing it back
+// would undo anything written since (an edit to the body, another transition). The caller's copy is
+// brought up to date with what was written.
 export function transitionStatus(ticket, status, note, roundInfo) {
+  return withTicketLock(ticket.dir, () => writeTransition(ticket, status, note, roundInfo));
+}
+
+// The write itself; the caller holds the ticket lock.
+function writeTransition(ticket, status, note, roundInfo) {
   const roundSuffix = roundInfo ? ` (round ${roundInfo.round}/${roundInfo.cap ?? roundInfo.resume + roundInfo.fresh} — ${roundInfo.label})` : '';
-  writeText(ticket.issuePath, setStatus(ticket.text, status));
+  const text = setStatus(readText(ticket.issuePath) ?? ticket.text, status);
+  writeText(ticket.issuePath, text);
+  ticket.text = text;
   appendText(ticket.logPath, `- ${nowIso()} status: ${status}${note ? ` — ${note}` : ''}${roundSuffix}\n`);
   return roundSuffix;
+}
+
+// advanceChangesRound(horde, ticket, note) — a ticket sent back to "changes" with the next round of
+// the fix loop counted. The round is read off the log and written back to it in one hold of the
+// ticket lock: counted before the lock, two transitions at once both read the same last round and
+// both write the next one, and the breaker loses a round. Returns changesRoundInfo's answer, with
+// `suffix` when it was written; a refused one (the rounds are spent) writes nothing.
+export function advanceChangesRound(horde, ticket, note) {
+  return withTicketLock(ticket.dir, () => {
+    const info = changesRoundInfo(horde, ticket);
+    if (info.refused) return info;
+    return { ...info, suffix: writeTransition(ticket, 'changes', note, info) };
+  });
 }
 
 // --- id / lookup ---------------------------------------------------------
@@ -446,7 +470,7 @@ function requireTicket(horde, idInput) {
 }
 
 function appendLog(ticket, text) {
-  appendText(ticket.logPath, `- ${nowIso()} ${text}\n`);
+  appendTicketLog(ticket.dir, `- ${nowIso()} ${text}\n`);
 }
 
 // Every id in the horde's charter.md evidence catalogue. This tool only needs the id column, but
@@ -1006,12 +1030,15 @@ function cmdStatus(horde, positional, flags) {
   const ticket = requireTicket(horde, idRaw);
 
   let roundInfo = null;
+  let roundSuffix;
   if (status === 'changes') {
-    roundInfo = changesRoundInfo(horde, ticket);
+    roundInfo = advanceChangesRound(horde, ticket, note);
     if (roundInfo.refused) fail(roundInfo.message);
+    roundSuffix = roundInfo.suffix;
+  } else {
+    roundSuffix = transitionStatus(ticket, status, note, null);
   }
 
-  const roundSuffix = transitionStatus(ticket, status, note, roundInfo);
   emit(
     { id: ticket.id, status, ...(roundInfo ? { round: roundInfo.round, phase: roundInfo.label } : {}) },
     flags,
@@ -1192,17 +1219,20 @@ function cmdAccept(horde, positional, flags) {
   if (typeof flags.by !== 'string' || !flags.by.trim()) fail('accept requires --by "<who accepted it>" — an acceptance nobody signed is nobody\'s');
   const acceptedBy = flags.by.trim();
 
+  // Read and written in one hold of the charter lock: another writer's change made between the
+  // read and the write would otherwise be erased by this one.
   const charterPath = hordePath(horde, 'charter.md');
-  const charterText = readText(charterPath);
-  if (charterText === null) fail(`no charter at ${charterPath} — the acceptance is recorded against a row of its evidence catalogue, and there is none to record it on`);
-  if (!charterEvidenceIds(horde).has(row)) {
-    fail(`${ticket.id} names evidence row ${row}, which the charter's catalogue does not carry — the row it describes was dropped or renamed after this prototype was filed`);
-  }
-
   const at = nowIso();
-  writeText(charterPath, recordPrototypeAcceptance(charterText, {
-    id: row, ticket: ticket.id, sha256, acceptedBy, at,
-  }));
+  withCharterLock(horde, () => {
+    const charterText = readText(charterPath);
+    if (charterText === null) fail(`no charter at ${charterPath} — the acceptance is recorded against a row of its evidence catalogue, and there is none to record it on`);
+    if (!charterEvidenceIds(horde).has(row)) {
+      fail(`${ticket.id} names evidence row ${row}, which the charter's catalogue does not carry — the row it describes was dropped or renamed after this prototype was filed`);
+    }
+    writeText(charterPath, recordPrototypeAcceptance(charterText, {
+      id: row, ticket: ticket.id, sha256, acceptedBy, at,
+    }));
+  });
   appendLog(ticket, `prototype accepted by ${acceptedBy} — ${row}, sha256 ${sha256}`);
 
   emit({
@@ -1217,9 +1247,14 @@ function cmdMove(horde, positional, flags) {
   const destDir = teamPath(horde, flags.team, 'issues', ticket.dirName);
   if (existsSync(destDir)) fail(`destination already exists: ${destDir}`);
   mkdirSync(teamPath(horde, flags.team, 'issues'), { recursive: true });
-  const updated = setField(ticket.text, 'Team', flags.team);
-  writeText(ticket.issuePath, updated);
-  renameSync(ticket.dir, destDir);
+  // The Team line and the rename are one step under the ticket's lock, so no other writer can take
+  // the lock on the old directory in between and write into a directory that is about to move. The
+  // lock file travels with the directory, so it is removed at the new path before the lock lets go.
+  withTicketLock(ticket.dir, () => {
+    writeText(ticket.issuePath, setField(readText(ticket.issuePath) ?? ticket.text, 'Team', flags.team));
+    renameSync(ticket.dir, destDir);
+    rmSync(join(destDir, 'issue.md.lock'), { force: true });
+  });
   emit({ id: ticket.id, from: ticket.team, to: flags.team }, flags, () => `${ticket.id} moved: ${ticket.team} -> ${flags.team}`);
 }
 
@@ -1272,8 +1307,7 @@ function replaceTicketBody(ticket, text, body) {
 export function setTicketBody(horde, id, body, by) {
   const ticket = findTicket(horde, padId(id));
   if (!ticket) fail(`no such ticket: ${id}`);
-  const text = replaceTicketBody(ticket, ticket.text, body);
-  writeText(ticket.issuePath, text);
+  updateTicketFile(ticket.dir, ticket.issuePath, (current) => replaceTicketBody(ticket, current, body));
   appendLog(ticket, `body edited by ${by}`);
   return { id: ticket.id, bytes: body.replace(/\s+$/, '').length };
 }
@@ -1283,7 +1317,15 @@ function cmdEdit(horde, positional, flags) {
   if (!flags.by) fail('edit requires --by <name>');
   const wantsFields = ['files', 'consumes', 'produces', 'evidence', 'depends', 'boundary-proposal'].some((k) => flags[k] !== undefined);
 
+  // Every change is worked out against the copy read above and then applied, under the ticket's
+  // lock, to issue.md as it stands at the moment of writing: a transition written in between (a
+  // landing, the scheduler) keeps its Status line instead of being overwritten by this copy.
   let text = ticket.text;
+  const fieldEdits = [];
+  const setEditedField = (label, value) => {
+    text = setHeaderField(text, label, value);
+    fieldEdits.push([label, value]);
+  };
   const changed = [];
   if (flags.depends !== undefined) {
     const deps = String(flags.depends).split(',').map((d) => d.trim()).filter(Boolean);
@@ -1298,32 +1340,32 @@ function cmdEdit(horde, positional, flags) {
     const nodes = nodesOf(text);
     if (flags['boundary-proposal'] !== undefined) {
       const proposal = approvedBoundaryProposal(horde, flags['boundary-proposal'], nodes);
-      text = setHeaderField(text, 'Boundary proposal', proposal.id);
+      setEditedField('Boundary proposal', proposal.id);
       changed.push(`boundary proposal: ${proposal.id} (${proposal.boundary.join(', ')})`);
     }
     if (flags.files !== undefined) {
       const declared = listFlag(flags.files);
       checkFilesInBoundary(nodes, declared, proposalBoundaryOf(horde, text, nodes));
       const files = withNodeLogs(nodes, declared);
-      text = setHeaderField(text, 'Files', files.length ? files.join(', ') : 'none');
+      setEditedField('Files', files.length ? files.join(', ') : 'none');
       changed.push(`files: ${files.length ? files.join(', ') : 'none'}`);
     }
     if (flags.consumes !== undefined) {
       const consumes = parsePortList(flags.consumes, 'Consumes');
       checkConsumesHaveProducers(horde, consumes, ticket.id);
-      text = setHeaderField(text, 'Consumes', consumes.length ? consumes.map((c) => c.ref).join(', ') : 'none');
+      setEditedField('Consumes', consumes.length ? consumes.map((c) => c.ref).join(', ') : 'none');
       changed.push(`consumes: ${consumes.length ? consumes.map((c) => c.ref).join(', ') : 'none'}`);
     }
     if (flags.produces !== undefined) {
       const produces = parsePortList(flags.produces, 'Produces');
-      text = setHeaderField(text, 'Produces', produces.length ? produces.map((p) => p.ref).join(', ') : 'none');
+      setEditedField('Produces', produces.length ? produces.map((p) => p.ref).join(', ') : 'none');
       changed.push(`produces: ${produces.length ? produces.map((p) => p.ref).join(', ') : 'none'}`);
     }
     if (flags.evidence !== undefined) {
       const values = asArray(flags.evidence);
       checkEvidenceIds(horde, values);
       const { ids } = splitEvidenceValues(values);
-      text = setHeaderField(text, 'Evidence', ids.length ? ids.join(', ') : 'none');
+      setEditedField('Evidence', ids.length ? ids.join(', ') : 'none');
       changed.push(`evidence: ${ids.length ? ids.join(', ') : 'none'}`);
     }
   }
@@ -1333,11 +1375,15 @@ function cmdEdit(horde, positional, flags) {
 
   let bytes = 0;
   if (stdin.trim()) {
-    text = replaceTicketBody(ticket, text, stdin);
+    replaceTicketBody(ticket, text, stdin);
     bytes = stdin.replace(/\s+$/, '').length;
   }
 
-  writeText(ticket.issuePath, text);
+  updateTicketFile(ticket.dir, ticket.issuePath, (current) => {
+    let next = current;
+    for (const [label, value] of fieldEdits) next = setHeaderField(next, label, value);
+    return bytes ? replaceTicketBody(ticket, next, stdin) : next;
+  });
   if (bytes) appendLog(ticket, `body edited by ${flags.by}`);
   for (const c of changed) appendLog(ticket, `${c} — changed by ${flags.by}`);
   emit({ id: ticket.id, bytes, changed }, flags, () => (changed.length

@@ -56,9 +56,9 @@ function workTheLaw(dir, ygCommand, horde = 'mission1') {
   addNode(dir, 'feature', { mapping: ['lib.mjs'], aspects: ['no-marker', 'spread-rule', 'tidy-exports'] });
   addNode(dir, 'edge', { mapping: ['other.mjs'], aspects: ['spread-rule'] });
   // …and every rule gets a reason of its own, which is what `why` reads back
-  ygRun(dir, ygCommand, ['aspects', 'log', 'add', '--aspect', 'no-marker', '--reason', 'Raised because two waves in a row saw nothing new against it.']);
-  ygRun(dir, ygCommand, ['aspects', 'log', 'add', '--aspect', 'tidy-exports', '--reason', 'Written down because three tickets in a row explained the same convention by hand.']);
-  ygRun(dir, ygCommand, ['aspects', 'log', 'add', '--aspect', 'spread-rule', '--reason', 'Attached to the edge because the same convention turned out to hold there.']);
+  ygRun(dir, ygCommand, ['log', 'add', '--aspect', 'no-marker', '--reason', 'Raised because two waves in a row saw nothing new against it.']);
+  ygRun(dir, ygCommand, ['log', 'add', '--aspect', 'tidy-exports', '--reason', 'Written down because three tickets in a row explained the same convention by hand.']);
+  ygRun(dir, ygCommand, ['log', 'add', '--aspect', 'spread-rule', '--reason', 'Attached to the edge because the same convention turned out to hold there.']);
   git(['add', '-A'], dir);
   git(['commit', '-qm', 'what this wave did to the law'], dir);
   git(['branch', '-f', `${horde}/trunk`, 'HEAD'], dir);
@@ -258,7 +258,7 @@ test('wave close writes the document and prints its path, and a second close of 
 
   // …and the rule's own history gained nothing from either close: the document reads the graph, it
   // never writes to it.
-  const log = JSON.parse(ygRun(dir, yg, ['aspects', 'log', 'read', '--aspect', 'no-marker', '--json']));
+  const log = JSON.parse(ygRun(dir, yg, ['log', 'read', '--aspect', 'no-marker', '--json']));
   assert.equal(log.entries.length, 1, 'two closes, still the one entry the fixture wrote');
 });
 
@@ -298,7 +298,7 @@ test('a Yggdrasil CLI Horde does not know: a refusal naming the version to insta
     "import { execFileSync } from 'node:child_process';",
     `const REAL = ${JSON.stringify(yg)};`,
     'const argv = process.argv.slice(2);',
-    "if (argv[0] === 'aspects' && argv.includes('--json') && argv[1] !== 'log') {",
+    "if (argv[0] === 'aspects' && argv.includes('--json')) {",
     '  process.stdout.write(JSON.stringify({ schema: "yg-aspects/0", aspects: [] }) + "\\n");',
     '  process.exit(0);',
     '}',
@@ -336,7 +336,7 @@ test('a stale-CLI refusal names the tree it ran on and the version that tree\'s 
     `const REAL = ${JSON.stringify(yg)};`,
     'const argv = process.argv.slice(2);',
     "if (argv[0] === '--version') { console.log(/[\\\\/]scratch[\\\\/]/.test(process.cwd()) ? '5.7.3' : '9.9.9'); process.exit(0); }",
-    "if (argv[0] === 'aspects' && argv.includes('--json') && argv[1] !== 'log') {",
+    "if (argv[0] === 'aspects' && argv.includes('--json')) {",
     '  process.stdout.write(JSON.stringify({ schema: "yg-aspects/0", aspects: [] }) + "\\n");',
     '  process.exit(0);',
     '}',

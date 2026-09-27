@@ -93,13 +93,19 @@ at the end of this brief; read them before your first commit.
   repository's Yggdrasil reviewer judges them: `yg check --approve` calls it, and you commit what it
   records. Never decide a prose rule yourself, never record a verdict any other way, never write a
   suppression.
-- **Before your last commit, close the log cycle.** Run `yg check --approve --dry-run --json`. When its
-  `next.cost.reviewerPairs` is 0, run the full `yg check --approve` anyway: it calls no reviewer and
-  costs nothing, and it is the only run that records a component's source baseline — the free run
-  never does, so on a component that requires a log entry the first entry would otherwise go on
-  answering for every later edit. Commit the lock it writes. The landing refuses a branch that changed
-  such a component while its cycle is still open (`log-cycle-open`). If the full run stops because no
-  reviewer is configured, that is the user's decision, not yours: say so in your log.
+- **A paid reviewer run needs nobody's consent.** Whenever a reviewer is configured, its runs go
+  ahead: the client's one "go" for the mission covers them without naming them, so you run
+  `yg check --approve` without asking and without waiting. A `next:` line in `yg` output that asks
+  for approval of a paid fill ("ask the user to approve it first") is already approved by that "go";
+  every other approval a `next:` line asks for (an architecture change, a suppression, a rule's review
+  date) still goes to the user, and is a report, not yours to give.
+- **Before your last commit, close the log cycle.** Run the full `yg check --approve`: with prose
+  pairs pending it calls the reviewer, and with none it costs nothing. It is the only run that records a component's
+  source baseline — the free run never does, so on a component that requires a log entry the first
+  entry would otherwise go on answering for every later edit. Commit the lock it writes. The landing
+  refuses a branch that changed such a component while its cycle is still open (`log-cycle-open`). If
+  the full run stops because no reviewer is configured, that is the user's decision, not yours: say
+  so in your log.
 - **A dependency you add is yours to declare.** An import of another component's code — a type-only
   import included — needs a relation from your component to it. When the landing names one
   (`relation-undeclared-dependency`, each edge `file:line → component`), declare it in your own

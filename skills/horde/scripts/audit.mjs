@@ -427,7 +427,7 @@ function lastLogLine(aspect) {
   const moved = log.statusChange
     ? `it was ${log.statusChange.from} and became ${log.statusChange.to}`
     : 'the entry recorded no change of standing';
-  return `Last written to ${log.at} — ${moved}. Read it in full: \`yg aspects log read --aspect ${aspect.id} --json\`.`;
+  return `Last written to ${log.at} — ${moved}. Read it in full: \`yg log read --aspect ${aspect.id} --json\`.`;
 }
 
 // ---- where an attention item goes -------------------------------------------------------------

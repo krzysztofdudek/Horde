@@ -33,6 +33,7 @@ import {
   resolveHorde, resolveTree, git, claimLease, assertLeaseAvailable, provenanceLine, withProvenance,
   firstClass, parseEvidenceRows, noEvidenceLayerIn,
   runMain, nowIso,
+  withCharterLock,
 } from './_lib.mjs';
 import {
   ygCommand, ygNode, ygContext, nodeExists, nodeBoundary, nodeRules, renderRules, listAllNodes,
@@ -86,7 +87,8 @@ steps (default: cut):
   frame
       with --json, the data a session renders to the client: what will change and where, what it
       will prove, and what the law gains. Three sections, no tool names, nothing about how any of
-      it is run. The client's "go" is the only approval in the whole mission.
+      it is run. The client's "go" is the one approval of the mission as a whole, and it covers the
+      paid reviewer runs without naming them: where a reviewer is configured, workers run them.
       When the graph on the trunk has prose rules no reviewer is set up to judge (or one that could
       not be reached), a fourth section comes first — what needs their decision before the work
       can finish — and "decision" in --json carries the rules and the command that settles it.
@@ -836,6 +838,11 @@ function stepCut(horde, flags) {
 // chairman agreed to. And a charter that cannot be written is a refusal naming the path — never a
 // silent skip that leaves the judgement in nobody's head.
 function writeEvidenceJudgement(horde, root, cfg) {
+  const layer = detectEvidenceLayer(root, cfg);
+  return withCharterLock(horde, () => writeEvidenceJudgementLocked(horde, layer));
+}
+
+function writeEvidenceJudgementLocked(horde, layer) {
   const path = hordePath(horde, 'charter.md');
   const before = readText(path) || '';
   const cut = catalogueCut(before);
@@ -848,7 +855,6 @@ function writeEvidenceJudgement(horde, root, cfg) {
       + '(above "## Acceptance", or below the last row) and run this step again. Nothing was written.',
     );
   }
-  const layer = detectEvidenceLayer(root, cfg);
   const text = upsertCharterSection(before, EVIDENCE_SECTION, renderEvidenceJudgement(layer), { before: '## Acceptance' });
   try {
     writeText(path, text);

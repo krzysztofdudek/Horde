@@ -222,6 +222,8 @@ test('land.mjs: nine items green, and the gate merges the branch itself', async 
   assert.equal(item.state, 'merged');
   assert.equal(item.sha, trunkAfter);
   assert.match(readFileSync(join(issueDir(dir, 'trunk', '001'), 'log.md'), 'utf8'), new RegExp(`landed 001 on mission1/trunk as ${trunkAfter}`));
+  // The ticket's own Status moves with the queue item, not only the queue item.
+  assert.match(readFileSync(join(issueDir(dir, 'trunk', '001'), 'issue.md'), 'utf8'), /^\*\*Status:\*\* merged$/m);
 
   // And the wave journal carries the merge, the way a recorded merge always has.
   assert.match(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8'), /001/);
@@ -2291,12 +2293,24 @@ async function waitGateLockHeldBy(dir, pid, timeoutMs = 30000) {
 
 test('land.mjs: the gate lock serializes two landings on one repository', async (t) => {
   const dir = makeRepo();
-  t.after(() => rmRepo(dir));
+  // The gate below runs until this test lets it go. Every way out of the test lets it go first, so
+  // a failed assertion never leaves a landing polling for a file nobody will write.
+  const hold = mkdtempSync(join(tmpdir(), 'horde-gate-hold-'));
+  const release = join(hold, 'release');
+  t.after(() => { writeFileSync(release, ''); rmRepo(dir); rmSync(hold, { recursive: true, force: true }); });
   const { branch } = setupLandable(dir, '021');
-  // A gate slow enough that the second run is certain to meet the lock held, and a wait short
-  // enough that it gives up inside this test rather than queueing behind it.
-  run('horde.mjs', ['config', 'set', 'gates.team', 'sleep 6'], dir);
+  // The collision is held open by a fact, not by a duration. This used to be `sleep 6`, and the
+  // second landing met the lock only if everything it does before the gate (the worktree, the
+  // cheap checks, the law guard's own yg runs) finished inside those six seconds. That takes about
+  // two seconds on an idle machine and more than six on a loaded one; the first landing then let
+  // go before the second got there, both landed in turn, and nobody reported a collision. Now the
+  // gate marks that it started and stays in until the test writes `release`, which it does only
+  // once the second landing has finished — refused by the lock, or inside a gate of its own.
+  const gate = `touch '${hold}/in.'$$; while [ ! -e '${release}' ]; do sleep 0.05; done`;
+  run('horde.mjs', ['config', 'set', 'gates.team', gate], dir);
+  // Short enough that the second run gives up inside this test rather than queueing behind it.
   run('horde.mjs', ['config', 'set', 'gateLockWaitMs', '1000'], dir);
+  const inside = () => readdirSync(hold).filter((f) => f.startsWith('in.')).length;
 
   function spawnLand() {
     const child = spawn('node', [join(SCRIPTS_DIR, 'land.mjs'), branch, '--json'], {
@@ -2305,24 +2319,31 @@ test('land.mjs: the gate lock serializes two landings on one repository', async 
     let out = ''; let err = '';
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err += d; });
-    const done = new Promise((resolve) => { child.on('close', (code) => resolve({ code, out, err })); });
-    return { pid: child.pid, done };
+    let finished = false;
+    const done = new Promise((resolve) => { child.on('close', (code) => { finished = true; resolve({ code, out, err }); }); });
+    return { pid: child.pid, done, finished: () => finished };
   }
 
-  // The second run only proves anything if it meets the lock actually held — starting it after a
-  // fixed wait was a guess about how long the first spawnLand takes to reach the lock on this
-  // machine, and guessing low under load let the second start before the first ever got there,
-  // leaving both free to land in turn with no collision for either to report. Wait for the fact
-  // instead: the lock file naming the first run's own pid.
   const first = spawnLand();
   await waitGateLockHeldBy(dir, first.pid);
   const second = spawnLand();
-
-  const both = await Promise.all([first.done, second.done]);
-  const refused = both.filter((x) => /holds the gate lock/.test(x.out + x.err));
-  assert.equal(refused.length, 1, `exactly one run met the lock:\n${both[0].out}${both[0].err}\n---\n${both[1].out}${both[1].err}`);
-  assert.match(refused[0].out + refused[0].err, /Landings on one repository run one at a time/);
-  assert.match(refused[0].out + refused[0].err, /pid \d+/);
+  // Whichever comes first: the second run ends (a serialized one is refused at the lock), or a
+  // second gate starts while the first is still held in its own (two landings at once).
+  const deadline = Date.now() + 180000;
+  while (!second.finished() && inside() < 2) {
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => { setTimeout(r, 20); });
+  }
+  const gatesAtOnce = inside();
+  writeFileSync(release, '');
+  const [a, b] = await Promise.all([first.done, second.done]);
+  assert.equal(gatesAtOnce, 1, `two gates ran at once — the lock let the second landing in while the first held it:\n${a.out}${a.err}\n---\n${b.out}${b.err}`);
+  assert.equal(a.code, 0, `the first landing, let go, lands:\n${a.out}${a.err}`);
+  const said = b.out + b.err;
+  assert.notEqual(b.code, 0, `the second landing met the lock and did not land:\n${said}`);
+  assert.match(said, /holds the gate lock/);
+  assert.match(said, /Landings on one repository run one at a time/);
+  assert.match(said, new RegExp(`pid ${first.pid}`));
 });
 
 test('land.mjs: a lock left by a dead process is taken over with a note, not waited on', async (t) => {
@@ -3423,6 +3444,114 @@ function resultFor(r, id) {
   return (r.json.results || []).find((x) => x.ticket === id);
 }
 
+// A "once" answer lets one landing through. Two members of one batch that both lean on it pass
+// their guards on the same unspent answer; only the first merge may spend it, and the second is
+// refused its merge because the answer is spent by then.
+test('land.mjs batch: two tickets leaning on one "once" answer — only one merges', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ids = ['111', '112'];
+  const suppressed = (id) => ({
+    extraFiles: { [`feature-${id}.mjs`]: '// yg-suppress-disable(no-marker) the fixture says so\nexport function add(a, b) { return a + b; }\n' },
+  });
+  setupBatchLandable(dir, ids, { perTicket: { 111: suppressed('111'), 112: suppressed('112') } });
+  const opened = run('ask.mjs', ['add', 'these branches suppress a rule the mission is judged by.', '--kind', 'lower', '--aspect', 'no-marker'], dir);
+  assert.equal(opened.code, 0, opened.stderr);
+  const answered = run('ask.mjs', ['answer', opened.json.id, 'approved — one of them may.', '--scope', 'once'], dir);
+  assert.equal(answered.code, 0, answered.stderr);
+
+  const r = run('land.mjs', [ids.join(','), '--result'], dir);
+  const landed = (r.json && r.json.results ? r.json.results : []).filter((x) => x.landed);
+  assert.equal(landed.length, 1, `exactly one member merged:\n${r.stdout}${r.stderr}`);
+  const refused = r.json.results.find((x) => !x.landed);
+  const merge = refused.full.checks.find((c) => c.name === 'merge');
+  assert.ok(merge && !merge.ok, 'the other one was refused at its merge');
+  assert.match(merge.note, /already spent/);
+
+  const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'decisions.md'), 'utf8');
+  assert.equal((decisions.match(/\*\*Consumed:\*\*/g) || []).length, 1, 'and the answer was spent once');
+
+  // Only a new answer lets the second one through, so it waits on a new question for that rule —
+  // and a wait on the user is not the worker's round.
+  const waiting = refused.full.waitingOnUser;
+  assert.ok(waiting && Array.isArray(waiting.asks) && waiting.asks.length === 1, JSON.stringify(refused.full));
+  assert.match(merge.note, new RegExp(`asked again as ${waiting.asks[0]}`));
+  const asks = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json'), 'utf8')).items;
+  const again = asks.find((a) => a.id === waiting.asks[0]);
+  assert.equal(again.kind, 'lower');
+  assert.equal(again.aspect, 'no-marker');
+  assert.equal(again.state, 'open');
+  assert.equal(again.ticket, refused.ticket);
+  const issues = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues');
+  const log = readFileSync(join(issues, readdirSync(issues).find((n) => n.startsWith(refused.ticket)), 'log.md'), 'utf8');
+  assert.match(log, /waiting on a user decision, no round counted/);
+  assert.doesNotMatch(log, /\(round \d+/, 'no round was counted');
+
+  // tick holds the landing while that question is open, counts nothing, and puts the branch through
+  // the gate again once it is answered.
+  const ticked = run('tick.mjs', [], dir);
+  assert.equal(ticked.code, 0, ticked.stderr);
+  const held = ticked.json.held.find((h) => h.ticket === refused.ticket);
+  assert.ok(held && held.ask === waiting.asks[0] && held.holds === 'landing', JSON.stringify(ticked.json.held));
+  assert.equal(ticked.json.landed.filter((l) => l.ticket === refused.ticket).length, 0);
+  assert.equal(run('ask.mjs', ['answer', waiting.asks[0], 'approved — this one too.', '--scope', 'once'], dir).code, 0);
+  const retick = run('tick.mjs', [], dir);
+  assert.equal(retick.code, 0, retick.stderr);
+  const step = retick.json.landed.find((l) => l.ticket === refused.ticket);
+  // Asked again the way any branch without a standing result is: its one review first when it never
+  // had one (as in this fixture), then the gate.
+  assert.ok(step && ['review', 'gate'].includes(step.action), `the gate is asked again: ${JSON.stringify(retick.json.landed)}`);
+  assert.doesNotMatch(readFileSync(join(issues, readdirSync(issues).find((n) => n.startsWith(refused.ticket)), 'log.md'), 'utf8'), /\(round \d+/, 'still no round');
+});
+
+// A landing refused at the merge because another held decisions.md past the wait did nothing wrong:
+// it goes round again as stale, and no fix round is counted against it.
+test('land.mjs: a merge refused because decisions.md stayed locked counts no round', async (t) => {
+  const dir = makeRepo();
+  const release = join(dir, '.release-decisions');
+  t.after(() => { writeFileSync(release, ''); rmRepo(dir); });
+  const suppressed = { extraFiles: { 'feature-121.mjs': '// yg-suppress-disable(no-marker) the fixture says so\nexport function add(a, b) { return a + b; }\n' } };
+  setupBatchLandable(dir, ['121'], { perTicket: { 121: suppressed } });
+  const opened = run('ask.mjs', ['add', 'this branch suppresses a rule the mission is judged by.', '--kind', 'lower', '--aspect', 'no-marker'], dir);
+  assert.equal(opened.code, 0, opened.stderr);
+  assert.equal(run('ask.mjs', ['answer', opened.json.id, 'approved — it may.', '--scope', 'once'], dir).code, 0);
+  // The wait for decisions.md is the landing's own lock wait, kept short here.
+  run('horde.mjs', ['config', 'set', 'gateLockWaitMs', '1500'], dir);
+
+  // Another process holds the decisions lock, and keeps it until this test lets go.
+  const held = join(dir, '.decisions-held');
+  const holder = spawn('node', ['--input-type=module', '-e', `
+    import { existsSync, writeFileSync } from 'node:fs';
+    const { withDecisionsLock } = await import(${JSON.stringify(join(SCRIPTS_DIR, 'decide.mjs'))});
+    withDecisionsLock('mission1', () => {
+      writeFileSync(${JSON.stringify(held)}, '');
+      while (!existsSync(${JSON.stringify(release)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    });
+  `], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+  let holderErr = '';
+  holder.stderr.on('data', (d) => { holderErr += d; });
+  const holderDone = new Promise((resolve) => { holder.on('close', resolve); });
+  const deadline = Date.now() + 30000;
+  while (!existsSync(held)) {
+    if (Date.now() > deadline) throw new Error(`the holder never took the decisions lock: ${holderErr}`);
+    await new Promise((r) => { setTimeout(r, 10); });
+  }
+
+  const r = run('land.mjs', ['121'], dir);
+  writeFileSync(release, '');
+  assert.equal(await holderDone, 0, holderErr);
+
+  assert.ok(r.json, `${r.stdout}${r.stderr}`);
+  assert.equal(r.json.landed, null, 'nothing merged');
+  assert.equal(r.json.stale, true, 'it goes round again the way a stale branch does');
+  const merge = r.json.checks.find((c) => c.name === 'merge');
+  assert.match(merge.note, /could not be locked/);
+  const log = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', readdirSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues')).find((n) => n.startsWith('121')), 'log.md'), 'utf8');
+  assert.doesNotMatch(log, /\(round \d+/, 'and no round was counted');
+  const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'decisions.md'), 'utf8');
+  assert.doesNotMatch(decisions, /\*\*Consumed:\*\*/, 'the answer is still there for the next attempt');
+});
+
 test('land.mjs batch: non-overlapping tickets ready to land share one gate run, and each still lands on its own', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -3959,6 +4088,69 @@ test('land.mjs: tickets on one node landed one after another are caught up by ru
   }
   assert.equal(gateCallCount(gateLog), 3);
   assertAllThreeOnTrunk(dir, ids);
+});
+
+// Issue 479: since Yggdrasil 6.1.0 a node type keeps its own decision log in
+// `.yggdrasil/types/<t>/log.md`, with its baseline in `yg-lock.types.json`. Two tickets that each add
+// a decision to the same type conflict in both files every time; the catch-up takes the lock's
+// parent side and runs `yg log merge-resolve --type <t>`, which writes the union and records the
+// baseline again, instead of refusing the second ticket as stale.
+test('land.mjs: two tickets adding a decision to one node type land one after another, the type log merged by rule (issue 479)', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const arch = join(dir, '.yggdrasil', 'yg-architecture.yaml');
+  writeFileSync(arch, readFileSync(arch, 'utf8').replace(/^node_types: \{\}$/m, 'node_types:\n  module:\n    description: A fixture module.\n    when:\n      path: "src/**"'));
+  addNode(dir, 'feature', { mapping: ['src'] });
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'base.mjs'), 'export const base = 1;\n');
+  assert.equal(yg(dir, ['log', 'add', '--type', 'module', '--reason', 'Modules keep their exports small.']).code, 0);
+  git(['add', '.yggdrasil', 'src/base.mjs'], dir);
+  git(['commit', '-qm', 'graph: a node type with a decision in force'], dir);
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+
+  const ids = ['191', '192'];
+  const branches = {};
+  for (const id of ids) {
+    git(['checkout', '-q', '-b', `mission1/t-${id}`, 'mission1/trunk'], dir);
+    writeFileSync(join(dir, 'src', `f${id}.mjs`), `export function f${id}() { return ${Number(id)}; }\n`);
+    writeFileSync(join(dir, 'src', `f${id}.test.mjs`), [
+      "import test from 'node:test';",
+      "import assert from 'node:assert/strict';",
+      `import { f${id} } from './f${id}.mjs';`,
+      `test('f${id}', () => { assert.equal(f${id}(), ${Number(id)}); });`,
+      '',
+    ].join('\n'));
+    const added = yg(dir, ['log', 'add', '--type', 'module', '--adds', '--reason', `Decision ${id}: a module names what it exports.`]);
+    assert.equal(added.code, 0, added.out);
+    git(['add', '--', `src/f${id}.mjs`, `src/f${id}.test.mjs`, '.yggdrasil'], dir);
+    git(['commit', '-qm', `ticket ${id}`], dir);
+    git(['checkout', '-q', 'mission1/trunk'], dir);
+    const dst = writeIssue(dir, 'trunk', id, { node: 'feature', files: [`src/f${id}.mjs`, `src/f${id}.test.mjs`, '.yggdrasil/types/module/log.md'] });
+    writeTicketLog(dst);
+    seedQueueItem(dir, 'trunk', id, `mission1/t-${id}`);
+    branches[id] = `mission1/t-${id}`;
+  }
+
+  const first = run('land.mjs', [branches['191']], dir);
+  assert.equal(first.code, 0, JSON.stringify(first.json && first.json.checks) + first.stderr);
+  const second = run('land.mjs', [branches['192']], dir);
+  assert.equal(second.code, 0, JSON.stringify(second.json && second.json.checks) + second.stderr);
+  assert.equal(second.json.ok, true);
+  assert.notEqual(second.json.stale, true);
+  const note = byName(second)['base freshness'].note;
+  assert.match(note, /\.yggdrasil\/types\/module\/log\.md \(type log: yg log merge-resolve --type\)/);
+  assert.match(note, /\.yggdrasil\/yg-lock\.types\.json \(lock: the parent's side, whole\)/);
+  assert.doesNotMatch(ticketLog(dir, '192'), /round \d+\//, 'no fix round was counted');
+
+  const log = git(['show', 'mission1/trunk:.yggdrasil/types/module/log.md'], dir);
+  for (const text of ['Modules keep their exports small.', 'Decision 191', 'Decision 192']) assert.ok(log.includes(text), `the trunk's type log keeps "${text}":\n${log}`);
+  const lock = JSON.parse(git(['show', 'mission1/trunk:.yggdrasil/yg-lock.types.json'], dir));
+  assert.ok(lock.types && lock.types.module && lock.types.module.log, 'the type baseline is recorded on the trunk');
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  const check = yg(dir, ['check', '--no-approve']);
+  assert.doesNotMatch(check.out, /log-integrity|prefix_modified|lock-invalid/, `the merged type log is one Yggdrasil accepts:\n${check.out}`);
 });
 
 test('land.mjs: a catch-up conflict outside the files that merge by rule is still refused, and the result names the files', async (t) => {

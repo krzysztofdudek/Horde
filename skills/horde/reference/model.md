@@ -227,7 +227,8 @@ Trust in an agent is a function of the evidence it left in files, not of the rep
   except to refresh a branch from its parent (`git merge <parent>`), which every worker does as its
   first action.
 - Push: never, at any level, without the user's instruction. Starting a mission consents to local
-  commits on the horde's branches, nothing more.
+  commits on the horde's branches (and, through the frame's "go", to paid reviewer runs); nothing
+  else, and never a push.
 
 ### Worktrees
 

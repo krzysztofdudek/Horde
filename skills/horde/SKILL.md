@@ -18,7 +18,8 @@ Three things never change, whatever the mission:
    checker go to Haiku. Pick the lightest class that will pass verification; the class is a field
    of the ticket, not a choice made in flight.
 2. **Push — never** without the user's explicit instruction. Starting a mission is the user's consent
-   to local commits on the horde's branches; nothing else.
+   to local commits on the horde's branches (and, through the frame's "go", to paid reviewer runs);
+   nothing else, and never a push.
 3. **The user is the chairman.** They set the mission and may interject at any time; every interjection
    is recorded as a charter amendment so it survives your respawn, and every amendment that touches
    scope pauses dispatch until the queue has been reconciled. Back to them go only: a charter
@@ -115,9 +116,13 @@ a proposal: one passed becomes work, one rejected keeps its reason on its own lo
 ruled on never runs. Silence is not a pass.
 
 The **frame** is the client's. Three sections, no tool names: what changes and where, what it will
-prove, what the rules gain. Their "go" is the only approval in the whole run, and it is asked for
+prove, what the rules gain. Their "go" is the one approval of the mission as a whole, and it is asked for
 once, at the start — a request of one territory and one ticket says exactly that, and needs no more
-ceremony than a request of ten.
+ceremony than a request of ten. It also covers the paid reviewer runs, which it never names: whenever
+the repository has a reviewer configured, every worker runs `yg check --approve` without asking, and
+nobody asks the client for a separate consent to it, however many prose judgements the work adds.
+What the graph itself reserves for the user — an architecture change, a suppression, a rule's review
+date — is not covered by it: that still comes back to them as an ask.
 
 ## Recognising the evidence layer
 
@@ -263,7 +268,7 @@ behind as usual.
 
 **A catch-up that conflicts is not a loop.** When a sibling's landing moves the parent, the landing
 merges the parent into the branch first, and the conflicts the family meets every day are resolved
-there by rule: a node's `log.md` through `yg log merge-resolve`, Yggdrasil's lock files by taking the
+there by rule: a node's `log.md` and a node type's decision log (`.yggdrasil/types/<t>/log.md`) through `yg log merge-resolve`, Yggdrasil's lock files by taking the
 parent's side, and the files `config.appendOnly` names (a CHANGELOG, as `horde.mjs init` finds it)
 by keeping both sides' added lines. Any other conflict sends the ticket back with no round counted
 and a brief naming the files to resolve; the second time the same files stop it, one `stuck` ask

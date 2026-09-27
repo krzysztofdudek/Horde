@@ -542,8 +542,9 @@ guesses at an answer.
   graph has prose rules no reviewer is set up to judge, or one that could not be reached (the same
   read-only `yg check --json` reading `horde.mjs init` takes), a fourth section comes first — *What
   needs your decision first*, in plain words — and `decision` in `--json` carries the rules and the
-  graph's own `next.text`, the command that settles it. The client's "go" is the only approval in the
-  whole mission run, and nothing is exposed before it.
+  graph's own `next.text`, the command that settles it. The client's "go" is the one approval of the
+  mission as a whole, and nothing is exposed before it. It covers the paid reviewer runs without
+  naming them: where a reviewer is configured, workers run `yg check --approve` without asking.
 
 ## brief.mjs — rendered briefs
 
@@ -698,7 +699,7 @@ several users.
     refusals would redden the trunk on purpose, which is the fall this ruling exists to prevent.
   The move itself is what Yggdrasil prescribes and nothing more: the `status:` line of the rule's own
   `yg-aspect.yaml`, then the numbers in self-contained prose in the rule's own log — one entry per
-  raise, `yg aspects log add --aspect <id> --reason "…" --status <rung> --evidence "…"` — never a
+  raise, `yg log add --aspect <id> --reason "…" --status <rung> --evidence "…"` — never a
   courtesy copy on every node the rule reaches. Only *advisory → enforced* also leaves a one-line
   pointer on those nodes (found the same way: the units `yg check` reports pairs for, falling back for
   a draft rule — which has no pairs at all — to the mission's own nodes asked one by one; `--node
@@ -708,7 +709,7 @@ several users.
   `review_by`. A rule a reader judges costs money to drill, so `promote` refuses it until
   `--with-reviewer` says to spend that. Under a charter set to `only-the-work`, `promote` refuses
   outright. An installed `yg` that reports a version below Horde's floor (6.1.0) is refused before the
-  rule's own log ("yg aspects log add") is written, naming the release to upgrade to — told by the
+  rule's own log ("yg log add --aspect") is written, naming the release to upgrade to — told by the
   version it reports, never by the words of how it fails.
 - `demote <aspect> --to draft|advisory --by user --why "<what they said>"` — the one direction nobody
   in the horde may take alone. Without `--by user` it refuses, and `--by architect` is refused just as
@@ -747,7 +748,7 @@ on the base; `attached` is a rule at the same rung reaching units here it did no
 only over units BOTH trees have, so a file the mission added is never mistaken for a rule that grew).
 `description` is the rule's own; `nodes` are the components the rule reaches, read from
 `yg aspects --json --reach` — one call per tree, the same reading the landing gate's law guard takes;
-`why` is the last entry of the rule's own history (`yg aspects log read --json`), `null` for a rule
+`why` is the last entry of the rule's own history (`yg log read --aspect <id> --json`), `null` for a rule
 nothing has been recorded about. Reach is read there rather than off `yg check --json --full`'s pairs
 because the gate deliberately runs nothing for a rule at `draft`: read that way, every draft rule came
 back reaching nothing, and the document described a rule with real subjects as one with none. A CLI
@@ -946,7 +947,7 @@ third time is not another answer — it is a rule. Each such group prints as a p
 evidence, one line of rule text quoting
 the latest of them, and the steps that file it — where the group has a territory, filing the rule
 itself (`.yggdrasil/aspects/<id>/yg-aspect.yaml`, attached to that territory's node — an edit this
-tool makes no graph object for), then `<config.ygCommand> aspects log add --aspect <id> --reason "…"`,
+tool makes no graph object for), then `<config.ygCommand> log add --aspect <id> --reason "…"`,
 since a rule's own reasoning belongs in its own log once it exists, not the node's; `decide.mjs add`
 where the group has no territory to hang a rule on at all. It
 prints those steps and never runs them — the agent that works that territory does the filing, in its
@@ -1105,7 +1106,7 @@ the JSON, and every item below is measured against it:
    was, and the landing stops here — `ok: false`, `stale: true`, base freshness the only item, no
    gate run and no fix round counted (`tick.mjs` sends the ticket back to be brought up to date).
    A merge that stops only on the files that merge by rule is finished instead of refused: a
-   node's `log.md` through `yg log merge-resolve --node <n>`, Yggdrasil's `yg-lock.*.json` by
+   node's `log.md` through `yg log merge-resolve --node <n>`, a node type's `.yggdrasil/types/<t>/log.md` through `yg log merge-resolve --type <t>` (after `yg-lock.types.json` took the parent's side, so the type's baseline is recorded again), Yggdrasil's `yg-lock.*.json` by
    taking the parent's side whole (the verdicts dropped are judged again), and a file
    `config.appendOnly` names by keeping both sides' added lines — only when neither side did more
    than add lines; where both added at the same place, the lines both begin and end with (a section
@@ -1205,7 +1206,7 @@ the JSON, and every item below is measured against it:
    tree red with such a cycle is never read as waiting on the user alone. The free half never records a
    component's source baseline, so its first log entry would otherwise answer for every later edit
    and the log gate would never ask for another why; the item names the component and the way out —
-   record why, run the full `yg check --approve` (free while no reviewer pair is pending), commit the
+   record why, run the full `yg check --approve` (calls the reviewer only if pairs are pending), commit the
    lock it writes. A shared batch gate reads it against the whole batch's diff;
 7. mapping — every file the branch added is owned by a node on the branch's own tree; skipped with
    `--no-gate`;

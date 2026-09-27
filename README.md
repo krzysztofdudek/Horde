@@ -84,7 +84,7 @@ ticket's change, and the one client in the loop:
 | Review (one-shot) | the ticket's own class, once per ticket, before it lands | nothing — it names what is wrong or stays silent; a serious finding sends the ticket back before the merge checklist runs | approving anything: the checklist runs whatever it wrote |
 | Client | you | the mission, every answered ask, whether it ships | reviewing every diff |
 
-Every change belongs to exactly one ticket. Liveness is judged by files and branches, never by silence. And it never pushes: starting a mission is your consent to local commits on the horde's own branches, nothing more. The pull request, and the push, stay yours.
+Every change belongs to exactly one ticket. Liveness is judged by files and branches, never by silence. And it never pushes: starting a mission is your consent to local commits on the horde's own branches (and, through your "go", to paid reviewer runs); nothing else, and never a push. The pull request, and the push, stay yours.
 
 ---
 

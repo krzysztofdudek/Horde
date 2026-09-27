@@ -386,6 +386,7 @@ function returnBlockFor(t, parentBranch, cfg) {
       'resolve each file by the rule for its kind, and commit the merge.',
       '',
       `- A node's \`log.md\`: \`${display} log merge-resolve --node <node>\`, with the merge still in progress; never stitch the markers by hand.`,
+      `- A node type's decision log \`.yggdrasil/types/<type>/log.md\`: \`${display} log merge-resolve --type <type>\`, after \`yg-lock.types.json\` took one side.`,
       '- `.yggdrasil/yg-lock.*.json`: take the parent\'s side whole (`git checkout --theirs -- <file>`), resolve the logs after it, and run `yg check --approve` once the merge is committed.',
       '- Anything else: by hand, reading both sides — and when the two cannot both be right, that is a report, not a choice you make: `tk.mjs log` it and stop.',
       '',
@@ -422,6 +423,7 @@ function returnBlockFor(t, parentBranch, cfg) {
       '',
       `That is the whole of this round: run \`${display} check --approve\` in your worktree, commit what it records,`,
       'and log `landed <sha>` as always. Change no code for it. A second return for the same reason counts a round.',
+      'The reviewer it calls is paid for under the mission\'s "go": run it without asking anyone.',
       '',
     ].join('\n');
   }
