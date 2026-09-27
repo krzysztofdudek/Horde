@@ -74,6 +74,7 @@
 import { execFileSync } from 'node:child_process';
 import {
   asArray, readTerritories, leaseHolderForNode, today, qualityPolicy, firstClass, withQueueLock,
+  splitCommandLine, programFor,
 } from './_lib.mjs';
 import {
   ygJson, ygCommand, readAuditLedger, recordAudit, readAspectLedger, listAllNodes, YG_DOCUMENTS_AFTER,
@@ -125,12 +126,13 @@ function readDoc(tree, cfg, args, schema) {
 // several things a close reports, so it becomes a note.
 function readGrainAdvice(root, cfg) {
   const raw = cfg && cfg.grainCommand;
-  const parts = String(raw || '').trim().split(/\s+/).filter(Boolean);
+  const parts = splitCommandLine(raw);
   if (parts.length === 0) return { configured: false };
-  const display = parts.join(' ');
+  const display = String(raw).trim();
   let out;
   try {
-    out = execFileSync(parts[0], [...parts.slice(1), 'advise', '--json'], {
+    const { cmd, prefix } = programFor(parts);
+    out = execFileSync(cmd, [...prefix, 'advise', '--json'], {
       cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
     });
   } catch (e) {

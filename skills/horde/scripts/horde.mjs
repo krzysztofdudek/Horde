@@ -17,7 +17,7 @@ import {
   readLeases, releaseLeasesForHorde, latestActivity, claimLease, assertLeaseAvailable,
   qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES, parseEvidenceRows, asArray,
   runGateAt, gateTimeoutOf, GATE_RAN, nowIso, notifyTemplateProblem,
-  runMain,
+  runMain, splitCommandLine, programFor,
 } from './_lib.mjs';
 import { nodesOf, padId } from './tk.mjs';
 import {
@@ -476,9 +476,13 @@ function defaultConfig(root) {
 
 // A command line ("yg", "node ./yg/bin.js") split into a program and its fixed leading arguments.
 function commandLine(raw, fallback) {
-  const parts = String(raw || fallback || '').trim().split(/\s+/).filter(Boolean);
+  const parts = splitCommandLine(String(raw || fallback || ''));
   if (!parts.length) return null;
-  return { cmd: parts[0], prefix: parts.slice(1), display: parts.join(' ') };
+  try {
+    return { ...programFor(parts), display: String(raw || fallback).trim() };
+  } catch {
+    return { cmd: parts[0], prefix: parts.slice(1), display: String(raw || fallback).trim() };
+  }
 }
 
 // True when the command line can actually be started. `--version` is the one argument every CLI

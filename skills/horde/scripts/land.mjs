@@ -35,7 +35,7 @@ import {
   parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine,
   withProvenance, nowIso, parseDecisionEntries, decisionField, diffSize, sizeRanks, sizeLine,
   noEvidenceLayerNote, createLockFile, processAlive, readLockText, removeStaleLock, sleepSync, HordeError,
-  runMain, GATE_RAN,
+  runMain, GATE_RAN, posixShell,
 } from './_lib.mjs';
 import {
   ticketNodes, ygCommand, fillDeterministic, pendingProsePairs, userOnlyRefusal, reviewerMissingIn,
@@ -548,9 +548,10 @@ function shellQuote(text) {
 
 function runTestFileCommand(tmp, relPath, cfg) {
   const command = String(cfg.gates.testFile).replace(/\{file\}/g, () => shellQuote(relPath));
+  const shell = posixShell();
   try {
     execSync(command, {
-      cwd: tmp, env: childTestEnv(), stdio: 'pipe', timeout: gateTimeout(cfg), killSignal: 'SIGTERM',
+      shell, cwd: tmp, env: childTestEnv(), stdio: 'pipe', timeout: gateTimeout(cfg), killSignal: 'SIGTERM',
     });
     return { path: relPath, ok: false, note: 'gates.testFile green with it in place — the test passes here, so it proves nothing about the change' };
   } catch (e) {
@@ -649,8 +650,9 @@ function fallbackReport(cfg) {
 function runWholeCommand(tmp, cfg, report) {
   if (report.path) rmSync(join(tmp, report.path), { force: true, recursive: true });
   let result;
+  const shell = posixShell();
   try {
-    execSync(cfg.gates.commit, { cwd: tmp, stdio: 'pipe', timeout: gateTimeout(cfg) });
+    execSync(cfg.gates.commit, { shell, cwd: tmp, stdio: 'pipe', timeout: gateTimeout(cfg) });
     result = { green: true, stopped: false };
   } catch (e) {
     result = { green: false, stopped: e.killed === true || e.signal === 'SIGTERM' };
@@ -792,8 +794,9 @@ function runMutateVariant(root, cfg, branch, parentBranch, mutate, newTestFiles)
     // working tree (the mutation goes there) is untouched.
     const forkPoint = git(['merge-base', parentBranch, branchSha], root);
     if (forkPoint) git(['reset', '-q', '--soft', forkPoint], tmp);
+    const shell = posixShell();
     try {
-      execSync(mutate, { cwd: tmp, stdio: 'pipe', timeout: gateTimeout(cfg) });
+      execSync(mutate, { shell, cwd: tmp, stdio: 'pipe', timeout: gateTimeout(cfg) });
     } catch (e) {
       if (e.killed === true || e.signal === 'SIGTERM') {
         return { ok: false, note: `mutate command did not finish within ${Math.round(gateTimeout(cfg) / 1000)}s and was stopped: ${mutate} — raise the limit with: horde.mjs config set gateTimeoutMs <milliseconds>` };
@@ -950,8 +953,9 @@ function checkGate(cfg, level, worktree, branchSha, noGate) {
   let green = true;
   let out = '';
   let timedOut = false;
+  const shell = posixShell();
   try {
-    out = execSync(cmd, { cwd: worktree, stdio: 'pipe', timeout }).toString();
+    out = execSync(cmd, { shell, cwd: worktree, stdio: 'pipe', timeout }).toString();
   } catch (e) {
     green = false;
     timedOut = e.killed === true || e.signal === 'SIGTERM';
@@ -4125,7 +4129,7 @@ function startBatchInBackground(horde, root, level, noGate, tickets) {
     if (noGate) args.push('--no-gate');
     args.push('--horde', horde, '--result', '--json');
     const child = spawn(process.execPath, [self, ...args], {
-      detached: true, stdio: 'ignore', cwd: root,
+      detached: true, stdio: 'ignore', cwd: root, windowsHide: true,
     });
     child.unref();
     for (const r of resolved) {
@@ -4599,6 +4603,7 @@ function startInBackground(horde, ticketId, argv) {
   const child = spawn(process.execPath, [self, ...args, '--result', '--json'], {
     detached: true,
     stdio: 'ignore',
+    windowsHide: true,
     cwd: process.cwd(),
   });
   child.unref();

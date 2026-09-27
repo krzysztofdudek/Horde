@@ -29,7 +29,7 @@ import { execFileSync, execSync } from 'node:child_process';
 import {
   repoRoot, hordePath, teamPath, readJSON, writeJSON, readText, readConfig, git, nowIso,
   fail, parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, parseVerdictBlocks,
-  runMain, noEvidenceLayerNote,
+  runMain, noEvidenceLayerNote, posixShell,
 } from './_lib.mjs';
 import { findTicket, ticketFiles } from './tk.mjs';
 import {
@@ -191,7 +191,7 @@ function runTestsAt(root, cfg, ref, contentRef, paths) {
         });
       } else if (cfg.gates && cfg.gates.commit) {
         let failed = false;
-        try { execSync(cfg.gates.commit, { cwd: tmp, stdio: 'pipe' }); } catch { failed = true; }
+        try { execSync(cfg.gates.commit, { shell: posixShell(), cwd: tmp, stdio: 'pipe' }); } catch { failed = true; }
         results.push({ path: relPath, failures: failed ? 1 : 0, note: failed ? 'the fast check is red here' : 'the fast check is green here' });
       } else {
         results.push({ path: relPath, failures: null, note: 'no runner: not a node test file, and no fast check configured' });
@@ -683,7 +683,7 @@ function snapshotHorde(root, dest) {
     filter: (from) => {
       const rel = from.slice(src.length + 1);
       if (!rel) return true;
-      return !SNAPSHOT_SKIP.has(rel.split('/')[0]);
+      return !SNAPSHOT_SKIP.has(rel.split(/[\\/]/)[0]);
     },
   });
   // A case is state, not a machine. `ygCommand` on the recording machine is very often an
