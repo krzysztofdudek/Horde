@@ -2286,12 +2286,24 @@ async function waitGateLockHeldBy(dir, pid, timeoutMs = 30000) {
 
 test('land.mjs: the gate lock serializes two landings on one repository', async (t) => {
   const dir = makeRepo();
-  t.after(() => rmRepo(dir));
+  // The gate below runs until this test lets it go. Every way out of the test lets it go first, so
+  // a failed assertion never leaves a landing polling for a file nobody will write.
+  const hold = mkdtempSync(join(tmpdir(), 'horde-gate-hold-'));
+  const release = join(hold, 'release');
+  t.after(() => { writeFileSync(release, ''); rmRepo(dir); rmSync(hold, { recursive: true, force: true }); });
   const { branch } = setupLandable(dir, '021');
-  // A gate slow enough that the second run is certain to meet the lock held, and a wait short
-  // enough that it gives up inside this test rather than queueing behind it.
-  run('horde.mjs', ['config', 'set', 'gates.team', 'sleep 6'], dir);
+  // The collision is held open by a fact, not by a duration. This used to be `sleep 6`, and the
+  // second landing met the lock only if everything it does before the gate (the worktree, the
+  // cheap checks, the law guard's own yg runs) finished inside those six seconds. That takes about
+  // two seconds on an idle machine and more than six on a loaded one; the first landing then let
+  // go before the second got there, both landed in turn, and nobody reported a collision. Now the
+  // gate marks that it started and stays in until the test writes `release`, which it does only
+  // once the second landing has finished — refused by the lock, or inside a gate of its own.
+  const gate = `touch '${hold}/in.'$$; while [ ! -e '${release}' ]; do sleep 0.05; done`;
+  run('horde.mjs', ['config', 'set', 'gates.team', gate], dir);
+  // Short enough that the second run gives up inside this test rather than queueing behind it.
   run('horde.mjs', ['config', 'set', 'gateLockWaitMs', '1000'], dir);
+  const inside = () => readdirSync(hold).filter((f) => f.startsWith('in.')).length;
 
   function spawnLand() {
     const child = spawn('node', [join(SCRIPTS_DIR, 'land.mjs'), branch, '--json'], {
@@ -2300,24 +2312,31 @@ test('land.mjs: the gate lock serializes two landings on one repository', async 
     let out = ''; let err = '';
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err += d; });
-    const done = new Promise((resolve) => { child.on('close', (code) => resolve({ code, out, err })); });
-    return { pid: child.pid, done };
+    let finished = false;
+    const done = new Promise((resolve) => { child.on('close', (code) => { finished = true; resolve({ code, out, err }); }); });
+    return { pid: child.pid, done, finished: () => finished };
   }
 
-  // The second run only proves anything if it meets the lock actually held — starting it after a
-  // fixed wait was a guess about how long the first spawnLand takes to reach the lock on this
-  // machine, and guessing low under load let the second start before the first ever got there,
-  // leaving both free to land in turn with no collision for either to report. Wait for the fact
-  // instead: the lock file naming the first run's own pid.
   const first = spawnLand();
   await waitGateLockHeldBy(dir, first.pid);
   const second = spawnLand();
-
-  const both = await Promise.all([first.done, second.done]);
-  const refused = both.filter((x) => /holds the gate lock/.test(x.out + x.err));
-  assert.equal(refused.length, 1, `exactly one run met the lock:\n${both[0].out}${both[0].err}\n---\n${both[1].out}${both[1].err}`);
-  assert.match(refused[0].out + refused[0].err, /Landings on one repository run one at a time/);
-  assert.match(refused[0].out + refused[0].err, /pid \d+/);
+  // Whichever comes first: the second run ends (a serialized one is refused at the lock), or a
+  // second gate starts while the first is still held in its own (two landings at once).
+  const deadline = Date.now() + 180000;
+  while (!second.finished() && inside() < 2) {
+    if (Date.now() >= deadline) break;
+    await new Promise((r) => { setTimeout(r, 20); });
+  }
+  const gatesAtOnce = inside();
+  writeFileSync(release, '');
+  const [a, b] = await Promise.all([first.done, second.done]);
+  assert.equal(gatesAtOnce, 1, `two gates ran at once — the lock let the second landing in while the first held it:\n${a.out}${a.err}\n---\n${b.out}${b.err}`);
+  assert.equal(a.code, 0, `the first landing, let go, lands:\n${a.out}${a.err}`);
+  const said = b.out + b.err;
+  assert.notEqual(b.code, 0, `the second landing met the lock and did not land:\n${said}`);
+  assert.match(said, /holds the gate lock/);
+  assert.match(said, /Landings on one repository run one at a time/);
+  assert.match(said, new RegExp(`pid ${first.pid}`));
 });
 
 test('land.mjs: a lock left by a dead process is taken over with a note, not waited on', async (t) => {
