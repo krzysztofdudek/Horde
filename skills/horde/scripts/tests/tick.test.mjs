@@ -2164,6 +2164,7 @@ test('tick.mjs: a "rejudge" result goes back with no round and a brief to refres
   const brief = JSON.parse(execFileSync('node', [script, ...args, '--json'], { cwd: dir, encoding: 'utf8' })).brief;
   assert.match(brief, /## Refresh the verdicts/);
   assert.match(brief, /reads-well on node:core/);
+  assert.match(brief, /paid for under the mission's "go": run it without asking anyone/);
   assert.doesNotMatch(readFileSync(ticketLogPath(dir, id), 'utf8'), /round \d+\//);
 
   // The worker comes back with a new commit, and the landing of it finds the same verdicts pending.

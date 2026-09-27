@@ -18,7 +18,7 @@ Three things never change, whatever the mission:
    checker go to Haiku. Pick the lightest class that will pass verification; the class is a field
    of the ticket, not a choice made in flight.
 2. **Push — never** without the user's explicit instruction. Starting a mission is the user's consent
-   to local commits on the horde's branches; nothing else.
+   to local commits on the horde's branches; never to a push.
 3. **The user is the chairman.** They set the mission and may interject at any time; every interjection
    is recorded as a charter amendment so it survives your respawn, and every amendment that touches
    scope pauses dispatch until the queue has been reconciled. Back to them go only: a charter
@@ -117,7 +117,9 @@ ruled on never runs. Silence is not a pass.
 The **frame** is the client's. Three sections, no tool names: what changes and where, what it will
 prove, what the rules gain. Their "go" is the only approval in the whole run, and it is asked for
 once, at the start — a request of one territory and one ticket says exactly that, and needs no more
-ceremony than a request of ten.
+ceremony than a request of ten. It also covers the paid reviewer runs, which it never names: whenever
+the repository has a reviewer configured, every worker runs `yg check --approve` without asking, and
+nobody asks the client for a separate consent to it, however many prose judgements the work adds.
 
 ## Recognising the evidence layer
 

@@ -543,7 +543,8 @@ guesses at an answer.
   read-only `yg check --json` reading `horde.mjs init` takes), a fourth section comes first — *What
   needs your decision first*, in plain words — and `decision` in `--json` carries the rules and the
   graph's own `next.text`, the command that settles it. The client's "go" is the only approval in the
-  whole mission run, and nothing is exposed before it.
+  whole mission run, and nothing is exposed before it. It covers the paid reviewer runs without
+  naming them: where a reviewer is configured, workers run `yg check --approve` without asking.
 
 ## brief.mjs — rendered briefs
 
