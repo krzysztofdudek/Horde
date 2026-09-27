@@ -1541,14 +1541,15 @@ export function mergeSpendingAnswers(horde, answers, ticketId, sha, merge, { wai
 
 // What a merge refused by mergeSpendingAnswers leaves on the ticket, and the fields its result
 // carries for tick. Neither refusal is the worker's doing, so neither counts a round:
-//   lockTimeout  another landing held decisions.md past the wait — the result reads as stale (back
-//                in the queue, no round), the same as a branch the parent moved under
+//   lockTimeout  another landing held decisions.md past the wait — the branch is fine as it stands, so
+//                the result says lockTimeout and tick puts the same branch through the gate again on
+//                its next run: no round, and no worker raised to change a branch nothing is wrong with
 //   spent        the one-time answer the branch leaned on was used up by another landing — only a
 //                new answer lets it through, so a new question is filed for each spent answer (one
 //                already open for this ticket and rule is reused) and the ticket waits on it
 // Anything else refused at the merge is a red landing, and counts its round as before.
 function refusedMerge(horde, ticketId, merged, checks) {
-  if (merged.lockTimeout) return { stale: true, conflictFiles: [] };
+  if (merged.lockTimeout) return { lockTimeout: true };
   if (Array.isArray(merged.spent) && merged.spent.length) {
     const waiting = spentAnswersWaiting(horde, ticketId, merged.spent);
     const last = checks[checks.length - 1];
@@ -1570,7 +1571,7 @@ function spentAnswersWaiting(horde, ticketId, spent) {
       kind: 'lower',
       aspect,
       ticket: String(ticketId),
-      why: `Ticket ${ticketId} leaned on the one-time answer "${s.heading}" to weaken ${aspect}, and another landing used that answer up before this one merged. One answer lets one landing through. Answer "approved — <why>" to let ticket ${ticketId} through as well, or say no and it stays blocked.`,
+      why: `Ticket ${ticketId} leaned on the one-time answer "${s.heading}" to weaken ${aspect}, and another landing used that answer up before this one merged. One answer lets one landing through. Answer "approved — <why>" to let ticket ${ticketId} through as well. Any other answer puts the branch through the gate again without one, where the weakened rule is refused and the ticket goes back to its worker to land without weakening it.`,
     });
     asks.push(ask.id);
   }

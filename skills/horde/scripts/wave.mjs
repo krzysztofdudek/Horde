@@ -969,10 +969,16 @@ function cmdEvidence(horde, positional, flags) {
   // The proof above was taken from the charter as it was read; the stamp goes on the charter as it
   // stands now, read again under the charter lock, so a change written meanwhile is kept. A gate run
   // for the row can take minutes, and it runs before the lock is taken, never inside it.
+  // The row is compared whole — what it demands and its kind of proof — not by id alone: a row
+  // rewritten meanwhile (a new command, another class) is not what the proof was taken for.
   withCharterLock(horde, () => {
     const current = readText(charterPath) || '';
-    if (!parseEvidenceRows(current).some((r) => r.id === id)) {
+    const now = parseEvidenceRows(current).find((r) => r.id === id);
+    if (!now) {
       fail(`evidence id ${id} left the charter's catalogue while its proof was being taken — nothing was stamped`);
+    }
+    if (now.evidence !== row.evidence || now.evidenceClass !== row.evidenceClass) {
+      fail(`evidence row ${id} was rewritten while its proof was being taken (what it demands or its kind of proof changed) — nothing was stamped; take the proof again for the row as it stands: wave.mjs evidence ${id} ${evidenceWay(now.evidenceClass).flag}`);
     }
     writeText(charterPath, stampRow(horde, current, id, by, detail));
   });

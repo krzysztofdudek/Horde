@@ -6,14 +6,14 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
-  existsSync, readFileSync, writeFileSync, rmSync, chmodSync, readdirSync, realpathSync,
+  existsSync, readFileSync, writeFileSync, rmSync, chmodSync, readdirSync, realpathSync, mkdirSync,
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde,
+  makeRepo, rmRepo, run, initHorde, yg, addNode, git,
 } from './helpers.mjs';
 
 const REWRITER = join(dirname(fileURLToPath(import.meta.url)), 'lock-race', 'rewriter.mjs');
@@ -29,7 +29,7 @@ function sleepSync(ms) {
 async function startRewriter(dir, args) {
   const marker = join(dir, `.rewriter-ready-${Math.random().toString(36).slice(2, 8)}`);
   rmSync(marker, { force: true });
-  const child = spawn('node', [REWRITER, args.kind, args.file, marker, String(HOLD_MS), args.addition, args.extra || ''], {
+  const child = spawn('node', [REWRITER, args.kind, args.file, marker, String(args.hold || HOLD_MS), args.addition, args.extra || ''], {
     cwd: dir, stdio: ['ignore', 'pipe', 'pipe'],
   });
   let err = '';
@@ -433,4 +433,122 @@ test('tk.mjs accept waits for a writer holding the charter lock, and both change
   const text = readFileSync(path, 'utf8');
   assert.match(text, /written under the charter lock/, 'the lock holder\'s write survived');
   assert.match(text, /Anna Kowalska/, 'and so did the acceptance that waited for it');
+});
+
+// A row's proof is taken from the charter as it was read and stamped on the charter as it stands
+// under the lock. The row is compared whole there — what it demands and its kind of proof — so a
+// row rewritten while its proof ran is not stamped with a proof of the old wording (issue 489).
+test('wave.mjs evidence refuses to stamp a row rewritten while its proof was being taken', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const path = join(dir, '.horde', 'hordes', 'mission1', 'charter.md');
+  // The row's own command rewrites the row's evidence while it runs: the change a charter edit made
+  // during a long gate run would be.
+  const rewrite = join(dir, 'rewrite-row.mjs');
+  writeFileSync(rewrite, `import { readFileSync, writeFileSync } from 'node:fs';
+const p = ${JSON.stringify(path)};
+writeFileSync(p, readFileSync(p, 'utf8').replace('is green', 'is green on every platform'));
+`);
+  // Forward slashes: the gate runs the command through sh, which on Windows reads a backslash as an escape.
+  const cmd = `node ${rewrite.replace(/\\/g, '/')}`;
+  writeFileSync(path, [
+    '# Mission · mission1', '', '## Acceptance — the evidence catalogue', '',
+    '| id | evidence | node | reproduced by |', '|---|---|---|---|',
+    `| E1 | \`${cmd}\` is green | api | |`, '',
+  ].join('\n'));
+
+  const r = run('wave.mjs', ['evidence', 'E1', '--run', cmd], dir);
+  assert.notEqual(r.code, 0, 'nothing is stamped');
+  assert.match(r.stderr, /evidence row E1 was rewritten while its proof was being taken/);
+  const text = readFileSync(path, 'utf8');
+  assert.match(text, /is green on every platform \| api \| \|/, 'the rewritten row stands, unstamped');
+  assert.doesNotMatch(text, /passed at [0-9a-f]{7}/);
+});
+
+// The charter edit checks the text it was given against the charter as it was read, and writes it
+// under the charter lock only over that same text: a stamp written meanwhile is never erased by it.
+test('horde.mjs charter edit, meeting a writer that holds the charter lock, is refused and erases nothing', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const path = charterWithRow(dir);
+
+  const { done } = await startRewriter(dir, {
+    kind: 'charter', file: path, addition: '\nwritten under the charter lock\n', extra: 'mission1',
+  });
+  const edited = spawnSync('node', [join(dirname(REWRITER), '..', '..', 'horde.mjs'), 'charter', 'edit', '--json'], {
+    cwd: dir, input: `${readFileSync(path, 'utf8')}\nthe edit's own line\n`, encoding: 'utf8',
+  });
+  const holder = await done;
+  assert.equal(holder.code, 0, holder.err);
+  assert.notEqual(edited.status, 0, 'the edit is refused, not written over the lock holder\'s change');
+  assert.match(edited.stderr, /the charter changed while this edit was being checked/);
+
+  const text = readFileSync(path, 'utf8');
+  assert.match(text, /written under the charter lock/, 'the lock holder\'s write survived');
+  assert.doesNotMatch(text, /the edit's own line/, 'and the edit wrote nothing');
+});
+
+// The cut's evidence-layer judgement is written into the charter under the charter lock.
+test('refine.mjs --step cut waits for a writer holding the charter lock, and both changes survive', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  yg(dir, ['init']);
+  addNode(dir, 'auth', { description: 'Signing people in.', mapping: ['src/auth/**'] });
+  addNode(dir, 'api', { description: 'The HTTP surface.', mapping: ['src/api/**'] });
+  mkdirSync(join(dir, 'src', 'auth'), { recursive: true });
+  mkdirSync(join(dir, 'src', 'api'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'auth', 'login.mjs'), 'export const login = 1;\n');
+  writeFileSync(join(dir, 'src', 'api', 'routes.mjs'), 'export const routes = 1;\n');
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'the graph and the code it governs'], dir);
+  git(['branch', '-f', 'develop', 'HEAD'], dir);
+  initHorde(dir, 'm1');
+  writeFileSync(join(dir, '.horde', 'hordes', 'm1', 'territories.json'), `${JSON.stringify({
+    door: { nodes: ['auth', 'api'], class: 'standard', why: 'How a request gets in.' },
+  }, null, 2)}\n`);
+  const path = join(dir, '.horde', 'hordes', 'm1', 'charter.md');
+
+  // The cut measures the territories through yg before it writes, which takes longer than the usual
+  // hold: the holder keeps the lock long enough for the write to come while it still holds it, and
+  // short of the fifteen seconds a writer waits for the charter lock.
+  const { done } = await startRewriter(dir, {
+    kind: 'charter', file: path, addition: '\nwritten under the charter lock\n', extra: 'm1', hold: 9000,
+  });
+  const r = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir);
+  const holder = await done;
+  assert.equal(holder.code, 0, holder.err);
+  assert.equal(r.code, 0, r.stderr);
+
+  const text = readFileSync(path, 'utf8');
+  assert.match(text, /written under the charter lock/, 'the lock holder\'s write survived');
+  assert.match(text, /Evidence here is this repository's test suite/, 'and so did the judgement that waited for it');
+});
+
+// A wave close stamps the rows its merged tickets reproduced under the charter lock.
+test('wave.mjs close waits for a writer holding the charter lock, and both changes survive', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const path = join(dir, '.horde', 'hordes', 'mission1', 'charter.md');
+  writeFileSync(path, readFileSync(path, 'utf8').replace('| | | | |', '| E1 | some check | auth | |'));
+  const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-slug');
+  mkdirSync(ticketDir, { recursive: true });
+  writeFileSync(join(ticketDir, 'issue.md'), '# 001 · slug\n\n**Status:** landed\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
+  writeFileSync(join(ticketDir, 'log.md'), '## Verdict · 001 · 2026-01-01 · by verifier-1 (standard)\n\n**Result:** reproduced\n');
+  assert.equal(run('wave.mjs', ['start'], dir).code, 0);
+  assert.equal(run('wave.mjs', ['merged', '001', 'abc1234'], dir).code, 0);
+
+  const { done } = await startRewriter(dir, {
+    kind: 'charter', file: path, addition: '\nwritten under the charter lock\n', extra: 'mission1',
+  });
+  const r = run('wave.mjs', ['close', '--gate', 'green'], dir);
+  const holder = await done;
+  assert.equal(holder.code, 0, holder.err);
+  assert.equal(r.code, 0, r.stderr);
+
+  const text = readFileSync(path, 'utf8');
+  assert.match(text, /written under the charter lock/, 'the lock holder\'s write survived');
+  assert.match(text, /\| E1 \| some check \| auth \| verifier-1 \|/, 'and so did the stamp that waited for it');
 });
