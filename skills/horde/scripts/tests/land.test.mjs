@@ -215,6 +215,8 @@ test('land.mjs: nine items green, and the gate merges the branch itself', async 
   assert.equal(item.state, 'merged');
   assert.equal(item.sha, trunkAfter);
   assert.match(readFileSync(join(issueDir(dir, 'trunk', '001'), 'log.md'), 'utf8'), new RegExp(`landed 001 on mission1/trunk as ${trunkAfter}`));
+  // The ticket's own Status moves with the queue item, not only the queue item.
+  assert.match(readFileSync(join(issueDir(dir, 'trunk', '001'), 'issue.md'), 'utf8'), /^\*\*Status:\*\* merged$/m);
 
   // And the wave journal carries the merge, the way a recorded merge always has.
   assert.match(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8'), /001/);

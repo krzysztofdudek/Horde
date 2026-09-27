@@ -22,7 +22,7 @@ import {
   runMain,
 } from './_lib.mjs';
 import {
-  findTicket, parseField, padId, allTickets, nodesOf, ticketWorkFiles, ticketPorts, ticketEvidence, ticketKind, prototypeBranchOf, createTicket, setTicketBody, acceptanceLines, charterPushback,
+  findTicket, parseField, padId, allTickets, transitionStatus, nodesOf, ticketWorkFiles, ticketPorts, ticketEvidence, ticketKind, prototypeBranchOf, createTicket, setTicketBody, acceptanceLines, charterPushback,
 } from './tk.mjs';
 import { noteMerged, parsePrototypeArtifacts } from './wave.mjs';
 import { loadAsks } from './ask.mjs';
@@ -627,11 +627,13 @@ function resolveStackParent(horde, team, key, item, raw, plan) {
     fail(`--on ${raw}: ${ref.ticket} belongs to team ${ref.team}, not ${team} — a ticket can only start from a branch its own team owns and merges; drop --on, or move the ticket first`);
   }
   if (!ref.item) fail(`--on ${raw}: no queue item ${ref.ticket} in team ${team}`);
-  if (!derivedDependsOn(plan, item).includes(ref.canonical)) {
-    fail(`--on ${raw}: ${key} does not depend on ${ref.canonical} — a stack follows a dependency (a port or a hand-written one) and nothing else, or the merge order and the base say different things; record the dependency first (queue.mjs dep ${key} --on ${ref.canonical}) if that is what you mean`);
-  }
+  // Merged is asked first: a merged ticket is out of the plan, so its dependents no longer list it,
+  // and the dependency check below would refuse it for the wrong reason.
   if (ref.item.state === 'merged') {
     fail(`--on ${raw}: ${ref.canonical} is already merged — its work is on ${horde}/${team}, so this ticket starts from the team's tip: run it again without --on`);
+  }
+  if (!derivedDependsOn(plan, item).includes(ref.canonical)) {
+    fail(`--on ${raw}: ${key} does not depend on ${ref.canonical} — a stack follows a dependency (a port or a hand-written one) and nothing else, or the merge order and the base say different things; record the dependency first (queue.mjs dep ${key} --on ${ref.canonical}) if that is what you mean`);
   }
   if (ref.item.state !== 'running' && ref.item.state !== 'landed') {
     fail(`--on ${raw}: ${ref.canonical} is ${ref.item.state} — only a running or landed ticket has a tip to start from; start ${ref.canonical} first, or run this one without --on`);
@@ -679,6 +681,16 @@ function applyMerged(horde, team, doc, item, key, sha, { tree } = {}) {
   }
 }
 
+// The ticket's own Status follows its queue item to merged. Both ways a merge is recorded (the
+// landing's recordMerged, and `set <t> merged` by hand) call this once the queue item is saved, so a
+// reader of issue.md (`tk.mjs list --open`, the wave-close audit asking whether a filing is closed)
+// sees the same state the queue holds.
+function markTicketMerged(horde, key, sha) {
+  const ticket = findTicket(horde, key);
+  if (!ticket || parseField(ticket.text, 'Status') === 'merged') return;
+  transitionStatus(ticket, 'merged', `merged as ${sha}`);
+}
+
 // The landing gate's own way in: it has already made the merge commit, so all that is left is the
 // record. Returns the journal bullet the wave close reads, exactly as `set <t> merged` does.
 export function recordMerged(horde, team, key, sha, { tree } = {}) {
@@ -690,6 +702,7 @@ export function recordMerged(horde, team, key, sha, { tree } = {}) {
     save(horde, team, found.doc);
     return found.item;
   });
+  markTicketMerged(horde, key, String(sha));
   return { item, journal: noteMerged(horde, team, key, String(sha)) };
 }
 
@@ -905,7 +918,10 @@ function cmdSet(horde, positional, flags) {
   // green. Writing only the first left the catalogue at 0 until somebody remembered a second,
   // independent command — so the state change writes the journal bullet itself.
   let journal = null;
-  if (state === 'merged' && flags.sha) journal = noteMerged(horde, team, key, String(flags.sha));
+  if (state === 'merged' && flags.sha) {
+    markTicketMerged(horde, key, String(flags.sha));
+    journal = noteMerged(horde, team, key, String(flags.sha));
+  }
 
   emit(
     { ...item, journal },
