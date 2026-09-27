@@ -4317,6 +4317,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
 
   const results = {};
   const guards = [];
+  const answersUsed = [];
   let landed = null;
   let lockNotes = [];
 
@@ -4377,7 +4378,9 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       if (guards.length) {
         fail(`${guards.length} refusal(s) — this branch may not land as it stands:\n${guards.map((g) => `- ${g.aspect} (${g.case}): ${g.note}`).join('\n')}`);
       }
-      [...law.used, ...protection.used].forEach((answer) => consumeAnswer(horde, answer, ticketId, branchSha));
+      // Spent only by the merge below, never here: a gate that goes red after the guards passed
+      // merges nothing, and the next attempt needs the same answer. The batch path does the same.
+      answersUsed.push(...law.used, ...protection.used);
     }
 
     // The lock covers the repository's own gate command and the graph item's `yg check` runs, and
@@ -4446,6 +4449,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       landed = { ticket: ticketId, sha: merged.sha, at: nowIso() };
       recordMerged(horde, team, ticketId, merged.sha, { tree: root });
       appendLanded(issueDirPath, landed, parentBranch);
+      answersUsed.forEach((answer) => consumeAnswer(horde, answer, ticketId, branchSha));
       // The gate item above measured `branchSha` — this merge's tree is that same tree, now under
       // a sha `done` and `close` can actually find on the branch they read. See checkGate's comment.
       if (results.gate.cache) recordGateCache(horde, level, { ...results.gate.cache, sha: merged.sha }, ticketId, branch, cfg);
