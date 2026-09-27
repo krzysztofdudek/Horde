@@ -32,6 +32,7 @@ import {
   resolveHorde, resolveTree, git, claimLease, assertLeaseAvailable, provenanceLine, withProvenance,
   firstClass, parseEvidenceRows, noEvidenceLayerIn,
   runMain, nowIso,
+  withCharterLock,
 } from './_lib.mjs';
 import {
   ygCommand, ygNode, ygContext, nodeExists, nodeBoundary, nodeRules, renderRules, listAllNodes,
@@ -835,6 +836,11 @@ function stepCut(horde, flags) {
 // chairman agreed to. And a charter that cannot be written is a refusal naming the path — never a
 // silent skip that leaves the judgement in nobody's head.
 function writeEvidenceJudgement(horde, root, cfg) {
+  const layer = detectEvidenceLayer(root, cfg);
+  return withCharterLock(horde, () => writeEvidenceJudgementLocked(horde, layer));
+}
+
+function writeEvidenceJudgementLocked(horde, layer) {
   const path = hordePath(horde, 'charter.md');
   const before = readText(path) || '';
   const cut = catalogueCut(before);
@@ -847,7 +853,6 @@ function writeEvidenceJudgement(horde, root, cfg) {
       + '(above "## Acceptance", or below the last row) and run this step again. Nothing was written.',
     );
   }
-  const layer = detectEvidenceLayer(root, cfg);
   const text = upsertCharterSection(before, EVIDENCE_SECTION, renderEvidenceJudgement(layer), { before: '## Acceptance' });
   try {
     writeText(path, text);

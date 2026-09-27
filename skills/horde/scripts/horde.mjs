@@ -18,6 +18,7 @@ import {
   qualityPolicyIn, QUALITY_POLICIES, resolveTree, DEFAULT_CLASSES, parseEvidenceRows, asArray,
   runGateAt, gateTimeoutOf, GATE_RAN, nowIso, notifyTemplateProblem,
   runMain,
+  withCharterLock,
 } from './_lib.mjs';
 import { nodesOf, padId } from './tk.mjs';
 import {
@@ -977,7 +978,15 @@ function cmdCharter(positional, flags) {
     .filter((r) => r.reproducedBy && !(proofs[r.id] && proofs[r.id].by === r.reproducedBy))
     .map((r) => ({ id: r.id, by: r.reproducedBy, flag: evidenceWay(r.evidenceClass).flag }));
 
-  writeText(path, content);
+  // Everything above was checked against the charter as it was read. It is written under the charter
+  // lock, and only over that same text: a stamp or an acceptance written meanwhile would be erased
+  // by this whole-file replace, so the edit is refused instead and run again over the new text.
+  withCharterLock(horde, () => {
+    if ((readText(path) || '') !== before) {
+      fail('the charter changed while this edit was being checked (an evidence stamp, a wave close or an acceptance wrote to it) — nothing was written; run `horde.mjs charter show`, and edit again from what it shows');
+    }
+    writeText(path, content);
+  });
   const result = {
     horde,
     path,

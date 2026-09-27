@@ -48,7 +48,7 @@ import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine, recordWorkerRun,
 } from './queue.mjs';
 import {
-  findTicket, parseField, changesRoundInfo, lastChangesRoundInfo, transitionStatus, ticketEvidence, readReview,
+  findTicket, parseField, changesRoundInfo, lastChangesRoundInfo, transitionStatus, advanceChangesRound, ticketEvidence, readReview,
 } from './tk.mjs';
 import {
   readLandResult, acquireGateLock, gateLockWaitMs, landingLoad, landingLine, landingDrain, drainLine,
@@ -753,9 +753,12 @@ function landTheLanded(horde, cfg, root, holds) {
         // Likewise a red gate already recorded by land.mjs: `written` reads that round back instead
         // of computing the next one, which would count the same event twice under two different
         // numbers — the log's own and this note's.
+        // A round nobody wrote yet is counted and written in one hold of the ticket lock
+        // (advanceChangesRound), so a transition landing between the count and the write cannot
+        // leave two "changes" lines with the same number; a refused one writes nothing.
         const roundInfo = byReview && step.counted
           ? { refused: false, ...step.counted }
-          : (ticket ? (written ? lastChangesRoundInfo(horde, ticket) : changesRoundInfo(horde, ticket)) : { refused: false, round: 1 });
+          : (ticket ? (written ? lastChangesRoundInfo(horde, ticket) : advanceChangesRound(horde, ticket, step.words)) : { refused: false, round: 1 });
         if (roundInfo.refused) {
           // The rounds are spent, including the ones a fresh worker was given, so another round would
           // be a state pretending to be progress. The ticket stops here and the client is asked —
@@ -775,12 +778,9 @@ function landTheLanded(horde, cfg, root, holds) {
           });
           continue;
         }
-        // A second write here would tick the counter for one red gate twice. The status is only
-        // written when nothing wrote it — a result read back after a run that died before recording
-        // it. A review's finding is written by nobody but this run, unless the review wrote it itself.
-        if (ticket && !written) {
-          transitionStatus(ticket, 'changes', step.words, roundInfo);
-        }
+        // A second write would tick the counter for one red gate twice. The status was written above
+        // only when nothing wrote it — a result read back after a run that died before recording it.
+        // A review's finding is written by nobody but this run, unless the review wrote it itself.
         item.state = 'queued';
         item.notes.push({ at: nowIso(), text: `tick: ${said} (round ${roundInfo.round}/${roundInfo.cap} — ${roundInfo.label}) — ${step.words}` });
         results.push({

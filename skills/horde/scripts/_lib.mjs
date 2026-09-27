@@ -849,9 +849,9 @@ function withCounterLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
 // other direction: asks.json's answerAsk calls into decide.mjs's own decisions lock WHILE holding
 // this one — asks lock outermost, decisions lock innermost, the one order the two are ever taken in.
 // So the full ordering, queue first when it appears at all, is: queue → { asks → decisions, graph,
-// counter, ticket, leases } — never the reverse on any edge, so there is no cycle for two processes
-// to deadlock on. The ticket and leases locks below are innermost in the same way: whoever holds
-// one of them takes nothing else.
+// counter, ticket, leases, charter } — never the reverse on any edge, so there is no cycle for two processes
+// to deadlock on. The ticket, charter and leases locks below are innermost in the same way: whoever
+// holds one of them takes nothing else.
 export function withAsksLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
   return withFileLock(`${hordePath(horde, 'asks.json')}.lock`, { horde, kind: 'asks' }, fn, { waitMs });
 }
@@ -900,6 +900,18 @@ export function updateTicketFile(ticketDir, file, change) {
 // it can never land between another writer's read of the log and that writer's rewrite of it.
 export function appendTicketLog(ticketDir, line) {
   withTicketLock(ticketDir, () => appendText(join(ticketDir, 'log.md'), line));
+}
+
+// A mission's charter.md, under one lock. The wave close stamps its evidence rows, `wave.mjs evidence`
+// and `horde.mjs done` stamp more, a prototype's acceptance writes its own section, refine records the
+// mission's judgement of what counts as evidence, and `horde.mjs charter edit` replaces the file. Each
+// reads the whole file, changes one part and writes the whole file back, so a writer working from a
+// copy read before another's write would put back a charter missing that write. Everything that
+// rewrites the charter takes this lock and reads the file again inside it. The evidence stamps also
+// rewrite the proofs record beside the charter inside the same hold. Innermost: nothing that holds it
+// takes another lock, and a command that runs a gate for a row runs it before taking this lock.
+export function withCharterLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
+  return withFileLock(`${hordePath(horde, 'charter.md')}.lock`, { horde, kind: 'charter' }, fn, { waitMs });
 }
 
 // The one shared leases.json (see "cross-horde leases" below). Every horde on the repository reads

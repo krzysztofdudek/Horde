@@ -294,3 +294,134 @@ test('tk.mjs move renames the ticket\'s directory while holding the ticket lock'
   assert.equal(existsSync(join(moved, 'issue.md.lock')), false, 'with no lock left behind');
   assert.equal(existsSync(ticketDir), false, 'and nothing left at the old path');
 });
+
+// The fix loop's round number is read off the ticket's log, and the "changes" line that carries it
+// is written to that same log. Both happen under the ticket lock, in one hold: counted before the
+// lock, two transitions to "changes" at once both read the same last round and both write the next
+// one, and one round of the loop's breaker goes uncounted.
+test('a round of changes is counted from the log as it stands under the ticket lock', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  newTicket(dir);
+
+  await inRepo(dir, async () => {
+    const { findTicket } = await import('../tk.mjs');
+    const ticket = findTicket('mission1', '1');
+    // Another transition to "changes", holding the lock, counts round 1 while this one waits.
+    const { done } = await startRewriter(dir, {
+      kind: 'ticket',
+      file: ticket.logPath,
+      addition: `- ${new Date().toISOString()} status: changes — the other one (round 1/5 — resume same worker)\n`,
+      extra: ticket.dir,
+    });
+    const r = run('tk.mjs', ['status', '1', 'changes', 'this one'], dir);
+    const holder = await done;
+    assert.equal(holder.code, 0, holder.err);
+    assert.equal(r.code, 0, r.stderr);
+    assert.equal(r.json.round, 2, 'the round after the one counted while this transition waited');
+
+    const rounds = [...readFileSync(ticket.logPath, 'utf8').matchAll(/\(round (\d+)\/5/g)].map((m) => Number(m[1]));
+    assert.deepEqual(rounds, [1, 2], 'two transitions, two rounds — never the same one twice');
+  });
+});
+
+test('the landing\'s and the loop\'s round go through the same locked count', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  newTicket(dir);
+
+  await inRepo(dir, async () => {
+    const { findTicket, advanceChangesRound } = await import('../tk.mjs');
+    const ticket = findTicket('mission1', '1');
+    const { done } = await startRewriter(dir, {
+      kind: 'ticket',
+      file: ticket.logPath,
+      addition: `- ${new Date().toISOString()} status: changes — the other one (round 1/5 — resume same worker)\n`,
+      extra: ticket.dir,
+    });
+    const info = advanceChangesRound('mission1', findTicket('mission1', '1'), 'gate red');
+    const holder = await done;
+    assert.equal(holder.code, 0, holder.err);
+    assert.equal(info.refused, false);
+    assert.equal(info.round, 2);
+    assert.match(readFileSync(ticket.logPath, 'utf8'), /status: changes — gate red \(round 2\/5 — resume same worker\)/);
+    assert.match(readFileSync(ticket.issuePath, 'utf8'), /^\*\*Status:\*\* changes$/m);
+  });
+});
+
+test('a spent fix loop is refused inside the lock and writes nothing', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  newTicket(dir);
+
+  await inRepo(dir, async () => {
+    const { findTicket, advanceChangesRound } = await import('../tk.mjs');
+    const ticket = findTicket('mission1', '1');
+    const rounds = [1, 2, 3, 4, 5].map((n) => `- 2026-09-27T10:0${n}:00.000Z status: changes — red (round ${n}/5 — x)\n`).join('');
+    writeFileSync(ticket.logPath, rounds);
+    const info = advanceChangesRound('mission1', ticket, 'red again');
+    assert.equal(info.refused, true);
+    assert.equal(info.round, 6);
+    assert.equal(readFileSync(ticket.logPath, 'utf8'), rounds, 'the log is untouched');
+    assert.doesNotMatch(readFileSync(ticket.issuePath, 'utf8'), /^\*\*Status:\*\* changes$/m);
+  });
+});
+
+// charter.md is rewritten by the wave close, the mission's evidence stamps, a prototype's acceptance
+// and the charter edit. Each reads the file, changes one part, and writes the whole file back, so
+// each holds the charter lock across the three steps: a stamp written from a copy read before
+// another writer's change would erase that change.
+function charterWithRow(dir) {
+  const path = join(dir, '.horde', 'hordes', 'mission1', 'charter.md');
+  writeFileSync(path, [
+    '# Mission · mission1', '', '## Acceptance — the evidence catalogue', '',
+    '| id | evidence | node | reproduced by |', '|---|---|---|---|',
+    '| E1 | `true` is green | api | |', '',
+  ].join('\n'));
+  return path;
+}
+
+test('wave.mjs evidence waits for a writer holding the charter lock, and both changes survive', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const path = charterWithRow(dir);
+
+  const { done } = await startRewriter(dir, {
+    kind: 'charter', file: path, addition: '\nwritten under the charter lock\n', extra: 'mission1',
+  });
+  const r = run('wave.mjs', ['evidence', 'E1', '--run', 'true'], dir);
+  const holder = await done;
+  assert.equal(holder.code, 0, holder.err);
+  assert.equal(r.code, 0, r.stderr);
+
+  const text = readFileSync(path, 'utf8');
+  assert.match(text, /written under the charter lock/, 'the lock holder\'s write survived');
+  assert.match(text, /\| E1 \| `true` is green \| api \| `true` passed at [0-9a-f]{7} \|/, 'and so did the stamp that waited for it');
+});
+
+test('tk.mjs accept waits for a writer holding the charter lock, and both changes survive', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const path = charterWithRow(dir);
+  const proto = run('tk.mjs', [
+    'new', 'board', '--title', 'Something to look at', '--node', 'api', '--class', 'standard', '--kind', 'prototype', '--evidence', 'E1',
+  ], dir);
+  assert.equal(proto.code, 0, proto.stderr);
+
+  const { done } = await startRewriter(dir, {
+    kind: 'charter', file: path, addition: '\nwritten under the charter lock\n', extra: 'mission1',
+  });
+  const r = run('tk.mjs', ['accept', proto.json.id, '--by', 'Anna Kowalska', '--sha256', 'b'.repeat(64)], dir);
+  const holder = await done;
+  assert.equal(holder.code, 0, holder.err);
+  assert.equal(r.code, 0, r.stderr);
+
+  const text = readFileSync(path, 'utf8');
+  assert.match(text, /written under the charter lock/, 'the lock holder\'s write survived');
+  assert.match(text, /Anna Kowalska/, 'and so did the acceptance that waited for it');
+});

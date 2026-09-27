@@ -45,7 +45,7 @@ import {
 } from './node.mjs';
 import {
   ticketFiles, ticketEvidence, ticketKind, prototypeBranchOf, ticketReopens, findTicket,
-  changesRoundInfo, transitionStatus, ticketReverts, mergeFiles,
+  advanceChangesRound, ticketReverts, mergeFiles,
 } from './tk.mjs';
 import { recordMerged, buildPlan } from './queue.mjs';
 import { noteFate } from './wave.mjs';
@@ -4587,12 +4587,10 @@ function recordChanges(horde, ticketId, checks) {
   const ticket = findTicket(horde, ticketId);
   if (!ticket) return;
   const red = checks.filter((c) => !c.ok).map((c) => `${c.name}: ${c.note}`);
-  const roundInfo = changesRoundInfo(horde, ticket);
+  const roundInfo = advanceChangesRound(horde, ticket, `land refused: ${red.join(' · ')}`);
   if (roundInfo.refused) {
     appendTicketLine(ticket, `- ${nowIso()} land refused and the fix rounds are spent — ${roundInfo.message}\n`);
-    return;
   }
-  transitionStatus(ticket, 'changes', `land refused: ${red.join(' · ')}`, roundInfo);
 }
 
 // A refusal only the user can clear is written into the ticket's history too — once per landing,

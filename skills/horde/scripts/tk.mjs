@@ -30,7 +30,7 @@ import {
   hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
   allocateId, latestChangesRound, parseAcceptanceLines, parseEvidenceRows, parseLogEntries,
-  runMain, git, withTicketLock, updateTicketFile, appendTicketLog,
+  runMain, git, withTicketLock, updateTicketFile, appendTicketLog, withCharterLock,
 } from './_lib.mjs';
 import {
   ticketBoundary, pathInBoundary, portExists, nodeExists, nodeGraphPathPrefix,
@@ -353,14 +353,30 @@ export function lastChangesRoundInfo(horde, ticket) {
 // would undo anything written since (an edit to the body, another transition). The caller's copy is
 // brought up to date with what was written.
 export function transitionStatus(ticket, status, note, roundInfo) {
+  return withTicketLock(ticket.dir, () => writeTransition(ticket, status, note, roundInfo));
+}
+
+// The write itself; the caller holds the ticket lock.
+function writeTransition(ticket, status, note, roundInfo) {
   const roundSuffix = roundInfo ? ` (round ${roundInfo.round}/${roundInfo.cap ?? roundInfo.resume + roundInfo.fresh} — ${roundInfo.label})` : '';
-  withTicketLock(ticket.dir, () => {
-    const text = setStatus(readText(ticket.issuePath) ?? ticket.text, status);
-    writeText(ticket.issuePath, text);
-    ticket.text = text;
-    appendText(ticket.logPath, `- ${nowIso()} status: ${status}${note ? ` — ${note}` : ''}${roundSuffix}\n`);
-  });
+  const text = setStatus(readText(ticket.issuePath) ?? ticket.text, status);
+  writeText(ticket.issuePath, text);
+  ticket.text = text;
+  appendText(ticket.logPath, `- ${nowIso()} status: ${status}${note ? ` — ${note}` : ''}${roundSuffix}\n`);
   return roundSuffix;
+}
+
+// advanceChangesRound(horde, ticket, note) — a ticket sent back to "changes" with the next round of
+// the fix loop counted. The round is read off the log and written back to it in one hold of the
+// ticket lock: counted before the lock, two transitions at once both read the same last round and
+// both write the next one, and the breaker loses a round. Returns changesRoundInfo's answer, with
+// `suffix` when it was written; a refused one (the rounds are spent) writes nothing.
+export function advanceChangesRound(horde, ticket, note) {
+  return withTicketLock(ticket.dir, () => {
+    const info = changesRoundInfo(horde, ticket);
+    if (info.refused) return info;
+    return { ...info, suffix: writeTransition(ticket, 'changes', note, info) };
+  });
 }
 
 // --- id / lookup ---------------------------------------------------------
@@ -1014,12 +1030,15 @@ function cmdStatus(horde, positional, flags) {
   const ticket = requireTicket(horde, idRaw);
 
   let roundInfo = null;
+  let roundSuffix;
   if (status === 'changes') {
-    roundInfo = changesRoundInfo(horde, ticket);
+    roundInfo = advanceChangesRound(horde, ticket, note);
     if (roundInfo.refused) fail(roundInfo.message);
+    roundSuffix = roundInfo.suffix;
+  } else {
+    roundSuffix = transitionStatus(ticket, status, note, null);
   }
 
-  const roundSuffix = transitionStatus(ticket, status, note, roundInfo);
   emit(
     { id: ticket.id, status, ...(roundInfo ? { round: roundInfo.round, phase: roundInfo.label } : {}) },
     flags,
@@ -1200,17 +1219,20 @@ function cmdAccept(horde, positional, flags) {
   if (typeof flags.by !== 'string' || !flags.by.trim()) fail('accept requires --by "<who accepted it>" — an acceptance nobody signed is nobody\'s');
   const acceptedBy = flags.by.trim();
 
+  // Read and written in one hold of the charter lock: another writer's change made between the
+  // read and the write would otherwise be erased by this one.
   const charterPath = hordePath(horde, 'charter.md');
-  const charterText = readText(charterPath);
-  if (charterText === null) fail(`no charter at ${charterPath} — the acceptance is recorded against a row of its evidence catalogue, and there is none to record it on`);
-  if (!charterEvidenceIds(horde).has(row)) {
-    fail(`${ticket.id} names evidence row ${row}, which the charter's catalogue does not carry — the row it describes was dropped or renamed after this prototype was filed`);
-  }
-
   const at = nowIso();
-  writeText(charterPath, recordPrototypeAcceptance(charterText, {
-    id: row, ticket: ticket.id, sha256, acceptedBy, at,
-  }));
+  withCharterLock(horde, () => {
+    const charterText = readText(charterPath);
+    if (charterText === null) fail(`no charter at ${charterPath} — the acceptance is recorded against a row of its evidence catalogue, and there is none to record it on`);
+    if (!charterEvidenceIds(horde).has(row)) {
+      fail(`${ticket.id} names evidence row ${row}, which the charter's catalogue does not carry — the row it describes was dropped or renamed after this prototype was filed`);
+    }
+    writeText(charterPath, recordPrototypeAcceptance(charterText, {
+      id: row, ticket: ticket.id, sha256, acceptedBy, at,
+    }));
+  });
   appendLog(ticket, `prototype accepted by ${acceptedBy} — ${row}, sha256 ${sha256}`);
 
   emit({
