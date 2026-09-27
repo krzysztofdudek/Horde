@@ -48,14 +48,14 @@ test('escalate.mjs recurring: the third answer of a kind on one territory is a r
     assert.equal(
       group.command,
       'file the rule (.yggdrasil/aspects/<id>/yg-aspect.yaml, attached to checkout\'s node), then '
-      + 'node ./vendor/yg.mjs aspects log add --aspect <id> --reason "' + group.rule + '"'
+      + 'node ./vendor/yg.mjs log add --aspect <id> --reason "' + group.rule + '"'
       + ' — its own log is where the reasoning belongs, not the node\'s',
     );
 
     const human = run('escalate.mjs', ['recurring'], dir, { json: false });
     assert.match(human.stdout, /stop · territory checkout — 3 answers/);
     assert.match(human.stdout, /file it: file the rule \(\.yggdrasil\/aspects\/<id>\/yg-aspect\.yaml, attached to checkout's node\)/);
-    assert.match(human.stdout, /node \.\/vendor\/yg\.mjs aspects log add --aspect <id> --reason/);
+    assert.match(human.stdout, /node \.\/vendor\/yg\.mjs log add --aspect <id> --reason/);
     // After 6.0.0 there is no seat that files law: the agent working that territory writes the
     // rule in its own branch and raises it on evidence. Nobody is asked for permission to write a
     // rule down; permission is only ever needed to take one away.

@@ -103,7 +103,7 @@ function ygRaw(dir, ygCommand, args) {
 }
 
 // A passthrough to the real CLI that answers ONE question differently — the shape quality.test.mjs
-// already uses for the pre-152 `aspects log` guard. `intercept` is the argv prefix to catch and the
+// already uses for the pre-152 `log add --aspect` guard. `intercept` is the argv prefix to catch and the
 // body to run instead; everything else reaches the real Yggdrasil unchanged, so the graph under
 // test is real in every other respect.
 function passthroughYg(dir, realYg, name, matchJs, bodyJs) {

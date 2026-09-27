@@ -793,7 +793,7 @@ function addRuleOnTrunk(dir, horde, aspect, description) {
   const tree = join(dir, `.trunk-${horde}`);
   git(['worktree', 'add', '-q', tree, `${horde}/trunk`], dir);
   addAspect(tree, aspect, { status: 'advisory', check: MARKER_CHECK, description });
-  ygIn(tree, ['aspects', 'log', 'add', '--aspect', aspect, '--reason', `Written down because ${horde} kept explaining it by hand.`]);
+  ygIn(tree, ['log', 'add', '--aspect', aspect, '--reason', `Written down because ${horde} kept explaining it by hand.`]);
   git(['add', '-A'], tree);
   git(['commit', '-qm', `the rule ${horde} added`], tree);
   git(['worktree', 'remove', tree, '--force'], dir);

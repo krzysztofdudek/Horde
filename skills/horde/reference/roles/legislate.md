@@ -65,7 +65,7 @@ other and goes to whoever is asking for the work.
 3. **Write it.** A new directory under `.yggdrasil/aspects/<id>/` with `yg-aspect.yaml` (`status: draft`
    to start), plus `check.mjs` or `content.md`. Attach it to this territory's components by adding the
    id under `aspects:` in their `yg-node.yaml`. Record why it exists with
-   `yg aspects log add --aspect <id> --reason "<why, in English, self-contained>"`.
+   `yg log add --aspect <id> --reason "<why, in English, self-contained>"`.
 4. **Give it cases.** `yg drill` runs a rule against its own corpus — cases it must refuse and cases it
    must pass. A rule with no cases has never been run against anything, and nothing will raise it.
 5. **Raise it on evidence.**

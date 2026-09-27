@@ -1302,25 +1302,25 @@ function logToNodes(root, cfg, nodes, reason) {
   return { logged, missed };
 }
 
-// `aspects log add` has no `--json` of its own, so a CLI below the floor is told apart by the version
+// `log add --aspect` has no `--json` of its own, so a CLI below the floor is told apart by the version
 // it reports, asked before anything is written — never by the words of how it fails.
 function failNoAspectLog(cfg, command, root, version) {
   const { display } = ygCommand(cfg);
   fail(
     `\`${command}\` did not run${root ? `, run in ${root}` : ''} — the Yggdrasil CLI at "${display}"${root ? ', as it resolves from there,' : ''} reports version ${version}, `
-    + `and Horde needs ${YG_DOCUMENTS_AFTER} or newer for a rule's own log ("yg aspects log add").\n`
+    + `and Horde needs ${YG_DOCUMENTS_AFTER} or newer for a rule's own log ("yg log add --aspect").\n`
     + `Upgrade to ${YG_DOCUMENTS_AFTER} or newer (npm i -g @chrisdudek/yg), or point the horde at a newer `
     + 'build: horde.mjs config set ygCommand "node path/to/bin.js"',
   );
 }
 
-// `yg aspects log add --aspect <id> --reason "<why>" [--status <s> --evidence "<e>"] [--by <who>]`,
+// `yg log add --aspect <id> --reason "<why>" [--status <s> --evidence "<e>"] [--by <who>]`,
 // run for real. This is the rule's own history now (152/153) — not a courtesy copy on every node it
 // touches — so unlike a node's log, a failure here is never best-effort: a CLI too old to take the
 // call, or a real refusal from the one that ran, both stop the caller rather than being swallowed.
 function logToAspect(root, cfg, aspectId, reason, { status, evidence, by } = {}) {
   const yg = ygCommand(cfg);
-  const args = ['aspects', 'log', 'add', '--aspect', aspectId, '--reason', reason];
+  const args = ['log', 'add', '--aspect', aspectId, '--reason', reason];
   if (status) args.push('--status', status, '--evidence', evidence);
   if (by) args.push('--by', by);
   const command = `${yg.display} ${args.join(' ')}`;
@@ -1346,7 +1346,7 @@ function logToAspect(root, cfg, aspectId, reason, { status, evidence, by } = {})
 function tryLogAspect(root, cfg, aspectId, reason, { by } = {}) {
   try {
     const yg = ygCommand(cfg);
-    const args = ['aspects', 'log', 'add', '--aspect', aspectId, '--reason', reason];
+    const args = ['log', 'add', '--aspect', aspectId, '--reason', reason];
     if (by) args.push('--by', by);
     execFileSync(yg.cmd, [...yg.prefix, ...args], ygOpts(cfg, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }));
     return true;
@@ -1544,7 +1544,7 @@ function cmdPromote(horde, root, cfg, positional, flags, info) {
   let pointerMissed = [];
   if (to === 'enforced') {
     const pointer = `The rule "${aspect}" now blocks the merge here — its own log has why `
-      + `(${ygCommand(cfg).display} aspects log read --aspect ${aspect}).`;
+      + `(${ygCommand(cfg).display} log read --aspect ${aspect}).`;
     ({ logged: pointered, missed: pointerMissed } = logToNodes(root, cfg, nodes, pointer));
   }
 
@@ -1580,7 +1580,7 @@ function cmdPromote(horde, root, cfg, positional, flags, info) {
   }, info), flags, () => [
     `"${aspect}" raised ${status} → ${to} — ${drillSentence(drill)}`
     + (to === 'enforced' ? `, ${clean.length} clean waves, nothing outstanding` : `, baseline ${after.refused}`),
-    `recorded in the rule's own log (${ygCommand(cfg).display} aspects log read --aspect ${aspect})`,
+    `recorded in the rule's own log (${ygCommand(cfg).display} log read --aspect ${aspect})`,
     ...(to === 'enforced' ? [
       pointered.length
         ? `now blocks the merge on: ${pointered.join(', ')} — pointed there too`

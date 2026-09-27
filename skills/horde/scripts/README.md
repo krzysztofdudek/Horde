@@ -699,7 +699,7 @@ several users.
     refusals would redden the trunk on purpose, which is the fall this ruling exists to prevent.
   The move itself is what Yggdrasil prescribes and nothing more: the `status:` line of the rule's own
   `yg-aspect.yaml`, then the numbers in self-contained prose in the rule's own log — one entry per
-  raise, `yg aspects log add --aspect <id> --reason "…" --status <rung> --evidence "…"` — never a
+  raise, `yg log add --aspect <id> --reason "…" --status <rung> --evidence "…"` — never a
   courtesy copy on every node the rule reaches. Only *advisory → enforced* also leaves a one-line
   pointer on those nodes (found the same way: the units `yg check` reports pairs for, falling back for
   a draft rule — which has no pairs at all — to the mission's own nodes asked one by one; `--node
@@ -709,7 +709,7 @@ several users.
   `review_by`. A rule a reader judges costs money to drill, so `promote` refuses it until
   `--with-reviewer` says to spend that. Under a charter set to `only-the-work`, `promote` refuses
   outright. An installed `yg` that reports a version below Horde's floor (6.1.0) is refused before the
-  rule's own log ("yg aspects log add") is written, naming the release to upgrade to — told by the
+  rule's own log ("yg log add --aspect") is written, naming the release to upgrade to — told by the
   version it reports, never by the words of how it fails.
 - `demote <aspect> --to draft|advisory --by user --why "<what they said>"` — the one direction nobody
   in the horde may take alone. Without `--by user` it refuses, and `--by architect` is refused just as
@@ -748,7 +748,7 @@ on the base; `attached` is a rule at the same rung reaching units here it did no
 only over units BOTH trees have, so a file the mission added is never mistaken for a rule that grew).
 `description` is the rule's own; `nodes` are the components the rule reaches, read from
 `yg aspects --json --reach` — one call per tree, the same reading the landing gate's law guard takes;
-`why` is the last entry of the rule's own history (`yg aspects log read --json`), `null` for a rule
+`why` is the last entry of the rule's own history (`yg log read --aspect <id> --json`), `null` for a rule
 nothing has been recorded about. Reach is read there rather than off `yg check --json --full`'s pairs
 because the gate deliberately runs nothing for a rule at `draft`: read that way, every draft rule came
 back reaching nothing, and the document described a rule with real subjects as one with none. A CLI
@@ -947,7 +947,7 @@ third time is not another answer — it is a rule. Each such group prints as a p
 evidence, one line of rule text quoting
 the latest of them, and the steps that file it — where the group has a territory, filing the rule
 itself (`.yggdrasil/aspects/<id>/yg-aspect.yaml`, attached to that territory's node — an edit this
-tool makes no graph object for), then `<config.ygCommand> aspects log add --aspect <id> --reason "…"`,
+tool makes no graph object for), then `<config.ygCommand> log add --aspect <id> --reason "…"`,
 since a rule's own reasoning belongs in its own log once it exists, not the node's; `decide.mjs add`
 where the group has no territory to hang a rule on at all. It
 prints those steps and never runs them — the agent that works that territory does the filing, in its

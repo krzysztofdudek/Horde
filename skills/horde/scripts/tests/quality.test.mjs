@@ -28,7 +28,7 @@ const nodeLogPath = (dir, node) => join(dir, '.yggdrasil', 'model', node, 'log.m
 // requireYg() returns ("yg" or "node /path/to/bin.js").
 function aspectLogRead(dir, ygCmd, aspect) {
   const parts = ygCmd.split(/\s+/);
-  const out = execFileSync(parts[0], [...parts.slice(1), 'aspects', 'log', 'read', '--aspect', aspect, '--json'], {
+  const out = execFileSync(parts[0], [...parts.slice(1), 'log', 'read', '--aspect', aspect, '--json'], {
     cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
   });
   return JSON.parse(out);
@@ -247,7 +247,7 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
     const nodeLog = readFileSync(nodeLogPath(dir, 'feature'), 'utf8');
     assert.doesNotMatch(nodeLog, /2 closed waves in a row saw nothing new against it/, 'no courtesy copy of the full reasoning on the node');
     assert.match(nodeLog, /now blocks the merge here/);
-    assert.match(nodeLog, /aspects log read --aspect no-marker/, 'the pointer names where to read why');
+    assert.match(nodeLog, /log read --aspect no-marker/, 'the pointer names where to read why');
 
     // And it really blocks now: put the marker back and the graph refuses the tree.
     writeFileSync(join(dir, 'other.mjs'), 'export const b = 2; // UNFINISHED\n');
@@ -317,8 +317,8 @@ test('E17 — a rule earns its status on evidence without a human, and nobody bu
       `const REAL = ${JSON.stringify(yg)};`,
       'const argv = process.argv.slice(2);',
       "if (argv[0] === '--version') { console.log(process.cwd().endsWith('tree-b') ? '5.7.3' : '9.9.9'); process.exit(0); }",
-      "if (argv[0] === 'aspects' && argv[1] === 'log') {",
-      '  process.stderr.write("error: too many arguments for \'aspects\'. Expected 0 arguments but got " + (argv.length - 2) + ": " + argv.slice(2).join(", ") + ".\\n");',
+      "if (argv[0] === 'log' && argv.includes('--aspect')) {",
+      '  process.stderr.write("error: unknown option \'--aspect\'\\n");',
       '  process.exit(1);',
       '}',
       'const real = REAL.split(/\\s+/);',

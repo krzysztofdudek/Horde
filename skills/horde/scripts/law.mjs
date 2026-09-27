@@ -179,7 +179,7 @@ function unitsIn(tree) {
 // `null` for a rule nothing has been recorded about — the ordinary state of a rule nobody has had
 // anything to say about yet, never an error.
 function whyOf(tree, cfg, id, where) {
-  const doc = docOn(tree, cfg, ['aspects', 'log', 'read', '--aspect', id, '--limit', '1', '--json'], 'yg-aspect-log/1', where);
+  const doc = docOn(tree, cfg, ['log', 'read', '--aspect', id, '--top', '1', '--json'], 'yg-aspect-log/1', where);
   const entries = asArray(doc && doc.entries);
   if (entries.length === 0) return null;
   const body = String(entries[0].body || '').trim();
