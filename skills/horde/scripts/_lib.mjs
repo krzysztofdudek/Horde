@@ -1611,10 +1611,14 @@ export function readTerritories(horde) {
   return doc && typeof doc === 'object' && !Array.isArray(doc) ? doc : {};
 }
 
-// leaseHolderForNode(node) — {horde, via} for whichever live horde holds this component, or null
-// when none does. `via` is 'node' for a direct bind and 'territory:<name>' for a component inside
-// a leased territory.
-export function leaseHolderForNode(node) {
+// leaseHolderForNode(node, {onUnreadable}) — {horde, via} for whichever live horde holds this
+// component, or null when none does. `via` is 'node' for a direct bind and 'territory:<name>' for a
+// component inside a leased territory.
+//
+// A territories.json that will not parse is refused by name, as readTerritories refuses it, unless the
+// caller passes `onUnreadable(horde, message)`: then that horde's cut is skipped and the caller is told.
+// A read-only report (status) takes that road, so another mission's broken file does not stop it.
+export function leaseHolderForNode(node, { onUnreadable = null } = {}) {
   const { leases } = readLeases();
   const live = listHordes();
   const direct = leases[node];
@@ -1623,7 +1627,14 @@ export function leaseHolderForNode(node) {
   }
   for (const [subject, lease] of Object.entries(leases)) {
     if (!lease || !lease.horde || !live.includes(lease.horde)) continue;
-    const territories = readTerritories(lease.horde);
+    let territories;
+    try {
+      territories = readTerritories(lease.horde);
+    } catch (e) {
+      if (!onUnreadable || !(e instanceof HordeError)) throw e;
+      onUnreadable(lease.horde, e.message);
+      continue;
+    }
     const spec = territories[subject];
     if (!spec) continue;
     if (!asArray(spec.nodes).includes(node)) continue;

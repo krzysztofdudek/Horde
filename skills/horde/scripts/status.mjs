@@ -119,9 +119,13 @@ function hordeDigest(horde, cfg) {
   // call, straight off the one file every horde on the repository shares. Since the cut a mission
   // leases territories, not the nodes inside them, so the holder is resolved both ways round —
   // the node's own lease, then the leased territory that holds it — and `via` says which.
+  // Another horde's territories.json that will not parse is skipped rather than failing this report:
+  // it names the file once, and the lease inside it reads as unknown, not as free.
   const touchedNodes = missionNodes(horde);
+  const unreadable = new Map();
+  const onUnreadable = (other, message) => { unreadable.set(other, message); };
   const foreignLeases = touchedNodes
-    .map((node) => ({ node, holder: leaseHolderForNode(node) }))
+    .map((node) => ({ node, holder: leaseHolderForNode(node, { onUnreadable }) }))
     .filter(({ holder }) => holder && holder.horde !== horde)
     .map(({ node, holder }) => ({
       node, horde: holder.horde, since: holder.since, via: holder.via,
@@ -149,7 +153,10 @@ function hordeDigest(horde, cfg) {
     asks: { open: askItems.filter((i) => i.state !== 'answered').length, total: askItems.length },
     lastGate,
     inherited,
-    leases: { foreign: foreignLeases },
+    leases: {
+      foreign: foreignLeases,
+      notes: [...unreadable.entries()].map(([other, message]) => `skipped horde "${other}"'s territories.json, so a lease it holds on a node here may not show: ${message.split('\n')[0]}`),
+    },
     evidence: { total: evidenceRows.length, byState: evidenceByState, rows: evidenceRows },
     orphanedBranches: orphans,
   };
@@ -194,6 +201,7 @@ function printHorde(h) {
     console.log('  leases held by other hordes on nodes this one touches:');
     for (const l of h.leases.foreign) console.log(`    ${l.node} -> ${l.horde} (${l.via && l.via.startsWith('territory:') ? `territory ${l.via.slice('territory:'.length)}, ` : ''}since ${l.since})`);
   }
+  for (const note of h.leases.notes || []) console.log(`  leases: ${note}`);
   if (h.evidence.total === 0) {
     console.log('  evidence: (no rows in the charter yet)');
   } else {

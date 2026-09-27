@@ -186,6 +186,31 @@ test('status.mjs: a node inside another horde\'s leased territory reads as lease
   assert.deepEqual(own.json.hordes[0].leases.foreign, []);
 });
 
+// Another horde's cut that will not parse is that horde's problem to repair, not a reason for this
+// horde's status to stop. The file is skipped, and status says it was.
+test('status.mjs: another horde\'s unreadable territories.json is skipped with a note, not a failure', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir, 'alpha');
+  initHorde(dir, 'beta');
+
+  writeFileSync(join(dir, '.horde', 'hordes', 'alpha', 'territories.json'), '{"doors": {"nodes": ["sha');
+  writeFileSync(join(dir, '.horde', 'leases.json'), `${JSON.stringify({ leases: { doors: { horde: 'alpha', since: '2026-09-27T00:00:00.000Z' } }, history: [] }, null, 2)}\n`);
+  run('tk.mjs', ['new', 'use-shared', '--title', 'Use shared', '--node', 'shared', '--class', 'standard', '--horde', 'beta'], dir);
+
+  const r = run('status.mjs', ['--horde', 'beta'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const { leases } = r.json.hordes[0];
+  assert.deepEqual(leases.foreign, []);
+  assert.equal(leases.notes.length, 1, JSON.stringify(leases));
+  assert.match(leases.notes[0], /alpha/);
+  assert.match(leases.notes[0], /territories\.json/);
+
+  const human = run('status.mjs', ['--horde', 'beta'], dir, { json: false });
+  assert.equal(human.code, 0, human.stderr);
+  assert.match(human.stdout, /territories\.json/);
+});
+
 // 079 — a ticket branch whose queue.json entry is gone must still surface, as an orphan, not
 // vanish. Liveness is judged by branches, not by silence in the queue.
 test('status.mjs: a ticket branch with no queue entry shows up as orphaned', async (t) => {
