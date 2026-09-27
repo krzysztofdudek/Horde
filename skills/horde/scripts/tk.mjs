@@ -23,14 +23,14 @@
 // ticket's status — doesn't reimplement the parsing.
 
 import {
-  existsSync, mkdirSync, readdirSync, renameSync, readFileSync, rmSync,
+  existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
   allocateId, latestChangesRound, parseAcceptanceLines, parseEvidenceRows, parseLogEntries,
-  runMain, git, withTicketLock, updateTicketFile, appendTicketLog, withCharterLock,
+  runMain, git, withTicketLock, updateTicketFile, appendTicketLog, withCharterLock, renameReplacing,
 } from './_lib.mjs';
 import {
   ticketBoundary, pathInBoundary, portExists, nodeExists, nodeGraphPathPrefix,
@@ -1252,7 +1252,7 @@ function cmdMove(horde, positional, flags) {
   // lock file travels with the directory, so it is removed at the new path before the lock lets go.
   withTicketLock(ticket.dir, () => {
     writeText(ticket.issuePath, setField(readText(ticket.issuePath) ?? ticket.text, 'Team', flags.team));
-    renameSync(ticket.dir, destDir);
+    renameReplacing(ticket.dir, destDir);
     rmSync(join(destDir, 'issue.md.lock'), { force: true });
   });
   emit({ id: ticket.id, from: ticket.team, to: flags.team }, flags, () => `${ticket.id} moved: ${ticket.team} -> ${flags.team}`);

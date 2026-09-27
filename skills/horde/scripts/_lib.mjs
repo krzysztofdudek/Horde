@@ -1825,7 +1825,7 @@ export function writeText(file, text) {
   mkdirSync(dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
   writeFileSync(temp, text);
-  renameSync(temp, file);
+  renameReplacing(temp, file);
 }
 
 export function appendText(file, text) {

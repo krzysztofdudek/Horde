@@ -11,7 +11,7 @@ import {
   existsSync, readFileSync, writeFileSync, rmSync, chmodSync, readdirSync, realpathSync,
 } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde,
 } from './helpers.mjs';
@@ -267,7 +267,7 @@ test('tk.mjs move renames the ticket\'s directory while holding the ticket lock'
 
   const tk = join(dirname(fileURLToPath(import.meta.url)), '..', 'tk.mjs');
   const register = join(dirname(fileURLToPath(import.meta.url)), 'move-race', 'register.mjs');
-  const child = spawn('node', ['--import', register, tk, 'move', '1', '--team', 'trunk/allies', '--json'], {
+  const child = spawn('node', ['--import', pathToFileURL(register).href, tk, 'move', '1', '--team', 'trunk/allies', '--json'], {
     cwd: dir,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
