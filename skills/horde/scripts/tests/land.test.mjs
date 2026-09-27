@@ -3482,6 +3482,9 @@ test('land.mjs batch: two tickets leaning on one "once" answer — only one merg
   assert.equal(again.aspect, 'no-marker');
   assert.equal(again.state, 'open');
   assert.equal(again.ticket, refused.ticket);
+  // A "no" is not a block: the branch goes through the gate again without an answer (issue 489).
+  assert.match(again.why, /Any other answer puts the branch through the gate again without one/);
+  assert.doesNotMatch(again.why, /stays blocked/);
   const issues = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues');
   const log = readFileSync(join(issues, readdirSync(issues).find((n) => n.startsWith(refused.ticket)), 'log.md'), 'utf8');
   assert.match(log, /waiting on a user decision, no round counted/);
@@ -3505,8 +3508,9 @@ test('land.mjs batch: two tickets leaning on one "once" answer — only one merg
 });
 
 // A landing refused at the merge because another held decisions.md past the wait did nothing wrong:
-// it goes round again as stale, and no fix round is counted against it.
-test('land.mjs: a merge refused because decisions.md stayed locked counts no round', async (t) => {
+// no fix round is counted against it, and no worker is raised to change a branch that needs nothing —
+// tick puts the same branch through the gate again (issue 489).
+test('land.mjs: a merge refused because decisions.md stayed locked counts no round, and tick asks the gate again', async (t) => {
   const dir = makeRepo();
   const release = join(dir, '.release-decisions');
   t.after(() => { writeFileSync(release, ''); rmRepo(dir); });
@@ -3537,19 +3541,29 @@ test('land.mjs: a merge refused because decisions.md stayed locked counts no rou
     await new Promise((r) => { setTimeout(r, 10); });
   }
 
-  const r = run('land.mjs', ['121'], dir);
+  const r = run('land.mjs', ['121', '--result'], dir);
   writeFileSync(release, '');
   assert.equal(await holderDone, 0, holderErr);
 
   assert.ok(r.json, `${r.stdout}${r.stderr}`);
   assert.equal(r.json.landed, null, 'nothing merged');
-  assert.equal(r.json.stale, true, 'it goes round again the way a stale branch does');
+  assert.equal(r.json.lockTimeout, true, 'the result says the lock was not taken');
+  assert.equal(r.json.stale, undefined, 'and not stale: the branch needs no catch-up');
   const merge = r.json.checks.find((c) => c.name === 'merge');
   assert.match(merge.note, /could not be locked/);
   const log = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', readdirSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues')).find((n) => n.startsWith('121')), 'log.md'), 'utf8');
   assert.doesNotMatch(log, /\(round \d+/, 'and no round was counted');
   const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'decisions.md'), 'utf8');
   assert.doesNotMatch(decisions, /\*\*Consumed:\*\*/, 'the answer is still there for the next attempt');
+
+  // tick asks the gate again for the same branch, and raises no worker for it.
+  const ticked = run('tick.mjs', [], dir);
+  assert.equal(ticked.code, 0, ticked.stderr);
+  const step = ticked.json.landed.find((l) => l.ticket === '121');
+  assert.ok(step && ['review', 'gate'].includes(step.action), `the gate is asked again: ${JSON.stringify(ticked.json.landed)}`);
+  assert.equal((ticked.json.spawn || []).filter((w) => w.ticket === '121').length, 0, 'no worker is raised for it');
+  const issue = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', readdirSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues')).find((n) => n.startsWith('121')), 'issue.md'), 'utf8');
+  assert.doesNotMatch(issue, /^\*\*Status:\*\* changes$/m, 'the ticket is not sent back to changes');
 });
 
 test('land.mjs batch: non-overlapping tickets ready to land share one gate run, and each still lands on its own', async (t) => {

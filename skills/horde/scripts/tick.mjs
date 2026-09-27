@@ -108,13 +108,15 @@ again; a pid that is gone with no result is a landing that died, and is asked ag
 A branch the landing refused as stale (the parent does not merge into it) goes back with no round
 counted, and its next worker is briefed on the files the merge stopped on. The second time the same
 files stop it, the ticket goes to "blocked" and one "stuck" ask names them: nothing in the loop has
-resolved them twice, so it is the client's question now. A landing whose only red was the prose
-verdicts its own catch-up merge made stale ("rejudge") also goes back with no round, briefed to
-refresh those verdicts; a second one in a row counts its round like any red gate. A landing red
-only on a decision the user has to make ("waitingOnUser" in its result: no reviewer configured for
-the prose rules, or one that could not be reached) counts no round either: the ticket goes to
-"blocked", and one "stuck" ask naming no ticket puts the decision to the client once for the whole
-horde. Once it is answered, the next run sends every ticket it held back to a worker, with the
+resolved them twice, so it is the client's question now. A landing refused at its merge only because
+decisions.md stayed locked past the wait is put through the gate again on the next run, with no
+round counted and no worker raised: nothing was wrong with the branch. A landing whose only red was
+the prose verdicts its own catch-up merge made stale ("rejudge") also goes back with no round,
+briefed to refresh those verdicts; a second one in a row counts its round like any red gate. A
+landing red only on a decision the user has to make ("waitingOnUser" in its result: no reviewer
+configured for the prose rules, or one that could not be reached) counts no round either: the ticket
+goes to "blocked", and one "stuck" ask naming no ticket puts the decision to the client once for the
+whole horde. Once it is answered, the next run sends every ticket it held back to a worker, with the
 answer in its brief and still no round counted.
 
 An open ask holds only what depends on its answer, and "held" says what each one held: "stop"
@@ -500,7 +502,10 @@ function landTheLanded(horde, cfg, root, holds) {
     // A landing refused at its merge because the one-time answer it leaned on was used up first filed
     // its own question for a new answer, and that open question holds the landing (above). Once it is
     // answered, the recorded refusal is an answer to a question that no longer stands: ask the gate again.
-    if (!result || result.sha !== tip || ownWaitAnswered(horde, result)) {
+    // A landing refused because decisions.md stayed locked past the wait found nothing wrong with the
+    // branch: the gate is asked again, and no worker is raised to change a branch that needs nothing.
+    const lockedOut = !!(result && result.sha === tip && result.lockTimeout);
+    if (!result || result.sha !== tip || ownWaitAnswered(horde, result) || lockedOut) {
       const reviewed = reviewedGateStep(horde, item);
       if (!reviewed) {
         plan.push({
@@ -538,7 +543,7 @@ function landTheLanded(horde, cfg, root, holds) {
         action: 'gate',
         sha: tip,
         closeReview: reviewed.closeReview,
-        note: `${skipped}${result ? `the recorded result is about ${result.sha}, and ${item.branch} now stands at ${tip} — running the gate again` : `no readable gate result for ${item.branch} at ${tip} — running the gate`}`,
+        note: `${skipped}${lockedOut ? `the last landing of ${tip} could not lock decisions.md to spend its one-time answer, and nothing was wrong with the branch — running the gate again` : result ? `the recorded result is about ${result.sha}, and ${item.branch} now stands at ${tip} — running the gate again` : `no readable gate result for ${item.branch} at ${tip} — running the gate`}`,
       });
       continue;
     }

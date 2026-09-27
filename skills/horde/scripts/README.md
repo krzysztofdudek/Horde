@@ -1104,15 +1104,17 @@ the JSON, and every item below is measured against it:
    cleanly, the branch is brought up to date, the merge noted in the ticket's log, and this landing
    goes on with it, once; with a conflict the merge is aborted, the branch is left exactly as it
    was, and the landing stops here — `ok: false`, `stale: true`, base freshness the only item, no
-   gate run and no fix round counted (`tick.mjs` sends the ticket back to be brought up to date).
-   A merge that stops only on the files that merge by rule is finished instead of refused: a
-   node's `log.md` through `yg log merge-resolve --node <n>`, a node type's `.yggdrasil/types/<t>/log.md` through `yg log merge-resolve --type <t>` (after `yg-lock.types.json` took the parent's side, so the type's baseline is recorded again), Yggdrasil's `yg-lock.*.json` by
-   taking the parent's side whole (the verdicts dropped are judged again), and a file
-   `config.appendOnly` names by keeping both sides' added lines — only when neither side did more
-   than add lines; where both added at the same place, the lines both begin and end with (a section
-   heading each opened, the blank line closing it) are written once, with the parent's own lines
-   and then the branch's between them. A stale result carries `conflictFiles`, the files no rule resolved, sorted.
-   `--no-gate` never writes to a branch, so it reports the staleness as it stands;
+   gate run and no fix round counted (`tick.mjs` sends the ticket back to be brought up to date). A
+   merge that stops only on the files that merge by rule is finished instead of refused: a node's
+   `log.md` through `yg log merge-resolve --node <n>`, a node type's `.yggdrasil/types/<t>/log.md`
+   through `yg log merge-resolve --type <t>` (after `yg-lock.types.json` took the parent's side, so
+   the type's baseline is recorded again), Yggdrasil's `yg-lock.*.json` by taking the parent's side
+   whole (the verdicts dropped are judged again), and a file `config.appendOnly` names by keeping
+   both sides' added lines — only when neither side did more than add lines; where both added at the
+   same place, the lines both begin and end with (a section heading each opened, the blank line
+   closing it) are written once, with the parent's own lines and then the branch's between them. A
+   stale result carries `conflictFiles`, the files no rule resolved, sorted. `--no-gate` never
+   writes to a branch, so it reports the staleness as it stands;
 2. judge — every prose rule on this tree carries a verdict from Yggdrasil's own reviewer, the only
    judge a prose rule has. A worker runs `yg check --approve` before committing (so does the commit
    hook, where there is one), and this item only checks that nothing came back unjudged. A pair still
