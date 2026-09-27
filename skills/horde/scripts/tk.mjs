@@ -23,7 +23,7 @@
 // ticket's status — doesn't reimplement the parsing.
 
 import {
-  existsSync, mkdirSync, readdirSync, renameSync, readFileSync,
+  existsSync, mkdirSync, readdirSync, renameSync, readFileSync, rmSync,
 } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -1225,8 +1225,14 @@ function cmdMove(horde, positional, flags) {
   const destDir = teamPath(horde, flags.team, 'issues', ticket.dirName);
   if (existsSync(destDir)) fail(`destination already exists: ${destDir}`);
   mkdirSync(teamPath(horde, flags.team, 'issues'), { recursive: true });
-  updateTicketFile(ticket.dir, ticket.issuePath, (current) => setField(current, 'Team', flags.team));
-  renameSync(ticket.dir, destDir);
+  // The Team line and the rename are one step under the ticket's lock, so no other writer can take
+  // the lock on the old directory in between and write into a directory that is about to move. The
+  // lock file travels with the directory, so it is removed at the new path before the lock lets go.
+  withTicketLock(ticket.dir, () => {
+    writeText(ticket.issuePath, setField(readText(ticket.issuePath) ?? ticket.text, 'Team', flags.team));
+    renameSync(ticket.dir, destDir);
+    rmSync(join(destDir, 'issue.md.lock'), { force: true });
+  });
   emit({ id: ticket.id, from: ticket.team, to: flags.team }, flags, () => `${ticket.id} moved: ${ticket.team} -> ${flags.team}`);
 }
 

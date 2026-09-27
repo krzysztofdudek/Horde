@@ -799,11 +799,11 @@ function counterLockPath(horde) {
 // one caller) — but every per-file lock added after it (counter.json below, and asks.json /
 // graph.json in node.mjs and ask.mjs) goes through this one, so a later fix to the primitive fixes
 // every one of them at once instead of a fourth or fifth hand-rolled copy.
-function withFileLock(path, meta, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
+function withFileLock(path, meta, fn, { waitMs = QUEUE_LOCK_WAIT_MS, mkdir = true } = {}) {
   const deadline = Date.now() + waitMs;
   for (;;) {
     try {
-      mkdirSync(dirname(path), { recursive: true });
+      if (mkdir) mkdirSync(dirname(path), { recursive: true });
       createLockFile(path, `${JSON.stringify({ pid: process.pid, ...meta, at: nowIso() }, null, 2)}\n`);
       break;
     } catch (e) {
@@ -870,8 +870,19 @@ export function withGraphLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
 // Lock order: innermost, like the counter lock. It is often taken while the queue lock is held (the
 // scheduler and the landing move a ticket's Status from inside their own queue blocks), and nothing
 // that holds it ever takes another lock.
+//
+// The lock never makes the ticket's directory. A ticket moved to another team (`tk.mjs move`) is renamed
+// away under this lock, and a writer that was waiting on the old path must not bring back an empty
+// directory under the old name there: it is refused, and finds the ticket again.
 export function withTicketLock(ticketDir, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
-  return withFileLock(join(ticketDir, 'issue.md.lock'), { kind: 'ticket', ticket: ticketDir }, fn, { waitMs });
+  try {
+    return withFileLock(join(ticketDir, 'issue.md.lock'), { kind: 'ticket', ticket: ticketDir }, fn, { waitMs, mkdir: false });
+  } catch (e) {
+    if (e && e.code === 'ENOENT' && !existsSync(ticketDir)) {
+      throw new Error(`the ticket at ${ticketDir} is gone — it was moved or removed by another process while this one waited to write it; find the ticket again and retry`);
+    }
+    throw e;
+  }
 }
 
 // updateTicketFile(ticketDir, file, change) — the one read-modify-write of a ticket file: the lock

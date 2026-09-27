@@ -8,9 +8,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import {
-  existsSync, readFileSync, writeFileSync, rmSync, chmodSync,
+  existsSync, readFileSync, writeFileSync, rmSync, chmodSync, readdirSync, realpathSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde,
@@ -245,4 +245,52 @@ test('mergeSpendingAnswers: a mark that fails after the merge is a note, not a t
     assert.equal(out.notes.length, 1);
     assert.match(out.notes[0], /could not be marked spent/);
   });
+});
+
+// Moving a ticket to another team rewrites its issue.md and renames its directory. Both happen
+// under the ticket's lock: between a release and the rename, another writer could take the lock
+// on the old directory and write into a directory about to move out from under it.
+test('tk.mjs move renames the ticket\'s directory while holding the ticket lock', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  newTicket(dir);
+  const issues = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues');
+  // The real path, as the tools resolve `.horde/` through git: a temporary directory can sit behind a
+  // symlink (macOS's /var is /private/var).
+  const ticketDir = realpathSync(join(issues, readdirSync(issues).find((n) => n.startsWith('001-'))));
+  const marker = join(dir, '.move-paused');
+  // A nested team exists only in a mission started before 6.0.0; its roster entry is what makes one.
+  writeFileSync(join(dir, '.horde', 'hordes', 'mission1', 'roster.json'), JSON.stringify({
+    entries: [{ name: 'mission1-steward-allies-1', role: 'steward', team: 'allies', parent: 'trunk' }],
+  }));
+
+  const tk = join(dirname(fileURLToPath(import.meta.url)), '..', 'tk.mjs');
+  const register = join(dirname(fileURLToPath(import.meta.url)), 'move-race', 'register.mjs');
+  const child = spawn('node', ['--import', register, tk, 'move', '1', '--team', 'trunk/allies', '--json'], {
+    cwd: dir,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env, HORDE_MOVE_RACE_DIR: ticketDir, HORDE_MOVE_RACE_DELAY_MS: '1500', HORDE_MOVE_RACE_MARKER: marker,
+    },
+  });
+  let err = '';
+  child.stderr.on('data', (d) => { err += d; });
+  const done = new Promise((resolve) => { child.on('close', resolve); });
+
+  const deadline = Date.now() + 30000;
+  while (!existsSync(marker)) {
+    if (Date.now() > deadline) throw new Error(`the move never reached its rename: ${err}`);
+    await new Promise((r) => { setTimeout(r, 10); });
+  }
+  const lock = join(ticketDir, 'issue.md.lock');
+  const heldDuringRename = existsSync(lock) ? JSON.parse(readFileSync(lock, 'utf8')).pid : null;
+  const code = await done;
+  assert.equal(code, 0, err);
+  assert.equal(heldDuringRename, child.pid, 'the ticket lock was held by the move while it renamed the directory');
+
+  const moved = join(realpathSync(dir), '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'teams', 'allies', 'issues', basename(ticketDir));
+  assert.ok(existsSync(join(moved, 'issue.md')), 'the ticket is in its new team');
+  assert.equal(existsSync(join(moved, 'issue.md.lock')), false, 'with no lock left behind');
+  assert.equal(existsSync(ticketDir), false, 'and nothing left at the old path');
 });
