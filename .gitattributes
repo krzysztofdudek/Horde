@@ -9,3 +9,6 @@
 
 # Drill corpus cases carry a git bundle: binary, never line-ending normalized.
 *.bundle -text
+
+# Every change adds its lines under [Unreleased]; only a release writes a version heading, so a union never interleaves two sections.
+/CHANGELOG.md merge=union

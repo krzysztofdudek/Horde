@@ -4063,7 +4063,9 @@ test('land.mjs: three parallel tickets on one node, each adding a log entry and 
     assert.equal(gateCallCount(gateLog), 1, 'one shared gate for the three');
     const notes = ids.map((id) => resultFor(r, id).full.checks.find((c) => c.name === 'merge').note).join('\n');
     assert.match(notes, /resolved by rule: .*CHANGELOG\.md \(append-only/);
-    assert.match(notes, /\.yggdrasil\/model\/feature\/log\.md \(node log: yg log merge-resolve\)/);
+    // A Yggdrasil with merge drivers merges the node's log itself (the attributes yg init wrote are in
+    // this checkout); one without them leaves it to the rule.
+    if (!ygHasMergeDrivers(dir)) assert.match(notes, /\.yggdrasil\/model\/feature\/log\.md \(node log: yg log merge-resolve\)/);
   });
 
   await t.test('the trunk carries every CHANGELOG line and every log entry, and the log is whole', () => {
@@ -4149,6 +4151,79 @@ test('land.mjs: two tickets adding a decision to one node type land one after an
   const lock = JSON.parse(git(['show', 'mission1/trunk:.yggdrasil/yg-lock.types.json'], dir));
   assert.ok(lock.types && lock.types.module && lock.types.module.log, 'the type baseline is recorded on the trunk');
   git(['checkout', '-q', 'mission1/trunk'], dir);
+  const check = yg(dir, ['check', '--no-approve']);
+  assert.doesNotMatch(check.out, /log-integrity|prefix_modified|lock-invalid/, `the merged type log is one Yggdrasil accepts:\n${check.out}`);
+});
+
+// Whether the configured Yggdrasil has the merge drivers: `yg merge-driver --help` prints that command's own usage
+// (an older CLI answers a command it does not know with its root help, and exit 0).
+function ygHasMergeDrivers(dir) {
+  const r = yg(dir, ['merge-driver', '--help']);
+  return r.code === 0 && /Usage: \S+ merge-driver\b/.test(r.out);
+}
+
+// Issue 473: with a Yggdrasil that has merge drivers and a repository whose committed .gitattributes names them,
+// the landing passes the drivers with git -c on every merge: two tickets' decisions in one type's log merge
+// without a conflict — nothing is resolved by rule — and `yg log merge-resolve` with no log named records the
+// baseline the lock driver dropped, inside the merge commit, so the trunk's log and lock are whole.
+test('land.mjs: with Yggdrasil\'s merge drivers, a type log both tickets added to merges in git itself, the baseline recorded in the merge (issue 473)', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  if (!ygHasMergeDrivers(dir)) { t.skip('the configured Yggdrasil has no merge drivers (older than 6.1.0)'); return; }
+  const arch = join(dir, '.yggdrasil', 'yg-architecture.yaml');
+  writeFileSync(arch, readFileSync(arch, 'utf8').replace(/^node_types: \{\}$/m, 'node_types:\n  module:\n    description: A fixture module.\n    when:\n      path: "src/**"'));
+  addNode(dir, 'feature', { mapping: ['src'] });
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'base.mjs'), 'export const base = 1;\n');
+  writeFileSync(join(dir, '.gitattributes'), '/.yggdrasil/**/log.md merge=yg-log\n/.yggdrasil/yg-lock.*.json merge=yg-lock\n');
+  // The clone's own driver configuration is removed: the landing must pass the drivers itself.
+  git(['config', '--local', '--remove-section', 'merge.yg-log'], dir);
+  git(['config', '--local', '--remove-section', 'merge.yg-lock'], dir);
+  assert.equal(yg(dir, ['log', 'add', '--type', 'module', '--reason', 'Modules keep their exports small.']).code, 0);
+  git(['add', '.yggdrasil', '.gitattributes', 'src/base.mjs'], dir);
+  git(['commit', '-qm', 'graph: a node type with a decision in force, and the merge attributes'], dir);
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+
+  const ids = ['201', '202'];
+  const branches = {};
+  for (const id of ids) {
+    git(['checkout', '-q', '-b', `mission1/t-${id}`, 'mission1/trunk'], dir);
+    writeFileSync(join(dir, 'src', `f${id}.mjs`), `export function f${id}() { return ${Number(id)}; }\n`);
+    writeFileSync(join(dir, 'src', `f${id}.test.mjs`), [
+      "import test from 'node:test';",
+      "import assert from 'node:assert/strict';",
+      `import { f${id} } from './f${id}.mjs';`,
+      `test('f${id}', () => { assert.equal(f${id}(), ${Number(id)}); });`,
+      '',
+    ].join('\n'));
+    const added = yg(dir, ['log', 'add', '--type', 'module', '--adds', '--reason', `Decision ${id}: a module names what it exports.`]);
+    assert.equal(added.code, 0, added.out);
+    git(['add', '--', `src/f${id}.mjs`, `src/f${id}.test.mjs`, '.yggdrasil'], dir);
+    git(['commit', '-qm', `ticket ${id}`], dir);
+    git(['checkout', '-q', 'mission1/trunk'], dir);
+    const dst = writeIssue(dir, 'trunk', id, { node: 'feature', files: [`src/f${id}.mjs`, `src/f${id}.test.mjs`, '.yggdrasil/types/module/log.md'] });
+    writeTicketLog(dst);
+    seedQueueItem(dir, 'trunk', id, `mission1/t-${id}`);
+    branches[id] = `mission1/t-${id}`;
+  }
+
+  const first = run('land.mjs', [branches['201']], dir);
+  assert.equal(first.code, 0, JSON.stringify(first.json && first.json.checks) + first.stderr);
+  const second = run('land.mjs', [branches['202']], dir);
+  assert.equal(second.code, 0, JSON.stringify(second.json && second.json.checks) + second.stderr);
+  assert.equal(second.json.ok, true);
+  const note = byName(second)['base freshness'].note;
+  assert.doesNotMatch(note, /resolved by rule/, `the drivers merged it, no rule did: ${note}`);
+
+  const log = git(['show', 'mission1/trunk:.yggdrasil/types/module/log.md'], dir);
+  for (const text of ['Modules keep their exports small.', 'Decision 201', 'Decision 202']) assert.ok(log.includes(text), `the trunk's type log keeps "${text}":\n${log}`);
+  assert.doesNotMatch(log, /^<<<<<<< /m);
+  const lock = JSON.parse(git(['show', 'mission1/trunk:.yggdrasil/yg-lock.types.json'], dir));
+  assert.ok(lock.types && lock.types.module && lock.types.module.log, 'the type baseline is recorded on the trunk, in the merge');
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  assert.equal(git(['status', '--porcelain', '--', '.yggdrasil'], dir), '', 'nothing is left for a commit after the merge');
   const check = yg(dir, ['check', '--no-approve']);
   assert.doesNotMatch(check.out, /log-integrity|prefix_modified|lock-invalid/, `the merged type log is one Yggdrasil accepts:\n${check.out}`);
 });

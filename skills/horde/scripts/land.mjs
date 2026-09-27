@@ -42,6 +42,7 @@ import {
   blockingFindings, splitFindings, routeFindings, renderFindings,
   globToRegExp, pathInBoundary, ticketBoundary, proposalBoundaryOf, ygFileContext, ygAvailable, ygJson,
   NODE_LOG_FILE, TYPE_LOG_FILE, YG_LOCK_FILE, mergesByRule, nodeOfLogFile, typeOfLogFile, ygLogMergeResolve, YG_DOCUMENTS_AFTER,
+  ygMergeDriverSettings, ygLogMergeResolveAll,
 } from './node.mjs';
 import {
   ticketFiles, ticketEvidence, ticketKind, prototypeBranchOf, ticketReopens, findTicket,
@@ -3211,14 +3212,39 @@ function resolvedLine(resolved) {
 // mergeResolving(tree, cfg, ref, message, parentSide) — `git merge --no-ff -m <message> <ref>` in
 // `tree`, finishing it by rule when it stops only on the known kinds of conflict. On a refusal the
 // merge is aborted and the tree is back where it was: {ok: false, files} names what no rule covers.
+//
+// When the configured Yggdrasil has merge drivers, the merge runs with them (`git -c`, see
+// ygMergeDriverSettings): git itself merges log.md and the lock files, and stops only where a driver
+// refused. The merge is then made with --no-commit, so that `yg log merge-resolve` — which records the
+// baseline of every log the merge changed, what no driver can — runs before the commit, and the lock
+// files it rewrites are part of the merge commit, not a commit after it. Whatever still conflicts goes
+// to the rules below exactly as before.
 function mergeResolving(tree, cfg, ref, message, parentSide, { byRule = true, expectTree = null } = {}) {
+  const drivers = ygMergeDriverSettings(cfg, tree);
+  const finish = () => {
+    if (!drivers.length) return null;
+    const res = ygLogMergeResolveAll(cfg, tree);
+    if (!res.ok) return `\`${res.command}\` did not reconcile the merged logs${res.out ? `: ${res.out.split('\n')[0]}` : ''}`;
+    for (const f of ['.yggdrasil/yg-lock.logs.json', '.yggdrasil/yg-lock.types.json']) if (existsSync(join(tree, f))) git(['add', '--', f], tree);
+    return null;
+  };
   try {
-    execFileSync('git', ['merge', '--no-ff', '-m', message, ref], { cwd: tree, stdio: 'pipe' });
-    return { ok: true, resolved: [] };
+    execFileSync('git', [...drivers, 'merge', '--no-ff', ...(drivers.length ? ['--no-commit'] : []), '-m', message, ref], { cwd: tree, stdio: 'pipe' });
+    if (!drivers.length || git(['rev-parse', '-q', '--verify', 'MERGE_HEAD'], tree) === null) return { ok: true, resolved: [] };
+    const refused = finish();
+    if (refused === null && git(['commit', '-m', message], tree) !== null) return { ok: true, resolved: [] };
+    const note = refused || `the merge could not be committed: ${gitError()}`;
+    let files = [];
+    try { files = conflictingFiles(tree); } finally { git(['merge', '--abort'], tree); }
+    return { ok: false, files, note, out: '' };
   } catch (e) {
     let outcome;
     try {
       outcome = byRule ? resolveKnownConflicts(tree, cfg, parentSide) : { ok: false, left: [], note: null };
+      if (outcome.ok) {
+        const refused = finish();
+        if (refused !== null) outcome = { ok: false, left: outcome.resolved.map((r) => r.file), note: refused };
+      }
       if (outcome.ok && expectTree) {
         const written = git(['write-tree'], tree);
         if (written !== expectTree) {

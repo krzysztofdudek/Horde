@@ -974,3 +974,33 @@ test('node.mjs: a Yggdrasil reporting 6.0.3 is below the floor and refused namin
     rmRepo(dir);
   }
 });
+
+// Issue 473: the landing passes Yggdrasil's merge drivers with git -c only when the configured CLI has them — a
+// driver git is told to run but cannot start keeps ours and drops theirs without a word — and names the CLI the
+// way git's POSIX shell reads it on every platform: each word double-quoted, with forward slashes.
+test('node.mjs ygMergeDriverSettings: settings only for a CLI that has the drivers, each word quoted for git\'s shell', async () => {
+  const { ygMergeDriverSettings } = await import('../node.mjs');
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(join(tmpdir(), 'horde-drivers-'));
+  try {
+    const stub = (name, code) => {
+      const p = join(dir, name);
+      writeFileSync(p, `if (process.argv[2] === 'merge-driver' && process.argv[3] === '--help' && ${code} === 0) { console.log('Usage: yg merge-driver [options] <kind>'); process.exit(0); }\nconsole.log('Usage: yg [options] [command]');\nprocess.exit(${code});\n`);
+      return p;
+    };
+    const has = stub('has.mjs', 0);
+    const lacks = stub('lacks.mjs', 1);
+    // An older CLI: root help and exit 0 for --help on a command it does not know.
+    const older = stub('older.mjs', 7);
+    writeFileSync(older, "console.log('Usage: yg [options] [command]');\n");
+    const slashed = (p) => p.replace(/\\/g, '/');
+    const settings = ygMergeDriverSettings({ ygCommand: `"${process.execPath}" "${has}"` }, dir);
+    assert.deepEqual(settings.filter((s) => s !== '-c').map((s) => s.split('=')[0]), ['merge.yg-log.name', 'merge.yg-log.driver', 'merge.yg-lock.name', 'merge.yg-lock.driver']);
+    assert.ok(settings.includes(`merge.yg-log.driver="${slashed(process.execPath)}" "${slashed(has)}" merge-driver log %O %A %B %P`), settings.join(' '));
+    assert.deepEqual(ygMergeDriverSettings({ ygCommand: `"${process.execPath}" "${lacks}"` }, dir), []);
+    assert.deepEqual(ygMergeDriverSettings({ ygCommand: `"${process.execPath}" "${older}"` }, dir), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
