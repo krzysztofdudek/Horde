@@ -35,7 +35,7 @@ import {
   parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, resolveTree, provenanceLine,
   withProvenance, nowIso, parseDecisionEntries, decisionField, diffSize, sizeRanks, sizeLine,
   noEvidenceLayerNote, createLockFile, processAlive, readLockText, removeStaleLock, sleepSync, HordeError,
-  runMain, GATE_RAN,
+  runMain, GATE_RAN, appendTicketLog,
 } from './_lib.mjs';
 import {
   ticketNodes, ygCommand, fillDeterministic, pendingProsePairs, userOnlyRefusal, reviewerMissingIn,
@@ -50,6 +50,7 @@ import {
 import { recordMerged, buildPlan } from './queue.mjs';
 import { noteFate } from './wave.mjs';
 import { detectEvidenceLayer, HOOK_FILES } from './horde.mjs';
+import { withDecisionsLock } from './decide.mjs';
 
 const USAGE = `usage: land.mjs <ticket|branch>[,<ticket|branch>...] [--level trunk] [--no-gate] [--background] [--tree p] [--horde h]
        land.mjs <ticket> --fate reverted --by <sha> [--tree p] [--horde h]
@@ -1431,15 +1432,22 @@ function findAnswer(horde, kind, aspect) {
 // A "once" answer is spent by the landing that used it, so the next branch cannot lean on the
 // same sentence. Recorded in the file itself rather than in a ledger beside it: the answer and
 // the fact that it was used belong in one place a reader opens.
-function consumeAnswer(horde, answer, ticketId, sha) {
+//
+// decisions.md is written by decide.mjs and ask.mjs too, under the decisions lock, so the mark is
+// made under that same lock and on the file as it stands then: a copy read before it would put
+// back a decisions.md missing whatever was recorded in between. The decisions lock is the innermost
+// one; nothing else is taken while it is held.
+export function consumeAnswer(horde, answer, ticketId, sha) {
   if (answer.scope === 'mission') return;
   const path = decisionsPath(horde);
-  const text = readText(path) || '';
-  const marked = answer.body.replace(
-    /(\*\*Answer:\*\*[^\n]*\n)/,
-    `$1**Consumed:** ticket ${ticketId} at ${sha} on ${nowIso()}\n`,
-  );
-  writeText(path, text.replace(answer.body, marked));
+  withDecisionsLock(horde, () => {
+    const text = readText(path) || '';
+    const marked = answer.body.replace(
+      /(\*\*Answer:\*\*[^\n]*\n)/,
+      `$1**Consumed:** ticket ${ticketId} at ${sha} on ${nowIso()}\n`,
+    );
+    writeText(path, text.replace(answer.body, marked));
+  });
 }
 
 // ---- reading one tree's graph ---------------------------------------------------------
@@ -4517,17 +4525,14 @@ function recordWaiting(horde, ticketId, waiting) {
 }
 
 function appendTicketLine(ticket, line) {
-  const existing = readText(ticket.logPath) || '';
-  writeText(ticket.logPath, existing + line);
+  appendTicketLog(ticket.dir, line);
 }
 
 // The landed sha, in the ticket's own log. Together with the queue item's own record (written by
 // recordMerged) this is the whole trace a landing leaves: no key, no verdict block, no signature
 // — the commit that exists is the claim, and it is checkable.
 function appendLanded(issueDirPath, landed, parentBranch) {
-  const path = join(issueDirPath, 'log.md');
-  const existing = readText(path) || '';
-  writeText(path, `${existing}- ${landed.at} landed ${landed.ticket} on ${parentBranch} as ${landed.sha}\n`);
+  appendTicketLog(issueDirPath, `- ${landed.at} landed ${landed.ticket} on ${parentBranch} as ${landed.sha}\n`);
 }
 
 function finish(horde, ticketId, result, head, flags, parent, level) {

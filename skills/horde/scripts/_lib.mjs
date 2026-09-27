@@ -849,13 +849,53 @@ function withCounterLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
 // other direction: asks.json's answerAsk calls into decide.mjs's own decisions lock WHILE holding
 // this one — asks lock outermost, decisions lock innermost, the one order the two are ever taken in.
 // So the full ordering, queue first when it appears at all, is: queue → { asks → decisions, graph,
-// counter } — never the reverse on any edge, so there is no cycle for two processes to deadlock on.
+// counter, ticket, leases } — never the reverse on any edge, so there is no cycle for two processes
+// to deadlock on. The ticket and leases locks below are innermost in the same way: whoever holds
+// one of them takes nothing else.
 export function withAsksLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
   return withFileLock(`${hordePath(horde, 'asks.json')}.lock`, { horde, kind: 'asks' }, fn, { waitMs });
 }
 
 export function withGraphLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
   return withFileLock(`${hordePath(horde, 'graph.json')}.lock`, { horde, kind: 'graph' }, fn, { waitMs });
+}
+
+// A ticket's two files, issue.md and log.md, under one lock. Its Status line is rewritten by
+// whichever process moves the ticket (a landing, the scheduler, a hand-run `tk.mjs status`) while
+// another may be editing the same issue.md (`tk.mjs edit`) or adding to its log: a rewrite from a
+// copy read before the lock would put back whatever the other one just changed. Everything that
+// rewrites either file takes this lock and reads the file again inside it. Keyed by the ticket's own
+// directory, so two tickets never wait on each other.
+//
+// Lock order: innermost, like the counter lock. It is often taken while the queue lock is held (the
+// scheduler and the landing move a ticket's Status from inside their own queue blocks), and nothing
+// that holds it ever takes another lock.
+export function withTicketLock(ticketDir, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
+  return withFileLock(join(ticketDir, 'issue.md.lock'), { kind: 'ticket', ticket: ticketDir }, fn, { waitMs });
+}
+
+// updateTicketFile(ticketDir, file, change) — the one read-modify-write of a ticket file: the lock
+// taken, the file read afresh inside it, `change(current)` applied to what is there now rather than
+// to a copy read earlier, and the result swapped in whole. Returns what was written.
+export function updateTicketFile(ticketDir, file, change) {
+  return withTicketLock(ticketDir, () => {
+    const next = change(readText(file) || '');
+    writeText(file, next);
+    return next;
+  });
+}
+
+// appendTicketLog(ticketDir, line) — one line added to a ticket's log.md under the ticket lock, so
+// it can never land between another writer's read of the log and that writer's rewrite of it.
+export function appendTicketLog(ticketDir, line) {
+  withTicketLock(ticketDir, () => appendText(join(ticketDir, 'log.md'), line));
+}
+
+// The one shared leases.json (see "cross-horde leases" below). Every horde on the repository reads
+// and rewrites it, so two claims at once would each read the file before the other wrote and one
+// lease would vanish. Innermost as well: nothing that holds it takes another lock.
+export function withLeasesLock(fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
+  return withFileLock(`${join(hordeRoot(), 'leases.json')}.lock`, { kind: 'leases' }, fn, { waitMs });
 }
 
 // writeJSONAtomic(file, obj) — same document shape as writeJSON, written so a reader outside the
@@ -1407,6 +1447,10 @@ export function writeLeases(doc) {
 // territories are free the moment it stops being live; returns the released subjects (empty when
 // it held none).
 export function releaseLeasesForHorde(horde) {
+  return withLeasesLock(() => releaseLeasesLocked(horde));
+}
+
+function releaseLeasesLocked(horde) {
   const doc = readLeases();
   const released = Object.entries(doc.leases).filter(([, l]) => l.horde === horde).map(([node]) => node);
   if (released.length === 0) return released;
@@ -1472,7 +1516,15 @@ export function assertLeaseAvailable(horde, subject, { kind = 'node' } = {}) {
 // read or an in-memory edit, so a run killed partway leaves the file exactly as it found it and
 // the subject free for the next attempt. Callers claiming several subjects at once hold to the
 // same shape by validating all of them before claiming any.
-export function claimLease(horde, subject, { take = false, ask = null, kind = 'node' } = {}) {
+//
+// The read, the checks and the write all happen under the leases lock: two hordes claiming at the
+// same moment would otherwise each read the file before the other wrote it, and the later write
+// would drop the earlier lease without a word.
+export function claimLease(horde, subject, options = {}) {
+  return withLeasesLock(() => claimLeaseLocked(horde, subject, options));
+}
+
+function claimLeaseLocked(horde, subject, { take = false, ask = null, kind = 'node' } = {}) {
   const doc = readLeases();
   const node = subject;
   const existing = doc.leases[node];
@@ -1677,7 +1729,7 @@ export function writeJSON(file, obj, { render } = {}) {
   writeJSONAtomic(file, obj);
   if (render) {
     const mdFile = file.replace(/\.json$/, '.md');
-    writeFileSync(mdFile, render(obj));
+    writeText(mdFile, render(obj));
   }
 }
 
@@ -1685,9 +1737,15 @@ export function readText(file) {
   return existsSync(file) ? readFileSync(file, 'utf8') : null;
 }
 
+// Written to a sibling and renamed over the file, exactly like writeJSON: an in-place write
+// truncates first, so a reader with no lock (a status sweep, a brief, a landing reading a ticket's
+// log) could catch the file empty or half-written. A rename swaps the whole old text for the whole
+// new one in one step.
 export function writeText(file, text) {
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, text);
+  const temp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
+  writeFileSync(temp, text);
+  renameSync(temp, file);
 }
 
 export function appendText(file, text) {
