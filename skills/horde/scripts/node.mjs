@@ -1955,6 +1955,47 @@ export function ygLogMergeResolve(cfg, cwd, name, kind = 'node') {
   return { ok: run.code === 0, command, out: `${run.out || ''}${run.err || ''}`.trim() };
 }
 
+// ---- git's merge drivers for Yggdrasil's files ---------------------------------------------------
+//
+// Yggdrasil (6.1.0 and later) ships merge drivers for the files it owns: `yg merge-driver log` merges an append-only
+// log.md into the union of both sides (conflict markers when history was rewritten or both sides superseded the same
+// entry), `yg merge-driver lock` merges a committed lock file key by key, the same whichever side is ours. A
+// repository that ran `yg init` names them in .gitattributes (merge=yg-log, merge=yg-lock). The landing passes the
+// drivers with `git -c` on every merge instead of relying on the clone's configuration, and only after asking the
+// configured CLI whether it has them: a driver git is told to run but cannot start leaves the file conflicted with
+// ours alone and no markers. A CLI without them gets no settings, and the landing's own rules resolve what conflicts.
+const MERGE_DRIVER_SUPPORT = new Map();
+export function ygMergeDriverSettings(cfg, cwd) {
+  const { cmd, prefix, display } = ygCommand(cfg);
+  if (!MERGE_DRIVER_SUPPORT.has(display)) {
+    const run = startCli(cmd, [...prefix, 'merge-driver', '--help'], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+    // An older CLI answers `--help` on a command it does not know with its root help and exit 0, so the answer
+    // counts only when it is the merge-driver command's own usage.
+    MERGE_DRIVER_SUPPORT.set(display, !(run.missing || run.spawnFailed || run.timedOut) && run.code === 0 && /Usage: \S+ merge-driver\b/.test(run.out || ''));
+  }
+  if (!MERGE_DRIVER_SUPPORT.get(display)) return [];
+  // Git runs a driver through its own POSIX shell on every platform: each word double-quoted, with forward slashes.
+  const quote = (w) => `"${String(w).replace(/\\/g, '/').replace(/(["$`])/g, '\\$1')}"`;
+  const program = [cmd, ...prefix].map(quote).join(' ');
+  return ['log', 'lock'].flatMap((kind) => [
+    '-c', `merge.yg-${kind}.name=Yggdrasil ${kind === 'log' ? 'log.md' : 'lock file'}`,
+    '-c', `merge.yg-${kind}.driver=${program} merge-driver ${kind} %O %A %B %P`,
+  ]);
+}
+
+// `yg log merge-resolve` with no log named, in a tree where a merge was just made (stopped before its commit, or
+// committed): every node and type log the merge changed is reconciled and its baseline recorded — the step a driver,
+// a function of one file, cannot take. The lock files it rewrites belong to the merge.
+export function ygLogMergeResolveAll(cfg, cwd) {
+  const { cmd, prefix, display } = ygCommand(cfg);
+  const args = ['log', 'merge-resolve'];
+  const command = `${display} ${args.join(' ')}`;
+  const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+  if (run.missing || run.spawnFailed) return { ok: false, command, out: `could not start \`${command}\`` };
+  if (run.timedOut) return { ok: false, command, out: timedOutDetail(run.ms) };
+  return { ok: run.code === 0, command, out: `${run.out || ''}${run.err || ''}`.trim() };
+}
+
 export function pathInBoundary(path, boundary) {
   return boundary.some((pat) => {
     if (pat.includes('*')) return globToRegExp(pat).test(path);
