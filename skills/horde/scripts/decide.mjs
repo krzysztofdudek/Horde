@@ -1,34 +1,40 @@
 #!/usr/bin/env node
 // horde skill — decide.mjs
 //
-// Durable rulings and lessons, appended to hordes/<horde>/decisions.md. Architectural decisions
-// (ones tied to a node, in a repository with Yggdrasil) belong in the graph's own log instead —
-// this tool refuses to store those and prints the `yg log add` command to run in their place.
+// Durable rulings and lessons, in the mission's own record: the Jarl loop's decisions.md
+// (.horde/hordes/<horde>/.jarl/decisions.md, loop.mjs). The loop writes and numbers nothing here but
+// the ruling itself — its date and slug heading, its text, who ruled, what it supersedes and the ticket
+// it settles — so Jarl's own views (`jarl.mjs decisions --live --root .horde/hordes/<h>`) read every
+// ruling this writes. Architectural decisions (ones tied to a node, in a repository with Yggdrasil)
+// belong in the graph's own log instead — this tool refuses to store those and prints the `yg log add`
+// command to run in their place.
 //
-// Entry format (exact):
-//   ## <YYYY-MM-DD> · <slug> [· ticket NNN] [· node n]
+// Entry format, as the loop writes it:
+//   ## <YYYY-MM-DD> · <slug>
 //   <ruling text, may be multi-line>
 //
-// Exports `appendDecision` so ask.mjs can record the client's answer in the same format, under
-// slug `ask-<id>`, without shelling out to this file.
+//   **Settles:** NNN       (with --ticket: the ticket the ruling is about; its Evidence carries the ruling too)
+//   **By:** <who>
+//   **Supersedes:** <slug> (with --supersedes; the earlier ruling is marked Superseded by in place)
 
-import { join, dirname } from 'node:path';
+import { mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { dirname } from 'node:path';
 import {
-  mkdirSync, readFileSync, rmSync,
-} from 'node:fs';
-import {
-  hordePath, readConfig, readText, appendText, today, fail, parseArgs, emit, isMain, resolveHorde,
-  parseDecisionEntries, createLockFile, processAlive, readLockText, removeStaleLock, sleepSync, nowIso,
-  runMain,
+  fail, parseArgs, emit, isMain, resolveHorde, readConfig, readText, parseDecisionEntries, runMain,
+  hordePath, createLockFile, processAlive, readLockText, removeStaleLock, sleepSync, nowIso,
 } from './_lib.mjs';
 import { ygCommand } from './node.mjs';
+import { decideLoop, decisionsFile } from './loop.mjs';
 
 const USAGE = `usage: decide.mjs <command> [options]
 
 commands:
-  add <slug> "<ruling>" [--ticket NNN] [--node n] [--horde h]
-      appends a new entry; refuses a duplicate slug. When --node is given it refuses and prints
-      the "yg log add" command to run instead — a node's decisions belong in the graph's own log.
+  add <slug> "<ruling>" [--ticket NNN] [--node n] [--by who] [--supersedes <slug>] [--horde h]
+      appends a new ruling to the mission's record; refuses a duplicate slug. --ticket names the
+      ticket the ruling settles (written on the ticket too). --supersedes names an earlier ruling
+      this one replaces (marked as superseded in place). --by says who ruled (default: director).
+      When --node is given it refuses and prints the "yg log add" command to run instead — a node's
+      decisions belong in the graph's own log.
   list [--grep <re>] [--node n] [--horde h]
       prints "date slug ticket node first-line" rows, newest first.
   show <slug> [--horde h]
@@ -36,13 +42,8 @@ commands:
 
 options: --json  --help`;
 
-function decisionsPath(horde) {
-  return hordePath(horde, 'decisions.md');
-}
-
-// The decisions this file records: { date, slug, ticket, node, body }. Any `## ` heading that
-// doesn't match the date-slug pattern (a stray preamble, a lessons banner) is skipped along with
-// its body, so free text can live in the file without confusing anything that reads it by slug.
+// The rulings this record holds: { date, slug, ticket, node, body }. Any `## ` heading that doesn't
+// match the date-slug pattern is skipped along with its body.
 export function parseEntries(text) {
   return parseDecisionEntries(text)
     .filter((e) => e.slug)
@@ -53,6 +54,12 @@ export function parseEntries(text) {
     }));
 }
 
+// The Horde side of the mission's rulings: one lock, held by whatever spends a client's answer. The
+// loop's own lock guards every single write to decisions.md; this one guards the longer protocol a
+// one-time answer is spent by — read it, merge the branch it lets through, mark it spent — so two
+// landings leaning on one answer cannot both pass on it. It is Horde's alone (hordes/<h>/decisions.lock),
+// held across a merge that runs the repository's own hooks, which the loop's lock is never held across.
+//
 // A duplicate-slug check that reads, then a write some time later, is a race between two
 // processes — two `ask answer` calls landing on the same item, say — that a check alone cannot
 // close: both can read "no such slug" before either has written. `withDecisionsLock` closes it,
@@ -67,7 +74,7 @@ export function parseEntries(text) {
 // holding this lock (killed outright, a container recycled) must not wedge every decision and
 // answer on this horde forever, so the lock file names the pid that took it, and a lock whose pid
 // is no longer running is taken over immediately rather than waited out.
-function decisionsLockPath(horde) { return decisionsPath(horde) + '.lock'; }
+function decisionsLockPath(horde) { return hordePath(horde, 'decisions.lock'); }
 
 const DECISIONS_LOCK_WAIT_MS = 10000;
 const DECISIONS_LOCK_POLL_MS = 20;
@@ -108,18 +115,12 @@ export function withDecisionsLock(horde, fn, { waitMs = DECISIONS_LOCK_WAIT_MS }
   }
 }
 
-function formatHeading(entry) {
-  let h = `## ${entry.date} · ${entry.slug}`;
-  if (entry.ticket) h += ` · ticket ${entry.ticket}`;
-  if (entry.node) h += ` · node ${entry.node}`;
-  return h;
-}
-
-// appendDecision(horde, {slug, ruling, ticket, node}) — throws on a missing field, a duplicate
-// slug, or (when node is given) on the graph-redirect case; the caller decides how to report that
-// (decide.mjs's own CLI turns it into a fail(), while a caller like ask.mjs never passes
-// node and so never sees it).
-export function appendDecision(horde, { slug, ruling, ticket, node } = {}) {
+// appendDecision(horde, {slug, ruling, ticket, node, by, supersedes}) — throws on a missing field, a
+// duplicate slug, or (when node is given) on the graph-redirect case; the caller decides how to report
+// it. The loop holds its own lock for the check and the write.
+export function appendDecision(horde, {
+  slug, ruling, ticket, node, by, supersedes,
+} = {}) {
   if (!slug) throw new Error('slug required');
   if (!ruling) throw new Error('ruling required');
 
@@ -133,18 +134,13 @@ export function appendDecision(horde, { slug, ruling, ticket, node } = {}) {
     throw err;
   }
 
-  return withDecisionsLock(horde, () => {
-    const path = decisionsPath(horde);
-    const existing = readText(path) || '';
-    const entries = parseEntries(existing);
-    if (entries.some((e) => e.slug === slug)) throw new Error(`duplicate slug: ${slug}`);
-
-    const entry = { date: today(), slug, ticket: ticket ? String(ticket) : null, node: node || null };
-    const block = `${formatHeading(entry)}\n${ruling}\n`;
-    const sep = existing.length > 0 && !existing.endsWith('\n\n') ? (existing.endsWith('\n') ? '\n' : '\n\n') : '';
-    appendText(path, sep + block);
-    return { ...entry, body: ruling };
+  const settles = ticket ? String(ticket).replace(/^t-/, '').padStart(3, '0') : null;
+  const done = decideLoop(horde, slug, ruling, {
+    by: by || 'director', ...(settles ? { settles } : {}), ...(supersedes ? { supersedes } : {}),
   });
+  return {
+    date: new Date().toISOString().slice(0, 10), slug, ticket: settles, node: null, body: ruling, by: done.by, supersedes: done.supersedes,
+  };
 }
 
 function cmdAdd(horde, positional, flags) {
@@ -152,7 +148,9 @@ function cmdAdd(horde, positional, flags) {
   if (!slug || !ruling) fail('add requires <slug> "<ruling>"');
   let entry;
   try {
-    entry = appendDecision(horde, { slug, ruling, ticket: flags.ticket, node: flags.node });
+    entry = appendDecision(horde, {
+      slug, ruling, ticket: flags.ticket, node: flags.node, by: flags.by, supersedes: flags.supersedes,
+    });
   } catch (e) {
     fail(e.message);
   }
@@ -160,7 +158,7 @@ function cmdAdd(horde, positional, flags) {
 }
 
 function cmdList(horde, positional, flags) {
-  let entries = parseEntries(readText(decisionsPath(horde))).slice().reverse();
+  let entries = parseEntries(readText(decisionsFile(horde))).slice().reverse();
   if (flags.node) entries = entries.filter((e) => e.node === flags.node);
   if (flags.grep) {
     const re = new RegExp(flags.grep, 'i');
@@ -177,10 +175,10 @@ function cmdList(horde, positional, flags) {
 function cmdShow(horde, positional, flags) {
   const slug = positional[0];
   if (!slug) fail('show requires <slug>');
-  const entries = parseEntries(readText(decisionsPath(horde)));
+  const entries = parseEntries(readText(decisionsFile(horde)));
   const e = entries.find((x) => x.slug === slug);
   if (!e) fail(`no such decision: ${slug}`);
-  emit(e, flags, () => `${formatHeading(e)}\n${e.body}`);
+  emit(e, flags, () => `## ${e.date} · ${e.slug}\n${e.body}`);
 }
 
 function main() {

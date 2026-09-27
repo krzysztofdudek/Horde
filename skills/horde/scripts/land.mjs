@@ -52,6 +52,9 @@ import { recordMerged, buildPlan } from './queue.mjs';
 import { noteFate } from './wave.mjs';
 import { detectEvidenceLayer, HOOK_FILES } from './horde.mjs';
 import { withDecisionsLock } from './decide.mjs';
+import {
+  decisionsFile, loopAsks, withLoopLock, writeLoopFile,
+} from './loop.mjs';
 import { loadAsks, addAsk } from './ask.mjs';
 
 const USAGE = `usage: land.mjs <ticket|branch>[,<ticket|branch>...] [--level trunk] [--no-gate] [--background] [--tree p] [--horde h]
@@ -234,13 +237,6 @@ function findQueueItem(horde, arg) {
   const id = String(parseInt(digits, 10)).padStart(3, '0');
   const byTicket = items.find((it) => String(it.ticket) === id);
   return byTicket ? { team: 'trunk', teamDir, item: byTicket } : null;
-}
-
-function findIssueDir(teamDir, ticketId) {
-  const issuesDir = join(teamDir, 'issues');
-  if (!existsSync(issuesDir)) return null;
-  return readdirSync(issuesDir, { withFileTypes: true })
-    .find((e) => e.isDirectory() && e.name.startsWith(`${ticketId}-`))?.name || null;
 }
 
 // The latest timestamp mentioned anywhere in a journal/log — full ISO first, a bare date
@@ -904,7 +900,7 @@ function checkRevertTest(horde, root, cfg, branch, parentBranch, files, issueTex
     }
     return {
       ok: false,
-      note: `no new or changed test files in diff (looked for ${testGlobs.join(', ')}) — a change that adds none must say so: declare "**No new tests:** <reason>" in issue.md`,
+      note: `no new or changed test files in diff (looked for ${testGlobs.join(', ')}) — a change that adds none must say so: declare "**No new tests:** <reason>" on the ticket`,
     };
   }
 
@@ -1412,24 +1408,33 @@ function checkJournal(text, branch, parentBranch) {
 // branch that sharpens a rule and changes the code that rule reaches, in one landing, is refused
 // every time — there is no ask kind that waives it and none is coming. The refusal's own message
 // says what to do instead: split the rule and the code into two landings.
-function decisionsPath(horde) { return hordePath(horde, 'decisions.md'); }
+function decisionsPath(horde) { return decisionsFile(horde); }
 
-function parseAsks(text) {
-  return parseDecisionEntries(text).map((entry) => ({
-    body: entry.block,
-    kind: decisionField(entry.block, 'Kind').toLowerCase(),
-    aspect: decisionField(entry.block, 'Aspect'),
-    scope: (decisionField(entry.block, 'Scope') || 'once').toLowerCase(),
-    answer: decisionField(entry.block, 'Answer'),
-    consumed: decisionField(entry.block, 'Consumed'),
-  }));
+// Each ruling, read as an answer. A ruling ask-NNN answers the loop's question a-NNN: what it answered
+// (its kind) and the one thing it lets through (the question's target) come from the ruling's own
+// fields when ask.mjs wrote them, else from the question itself — so a question answered with Jarl's own
+// command is read the same way, with the scope "once".
+function parseAsks(text, horde) {
+  const questions = new Map((horde ? loopAsks(horde) : []).map((a) => [a.id, a]));
+  return parseDecisionEntries(text).map((entry) => {
+    const n = /^ask-(?:a-)?(\d+)$/.exec(entry.slug || '');
+    const q = n ? questions.get(n[1].padStart(3, '0')) : null;
+    return {
+      body: entry.block,
+      kind: (decisionField(entry.block, 'Kind') || (q && q.kind) || '').toLowerCase(),
+      aspect: decisionField(entry.block, 'Aspect') || (q && q.target) || '',
+      scope: (decisionField(entry.block, 'Scope') || 'once').toLowerCase(),
+      answer: decisionField(entry.block, 'Answer'),
+      consumed: decisionField(entry.block, 'Consumed'),
+    };
+  });
 }
 
 // An answer that lets one refusal through: right kind, right aspect, actually answered, and not
 // already used up by an earlier landing.
 function findAnswer(horde, kind, aspect) {
   const text = readText(decisionsPath(horde));
-  return parseAsks(text).find((a) => a.kind === kind
+  return parseAsks(text, horde).find((a) => a.kind === kind
     && a.aspect === aspect
     && /^approved\b/i.test(a.answer)
     && !a.consumed) || null;
@@ -1459,23 +1464,26 @@ function answerHeading(answer) {
 // older than a mark another landing has written since.
 function freshAnswer(horde, answer) {
   const heading = answerHeading(answer);
-  return parseAsks(readText(decisionsPath(horde)) || '').find((a) => answerHeading(a) === heading) || null;
+  return parseAsks(readText(decisionsPath(horde)) || '', horde).find((a) => answerHeading(a) === heading) || null;
 }
 
 // Marks one answer spent. The caller holds the decisions lock. Null when it was marked, a note when
 // it could not be: already spent, or no longer in the file.
 function markConsumed(horde, answer, ticketId, sha) {
   const path = decisionsPath(horde);
-  const fresh = freshAnswer(horde, answer);
-  if (!fresh) return `the answer "${answerHeading(answer)}" is no longer in decisions.md, so it was not marked spent`;
-  if (fresh.consumed) return `the answer "${answerHeading(answer)}" was already consumed (${fresh.consumed}), so it was not marked a second time`;
-  const text = readText(path) || '';
-  const marked = fresh.body.replace(
-    /(\*\*Answer:\*\*[^\n]*\n)/,
-    `$1**Consumed:** ticket ${ticketId} at ${sha} on ${nowIso()}\n`,
-  );
-  writeText(path, text.replace(fresh.body, marked));
-  return null;
+  // The write is the loop's: under its own lock, on decisions.md as it stands then.
+  return withLoopLock(horde, () => {
+    const fresh = freshAnswer(horde, answer);
+    if (!fresh) return `the answer "${answerHeading(answer)}" is no longer in decisions.md, so it was not marked spent`;
+    if (fresh.consumed) return `the answer "${answerHeading(answer)}" was already consumed (${fresh.consumed}), so it was not marked a second time`;
+    const text = readText(path) || '';
+    const marked = fresh.body.replace(
+      /(\*\*Answer:\*\*[^\n]*\n)/,
+      `$1**Consumed:** ticket ${ticketId} at ${sha} on ${nowIso()}\n`,
+    );
+    writeLoopFile(path, text.replace(fresh.body, marked));
+    return null;
+  });
 }
 
 // mergeSpendingAnswers(horde, answers, ticketId, sha, merge) — `merge()` run so that a "once" answer
@@ -3941,11 +3949,11 @@ function resolveBatchCandidate(horde, root, cfg, arg, level) {
       return { ok: false, arg, note: `no such branch: ${branch}${detail ? ` — ${detail}` : ''}` };
     }
     const ticketId = String(item.ticket);
-    const issueDirName = findIssueDir(teamDir, ticketId);
-    if (!issueDirName) return { ok: false, arg, note: `no ticket found for ${ticketId} in team ${team}` };
-    const issueDirPath = join(teamDir, 'issues', issueDirName);
-    const issueText = readText(join(issueDirPath, 'issue.md'));
-    const logText = readText(join(issueDirPath, 'log.md'));
+    const ticketRec = findTicket(horde, ticketId);
+    if (!ticketRec) return { ok: false, arg, note: `no ticket found for ${ticketId} in team ${team}` };
+    const issueDirPath = ticketRec.dir;
+    const issueText = ticketRec.text;
+    const logText = readText(ticketRec.logPath);
     const nodes = ticketNodes(issueText);
     const declaredFiles = ticketFiles(issueText);
     const kind = ticketKind(issueText);
@@ -4194,8 +4202,11 @@ function landBatchGreen(root, cfg, horde, level, group, provenanceInfo, shared, 
 
     currentTip = merged.sha;
     const landed = { ticket: ctx.ticketId, sha: merged.sha, at: nowIso() };
-    recordMerged(horde, ctx.team, ctx.ticketId, merged.sha, { tree: root });
+    const recorded = recordMerged(horde, ctx.team, ctx.ticketId, merged.sha, {
+      tree: root, base: group.parentBranch, ran: `land.mjs ${ctx.ticketId} (a shared gate run)`, saw: `every item green; merged into ${group.parentBranch} as ${merged.sha}`,
+    });
     appendLanded(ctx.issueDirPath, landed, group.parentBranch);
+    if (recorded.recordNote) answerNotes.push(recorded.recordNote);
     checks.push({ name: 'merge', ok: true, note: `${merged.note} — ${short(merged.sha)}${answerNotes.length ? ` (${answerNotes.join('; ')})` : ''}` });
     landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: true, checks, landed }, provenanceInfo, flags, group, level, lockNotes, batchTiming(shared, group)) });
   }
@@ -4430,11 +4441,11 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
   }
 
   const ticketId = String(item.ticket);
-  const issueDirName = findIssueDir(teamDir, ticketId);
-  if (!issueDirName) fail(`no ticket found for ${ticketId} in team ${team}`);
-  const issueDirPath = join(teamDir, 'issues', issueDirName);
-  const issueText = readText(join(issueDirPath, 'issue.md'));
-  const logText = readText(join(issueDirPath, 'log.md'));
+  const ticketRec = findTicket(horde, ticketId);
+  if (!ticketRec) fail(`no ticket found for ${ticketId} in team ${team}`);
+  const issueDirPath = ticketRec.dir;
+  const issueText = ticketRec.text;
+  const logText = readText(ticketRec.logPath);
   const nodes = ticketNodes(issueText);
   const declaredFiles = ticketFiles(issueText);
   // Read before the parent is resolved, because for one kind of ticket it decides what the parent
@@ -4621,8 +4632,11 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
         }, head, flags, parent, level);
       }
       landed = { ticket: ticketId, sha: merged.sha, at: nowIso() };
-      recordMerged(horde, team, ticketId, merged.sha, { tree: root });
+      const recorded = recordMerged(horde, team, ticketId, merged.sha, {
+        tree: root, base: parentBranch, ran: `land.mjs ${ticketId}`, saw: `every item green; merged into ${parentBranch} as ${merged.sha}`,
+      });
       appendLanded(issueDirPath, landed, parentBranch);
+      if (recorded.recordNote) answerNotes.push(recorded.recordNote);
       // The gate item above measured `branchSha` — this merge's tree is that same tree, now under
       // a sha `done` and `close` can actually find on the branch they read. See checkGate's comment.
       if (results.gate.cache) recordGateCache(horde, level, { ...results.gate.cache, sha: merged.sha }, ticketId, branch, cfg);

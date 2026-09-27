@@ -28,6 +28,8 @@ import {
 import { writeLawDiff } from './law.mjs';
 import { RETRO_SCHEMA, collectRetroInput, missionState } from './retro.mjs';
 import { ygJson, reviewerGap } from './node.mjs';
+import { openLoop } from './loop.mjs';
+import { loadAsks } from './ask.mjs';
 
 const USAGE = `usage: horde.mjs <command> [options]
 
@@ -671,11 +673,17 @@ function cmdInit(positional, flags) {
   mkdirSync(dest, { recursive: true });
   writeFileSync(join(dest, 'charter.md'), charter);
 
-  writeText(join(dest, 'decisions.md'), '# Decisions\n\n');
+  // The mission's record: a Jarl loop of its own, opened with Horde's profile (loop.mjs). Its
+  // tickets, rulings, questions to the client and journal live there from the first ticket on.
+  // Its goal line names the charter, and its Check line the gate every ticket lands through, so Jarl's
+  // own views say the loop lands on a check, never on testimony alone.
+  openLoop(name, `${flags.title || name} — the mission's charter is .horde/hordes/${name}/charter.md\n\n`
+    + 'Check: `land.mjs <ticket>` — Horde\'s landing gate: the repository\'s own gate command, the graph\'s `yg check` and seven more items, all green or nothing merges');
   if (startSha) writeText(join(dest, 'start.json'), `${JSON.stringify({ sha: startSha, base: flags.base, at: nowIso() }, null, 2)}\n`);
   writeText(join(dest, 'plan.md'), '# Plan\n\n');
   // No dissents.json: the dissent channel folded into ask.mjs, and this wrote an empty file that
   // nothing in the tool set has read since. A pre-6.0.0 mission's own copy is left where it is.
+  // The counter numbers what the architect rules on (g-NNN); the loop numbers tickets and questions.
   writeJSON(join(dest, 'counter.json'), { next: 1 });
 
   writeJSON(join(dest, 'teams', 'trunk', 'queue.json'), { items: [] });
@@ -939,9 +947,8 @@ function cmdCharter(positional, flags) {
         + `"<answer mentioning ${droppedIds.join(', ')}>", then retry with --ask <id>`,
       );
     }
-    const askId = String(flags.ask);
-    const doc = readJSON(hordePath(horde, 'asks.json'), { items: [] });
-    const item = (Array.isArray(doc.items) ? doc.items : []).find((it) => it.id === askId);
+    const askId = String(flags.ask).startsWith('a-') ? String(flags.ask) : `a-${String(flags.ask).padStart(3, '0')}`;
+    const item = loadAsks(horde).items.find((it) => it.id === askId);
     if (!item) fail(`no such ask: ${askId}`);
     if (item.kind !== 'charter') fail(`ask ${askId} is kind "${item.kind}", not "charter" — dropping an evidence row is a charter change and needs an ask of that kind`);
     if (item.state !== 'answered') fail(`ask ${askId} is not answered yet (state: ${item.state}) — answer it first: ask.mjs answer ${askId} "<answer>"`);
@@ -1155,6 +1162,17 @@ function lastLawDiff(dir) {
 // is the only honest answer to "where did this happen".
 function ticketNodes(dir) {
   const byTicket = new Map();
+  // A mission closed on 6.1.0 or later kept its tickets in its loop: .jarl/issues/NNN-<slug>.md.
+  const loopIssues = join(dir, '.jarl', 'issues');
+  if (existsSync(loopIssues)) {
+    for (const f of readdirSync(loopIssues)) {
+      const m = /^(\d+)-.*\.md$/.exec(f);
+      if (!m) continue;
+      const id = ticketKey(m[1]);
+      if (id) byTicket.set(id, nodesOf(readText(join(loopIssues, f)) || ''));
+    }
+    return byTicket;
+  }
   const visit = (teamDir) => {
     const issues = join(teamDir, 'issues');
     if (existsSync(issues)) {
@@ -1207,7 +1225,11 @@ export function readArchivedMission(dirName) {
   const charterText = readText(join(dir, 'charter.md'));
   const rows = parseEvidenceRows(charterText || '');
   const retro = readJSON(join(dir, 'retro.json'), null);
-  const asks = readJSON(join(dir, 'asks.json'), null);
+  // A mission closed on 6.1.0 or later kept its questions in its loop; one closed before kept them in
+  // asks.json, and both are read — an archive is never rewritten.
+  const asks = existsSync(join(dir, '.jarl', 'goal.md'))
+    ? loadAsks(`${ARCHIVE}/${dirName}`)
+    : readJSON(join(dir, 'asks.json'), null);
   const heading = /^#\s+(.+)$/m.exec(charterText || '');
 
   return {

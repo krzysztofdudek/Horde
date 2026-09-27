@@ -27,6 +27,7 @@ import {
   allocateId, idNumber, migrationNote, withGraphLock,
   runMain, splitCommandLine, programFor, toPosix,
 } from './_lib.mjs';
+import { loopTickets } from './loop.mjs';
 
 const USAGE = `usage: node.mjs <command> [options]
 
@@ -2319,8 +2320,8 @@ function cmdBind(horde, root, cfg, positional, flags, info) {
     : `"${node}" bound to "${horde}"`));
 }
 
-// Nodes "this mission touches": named by an owner in the roster, or by a ticket anywhere under
-// teams/**/issues/*/issue.md (walked recursively for sub-teams).
+// Nodes "this mission touches": named by an owner in the roster, or by a ticket of the mission's
+// loop (loop.mjs).
 // Exported for status.mjs's leases block: the nodes this horde touches are exactly the set a
 // foreign lease on one of them would matter to. root/cfg are accepted but unused — kept so the
 // signature matches every other node-reading export's own (horde, root, cfg) shape.
@@ -2330,27 +2331,8 @@ export function missionNodes(horde, root, cfg) {
   for (const e of asArray(roster.entries)) {
     if (e.role === 'owner' && e.node) nodes.add(e.node);
   }
-  const teamsRoot = hordePath(horde, 'teams');
-  const walk = (teamDir) => {
-    const issuesDir = join(teamDir, 'issues');
-    if (existsSync(issuesDir)) {
-      for (const d of readdirSync(issuesDir, { withFileTypes: true })) {
-        if (!d.isDirectory()) continue;
-        const text = readText(join(issuesDir, d.name, 'issue.md'));
-        for (const n of ticketNodes(text)) nodes.add(n);
-      }
-    }
-    const subTeamsDir = join(teamDir, 'teams');
-    if (existsSync(subTeamsDir)) {
-      for (const d of readdirSync(subTeamsDir, { withFileTypes: true })) {
-        if (d.isDirectory()) walk(join(subTeamsDir, d.name));
-      }
-    }
-  };
-  if (existsSync(teamsRoot)) {
-    for (const d of readdirSync(teamsRoot, { withFileTypes: true })) {
-      if (d.isDirectory()) walk(join(teamsRoot, d.name));
-    }
+  for (const issue of loopTickets(horde)) {
+    for (const n of ticketNodes(readText(issue.file))) nodes.add(n);
   }
   return [...nodes].sort();
 }

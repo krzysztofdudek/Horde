@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawnSync, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
+import { loadAsks } from './ask.mjs';
+
 const TEMPLATES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'templates');
 
 // The stderr text of the most recent failed git() call — see gitError() below.
@@ -898,9 +900,10 @@ export function withGraphLock(horde, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
 // The lock never makes the ticket's directory. A ticket moved to another team (`tk.mjs move`) is renamed
 // away under this lock, and a writer that was waiting on the old path must not bring back an empty
 // directory under the old name there: it is refused, and finds the ticket again.
+export const TICKET_LOCK = 'ticket.lock';
 export function withTicketLock(ticketDir, fn, { waitMs = QUEUE_LOCK_WAIT_MS } = {}) {
   try {
-    return withFileLock(join(ticketDir, 'issue.md.lock'), { kind: 'ticket', ticket: ticketDir }, fn, { waitMs, mkdir: false });
+    return withFileLock(join(ticketDir, TICKET_LOCK), { kind: 'ticket', ticket: ticketDir }, fn, { waitMs, mkdir: false });
   } catch (e) {
     if (e && e.code === 'ENOENT' && !existsSync(ticketDir)) {
       throw new Error(`the ticket at ${ticketDir} is gone — it was moved or removed by another process while this one waited to write it; find the ticket again and retry`);
@@ -1320,11 +1323,14 @@ export function parseDecisionEntries(text) {
     const body = [...raw];
     while (body.length && body[0].trim() === '') body.shift();
     while (body.length && body[body.length - 1].trim() === '') body.pop();
+    // A ruling in the loop's decisions.md names the ticket it is about as Jarl writes it — a
+    // `**Settles:** NNN` line in its body — where a 6.0.x heading carried `· ticket NNN`.
+    const settles = /^\*\*Settles:\*\*\s*(\d+)/m.exec(body.join('\n'));
     entries.push({
       heading,
       date: m ? m[1] : null,
       slug: m ? m[2] : null,
-      ticket: m && m[3] ? m[3] : null,
+      ticket: m && m[3] ? m[3] : (settles ? settles[1] : null),
       node: m && m[4] ? m[4] : null,
       body: body.join('\n'),
       // The entry's own text, verbatim, so a caller can find and rewrite it inside the document.
@@ -1604,8 +1610,8 @@ function claimLeaseLocked(horde, subject, { take = false, ask = null, kind = 'no
     if (!ask) {
       throw new Error('--take requires --ask <id> — an answered ask on this horde justifying the take-over');
     }
-    const askDoc = readJSON(hordePath(horde, 'asks.json'), { items: [] });
-    const item = (Array.isArray(askDoc.items) ? askDoc.items : []).find((it) => it.id === String(ask));
+    const askRef = String(ask).startsWith('a-') ? String(ask) : `a-${String(ask).padStart(3, '0')}`;
+    const item = loadAsks(horde).items.find((it) => it.id === askRef);
     if (!item) throw new Error(`no such ask: ${ask} (on horde "${horde}")`);
     if (item.state !== 'answered') {
       throw new Error(`ask ${ask} is not answered yet — \`ask.mjs answer ${ask} "<answer>" --horde ${horde}\` first`);
@@ -1731,6 +1737,27 @@ export function latestActivity(dest) {
   return latest ? new Date(latest).toISOString() : null;
 }
 
+// A mission's record is a Jarl loop from 6.1.0 on (loop.mjs): .horde/hordes/<h>/.jarl/. A horde
+// directory without one was started by Horde 6.0.x, whose record — issue.md files per team, a
+// decisions.md and an asks.json of its own — this release does not read or write. It is refused by
+// name, with what to do, rather than half-read: a mission is finished on the release it started on.
+// `horde.mjs archive` still sets it aside, and `history` and `blame` still read it once archived.
+export function hasLoopRecord(horde) {
+  return existsSync(hordePath(horde, '.jarl', 'goal.md'));
+}
+
+export function oldMissionMessage(horde) {
+  return `the mission "${horde}" was started by Horde 6.0.x, and this Horde keeps a mission's record in a Jarl loop `
+    + `(.horde/hordes/${horde}/.jarl/) — it cannot read that mission's tickets, rulings and questions. `
+    + 'Finish it with the Horde 6.0.x release it was started on (a mission does not change release mid-flight), '
+    + `then start the next mission with this one. \`horde.mjs archive ${horde}\` sets it aside; history and blame still read it there.`;
+}
+
+export function requireLoopHorde(horde) {
+  if (!hasLoopRecord(horde)) fail(oldMissionMessage(horde));
+  return horde;
+}
+
 // listHordes() — names under hordes/, excluding the archive.
 export function listHordes() {
   const dir = join(hordeRoot(), 'hordes');
@@ -1749,9 +1776,9 @@ export function resolveHorde(args) {
   const hordes = listHordes();
   if (flags.horde) {
     if (!hordes.includes(flags.horde)) fail(`no such horde: ${flags.horde}`);
-    return flags.horde;
+    return requireLoopHorde(flags.horde);
   }
-  if (hordes.length === 1) return hordes[0];
+  if (hordes.length === 1) return requireLoopHorde(hordes[0]);
   if (hordes.length === 0) fail('no horde exists — run horde.mjs init <name> --base <branch>');
   fail(`multiple hordes exist (${hordes.join(', ')}) — pass --horde <name>`);
 }

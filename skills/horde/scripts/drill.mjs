@@ -31,6 +31,7 @@ import {
   fail, parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, parseVerdictBlocks,
   runMain, noEvidenceLayerNote, posixShell,
 } from './_lib.mjs';
+import { loopTickets } from './loop.mjs';
 import { findTicket, ticketFiles } from './tk.mjs';
 import {
   nodeExists, nodeBoundary, nodeGraphPathPrefix, ticketNodes, pathInBoundary,
@@ -206,22 +207,7 @@ function runTestsAt(root, cfg, ref, contentRef, paths) {
 // ---- the ticket under drill -----------------------------------------------------------
 
 function onlyTicketId(horde) {
-  const ids = [];
-  const teamsRoot = hordePath(horde, 'teams');
-  const walk = (dir) => {
-    if (!existsSync(dir)) return;
-    for (const d of readdirSync(dir, { withFileTypes: true })) {
-      if (!d.isDirectory()) continue;
-      const issues = join(dir, d.name, 'issues');
-      if (existsSync(issues)) {
-        for (const i of readdirSync(issues, { withFileTypes: true })) {
-          if (i.isDirectory()) ids.push(i.name.split('-')[0]);
-        }
-      }
-      walk(join(dir, d.name, 'teams'));
-    }
-  };
-  walk(teamsRoot);
+  const ids = loopTickets(horde).map((i) => i.id);
   const unique = [...new Set(ids)].sort();
   if (unique.length === 1) return unique[0];
   if (unique.length === 0) fail('this horde has no tickets — a drill reads one ticket\'s state');
