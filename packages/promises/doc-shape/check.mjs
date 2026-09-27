@@ -201,7 +201,7 @@ function sameHeading(a, b) {
 
 /** Every `## ` heading in the body, with the line it sits on. */
 function sectionHeadings(content, bodyLine) {
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   const out = [];
   let fenced = false;
   for (let i = bodyLine - 1; i < lines.length; i++) {
@@ -228,7 +228,7 @@ function sectionHeadings(content, bodyLine) {
  * next file.
  */
 function readFrontmatter(content) {
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   if ((lines[0] ?? '').trim() !== '---') return { kind: 'absent' };
 
   let end = -1;

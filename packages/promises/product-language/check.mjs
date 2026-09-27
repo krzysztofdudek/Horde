@@ -174,7 +174,7 @@ function findAll(text, allowed) {
  * other rules require it to say. Returns null when there is no frontmatter at all.
  */
 function readableParts(content) {
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   if ((lines[0] ?? '').trim() !== '---') return null;
 
   let end = -1;

@@ -230,7 +230,7 @@ function adapterOf(front) {
 }
 
 function readFrontmatter(content) {
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   if ((lines[0] ?? '').trim() !== '---') return null;
   let end = -1;
   for (let i = 1; i < lines.length; i++) {

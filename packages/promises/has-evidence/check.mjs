@@ -301,7 +301,7 @@ function normalize(value) {
  * rule is the one that says so, and refusing it twice helps nobody.
  */
 function readFrontmatter(content) {
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   if ((lines[0] ?? '').trim() !== '---') return null;
 
   let end = -1;

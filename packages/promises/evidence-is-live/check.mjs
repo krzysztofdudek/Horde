@@ -118,7 +118,7 @@ export function check(ctx) {
     if (parked.has(promise.front.fields.status)) continue;
     const paired = pairedWith(promise, files, others, suffix);
     if (paired === null) continue; // nothing to read here; has-evidence is the rule that says so
-    const lines = paired.file.content.split('\n');
+    const lines = paired.file.content.split(/\r?\n/);
     const id = promise.front.fields.id ?? stemOf(promise.file.path);
 
     // Exclusivity is a fact about the whole file, whichever case the promise is
@@ -286,7 +286,7 @@ function normalize(value) {
  * rule is the one that says so.
  */
 function readFrontmatter(content) {
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   if ((lines[0] ?? '').trim() !== '---') return null;
 
   let end = -1;
