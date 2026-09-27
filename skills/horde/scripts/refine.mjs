@@ -26,6 +26,7 @@ import {
   existsSync, statSync, readdirSync, renameSync, openSync, readSync, closeSync,
 } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import {
   hordePath, readJSON, readText, writeText, readConfig, fail, parseArgs, emit, isMain,
@@ -718,7 +719,7 @@ function architectPlanQuestions() {
 }
 
 function here0() {
-  return new URL('.', import.meta.url).pathname;
+  return fileURLToPath(new URL('.', import.meta.url));
 }
 
 function reviewBrief(horde, team, charter, planFile, planText) {
@@ -1009,7 +1010,7 @@ function stepReview(horde, flags) {
 // One ruling, applied through the tools that own the two states rather than by writing either file
 // here: the ticket's own status, and the queue item that decides whether anything may pick it up.
 function applyRuling(horde, team, { ticket, verdict, why }) {
-  const scripts = new URL('.', import.meta.url).pathname;
+  const scripts = fileURLToPath(new URL('.', import.meta.url));
   const node = process.execPath;
   const runTool = (tool, args) => {
     try {

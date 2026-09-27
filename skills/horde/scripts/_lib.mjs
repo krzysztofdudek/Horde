@@ -210,11 +210,20 @@ function thisRepoWorktrees(cwd) {
 // Whether two paths name the same place as git and Node print them. On Windows git writes
 // `C:/Users/…` where Node writes `C:\Users\…`, and the file system ignores case, so both sides are
 // resolved and folded before they are compared; elsewhere the bytes decide.
+// A short 8.3 name (`C:\Users\RUNNER~1`, which is what the temp directory often is) is expanded to
+// the long one git prints by asking the file system for the path it really is.
 export function samePath(a, b) {
   if (!a || !b) return false;
   if (process.platform !== 'win32') return a === b;
-  const fold = (p) => resolve(String(p)).replace(/[\\/]+$/, '').toLowerCase();
+  const fold = (p) => realPath(p).replace(/[\\/]+$/, '').toLowerCase();
   return fold(a) === fold(b);
+}
+
+// realPath(path) — the path as the file system itself names it (symlinks followed, and on Windows
+// the long name for a short one and git's `C:/…` spelling made `C:\…`), or the path resolved as it
+// stands when there is nothing there to ask.
+export function realPath(path) {
+  try { return realpathSync.native(resolve(String(path))); } catch { return resolve(String(path)); }
 }
 
 function realpathMaybe(path) {
