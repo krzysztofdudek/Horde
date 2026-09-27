@@ -119,7 +119,7 @@ jobs:
     needs: yggdrasil-dist
     runs-on: windows-latest
     name: tests (windows, node 24)
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
