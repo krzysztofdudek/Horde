@@ -20,6 +20,7 @@ import {
   markdownSection, markdownTableCells, parseEvidenceRows, parseVerdictBlocks, diffSize, sizeRanks,
   noEvidenceLayerNote, EVIDENCE_CLASSES, git, runGateAt, gateTimeoutOf, GATE_RAN, GATE_ASSERTED,
   runMain, notifyClient,
+  withCharterLock,
 } from './_lib.mjs';
 // report.mjs reads this file (evidenceCoverage) and a close rewrites the report — the same kind of
 // cycle as queue.mjs's below, safe for the same reason: functions only, called after both load.
@@ -674,6 +675,10 @@ export function recordPrototypeAcceptance(charterText, artifact) {
 // carries a verifier's "reproduced" verdict; that verifier's name is then written into the
 // charter so the row stays green without the director having to transcribe it by hand.
 function computeEvidence(horde, team, mergedTickets) {
+  return withCharterLock(horde, () => computeEvidenceLocked(horde, team, mergedTickets));
+}
+
+function computeEvidenceLocked(horde, team, mergedTickets) {
   const charterPath = hordePath(horde, 'charter.md');
   let charterText = readText(charterPath) || '';
   const rows = parseEvidenceRows(charterText);
@@ -862,19 +867,21 @@ export function evidenceCoverage(horde) {
 // the coverage read back afterwards.
 export function stampMissionEvidence(horde) {
   const charterPath = hordePath(horde, 'charter.md');
-  let charterText = readText(charterPath) || '';
-  const rows = parseEvidenceRows(charterText);
   const tickets = allHordeTickets(horde);
-  let changed = false;
-  for (const row of rows) {
-    if (row.reproducedBy) continue;
-    const { state, verifier, ticket } = deriveRowState(row, tickets);
-    if (state === 'merged' && verifier) {
-      charterText = stampRow(horde, charterText, row.id, verifier, { kind: 'ticket', ticket });
-      changed = true;
+  withCharterLock(horde, () => {
+    let charterText = readText(charterPath) || '';
+    const rows = parseEvidenceRows(charterText);
+    let changed = false;
+    for (const row of rows) {
+      if (row.reproducedBy) continue;
+      const { state, verifier, ticket } = deriveRowState(row, tickets);
+      if (state === 'merged' && verifier) {
+        charterText = stampRow(horde, charterText, row.id, verifier, { kind: 'ticket', ticket });
+        changed = true;
+      }
     }
-  }
-  if (changed) writeText(charterPath, charterText);
+    if (changed) writeText(charterPath, charterText);
+  });
   return evidenceCoverage(horde);
 }
 
@@ -959,7 +966,16 @@ function cmdEvidence(horde, positional, flags) {
       detail = { kind: 'run', run: cmd, sha: trunkSha };
     }
   }
-  writeText(charterPath, stampRow(horde, charterText, id, by, detail));
+  // The proof above was taken from the charter as it was read; the stamp goes on the charter as it
+  // stands now, read again under the charter lock, so a change written meanwhile is kept. A gate run
+  // for the row can take minutes, and it runs before the lock is taken, never inside it.
+  withCharterLock(horde, () => {
+    const current = readText(charterPath) || '';
+    if (!parseEvidenceRows(current).some((r) => r.id === id)) {
+      fail(`evidence id ${id} left the charter's catalogue while its proof was being taken — nothing was stamped`);
+    }
+    writeText(charterPath, stampRow(horde, current, id, by, detail));
+  });
   emit({ id, by, ...detail }, flags, () => `evidence ${id} reproduced by: ${by}`);
 }
 
@@ -1280,11 +1296,13 @@ function cmdClose(horde, positional, flags) {
   }
   if (gateEvidence.length) {
     const charterPath = hordePath(horde, 'charter.md');
-    let charterText = readText(charterPath) || '';
-    for (const id of gateEvidence) {
-      charterText = stampRow(horde, charterText, id, `wave ${n} gate passed at ${gateSha.slice(0, 7)}`, { kind: 'gate', sha: gateSha });
-    }
-    writeText(charterPath, charterText);
+    withCharterLock(horde, () => {
+      let charterText = readText(charterPath) || '';
+      for (const id of gateEvidence) {
+        charterText = stampRow(horde, charterText, id, `wave ${n} gate passed at ${gateSha.slice(0, 7)}`, { kind: 'gate', sha: gateSha });
+      }
+      writeText(charterPath, charterText);
+    });
   }
 
   const queue = readJSON(teamPath(horde, team, 'queue.json'), { items: [] });

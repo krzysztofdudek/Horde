@@ -1,6 +1,6 @@
 // Test-only: a writer that plays by the rules, slowly.
 //
-//   usage: rewriter.mjs <ticket|leases|decisions> <file> <ready-marker> <hold-ms> <text-to-add> [<ticket-dir>|<horde>]
+//   usage: rewriter.mjs <ticket|leases|decisions|charter> <file> <ready-marker> <hold-ms> <text-to-add> [<ticket-dir>|<horde>]
 //
 // It takes the real lock for <file> — the shipped function, imported from the shipped script —
 // reads the file, writes <ready-marker> so the test knows the lock is held and the read is done,
@@ -53,6 +53,9 @@ if (kind === 'ticket') {
 } else if (kind === 'decisions') {
   const { withDecisionsLock } = await import('../../decide.mjs');
   withDecisionsLock(extra, rewrite);
+} else if (kind === 'charter') {
+  const { withCharterLock } = await import('../../_lib.mjs');
+  withCharterLock(extra, rewrite);
 } else {
   throw new Error(`no such kind: ${kind}`);
 }
