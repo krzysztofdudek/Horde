@@ -3418,6 +3418,34 @@ function resultFor(r, id) {
   return (r.json.results || []).find((x) => x.ticket === id);
 }
 
+// A "once" answer lets one landing through. Two members of one batch that both lean on it pass
+// their guards on the same unspent answer; only the first merge may spend it, and the second is
+// refused its merge because the answer is spent by then.
+test('land.mjs batch: two tickets leaning on one "once" answer — only one merges', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const ids = ['111', '112'];
+  const suppressed = (id) => ({
+    extraFiles: { [`feature-${id}.mjs`]: '// yg-suppress-disable(no-marker) the fixture says so\nexport function add(a, b) { return a + b; }\n' },
+  });
+  setupBatchLandable(dir, ids, { perTicket: { 111: suppressed('111'), 112: suppressed('112') } });
+  const opened = run('ask.mjs', ['add', 'these branches suppress a rule the mission is judged by.', '--kind', 'lower', '--aspect', 'no-marker'], dir);
+  assert.equal(opened.code, 0, opened.stderr);
+  const answered = run('ask.mjs', ['answer', opened.json.id, 'approved — one of them may.', '--scope', 'once'], dir);
+  assert.equal(answered.code, 0, answered.stderr);
+
+  const r = run('land.mjs', [ids.join(',')], dir);
+  const landed = (r.json && r.json.results ? r.json.results : []).filter((x) => x.landed);
+  assert.equal(landed.length, 1, `exactly one member merged:\n${r.stdout}${r.stderr}`);
+  const refused = r.json.results.find((x) => !x.landed);
+  const merge = refused.full.checks.find((c) => c.name === 'merge');
+  assert.ok(merge && !merge.ok, 'the other one was refused at its merge');
+  assert.match(merge.note, /already spent/);
+
+  const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'decisions.md'), 'utf8');
+  assert.equal((decisions.match(/\*\*Consumed:\*\*/g) || []).length, 1, 'and the answer was spent once');
+});
+
 test('land.mjs batch: non-overlapping tickets ready to land share one gate run, and each still lands on its own', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

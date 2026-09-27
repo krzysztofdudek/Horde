@@ -1435,19 +1435,97 @@ function findAnswer(horde, kind, aspect) {
 //
 // decisions.md is written by decide.mjs and ask.mjs too, under the decisions lock, so the mark is
 // made under that same lock and on the file as it stands then: a copy read before it would put
-// back a decisions.md missing whatever was recorded in between. The decisions lock is the innermost
-// one; nothing else is taken while it is held.
+// back a decisions.md missing whatever was recorded in between. Returns {consumed: true}, or
+// {consumed: false, note} when there was nothing to mark: a mission answer is never spent, and one
+// another landing spent first is said so rather than passed over in silence.
 export function consumeAnswer(horde, answer, ticketId, sha) {
-  if (answer.scope === 'mission') return;
+  if (answer.scope === 'mission') return { consumed: false, note: null };
+  const note = withDecisionsLock(horde, () => markConsumed(horde, answer, ticketId, sha));
+  return note ? { consumed: false, note } : { consumed: true, note: null };
+}
+
+// The answer's own heading line: how the same entry is found again in a later read of the file.
+function answerHeading(answer) {
+  return String(answer.body).split('\n')[0].replace(/^##\s*/, '').trim();
+}
+
+// The answer as decisions.md holds it now, or null when it is gone. The copy the guards read may be
+// older than a mark another landing has written since.
+function freshAnswer(horde, answer) {
+  const heading = answerHeading(answer);
+  return parseAsks(readText(decisionsPath(horde)) || '').find((a) => answerHeading(a) === heading) || null;
+}
+
+// Marks one answer spent. The caller holds the decisions lock. Null when it was marked, a note when
+// it could not be: already spent, or no longer in the file.
+function markConsumed(horde, answer, ticketId, sha) {
   const path = decisionsPath(horde);
-  withDecisionsLock(horde, () => {
-    const text = readText(path) || '';
-    const marked = answer.body.replace(
-      /(\*\*Answer:\*\*[^\n]*\n)/,
-      `$1**Consumed:** ticket ${ticketId} at ${sha} on ${nowIso()}\n`,
-    );
-    writeText(path, text.replace(answer.body, marked));
-  });
+  const fresh = freshAnswer(horde, answer);
+  if (!fresh) return `the answer "${answerHeading(answer)}" is no longer in decisions.md, so it was not marked spent`;
+  if (fresh.consumed) return `the answer "${answerHeading(answer)}" was already consumed (${fresh.consumed}), so it was not marked a second time`;
+  const text = readText(path) || '';
+  const marked = fresh.body.replace(
+    /(\*\*Answer:\*\*[^\n]*\n)/,
+    `$1**Consumed:** ticket ${ticketId} at ${sha} on ${nowIso()}\n`,
+  );
+  writeText(path, text.replace(fresh.body, marked));
+  return null;
+}
+
+// mergeSpendingAnswers(horde, answers, ticketId, sha, merge) — `merge()` run so that a "once" answer
+// lets exactly one merge through. The guards read an answer long before the merge, and nothing holds
+// a lock from the guards through the gate to the merge, so two landings (or two members of one batch)
+// can both pass on the same unspent answer. So when a "once" answer is in play, the decisions lock is
+// held across three steps: the answer is read again and the merge refused if it is spent by now, the
+// merge is made, and the answer is marked spent. A landing that uses no "once" answer takes no lock.
+//
+// Returns {merged, notes}: `merged` is merge()'s own {ok, sha, note}, or a refusal in the same shape;
+// `notes` says what could not be recorded after a merge that did happen. Marking the answer spent never
+// undoes or hides the merge: a failure there is a note, and the landing is recorded as it is.
+//
+// Lock order: this is the one place the decisions lock is not innermost. The merge under it can make a
+// scratch worktree, which takes that tree's lock (decisions → tree). Nothing that holds a tree lock
+// ever takes the decisions lock, so the pair has one order and no cycle.
+export function mergeSpendingAnswers(horde, answers, ticketId, sha, merge) {
+  const once = answers.filter((a) => a.scope !== 'mission');
+  if (once.length === 0) return { merged: merge(), notes: [] };
+  let locked = false;
+  try {
+    return withDecisionsLock(horde, () => {
+      locked = true;
+      const spent = once.filter((a) => {
+        const fresh = freshAnswer(horde, a);
+        return !fresh || fresh.consumed;
+      });
+      if (spent.length) {
+        return {
+          merged: {
+            ok: false,
+            note: `the "once" answer${spent.length === 1 ? '' : 's'} this branch leaned on (${spent.map(answerHeading).join(', ')}) ${spent.length === 1 ? 'was' : 'were'} already spent by another landing while this one ran — nothing was merged. One answer lets one landing through: ask again (ask.mjs add --kind lower) if this branch should land too`,
+          },
+          notes: [],
+        };
+      }
+      const merged = merge();
+      const notes = [];
+      if (merged.ok) {
+        for (const a of once) {
+          try {
+            const note = markConsumed(horde, a, ticketId, sha);
+            if (note) notes.push(note);
+          } catch (e) {
+            notes.push(`the answer "${answerHeading(a)}" could not be marked spent: ${e.message}`);
+          }
+        }
+      }
+      return { merged, notes };
+    });
+  } catch (e) {
+    // A throw from inside the lock (the merge itself) is the merge's own, and goes on as it always
+    // did. Only a lock that could not be taken is answered here: nothing was merged.
+    if (locked) throw e;
+    return { merged: { ok: false, note: `decisions.md could not be locked to check the "once" answers this branch leaned on, so nothing was merged: ${e.message}. Land again` }, notes: [] };
+  }
 }
 
 // ---- reading one tree's graph ---------------------------------------------------------
@@ -4008,9 +4086,9 @@ function landBatchGreen(root, cfg, horde, level, group, provenanceInfo, shared, 
     }
 
     const resolved = !!(ctx.combined && ctx.combined.resolved.length);
-    const merged = mergeIntoParent(root, cfg, ctx.branch, group.parentBranch, currentTip, ctx.ticketId, cleaner, horde, {
+    const { merged, notes: answerNotes } = mergeSpendingAnswers(horde, ctx.screen.answersUsed, ctx.ticketId, ctx.branchSha, () => mergeIntoParent(root, cfg, ctx.branch, group.parentBranch, currentTip, ctx.ticketId, cleaner, horde, {
       resolve: resolved, expectTree: resolved ? ctx.combined.tree : null,
-    });
+    }));
     if (!merged.ok) {
       checks.push({ name: 'merge', ok: false, note: merged.note });
       recordChanges(horde, ctx.ticketId, checks);
@@ -4022,8 +4100,7 @@ function landBatchGreen(root, cfg, horde, level, group, provenanceInfo, shared, 
     const landed = { ticket: ctx.ticketId, sha: merged.sha, at: nowIso() };
     recordMerged(horde, ctx.team, ctx.ticketId, merged.sha, { tree: root });
     appendLanded(ctx.issueDirPath, landed, group.parentBranch);
-    ctx.screen.answersUsed.forEach((answer) => consumeAnswer(horde, answer, ctx.ticketId, ctx.branchSha));
-    checks.push({ name: 'merge', ok: true, note: `${merged.note} — ${short(merged.sha)}` });
+    checks.push({ name: 'merge', ok: true, note: `${merged.note} — ${short(merged.sha)}${answerNotes.length ? ` (${answerNotes.join('; ')})` : ''}` });
     landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: true, checks, landed }, provenanceInfo, flags, group, level, lockNotes, batchTiming(shared, group)) });
   }
   if (currentTip !== group.parentTip && shared.gate.cache) {
@@ -4379,7 +4456,8 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
         fail(`${guards.length} refusal(s) — this branch may not land as it stands:\n${guards.map((g) => `- ${g.aspect} (${g.case}): ${g.note}`).join('\n')}`);
       }
       // Spent only by the merge below, never here: a gate that goes red after the guards passed
-      // merges nothing, and the next attempt needs the same answer. The batch path does the same.
+      // merges nothing, and the next attempt needs the same answer. The batch path does the same, and
+      // both re-check the answer at the merge (mergeSpendingAnswers).
       answersUsed.push(...law.used, ...protection.used);
     }
 
@@ -4438,7 +4516,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       if (nowSha !== branchSha) {
         fail(`${branch} moved while this landing ran — every item above was measured at ${short(branchSha)} and the branch now stands at ${short(nowSha)}. Nothing was merged; land again against the branch as it stands now`);
       }
-      const merged = mergeIntoParent(root, cfg, branch, parentBranch, parentTip, ticketId, cleaner, horde);
+      const { merged, notes: answerNotes } = mergeSpendingAnswers(horde, answersUsed, ticketId, branchSha, () => mergeIntoParent(root, cfg, branch, parentBranch, parentTip, ticketId, cleaner, horde));
       if (!merged.ok) {
         checks.push({ name: 'merge', ok: false, note: merged.note });
         recordChanges(horde, ticketId, checks);
@@ -4449,11 +4527,10 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       landed = { ticket: ticketId, sha: merged.sha, at: nowIso() };
       recordMerged(horde, team, ticketId, merged.sha, { tree: root });
       appendLanded(issueDirPath, landed, parentBranch);
-      answersUsed.forEach((answer) => consumeAnswer(horde, answer, ticketId, branchSha));
       // The gate item above measured `branchSha` — this merge's tree is that same tree, now under
       // a sha `done` and `close` can actually find on the branch they read. See checkGate's comment.
       if (results.gate.cache) recordGateCache(horde, level, { ...results.gate.cache, sha: merged.sha }, ticketId, branch, cfg);
-      checks.push({ name: 'merge', ok: true, note: `${merged.note} — ${short(merged.sha)}` });
+      checks.push({ name: 'merge', ok: true, note: `${merged.note} — ${short(merged.sha)}${answerNotes.length ? ` (${answerNotes.join('; ')})` : ''}` });
       // A revert that lands is the reverted ticket's fate, recorded by the merge that carries it.
       if (revert) {
         const fate = recordFate(horde, revert.team, revert.id, 'reverted', merged.sha);

@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import {
-  existsSync, readFileSync, writeFileSync, rmSync,
+  existsSync, readFileSync, writeFileSync, rmSync, chmodSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -184,4 +184,65 @@ test('a spent "once" answer is marked under the decisions lock, so nothing recor
   const text = readFileSync(path, 'utf8');
   assert.match(text, /recorded-meanwhile/, 'the entry recorded under the lock survived');
   assert.match(text, /\*\*Consumed:\*\* ticket 001 at a{40} on /, 'and so did the mark that waited for it');
+});
+
+// A "once" answer spent twice is said so, not passed over: the second consumeAnswer reports that
+// the answer was already consumed and leaves the first mark alone.
+test('consumeAnswer reports an answer another landing already spent', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const path = join(dir, '.horde', 'hordes', 'mission1', 'decisions.md');
+  const block = [
+    '## 2026-09-27 · ask-lower-twice', '',
+    '**Kind:** lower · **Aspect:** no-marker · **Scope:** once',
+    '**Answer:** approved — superseded.',
+    '**By:** client · **At:** 2026-09-27T09:00:00Z', '',
+  ].join('\n');
+  writeFileSync(path, `# Decisions\n\n${block}`);
+
+  await inRepo(dir, async () => {
+    const { consumeAnswer } = await import('../land.mjs');
+    const first = consumeAnswer('mission1', { body: block, scope: 'once' }, '001', 'a'.repeat(40));
+    assert.equal(first.consumed, true);
+    const second = consumeAnswer('mission1', { body: block, scope: 'once' }, '002', 'b'.repeat(40));
+    assert.equal(second.consumed, false);
+    assert.match(second.note, /already consumed \(ticket 001 at a{40}/);
+  });
+  const text = readFileSync(path, 'utf8');
+  assert.equal((text.match(/\*\*Consumed:\*\*/g) || []).length, 1, 'marked once');
+});
+
+// A merge that happened stays a merge when the answer cannot be marked spent afterwards: the failure
+// comes back as a note beside it, never as a throw that would skip the rest of the landing's record.
+test('mergeSpendingAnswers: a mark that fails after the merge is a note, not a throw', { skip: process.getuid && process.getuid() === 0 ? 'root ignores the read-only directory this relies on' : false }, async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const hordeDir = join(dir, '.horde', 'hordes', 'mission1');
+  const path = join(hordeDir, 'decisions.md');
+  const block = [
+    '## 2026-09-27 · ask-lower-unwritable', '',
+    '**Kind:** lower · **Aspect:** no-marker · **Scope:** once',
+    '**Answer:** approved — superseded.',
+    '**By:** client · **At:** 2026-09-27T09:00:00Z', '',
+  ].join('\n');
+  writeFileSync(path, `# Decisions\n\n${block}`);
+
+  await inRepo(dir, async () => {
+    const { mergeSpendingAnswers } = await import('../land.mjs');
+    let out;
+    try {
+      out = mergeSpendingAnswers('mission1', [{ body: block, scope: 'once' }], '001', 'a'.repeat(40), () => {
+        // The merge succeeds, and then the file can no longer be written beside.
+        chmodSync(hordeDir, 0o555);
+        return { ok: true, sha: 'c'.repeat(40), note: 'merged' };
+      });
+    } finally {
+      chmodSync(hordeDir, 0o755);
+    }
+    assert.equal(out.merged.ok, true, 'the merge stands');
+    assert.equal(out.notes.length, 1);
+    assert.match(out.notes[0], /could not be marked spent/);
+  });
 });
