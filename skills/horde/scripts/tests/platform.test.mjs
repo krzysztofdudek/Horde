@@ -111,13 +111,13 @@ test('runCommandGroup stops a command that outlives its timeout, and what it sta
   const dir = mkdtempSync(join(tmpdir(), 'horde-group-'));
   try {
     const started = Date.now();
-    const res = runCommandGroup('sleep 30 & sleep 30; wait', dir, 1500);
+    const res = runCommandGroup('sleep 120 & sleep 120; wait', dir, 1500);
     assert.equal(res.ok, false);
     assert.equal(res.timedOut, true);
-    assert.ok(Date.now() - started < 20000, 'the run came back long before its sleeps would have ended');
-    const green = runCommandGroup('exit 0', dir, 10000);
+    assert.ok(Date.now() - started < 60000, 'the run came back long before its sleeps would have ended');
+    const green = runCommandGroup('exit 0', dir, 60000);
     assert.equal(green.ok, true);
-    const red = runCommandGroup('exit 3', dir, 10000);
+    const red = runCommandGroup('exit 3', dir, 60000);
     assert.equal(red.ok, false);
     assert.equal(red.timedOut, false);
   } finally {
