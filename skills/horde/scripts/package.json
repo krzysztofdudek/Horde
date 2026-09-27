@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/yg-floor.mjs && node --test tests/*.test.mjs"
+    "test": "node jarl-vendor.mjs check && node tests/yg-floor.mjs && node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

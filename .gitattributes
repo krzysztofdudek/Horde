@@ -12,3 +12,6 @@
 
 # Every change adds its lines under [Unreleased]; only a release writes a version heading, so a union never interleaves two sections.
 /CHANGELOG.md merge=union
+
+# The vendored Jarl record is compared byte for byte against its pin (jarl-vendor.mjs): never line-ending normalized.
+skills/horde/scripts/vendor/** -text
