@@ -1876,27 +1876,31 @@ tool could do.
 
 A threshold has provenance, not a signature — a constant nobody can source can neither be defended
 nor changed. `packages/promises/yg-package.yaml`'s `max_bytes` is the pattern: it closes with a real
-transport measurement, not a design sentence. The rest of this table is the honest state of the
-others — where a number has that kind of backing and where it does not.
+transport measurement, not a design sentence. A number can also be backed by a dated maintainer
+decision, recorded plainly as a decision and never dressed up as a measurement it never was. The
+rest of this table is the honest state of the others — where a number has that kind of backing and
+where it does not.
 
 | Constant | Value | Set in | Where it comes from |
 | --- | --- | --- | --- |
-| `parallelism` | 6 | `horde.mjs` `defaultConfig()` | Maintainer decision, 2026-09-27: the current value is the approved starting value. What the knob costs is measured, every run: `tick` prints beside the dispatch list how many landings the gate drains per tick interval at its mean gate time (`drain`), so a director sets this against that figure, not against the default. |
+| `parallelism` | 6 | `horde.mjs` `defaultConfig()` | Maintainer decision, 2026-09-27: the current value is the approved starting value — a decision, not a measurement. What the knob costs is measured, every run: `tick` prints beside the dispatch list how many landings the gate drains per tick interval at its mean gate time (`drain`), so a director sets this against that figure, not against the default. |
 | `fixRounds.resume` | 3 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | Adopted from the fix loop of the Superpowers skill set's subagent-driven development (five rounds at most: rounds 1–3 resume the same implementer, 4–5 take a fresh one a class up). A design borrowed from another tool, not a measurement on Horde's own missions. |
 | `fixRounds.fresh` | 2 | `horde.mjs` `defaultConfig()`, read by `tk.mjs status` and `node.mjs` | The same source as the resume count above: rounds 4–5 of that five-round loop. |
-| `tick.interval` | 300 (seconds) | `horde.mjs` `defaultConfig()`, read by `tick.mjs --watch` | Maintainer decision, 2026-09-27: the current value is the approved starting value. |
-| `territory.maxBytes` | 400000 (bytes) | `horde.mjs` `defaultConfig()`, read by `refine.mjs --step cut` | Maintainer decision, 2026-09-27: the current value is the approved starting value. |
-| `law.retireAfterWaves` | 2 (waves) | `horde.mjs` `defaultConfig()` | Maintainer decision, 2026-09-27: the current value is the approved starting value. |
-| `law.qualityDropAsk` | 0.1 (fraction) | `horde.mjs` `defaultConfig()` | Maintainer decision, 2026-09-27: the current value is the approved starting value. |
-| `WAVES_CLEAN_FOR_ENFORCED` | 2 (waves) | `node.mjs:641` | Maintainer decision, 2026-09-27: the current value is the approved starting value. |
+| `tick.interval` | 300 (seconds) | `horde.mjs` `defaultConfig()`, read by `tick.mjs --watch` | Maintainer decision, 2026-09-27: the current value is the approved starting value — a decision, not a measurement. |
+| `territory.maxBytes` | 400000 (bytes) | `horde.mjs` `defaultConfig()`, read by `refine.mjs --step cut` | Maintainer decision, 2026-09-27: the current value is the approved starting value — a decision, not a measurement. |
+| `law.retireAfterWaves` | 2 (waves) | `horde.mjs` `defaultConfig()` | Maintainer decision, 2026-09-27: the current value is the approved starting value — a decision, not a measurement. |
+| `law.qualityDropAsk` | 0.1 (fraction) | `horde.mjs` `defaultConfig()` | Maintainer decision, 2026-09-27: the current value is the approved starting value — a decision, not a measurement. |
+| `WAVES_CLEAN_FOR_ENFORCED` | 2 (waves) | `node.mjs` | Maintainer decision, 2026-09-27: the current value is the approved starting value — a decision, not a measurement. |
 | `escalate.mjs recurring --min` (default) | 3 | `escalate.mjs:53` | A stated design heuristic, not a measurement: the comment argues three identical answers mark a pattern rather than coincidence. No measurement or client decision sets the number itself. |
 | `max_bytes` (reference — already sourced) | 32000 (bytes) | `packages/promises/yg-package.yaml` | Transport constraint, measured: a reviewer tier naming no limit of its own is gated at 50,000 characters; this rule's own text runs about 2,450 of them and a promise adds a few hundred more; 32000 leaves the rest as headroom for the prompt's own framing. |
 
 "Not recorded" is not a claim that a number is wrong — it may be exactly right — only that nobody
-has yet written down the measurement, the transport ceiling, or the client's call that would let a
-future change be judged against something. Where the maintainer makes that call, the row changes
-from "not recorded" to whichever of the three actually applies; it does not get a fourth kind of
-answer invented to fill the cell.
+has yet written down the measurement, the transport ceiling, the client's call, or a dated
+maintainer decision that would let a future change be judged against something. A maintainer
+decision is recorded as exactly that — a decision, not a measurement — dated so a later change can
+be judged against when it was made, never retrofitted as data it never was. The row then changes
+from "not recorded" to whichever of these actually applies; it does not get a fifth kind of answer
+invented to fill the cell.
 
 ## Tests
 
