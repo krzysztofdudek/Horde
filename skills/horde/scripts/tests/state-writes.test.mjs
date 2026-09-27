@@ -109,7 +109,12 @@ test('writeText replaces a file whole: a reader never sees it empty or half-writ
   const full = (n) => `${n}${'x'.repeat(4 * 1024 * 1024)}\n`;
   writeFileSync(file, full(0));
 
-  // A reader in its own process, reading as fast as it can while this one rewrites the file.
+  // A reader in its own process, reading as fast as it can while this one rewrites the file. On
+  // Windows it rests a moment between reads: there a rename over a file another process holds open is
+  // refused for as long as the handle lives, so a reader that never lets go would keep every write
+  // out (renameReplacing waits two seconds, then gives up) — a real reader closes the file between
+  // reads, and what is under test is only that each read sees one whole version.
+  const rest = process.platform === 'win32' ? 15 : 0;
   const reader = spawn('node', ['--input-type=module', '-e', `
     import { readFileSync, existsSync } from 'node:fs';
     const file = ${JSON.stringify(file)};
@@ -119,6 +124,7 @@ test('writeText replaces a file whole: a reader never sees it empty or half-writ
       const text = readFileSync(file, 'utf8');
       reads += 1;
       if (text.length !== ${full(0).length}) torn += 1;
+      if (${rest}) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${rest});
     }
     process.stdout.write(JSON.stringify({ torn, reads }));
   `], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -234,12 +240,15 @@ test('mergeSpendingAnswers: a mark that fails after the merge is a note, not a t
     let out;
     try {
       out = mergeSpendingAnswers('mission1', [{ body: block, scope: 'once' }], '001', 'a'.repeat(40), () => {
-        // The merge succeeds, and then the file can no longer be written beside.
-        chmodSync(hordeDir, 0o555);
+        // The merge succeeds, and then the file can no longer be replaced. A read-only directory does
+        // that on POSIX; Windows ignores a directory's mode, but refuses a rename over a read-only file.
+        if (process.platform === 'win32') chmodSync(path, 0o444);
+        else chmodSync(hordeDir, 0o555);
         return { ok: true, sha: 'c'.repeat(40), note: 'merged' };
       });
     } finally {
       chmodSync(hordeDir, 0o755);
+      chmodSync(path, 0o644);
     }
     assert.equal(out.merged.ok, true, 'the merge stands');
     assert.equal(out.notes.length, 1);

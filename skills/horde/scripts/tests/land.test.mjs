@@ -8,7 +8,7 @@ import {
 import { dirname, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode, addAspect, yg, requireYg, MARKER_CHECK, git,
   writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE,
@@ -3522,7 +3522,7 @@ test('land.mjs: a merge refused because decisions.md stayed locked counts no rou
   const held = join(dir, '.decisions-held');
   const holder = spawn('node', ['--input-type=module', '-e', `
     import { existsSync, writeFileSync } from 'node:fs';
-    const { withDecisionsLock } = await import(${JSON.stringify(join(SCRIPTS_DIR, 'decide.mjs'))});
+    const { withDecisionsLock } = await import(${JSON.stringify(pathToFileURL(join(SCRIPTS_DIR, 'decide.mjs')).href)});
     withDecisionsLock('mission1', () => {
       writeFileSync(${JSON.stringify(held)}, '');
       while (!existsSync(${JSON.stringify(release)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
