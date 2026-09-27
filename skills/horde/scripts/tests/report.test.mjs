@@ -82,7 +82,7 @@ test('report.mjs: one plain page — what waits on the client, what has been pro
   await t.test('tick rewrites it every pass and says where', () => {
     const r = run('tick.mjs', [], dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.match(r.json.report.path, /\/\.horde\/hordes\/mission1\/report\.md$/);
+    assert.match(r.json.report.path, /[\\/]\.horde[\\/]hordes[\\/]mission1[\\/]report\.md$/);
     const human = run('tick.mjs', [], dir, { json: false });
     assert.match(human.stdout, /client report: .*report\.md/);
   });
@@ -168,7 +168,7 @@ test('wave.mjs close: the client is told and the page rewritten; the two pre-6.0
   run('wave.mjs', ['start'], dir);
   const r = run('wave.mjs', ['close'], dir);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.json.report, /\/\.horde\/hordes\/mission1\/report\.md$/);
+  assert.match(r.json.report, /[\\/]\.horde[\\/]hordes[\\/]mission1[\\/]report\.md$/);
   assert.match(await waitForText(log, /wave-close/), /^wave-close\|wave\|1\|wave 1 closed — \d+\/\d+ evidence rows proven, gate /m);
   const plan = readFileSync(join(hordeDir(dir), 'plan.md'), 'utf8');
   const block = plan.slice(plan.lastIndexOf('# Wave 1 — close'));

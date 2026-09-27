@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { YG_DOCUMENTS_AFTER } from '../node.mjs';
+import { splitCommandLine, programFor } from '../_lib.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -85,7 +86,7 @@ export function git(args, cwd) {
         }
         throw e;
       }
-      execFileSync('sleep', [String(SIGNING_RETRY_BACKOFF_SECONDS * attempt)]);
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, SIGNING_RETRY_BACKOFF_SECONDS * attempt * 1000);
     }
   }
   // Unreachable: SIGNING_RETRY_ATTEMPTS >= 1, and every iteration above either returns or throws.
@@ -199,11 +200,11 @@ export function requireYg() {
 
 // yg(dir, args) — run the real CLI in a fixture and hand back what it said, exit code included.
 export function yg(dir, args) {
-  const parts = requireYg().split(/\s+/);
+  const { cmd, prefix } = programFor(splitCommandLine(requireYg()));
   try {
     return {
       code: 0,
-      out: execFileSync(parts[0], [...parts.slice(1), ...args], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
+      out: execFileSync(cmd, [...prefix, ...args], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
     };
   } catch (e) {
     return {
@@ -369,10 +370,11 @@ function meetsFloor(version) {
 
 function locateRealYg() {
   const probe = (cmdline) => {
-    const parts = String(cmdline).trim().split(/\s+/).filter(Boolean);
+    let program;
+    try { program = programFor(splitCommandLine(cmdline)); } catch { return null; }
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const out = execFileSync(parts[0], [...parts.slice(1), '--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+        const out = execFileSync(program.cmd, [...program.prefix, '--version'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
         return { cmdline, version: String(out).trim() };
       } catch (e) {
         // A program that is not there is not there; a machine that could not start one right now
@@ -389,13 +391,18 @@ function locateRealYg() {
     return null;
   };
   if (process.env.HORDE_TEST_YG) return accept(probe(process.env.HORDE_TEST_YG));
+  // On Windows `yg` on PATH is npm's yg.cmd shim, which nothing can start without a shell; the suite
+  // hands the tools, and splits for its own fixtures, the node line the shim stands for instead.
   const onPath = accept(probe('yg'));
-  if (onPath) return onPath;
+  if (onPath) {
+    const { cmd, prefix } = programFor(['yg']);
+    return cmd === 'yg' ? onPath : [cmd, ...prefix].map((w) => (/\s/.test(w) ? `"${w}"` : w)).join(' ');
+  }
   let dir = SCRIPTS_DIR;
   for (let i = 0; i < 12; i++) {
     const candidate = join(dir, 'Yggdrasil', 'source', 'cli', 'dist', 'bin.js');
     if (existsSync(candidate)) {
-      const sibling = accept(probe(`node ${candidate}`));
+      const sibling = accept(probe(`node "${candidate}"`));
       if (sibling) belowFloor = null;
       return sibling;
     }

@@ -8,7 +8,7 @@ import {
   existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, realpathSync, rmSync,
   cpSync, linkSync, renameSync, mkdtempSync,
 } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, execSync, spawnSync, spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -207,6 +207,25 @@ function thisRepoWorktrees(cwd) {
   return parseWorktreeList(out);
 }
 
+// Whether two paths name the same place as git and Node print them. On Windows git writes
+// `C:/Users/…` where Node writes `C:\Users\…`, and the file system ignores case, so both sides are
+// resolved and folded before they are compared; elsewhere the bytes decide.
+// A short 8.3 name (`C:\Users\RUNNER~1`, which is what the temp directory often is) is expanded to
+// the long one git prints by asking the file system for the path it really is.
+export function samePath(a, b) {
+  if (!a || !b) return false;
+  if (process.platform !== 'win32') return a === b;
+  const fold = (p) => realPath(p).replace(/[\\/]+$/, '').toLowerCase();
+  return fold(a) === fold(b);
+}
+
+// realPath(path) — the path as the file system itself names it (symlinks followed, and on Windows
+// the long name for a short one and git's `C:/…` spelling made `C:\…`), or the path resolved as it
+// stands when there is nothing there to ask.
+export function realPath(path) {
+  try { return realpathSync.native(resolve(String(path))); } catch { return resolve(String(path)); }
+}
+
 function realpathMaybe(path) {
   try { return realpathSync(path); } catch { return null; }
 }
@@ -222,7 +241,7 @@ function realpathMaybe(path) {
 function resolveKnownTreePath(path, cwd, kind, notFound) {
   const entries = thisRepoWorktrees(cwd);
   const real = realpathMaybe(path);
-  const match = entries.find((e) => e.path === path || (real && e.path === real));
+  const match = entries.find((e) => samePath(e.path, path) || (real && samePath(e.path, real)));
   if (!match) { notFound(); return null; }
   if (match.prunable) {
     fail(`${path} is a worktree git still knows about, but its directory is gone from disk (${match.prunable}) — run \`git worktree prune\` and recreate it`);
@@ -304,8 +323,13 @@ export function processAlive(pid) {
 // be read (no such process, no `ps`, a platform without it). Recorded beside a pid that is kept for
 // longer than one run, so a live pid can be told apart from a new process that was given the same
 // number after the first one ended: same pid, a different start, is a different process.
+//
+// Windows has no `ps`, and asking PowerShell costs a second per call on a path tick walks for every
+// worker, so there it answers null: a reused pid is then read as the worker still alive, the same
+// answer a machine without `ps` has always got — the worker's own "landed"/"stopped" line still ends
+// it, and nothing is ever judged gone that is not.
 export function processStartedAt(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return null;
+  if (!Number.isInteger(pid) || pid <= 0 || process.platform === 'win32') return null;
   try {
     const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     return out || null;
@@ -929,7 +953,25 @@ function writeJSONAtomic(file, obj) {
   mkdirSync(dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
   writeFileSync(temp, `${JSON.stringify(obj, null, 2)}\n`);
-  renameSync(temp, file);
+  renameReplacing(temp, file);
+}
+
+// renameSync(from, to) that replaces `to`, patient with Windows: there, a rename over a file another
+// process (a virus scanner, an indexer, a reader outside Node) holds open without delete sharing is
+// refused with EPERM, EACCES or EBUSY for as long as that handle lives — usually milliseconds. It is
+// retried for up to two seconds before the error is let through; everywhere else the first answer
+// stands, because a POSIX rename over an open file always succeeds.
+export function renameReplacing(from, to) {
+  const deadline = Date.now() + 2000;
+  for (;;) {
+    try {
+      renameSync(from, to);
+      return;
+    } catch (e) {
+      if (!IS_WINDOWS || !['EPERM', 'EACCES', 'EBUSY'].includes(e.code) || Date.now() > deadline) throw e;
+      sleepSync(25);
+    }
+  }
 }
 
 // allocateId(horde, kind, {floor}) — the next number in the shared sequence, as {n, number, id}.
@@ -1767,8 +1809,12 @@ export function writeJSON(file, obj, { render } = {}) {
   }
 }
 
+// Line endings are read as `\n` whatever the file was saved with: a charter, a ticket or a log a
+// person touched in a Windows editor comes back CRLF, and every parser here splits on `\n` and
+// anchors its patterns at `$`, where a stray `\r` would quietly make a heading or a status line not
+// match.
 export function readText(file) {
-  return existsSync(file) ? readFileSync(file, 'utf8') : null;
+  return existsSync(file) ? readFileSync(file, 'utf8').replace(/\r\n/g, '\n') : null;
 }
 
 // Written to a sibling and renamed over the file, exactly like writeJSON: an in-place write
@@ -1779,7 +1825,7 @@ export function writeText(file, text) {
   mkdirSync(dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}`;
   writeFileSync(temp, text);
-  renameSync(temp, file);
+  renameReplacing(temp, file);
 }
 
 export function appendText(file, text) {
@@ -1969,6 +2015,152 @@ export function gateTimeoutOf(cfg) {
   return Number.isFinite(asked) && asked > 0 ? asked : GATE_TIMEOUT_MS;
 }
 
+// ---- the platform: starting programs and shells the same way on every OS ----------------------
+//
+// Three things differ on Windows, and every tool here meets all three.
+//
+// A command line from the config ("yg", "grain", "node C:\\tools\\yg\\bin.js") names a program npm
+// installed as a `.cmd` shim, not an executable. `execFile` does not look for `.cmd`, and since Node
+// 20.12 refuses to start one without a shell at all (EINVAL). A shell is the wrong way round here:
+// the arguments these tools pass are free text (a log reason, a ruling), and cmd.exe would read
+// `&`, `|` and `%` inside them. So `programFor` reads the shim instead — npm's shims all end by
+// running node on one script — and starts node on that script directly, arguments untouched.
+//
+// Gate, notify and runner commands are shell text the adopter wrote, and every document of this tool
+// set calls them shell commands: `sh` semantics, quoting included (notify quotes its placeholders
+// for `sh`). Windows has no `sh`, but every Windows machine that runs Horde has Git for Windows,
+// which ships one. `posixShell` finds it; a machine without one is told so, never handed cmd.exe
+// quietly, where the same command line would mean something else.
+//
+// A process group — `detached` plus `kill(-pid)` — does not exist on Windows. `killTree` stops a
+// process and everything it started with `taskkill /T /F` there, and with the group signal elsewhere.
+export const IS_WINDOWS = process.platform === 'win32';
+
+// toPosix(path) — a relative OS path in the form git, the graph and every document here use: `/`
+// between segments. A no-op anywhere `/` is already the separator.
+export function toPosix(path) {
+  return String(path).split(sep).join('/');
+}
+
+// splitCommandLine("node \"C:\\Program Files\\yg\\bin.js\"") — a configured command line split into
+// words. A double-quoted segment is one word with its quotes removed, so a path with a space in it
+// (every default install location on Windows) survives; a backslash is kept as it stands, because on
+// Windows it is a path separator, not an escape.
+export function splitCommandLine(raw) {
+  const words = [];
+  let word = null;
+  let quoted = false;
+  for (const c of String(raw || '')) {
+    if (c === '"') { quoted = !quoted; word = word ?? ''; continue; }
+    if (!quoted && /\s/.test(c)) {
+      if (word !== null) words.push(word);
+      word = null;
+      continue;
+    }
+    word = (word ?? '') + c;
+  }
+  if (word !== null) words.push(word);
+  return words;
+}
+
+// Where a bare program name resolves on Windows: each PATH directory, each PATHEXT extension, in
+// the order the system itself tries them. Null when nothing matches.
+function whichWindows(name, env = process.env) {
+  const pathVar = env.PATH ?? env.Path ?? env.path ?? '';
+  const exts = (env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  const hasExt = /\.[^\\/.]+$/.test(name);
+  const direct = /[\\/]/.test(name);
+  const dirs = direct ? [''] : pathVar.split(';').filter(Boolean);
+  for (const dir of dirs) {
+    const base = dir ? join(dir, name) : resolve(name);
+    const candidates = hasExt ? [base] : exts.map((e) => base + e.toLowerCase());
+    for (const c of candidates) {
+      try { if (statSync(c).isFile()) return c; } catch { /* not here */ }
+    }
+  }
+  return null;
+}
+
+// The script an npm `.cmd` shim runs, or null when the file is not one. npm (cmd-shim) writes the
+// target as `"%dp0%\<relative path>" %*`, run by node.
+export function cmdShimTarget(shimPath) {
+  let text;
+  try { text = readFileSync(shimPath, 'utf8'); } catch { return null; }
+  const m = /"%(?:~?dp0)%\\?([^"]+\.(?:c|m)?js)"\s+%\*/i.exec(text);
+  return m ? resolve(dirname(shimPath), ...m[1].split('\\')) : null;
+}
+
+// programFor(words) — {cmd, prefix}: what to hand execFile/spawn for a command line split into words.
+// Anywhere but Windows, the words as they stand. On Windows, a name that resolves to an npm `.cmd`
+// shim becomes node on the shim's script; one that resolves to an executable is started as it is;
+// a `.cmd`/`.bat` that is not an npm shim is refused with a message, because Node cannot start it
+// without a shell and a shell would read the arguments.
+export function programFor(words) {
+  const [first, ...rest] = words;
+  if (!IS_WINDOWS || !first) return { cmd: first, prefix: rest };
+  const found = whichWindows(first);
+  if (!found || !/\.(cmd|bat)$/i.test(found)) return { cmd: first, prefix: rest };
+  const script = cmdShimTarget(found);
+  if (script) return { cmd: process.execPath, prefix: [script, ...rest] };
+  throw new HordeError(`${found} is a batch file, and Windows cannot start one without cmd.exe reading the arguments as shell text. `
+    + `Configure the command as the program it runs instead, e.g. "node <path to its script>".`);
+}
+
+// The POSIX shell gate, notify and runner commands run under: `/bin/sh` wherever there is one; on
+// Windows, Git for Windows' own `sh.exe` (HORDE_SH names another). Found once per process.
+let shellCache;
+export function posixShell() {
+  if (shellCache) return shellCache;
+  if (!IS_WINDOWS) { shellCache = '/bin/sh'; return shellCache; }
+  const candidates = [];
+  if (process.env.HORDE_SH) candidates.push(process.env.HORDE_SH);
+  try {
+    // git --exec-path is <git>/mingw64/libexec/git-core (or clangarm64/…); sh.exe is in <git>/bin
+    // and <git>/usr/bin.
+    const exec = execFileSync('git', ['--exec-path'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    let dir = resolve(exec);
+    for (let i = 0; i < 4; i++) {
+      dir = dirname(dir);
+      candidates.push(join(dir, 'bin', 'sh.exe'), join(dir, 'usr', 'bin', 'sh.exe'));
+    }
+  } catch { /* no git on PATH: nothing to derive it from */ }
+  const onPath = whichWindows('sh.exe');
+  // System32's bash.exe/sh is WSL, a different machine with different paths: never that one.
+  if (onPath && !/\\system32\\/i.test(onPath)) candidates.push(onPath);
+  for (const c of candidates) {
+    try { if (statSync(c).isFile()) { shellCache = c; return c; } } catch { /* next */ }
+  }
+  throw new HordeError('no POSIX shell found: Horde runs gate, notify and runner commands as sh command lines, '
+    + 'and on Windows it uses the sh.exe that ships with Git for Windows. Install Git for Windows, '
+    + 'or set HORDE_SH to the full path of an sh.exe.');
+}
+
+// Stops `pid` and every process it started: the group signal where process groups exist (the
+// process must have been started `detached`), `taskkill /T /F` on Windows, where there is no
+// gentler signal to send a tree of console processes. Never throws — a tree already gone is the
+// outcome asked for.
+export function killTree(pid, signal = 'SIGTERM') {
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  if (IS_WINDOWS) {
+    try { spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); } catch { /* gone */ }
+    return;
+  }
+  try { process.kill(-pid, signal); } catch { /* gone */ }
+}
+
+// The same stop, as source text for the small supervisors below, which run as `node -e` and
+// cannot import this file.
+const KILL_TREE_SOURCE = `
+const killTree = (pid, sig) => {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    try { require('node:child_process').spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }); } catch {}
+    return;
+  }
+  try { process.kill(-pid, sig); } catch {}
+};
+`;
+
 // Runs `cmd` in `cwd` as a process group of its own, and waits for it. A timeout stops the whole
 // group — the shell and everything it started — not the shell alone: a test runner the shell
 // launched would otherwise go on running, and holding the worktree, after the gate said it was
@@ -1985,9 +2177,10 @@ export function gateTimeoutOf(cfg) {
 const GROUP_SUPERVISOR = `
 const { spawn } = require('node:child_process');
 const { constants } = require('node:os');
-const [cmd, cwd, ms] = process.argv.slice(1);
-const child = spawn('sh', ['-c', cmd], { cwd, detached: true, stdio: 'ignore' });
-const group = (sig) => { try { process.kill(-child.pid, sig); } catch {} };
+const [cmd, cwd, ms, shell] = process.argv.slice(1);
+${KILL_TREE_SOURCE}
+const child = spawn(shell, ['-c', cmd], { cwd, detached: true, stdio: 'ignore', windowsHide: true });
+const group = (sig) => killTree(child.pid, sig);
 let timedOut = false;
 let signalled = null;
 const timer = Number(ms) > 0 ? setTimeout(() => { timedOut = true; group('SIGTERM'); setTimeout(() => group('SIGKILL'), 2000).unref(); }, Number(ms)) : null;
@@ -2063,11 +2256,12 @@ export function notifyTemplateProblem(template) {
 const NOTIFY_SUPERVISOR = `
 const { spawn } = require('node:child_process');
 const { appendFileSync } = require('node:fs');
-const [cmd, cwd, ms, log] = process.argv.slice(1);
+const [cmd, cwd, ms, log, shell] = process.argv.slice(1);
 const note = (line) => { try { appendFileSync(log, new Date().toISOString() + ' ' + line + '\\n'); } catch {} };
-const child = spawn('sh', ['-c', cmd], { cwd, detached: true, stdio: 'ignore' });
+${KILL_TREE_SOURCE}
+const child = spawn(shell, ['-c', cmd], { cwd, detached: true, stdio: 'ignore', windowsHide: true });
 let stopped = false;
-const timer = setTimeout(() => { stopped = true; try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, Number(ms));
+const timer = setTimeout(() => { stopped = true; killTree(child.pid, 'SIGKILL'); }, Number(ms));
 child.on('error', (e) => { clearTimeout(timer); note('could not be started: ' + e.message); });
 child.on('exit', (code, signal) => {
   clearTimeout(timer);
@@ -2088,8 +2282,8 @@ export function notifyClient(horde, cfg, fields = {}) {
   try { cwd = dirname(hordeRoot()); } catch { cwd = process.cwd(); }
   const log = hordePath(horde, 'notify.log');
   try {
-    const child = spawn(process.execPath, ['-e', NOTIFY_SUPERVISOR, '--', command, cwd, String(NOTIFY_TIMEOUT_MS), log], {
-      cwd, detached: true, stdio: 'ignore',
+    const child = spawn(process.execPath, ['-e', NOTIFY_SUPERVISOR, '--', command, cwd, String(NOTIFY_TIMEOUT_MS), log, posixShell()], {
+      cwd, detached: true, stdio: 'ignore', windowsHide: true,
     });
     child.on('error', () => {});
     child.unref();
@@ -2100,8 +2294,8 @@ export function notifyClient(horde, cfg, fields = {}) {
 }
 
 export function runCommandGroup(cmd, cwd, timeoutMs = null) {
-  const res = spawnSync(process.execPath, ['-e', GROUP_SUPERVISOR, '--', cmd, cwd, String(timeoutMs || 0)], {
-    encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+  const res = spawnSync(process.execPath, ['-e', GROUP_SUPERVISOR, '--', cmd, cwd, String(timeoutMs || 0), posixShell()], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
     ...(timeoutMs ? { timeout: timeoutMs + 10000, killSignal: 'SIGKILL' } : {}),
   });
   const timedOut = String(res.stdout || '').includes('HORDE-GATE-TIMED-OUT') || (res.error && res.error.code === 'ETIMEDOUT');

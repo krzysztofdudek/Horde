@@ -25,7 +25,7 @@ import {
   fail, parseArgs, asArray, emit, isMain, resolveHorde, claimLease, qualityPolicy,
   resolveTree, assertGraphWritable, provenanceLine, withProvenance,
   allocateId, idNumber, migrationNote, withGraphLock,
-  runMain,
+  runMain, splitCommandLine, programFor, toPosix,
 } from './_lib.mjs';
 
 const USAGE = `usage: node.mjs <command> [options]
@@ -126,10 +126,10 @@ export function grainLine(cfg) {
 export function grainAsk(cfg, root, args) {
   const raw = grainLine(cfg);
   if (!raw) return { available: false, why: 'no Grain CLI is configured for this repository' };
-  const parts = raw.split(/\s+/).filter(Boolean);
   const display = `${raw} ${args.join(' ')}`;
   try {
-    const out = execFileSync(parts[0], [...parts.slice(1), ...args], {
+    const { cmd, prefix } = programFor(splitCommandLine(raw));
+    const out = execFileSync(cmd, [...prefix, ...args], {
       cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024,
     });
     return { available: true, display, text: String(out).trim() };
@@ -144,8 +144,10 @@ export function grainAsk(cfg, root, args) {
 
 export function ygCommand(cfg) {
   const raw = (cfg && cfg.ygCommand) || 'yg';
-  const parts = String(raw).trim().split(/\s+/).filter(Boolean);
-  return { cmd: parts[0] || 'yg', prefix: parts.slice(1), display: parts.join(' ') || 'yg' };
+  const parts = splitCommandLine(raw);
+  if (!parts.length) parts.push('yg');
+  const { cmd, prefix } = programFor(parts);
+  return { cmd, prefix, display: String(raw).trim() || 'yg' };
 }
 
 // How long any one call to that CLI is allowed to take before it is stopped. A CLI that hangs is
@@ -1860,7 +1862,7 @@ export function listAllNodes(root) {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, e.name);
       if (e.isDirectory()) walk(full);
-      else if (e.name === 'yg-node.yaml') found.push(relative(base, dir));
+      else if (e.name === 'yg-node.yaml') found.push(toPosix(relative(base, dir)));
     }
   };
   walk(base);
@@ -1879,7 +1881,7 @@ export function nodeBoundary(root, cfg, node) {
 // aspects, locks, config) is a node's own files, so this names only that one directory, never the
 // graph root.
 export function nodeGraphPathPrefix(root, cfg, node) {
-  return `${relative(root, nodeDir(root, node))}/`;
+  return `${toPosix(relative(root, nodeDir(root, node)))}/`;
 }
 
 // ---- boundary matching (shared with land.mjs and tk.mjs) ---------------

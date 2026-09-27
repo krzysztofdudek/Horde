@@ -6,15 +6,22 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, dirname, delimiter } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { YG_DOCUMENTS_AFTER } from '../node.mjs';
 
 const TESTS_DIR = dirname(fileURLToPath(import.meta.url));
 
-// A stand-in CLI that only answers `--version`, with the version it is given.
+// A stand-in CLI that only answers `--version`, with the version it is given. On Windows it is what
+// npm installs there: a `yg.cmd` shim that runs node on a script, and `bin` is that script's node line.
 function fakeYg(version) {
   const dir = mkdtempSync(join(tmpdir(), 'horde-old-yg-'));
+  if (process.platform === 'win32') {
+    const js = join(dir, 'yg.js');
+    writeFileSync(js, `console.log(${JSON.stringify(version)});\n`);
+    writeFileSync(join(dir, 'yg.cmd'), '@ECHO off\r\n"%_prog%"  "%dp0%\\yg.js" %*\r\n');
+    return { dir, bin: `node ${js}` };
+  }
   const bin = join(dir, 'yg');
   writeFileSync(bin, `#!/bin/sh\necho ${version}\n`);
   chmodSync(bin, 0o755);
@@ -23,7 +30,7 @@ function fakeYg(version) {
 
 function loadHelpers(env) {
   return spawnSync(process.execPath, ['--input-type=module', '-e', `
-    const h = await import(${JSON.stringify(join(TESTS_DIR, 'helpers.mjs'))});
+    const h = await import(${JSON.stringify(pathToFileURL(join(TESTS_DIR, 'helpers.mjs')).href)});
     console.log('loaded:' + h.findRealYg());
   `], { encoding: 'utf8', env: { ...process.env, ...env } });
 }
@@ -65,10 +72,10 @@ test('test setup: a Yggdrasil at the floor or above is taken', () => {
 test('test setup: an older yg on PATH is passed over for a build that meets the floor, or refused by name', () => {
   const old = fakeYg('6.0.0');
   try {
-    const env = { PATH: `${old.dir}:${process.env.PATH}` };
-    delete env.HORDE_TEST_YG;
+    const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
+    const env = { [pathKey]: `${old.dir}${delimiter}${process.env[pathKey]}` };
     const r = spawnSync(process.execPath, ['--input-type=module', '-e', `
-      const h = await import(${JSON.stringify(join(TESTS_DIR, 'helpers.mjs'))});
+      const h = await import(${JSON.stringify(pathToFileURL(join(TESTS_DIR, 'helpers.mjs')).href)});
       console.log('loaded:' + h.findRealYg());
     `], { encoding: 'utf8', env: { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k !== 'HORDE_TEST_YG')), ...env } });
     if (r.status === 0) {

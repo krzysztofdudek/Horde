@@ -1,10 +1,11 @@
 import { test } from 'node:test';
+import { sleepSync } from '../_lib.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import {
   existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +20,12 @@ import {
 } from '../land.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
+
+// How long a test waits for a detached landing to write its result. A landing starts git and the
+// Yggdrasil CLI dozens of times, and a process start on Windows costs several times what it does on
+// Linux: a two-ticket batch that finishes in seconds there takes over a minute on a loaded Windows
+// runner, so the wait there is longer. It is a ceiling, never a sleep.
+const BACKGROUND_WAIT_MS = process.platform === 'win32' ? 300000 : 90000;
 
 // git() (retrying the sandbox's transient commit-signing 503s for `commit`/`merge`/`revert`, same
 // as everywhere else in this suite) now lives once, shared and exported, in helpers.mjs — this
@@ -2405,14 +2412,14 @@ test('land.mjs: --background returns a result-file path at once, and the file ha
   assert.equal(r.code, 0, r.stderr);
   assert.ok(elapsed < 3000, `it did not wait for the gate (${elapsed}ms)`);
   assert.equal(r.json.ticket, '024');
-  assert.match(r.json.resultFile, /\.horde\/hordes\/mission1\/land\/024\.json$/);
+  assert.match(r.json.resultFile, /\.horde[\\/]hordes[\\/]mission1[\\/]land[\\/]024\.json$/);
   assert.equal(existsSync(r.json.resultFile), false, 'nothing is written yet');
 
-  const deadline = Date.now() + 90000;
+  const deadline = Date.now() + BACKGROUND_WAIT_MS;
   let doc = null;
   while (Date.now() < deadline) {
     try { doc = JSON.parse(readFileSync(r.json.resultFile, 'utf8')); break; } catch { /* not yet, or half-written */ }
-    execFileSync('sleep', ['0.25']);
+    sleepSync(250);
   }
   assert.ok(doc, 'the background run wrote its result');
   assert.equal(doc.ticket, '024');
@@ -2804,7 +2811,7 @@ test('land.mjs: a red gate puts the ticket on "changes" with the gate\'s own wor
   assert.match(run('tk.mjs', ['show', id], dir).json.text, /\*\*Status:\*\* changes/);
   const log = readFileSync(join(readdirSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues'))
     .map((d) => join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', d))
-    .find((d) => d.includes(`/${id}-`)), 'log.md'), 'utf8');
+    .find((d) => d.includes(`${sep}${id}-`)), 'log.md'), 'utf8');
   assert.match(log, /land refused: /);
   assert.match(log, /round 1\/5 — resume same worker/);
 });
@@ -2960,10 +2967,10 @@ function journal(dir, horde = 'mission1') {
 function landInBackground(dir, branch) {
   const started = run('land.mjs', [branch, '--background'], dir);
   assert.equal(started.code, 0, started.stderr);
-  const deadline = Date.now() + 90000;
+  const deadline = Date.now() + BACKGROUND_WAIT_MS;
   while (Date.now() < deadline) {
     try { return JSON.parse(readFileSync(started.json.resultFile, 'utf8')); } catch { /* not yet */ }
-    execFileSync('sleep', ['0.25']);
+    sleepSync(250);
   }
   throw new Error(`the background landing of ${branch} wrote no result`);
 }
@@ -3894,18 +3901,18 @@ test('land.mjs --background with two or more tickets starts one worker for the w
   assert.equal(r.json.items.length, 2);
   for (const it of r.json.items) {
     assert.equal(it.started, true, JSON.stringify(it));
-    assert.match(it.resultFile, /\.horde\/hordes\/mission1\/land\/1(41|42)\.json$/);
+    assert.match(it.resultFile, /\.horde[\\/]hordes[\\/]mission1[\\/]land[\\/]1(41|42)\.json$/);
     assert.equal(existsSync(it.resultFile), false, 'nothing is written yet');
   }
 
-  const deadline = Date.now() + 90000;
+  const deadline = Date.now() + BACKGROUND_WAIT_MS;
   const docs = {};
   while (Date.now() < deadline && Object.keys(docs).length < ids.length) {
     for (const it of r.json.items) {
       if (docs[it.ticket]) continue;
       try { docs[it.ticket] = JSON.parse(readFileSync(it.resultFile, 'utf8')); } catch { /* not yet, or half-written */ }
     }
-    if (Object.keys(docs).length < ids.length) execFileSync('sleep', ['0.25']);
+    if (Object.keys(docs).length < ids.length) sleepSync(250);
   }
   assert.equal(Object.keys(docs).length, ids.length, 'both background results were written');
   for (const id of ids) {
@@ -3933,12 +3940,12 @@ test('land.mjs --background with a batch: a ticket with no queue item is refused
     assert.equal(it.started, true, JSON.stringify(it));
   }
 
-  const deadline = Date.now() + 90000;
+  const deadline = Date.now() + BACKGROUND_WAIT_MS;
   let bothLanded = false;
   while (Date.now() < deadline && !bothLanded) {
     const items = run('queue.mjs', ['list'], dir).json;
     bothLanded = ids.every((id) => items.find((i) => i.ticket === id)?.state === 'merged');
-    if (!bothLanded) execFileSync('sleep', ['0.25']);
+    if (!bothLanded) sleepSync(250);
   }
   assert.ok(bothLanded, 'the two real tickets landed despite the third being unresolvable');
 });

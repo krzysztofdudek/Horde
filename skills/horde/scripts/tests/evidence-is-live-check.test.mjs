@@ -8,11 +8,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CHECK_PATH = join(HERE, '..', '..', '..', '..', 'packages', 'promises', 'evidence-is-live', 'check.mjs');
-const { check } = await import(CHECK_PATH);
+const { check } = await import(pathToFileURL(CHECK_PATH).href);
 
 const PROMISE_PATH = 'promises/orders-are-confirmed.md';
 const MIRROR_PATH = 'suite/orders-are-confirmed.test.mjs';

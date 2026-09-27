@@ -42,7 +42,7 @@ import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readText, readConfig, nowIso, fail, HordeError, parseArgs, emit,
   isMain, resolveHorde, git, resolveTree, withProvenance, provenanceLine, withQueueLock,
-  runMain, appendText, parseEvidenceRows, classUp, processAlive, REASON_RECLAIM_REFUSED,
+  runMain, appendText, parseEvidenceRows, classUp, processAlive, REASON_RECLAIM_REFUSED, posixShell, IS_WINDOWS,
 } from './_lib.mjs';
 import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine, recordWorkerRun,
@@ -965,7 +965,10 @@ function externalStart(horde, cfg, entries, root) {
     }
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, text);
-    const command = String(template).split('<class>').join(entry.model || '').split('<brief>').join(path);
+    // The command runs under sh, where a backslash is an escape: a Windows path goes in with forward
+    // slashes, which Git for Windows' sh and every Windows program it starts read as the same path.
+    const briefArg = IS_WINDOWS ? path.replace(/\\/g, '/') : path;
+    const command = String(template).split('<class>').join(entry.model || '').split('<brief>').join(briefArg);
     // What the headless CLI prints goes to a log of its own beside the brief, not nowhere: a worker
     // that died is otherwise a pid that vanished with no word said.
     const log = hordePath(horde, 'runs', `${(entry.briefFile || `${entry.ticket}.md`).replace(/\.md$/, '')}.log`);
@@ -973,7 +976,7 @@ function externalStart(horde, cfg, entries, root) {
     const fd = openSync(log, 'a');
     let child;
     try {
-      child = spawnProcess('sh', ['-c', command], { cwd: root, detached: true, stdio: ['ignore', fd, fd] });
+      child = spawnProcess(posixShell(), ['-c', command], { cwd: root, detached: true, stdio: ['ignore', fd, fd], windowsHide: true });
     } finally {
       closeSync(fd);
     }

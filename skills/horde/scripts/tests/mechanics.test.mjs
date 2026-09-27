@@ -3,6 +3,7 @@
 // drives a whole mini-wave.
 
 import { test } from 'node:test';
+import { sleepSync } from '../_lib.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
@@ -497,7 +498,7 @@ function seedLandableTicket(dir, id) {
   return branch;
 }
 
-test('land.mjs --background: the run is let go of, but not forgotten — the result file arrives and the process that wrote it is gone', async (t) => {
+test('land.mjs --background: the run is let go of, but not forgotten — the result file arrives and the process that wrote it is gone', { skip: process.platform === 'win32' && 'the test finds the detached process with pgrep, which Windows does not have' }, async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
 
@@ -516,7 +517,7 @@ test('land.mjs --background: the run is let go of, but not forgotten — the res
   const fileDeadline = Date.now() + 120000;
   while (Date.now() < fileDeadline) {
     try { doc = JSON.parse(readFileSync(started.json.resultFile, 'utf8')); break; } catch { /* not yet, or half-written */ }
-    execFileSync('sleep', ['0.1']);
+    sleepSync(100);
   }
   assert.ok(doc, 'the background run wrote its result');
   assert.equal(doc.ticket, id);
@@ -526,7 +527,7 @@ test('land.mjs --background: the run is let go of, but not forgotten — the res
   // takes and far shorter than a hang: a run still here after it has published its own answer is
   // not finishing, it is stuck.
   const exitDeadline = Date.now() + 10000;
-  while (Date.now() < exitDeadline && stillAlive(children).length) execFileSync('sleep', ['0.25']);
+  while (Date.now() < exitDeadline && stillAlive(children).length) sleepSync(250);
   assert.deepEqual(
     stillAlive(children), [],
     'a background landing outlived the result file it was started to write — nothing waits on it, so it stays until the machine is rebooted',
@@ -572,7 +573,7 @@ function writeHangingYgStub(realYg) {
   return { stubDir, stub, command: `node ${stub}` };
 }
 
-test('land.mjs --background: a Yggdrasil CLI that hangs is stopped at config.ygTimeoutMs — the detached run ends instead of outliving the machine', async (t) => {
+test('land.mjs --background: a Yggdrasil CLI that hangs is stopped at config.ygTimeoutMs — the detached run ends instead of outliving the machine', { skip: process.platform === 'win32' && 'the test finds the detached process with pgrep, which Windows does not have' }, async (t) => {
   const dir = makeRepo();
   const { stubDir, stub, command } = writeHangingYgStub(requireYg());
   t.after(() => { rmRepo(dir); rmRepo(stubDir); });
@@ -611,7 +612,7 @@ test('land.mjs --background: a Yggdrasil CLI that hangs is stopped at config.ygT
   const fileDeadline = Date.now() + 60000;
   while (Date.now() < fileDeadline) {
     try { doc = JSON.parse(readFileSync(started.json.resultFile, 'utf8')); break; } catch { /* not yet, or half-written */ }
-    execFileSync('sleep', ['0.25']);
+    sleepSync(250);
   }
   // Two very different things look alike from here, so the message tells them apart: a run still
   // alive with no result is the hang this test exists to catch; a run already gone with no result
@@ -632,7 +633,7 @@ test('land.mjs --background: a Yggdrasil CLI that hangs is stopped at config.ygT
   assert.match(graph.note, /ygTimeoutMs/);
 
   const exitDeadline = Date.now() + 10000;
-  while (Date.now() < exitDeadline && stillAlive(children).length) execFileSync('sleep', ['0.25']);
+  while (Date.now() < exitDeadline && stillAlive(children).length) sleepSync(250);
   assert.deepEqual(
     stillAlive(children), [],
     'the landing published its refusal and stayed alive anyway — the process the ceiling exists to end is still here',

@@ -92,7 +92,7 @@ test('horde.mjs: init, list, config, archive', async (t) => {
     const r = run('horde.mjs', ['archive', 'mission2'], dir);
     assert.equal(r.code, 0);
     assert.equal(existsSync(join(dir, '.horde', 'hordes', 'mission2')), false);
-    assert.match(r.json.to, /_archive\/mission2-/);
+    assert.match(r.json.to, /_archive[\\/]mission2-/);
     const branches = execFileSync('git', ['branch'], { cwd: dir, encoding: 'utf8' });
     assert.match(branches, /mission2\/trunk/);
 
@@ -729,6 +729,10 @@ test('horde.mjs archive: an "archived" file already there is overwritten, never 
 test('horde.mjs archive: a horde directory that cannot be written refuses, naming the path', async (t) => {
   if (process.getuid && process.getuid() === 0) {
     t.skip('root bypasses file-mode permissions — chmod cannot force a write to fail as root');
+    return;
+  }
+  if (process.platform === 'win32') {
+    t.skip('a directory\'s mode bits do not stop a write on Windows — chmod cannot make one unwritable there');
     return;
   }
   const dir = makeRepo();

@@ -19,7 +19,7 @@ import {
   hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, leaseHolderForNode,
   resolveTree, provisionTree, provenanceLine, withProvenance, firstClass, withQueueLock, appendTicketLog,
   parseEvidenceRows, diffSize, sizeRanks, parseLogEntries, processAlive, processStartedAt, REASON_RECLAIM_REFUSED,
-  runMain,
+  runMain, splitCommandLine, programFor,
 } from './_lib.mjs';
 import {
   findTicket, parseField, padId, allTickets, transitionStatus, nodesOf, ticketWorkFiles, ticketPorts, ticketEvidence, ticketKind, prototypeBranchOf, createTicket, setTicketBody, acceptanceLines, charterPushback,
@@ -356,8 +356,8 @@ const ADVICE_SCHEMA = 'grain-advice/1';
 function grainCommandLine(cfg) {
   const raw = cfg && cfg.grainCommand;
   if (!raw) return null;
-  const parts = String(raw).trim().split(/\s+/).filter(Boolean);
-  return parts.length ? { cmd: parts[0], prefix: parts.slice(1), display: parts.join(' ') } : null;
+  const parts = splitCommandLine(raw);
+  return parts.length ? { ...programFor(parts), display: String(raw).trim() } : null;
 }
 
 // The document, from a file or from the CLI itself. Grain prints its progress on stderr and the

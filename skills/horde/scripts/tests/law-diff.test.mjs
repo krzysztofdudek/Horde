@@ -335,7 +335,7 @@ test('a stale-CLI refusal names the tree it ran on and the version that tree\'s 
     "import { execFileSync } from 'node:child_process';",
     `const REAL = ${JSON.stringify(yg)};`,
     'const argv = process.argv.slice(2);',
-    "if (argv[0] === '--version') { console.log(process.cwd().includes('/scratch/') ? '5.7.3' : '9.9.9'); process.exit(0); }",
+    "if (argv[0] === '--version') { console.log(/[\\\\/]scratch[\\\\/]/.test(process.cwd()) ? '5.7.3' : '9.9.9'); process.exit(0); }",
     "if (argv[0] === 'aspects' && argv.includes('--json')) {",
     '  process.stdout.write(JSON.stringify({ schema: "yg-aspects/0", aspects: [] }) + "\\n");',
     '  process.exit(0);',
@@ -426,6 +426,10 @@ test('a CLI that takes the reach flag and ignores it: refused, not read as every
 test('an unwritable law/ directory: a refusal naming the path', async (t) => {
   if (process.getuid && process.getuid() === 0) {
     t.skip('root bypasses file-mode permissions — chmod cannot force a write to fail as root');
+    return;
+  }
+  if (process.platform === 'win32') {
+    t.skip('a directory\'s mode bits do not stop a write on Windows — chmod cannot make one unwritable there');
     return;
   }
   const yg = requireYg();

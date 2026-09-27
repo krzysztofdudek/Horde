@@ -23,7 +23,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { addNode, git, makeRepo, rmRepo, requireYg, yg, ygInit } from './helpers.mjs';
 
@@ -850,7 +850,7 @@ test('a word on the vocabulary list is let through', () => {
 // ── what the reader of the judged rule is handed ─────────────────────────────
 
 test('the companion folds what the evidence imports, and says what it could not reach', async () => {
-  const { companion } = await import(join(PACKAGE_DIR, 'evidence-matches-promise', 'companion.mjs'));
+  const { companion } = await import(pathToFileURL(join(PACKAGE_DIR, 'evidence-matches-promise', 'companion.mjs')).href);
 
   // A repository in memory, with an allowance that stops at the component's own mapping — the same
   // shape ctx.fs enforces, which throws rather than returning false for a path out of reach.
@@ -903,7 +903,7 @@ test('the companion folds what the evidence imports, and says what it could not 
 });
 
 test('the companion has nothing to pair for a promise nothing runs yet', async () => {
-  const { companion } = await import(join(PACKAGE_DIR, 'evidence-matches-promise', 'companion.mjs'));
+  const { companion } = await import(pathToFileURL(join(PACKAGE_DIR, 'evidence-matches-promise', 'companion.mjs')).href);
   const ctx = {
     subject: [{ path: 'promises/orders-are-confirmed.md', content: promise({ status: 'planned' }) }],
     config: {},
@@ -913,7 +913,7 @@ test('the companion has nothing to pair for a promise nothing runs yet', async (
 });
 
 test('the companion honors a repository-configured parked status, matching has-evidence', async () => {
-  const { companion } = await import(join(PACKAGE_DIR, 'evidence-matches-promise', 'companion.mjs'));
+  const { companion } = await import(pathToFileURL(join(PACKAGE_DIR, 'evidence-matches-promise', 'companion.mjs')).href);
   const ctx = {
     subject: [{ path: 'promises/orders-are-confirmed.md', content: promise({ status: 'deferred' }) }],
     config: { parked_markers: 'planned, disabled, deferred' },
@@ -923,7 +923,7 @@ test('the companion honors a repository-configured parked status, matching has-e
 });
 
 test('doc-shape honors a repository-configured parked status too, matching has-evidence', async () => {
-  const { check } = await import(join(PACKAGE_DIR, 'doc-shape', 'check.mjs'));
+  const { check } = await import(pathToFileURL(join(PACKAGE_DIR, 'doc-shape', 'check.mjs')).href);
   const ctx = {
     files: [{ path: 'promises/orders-are-confirmed.md', content: promise({ status: 'deferred' }) }],
     config: { parked_markers: 'planned, disabled, deferred' },
@@ -932,7 +932,7 @@ test('doc-shape honors a repository-configured parked status too, matching has-e
 });
 
 test('doc-shape still refuses that same status when nothing configured it as parked', async () => {
-  const { check } = await import(join(PACKAGE_DIR, 'doc-shape', 'check.mjs'));
+  const { check } = await import(pathToFileURL(join(PACKAGE_DIR, 'doc-shape', 'check.mjs')).href);
   const ctx = {
     files: [{ path: 'promises/orders-are-confirmed.md', content: promise({ status: 'deferred' }) }],
     config: {},
@@ -943,7 +943,7 @@ test('doc-shape still refuses that same status when nothing configured it as par
 });
 
 test('doc-shape asks nothing of a promise that names no class and no executor', async () => {
-  const { check } = await import(join(PACKAGE_DIR, 'doc-shape', 'check.mjs'));
+  const { check } = await import(pathToFileURL(join(PACKAGE_DIR, 'doc-shape', 'check.mjs')).href);
   const findings = (extra) => check({
     files: [{ path: 'promises/orders-are-confirmed.md', content: promise({ extra }) }],
     config: {},
@@ -955,7 +955,7 @@ test('doc-shape asks nothing of a promise that names no class and no executor', 
 });
 
 test('doc-shape accepts every class and every executor this package approves', async () => {
-  const { check, CLASSES, EXECUTORS } = await import(join(PACKAGE_DIR, 'doc-shape', 'check.mjs'));
+  const { check, CLASSES, EXECUTORS } = await import(pathToFileURL(join(PACKAGE_DIR, 'doc-shape', 'check.mjs')).href);
   const findings = (extra) => check({
     files: [{ path: 'promises/orders-are-confirmed.md', content: promise({ extra }) }],
     config: {},
@@ -977,7 +977,7 @@ test('doc-shape accepts every class and every executor this package approves', a
 });
 
 test('neither class nor executor is a setting a repository can widen', async () => {
-  const { check } = await import(join(PACKAGE_DIR, 'doc-shape', 'check.mjs'));
+  const { check } = await import(pathToFileURL(join(PACKAGE_DIR, 'doc-shape', 'check.mjs')).href);
   const out = check({
     files: [{ path: 'promises/orders-are-confirmed.md', content: promise({ extra: ['class: smoke test'] }) }],
     // A repository reaching for the shape of the settings it DOES have gets nowhere: the kinds of
@@ -989,7 +989,7 @@ test('neither class nor executor is a setting a repository can widen', async () 
 });
 
 test('the companion refuses to guess when a promise says it is kept and nothing keeps it', async () => {
-  const { companion } = await import(join(PACKAGE_DIR, 'evidence-matches-promise', 'companion.mjs'));
+  const { companion } = await import(pathToFileURL(join(PACKAGE_DIR, 'evidence-matches-promise', 'companion.mjs')).href);
   const ctx = {
     subject: [{ path: 'promises/orders-are-confirmed.md', content: promise() }],
     config: {},
@@ -999,7 +999,7 @@ test('the companion refuses to guess when a promise says it is kept and nothing 
 });
 
 test('the fold a reader is handed stays inside the limit a reviewer will accept', async () => {
-  const { companion } = await import(join(PACKAGE_DIR, 'evidence-matches-promise', 'companion.mjs'));
+  const { companion } = await import(pathToFileURL(join(PACKAGE_DIR, 'evidence-matches-promise', 'companion.mjs')).href);
   const manifest = readFileSync(join(PACKAGE_DIR, 'yg-package.yaml'), 'utf8');
   const budget = Number(/max_bytes:\s*\n\s*type: number\s*\n\s*default:\s*(\d+)/.exec(manifest)?.[1]);
   const ruleText = readFileSync(join(PACKAGE_DIR, 'evidence-matches-promise', 'content.md'), 'utf8').length;

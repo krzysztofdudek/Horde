@@ -28,7 +28,7 @@ import {
   hordeRoot, hordePath, teamPath, listHordes, readConfig, readJSON, readText, git, gitError, fail,
   parseArgs, emit, isMain, resolveTree, parseVerdictBlocks, parseAcceptanceLines,
   parseEvidenceRows,
-  runMain,
+  runMain, realPath, toPosix,
 } from './_lib.mjs';
 import {
   allTickets, nodesOf, parseField,
@@ -452,7 +452,9 @@ function main() {
   const { file, line } = parseTarget(positional[0]);
 
   const root = resolveTree({ tree: flags.tree }).path;
-  const relFile = relative(root, resolve(process.cwd(), file)).split('\\').join('/');
+  // Both sides as the file system names them: git prints the root long-named and with `/`, while
+  // cwd on Windows may carry a short 8.3 name, and a plain relative() of the two reads as outside.
+  const relFile = toPosix(relative(realPath(root), realPath(resolve(process.cwd(), file))));
   if (relFile.startsWith('..')) fail(`${file} is outside the repository`);
 
   const commit = blameLine(root, relFile, line);
