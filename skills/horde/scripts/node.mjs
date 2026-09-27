@@ -1903,13 +1903,15 @@ export function globToRegExp(glob) {
 // ---- files two parallel tickets may both change ------------------------------------------------
 //
 // Three kinds of file are touched by nearly every ticket and still merge by rule, not by judgement:
-// a node's own `log.md` (entries are appended, and `yg log merge-resolve` writes the union of two
-// sides), Yggdrasil's committed lock files (`yg-lock.*.json`, where one side is taken whole and the
-// verdicts the other side held are simply judged again), and whatever the repository lists in
+// a node's own `log.md` and a node type's decision log (`.yggdrasil/types/<t>/log.md`) (entries are
+// appended, and `yg log merge-resolve` writes the union of two sides), Yggdrasil's committed lock
+// files (`yg-lock.*.json`, `yg-lock.types.json` among them, where one side is taken whole and what the
+// other side held is judged or recorded again), and whatever the repository lists in
 // `config.appendOnly` (a CHANGELOG, most often), where each side only ever adds lines. None of them
 // says anything about which ticket owns which piece of work, so none of them serializes two tickets
 // in the plan, and a merge that conflicts only in them is resolved mechanically.
 export const NODE_LOG_FILE = /^\.yggdrasil\/model\/(?:.+\/)?log\.md$/;
+export const TYPE_LOG_FILE = /^\.yggdrasil\/types\/[^/]+\/log\.md$/;
 export const YG_LOCK_FILE = /^\.yggdrasil\/yg-lock\.[^/]+\.json$/;
 
 export function appendOnlyGlobs(cfg) {
@@ -1922,7 +1924,7 @@ export function isAppendOnly(path, cfg) {
 
 // A file whose conflicts the landing resolves by rule — one of the three kinds above.
 export function mergesByRule(path, cfg) {
-  return NODE_LOG_FILE.test(path) || YG_LOCK_FILE.test(path) || isAppendOnly(path, cfg);
+  return NODE_LOG_FILE.test(path) || TYPE_LOG_FILE.test(path) || YG_LOCK_FILE.test(path) || isAppendOnly(path, cfg);
 }
 
 // The node a `log.md` belongs to, as `yg log --node` names it (relative to `.yggdrasil/model/`).
@@ -1931,12 +1933,19 @@ export function nodeOfLogFile(path) {
   return m ? m[1] : null;
 }
 
-// `yg log merge-resolve --node <n>`, run in a tree stopped mid-merge on that node's log: it writes
-// the union of both sides and records the node's baseline in `yg-lock.logs.json`. Yggdrasil's own
-// resolution, never a hand-stitched one.
-export function ygLogMergeResolve(cfg, cwd, node) {
+// The node type a decision log belongs to, as `yg log --type` names it.
+export function typeOfLogFile(path) {
+  const m = /^\.yggdrasil\/types\/([^/]+)\/log\.md$/.exec(path);
+  return m ? m[1] : null;
+}
+
+// `yg log merge-resolve --node <n>` (or `--type <t>` for a type's decision log), run in a tree
+// stopped mid-merge on that log: it writes the union of both sides and records the baseline, a
+// node's in `yg-lock.logs.json`, a type's in `yg-lock.types.json`. Yggdrasil's own resolution,
+// never a hand-stitched one.
+export function ygLogMergeResolve(cfg, cwd, name, kind = 'node') {
   const { cmd, prefix, display } = ygCommand(cfg);
-  const args = ['log', 'merge-resolve', '--node', node];
+  const args = ['log', 'merge-resolve', kind === 'type' ? '--type' : '--node', name];
   const command = `${display} ${args.join(' ')}`;
   const run = startCli(cmd, [...prefix, ...args], ygOpts(cfg, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
   if (run.missing || run.spawnFailed) return { ok: false, command, out: `could not start \`${command}\`` };

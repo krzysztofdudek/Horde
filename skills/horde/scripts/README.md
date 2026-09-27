@@ -1106,7 +1106,7 @@ the JSON, and every item below is measured against it:
    was, and the landing stops here — `ok: false`, `stale: true`, base freshness the only item, no
    gate run and no fix round counted (`tick.mjs` sends the ticket back to be brought up to date).
    A merge that stops only on the files that merge by rule is finished instead of refused: a
-   node's `log.md` through `yg log merge-resolve --node <n>`, Yggdrasil's `yg-lock.*.json` by
+   node's `log.md` through `yg log merge-resolve --node <n>`, a node type's `.yggdrasil/types/<t>/log.md` through `yg log merge-resolve --type <t>` (after `yg-lock.types.json` took the parent's side, so the type's baseline is recorded again), Yggdrasil's `yg-lock.*.json` by
    taking the parent's side whole (the verdicts dropped are judged again), and a file
    `config.appendOnly` names by keeping both sides' added lines — only when neither side did more
    than add lines; where both added at the same place, the lines both begin and end with (a section

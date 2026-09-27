@@ -268,7 +268,7 @@ behind as usual.
 
 **A catch-up that conflicts is not a loop.** When a sibling's landing moves the parent, the landing
 merges the parent into the branch first, and the conflicts the family meets every day are resolved
-there by rule: a node's `log.md` through `yg log merge-resolve`, Yggdrasil's lock files by taking the
+there by rule: a node's `log.md` and a node type's decision log (`.yggdrasil/types/<t>/log.md`) through `yg log merge-resolve`, Yggdrasil's lock files by taking the
 parent's side, and the files `config.appendOnly` names (a CHANGELOG, as `horde.mjs init` finds it)
 by keeping both sides' added lines. Any other conflict sends the ticket back with no round counted
 and a brief naming the files to resolve; the second time the same files stop it, one `stuck` ask

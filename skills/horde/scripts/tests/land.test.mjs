@@ -3984,6 +3984,69 @@ test('land.mjs: tickets on one node landed one after another are caught up by ru
   assertAllThreeOnTrunk(dir, ids);
 });
 
+// Issue 479: since Yggdrasil 6.1.0 a node type keeps its own decision log in
+// `.yggdrasil/types/<t>/log.md`, with its baseline in `yg-lock.types.json`. Two tickets that each add
+// a decision to the same type conflict in both files every time; the catch-up takes the lock's
+// parent side and runs `yg log merge-resolve --type <t>`, which writes the union and records the
+// baseline again, instead of refusing the second ticket as stale.
+test('land.mjs: two tickets adding a decision to one node type land one after another, the type log merged by rule (issue 479)', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const arch = join(dir, '.yggdrasil', 'yg-architecture.yaml');
+  writeFileSync(arch, readFileSync(arch, 'utf8').replace(/^node_types: \{\}$/m, 'node_types:\n  module:\n    description: A fixture module.\n    when:\n      path: "src/**"'));
+  addNode(dir, 'feature', { mapping: ['src'] });
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'base.mjs'), 'export const base = 1;\n');
+  assert.equal(yg(dir, ['log', 'add', '--type', 'module', '--reason', 'Modules keep their exports small.']).code, 0);
+  git(['add', '.yggdrasil', 'src/base.mjs'], dir);
+  git(['commit', '-qm', 'graph: a node type with a decision in force'], dir);
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+
+  const ids = ['191', '192'];
+  const branches = {};
+  for (const id of ids) {
+    git(['checkout', '-q', '-b', `mission1/t-${id}`, 'mission1/trunk'], dir);
+    writeFileSync(join(dir, 'src', `f${id}.mjs`), `export function f${id}() { return ${Number(id)}; }\n`);
+    writeFileSync(join(dir, 'src', `f${id}.test.mjs`), [
+      "import test from 'node:test';",
+      "import assert from 'node:assert/strict';",
+      `import { f${id} } from './f${id}.mjs';`,
+      `test('f${id}', () => { assert.equal(f${id}(), ${Number(id)}); });`,
+      '',
+    ].join('\n'));
+    const added = yg(dir, ['log', 'add', '--type', 'module', '--adds', '--reason', `Decision ${id}: a module names what it exports.`]);
+    assert.equal(added.code, 0, added.out);
+    git(['add', '--', `src/f${id}.mjs`, `src/f${id}.test.mjs`, '.yggdrasil'], dir);
+    git(['commit', '-qm', `ticket ${id}`], dir);
+    git(['checkout', '-q', 'mission1/trunk'], dir);
+    const dst = writeIssue(dir, 'trunk', id, { node: 'feature', files: [`src/f${id}.mjs`, `src/f${id}.test.mjs`, '.yggdrasil/types/module/log.md'] });
+    writeTicketLog(dst);
+    seedQueueItem(dir, 'trunk', id, `mission1/t-${id}`);
+    branches[id] = `mission1/t-${id}`;
+  }
+
+  const first = run('land.mjs', [branches['191']], dir);
+  assert.equal(first.code, 0, JSON.stringify(first.json && first.json.checks) + first.stderr);
+  const second = run('land.mjs', [branches['192']], dir);
+  assert.equal(second.code, 0, JSON.stringify(second.json && second.json.checks) + second.stderr);
+  assert.equal(second.json.ok, true);
+  assert.notEqual(second.json.stale, true);
+  const note = byName(second)['base freshness'].note;
+  assert.match(note, /\.yggdrasil\/types\/module\/log\.md \(type log: yg log merge-resolve --type\)/);
+  assert.match(note, /\.yggdrasil\/yg-lock\.types\.json \(lock: the parent's side, whole\)/);
+  assert.doesNotMatch(ticketLog(dir, '192'), /round \d+\//, 'no fix round was counted');
+
+  const log = git(['show', 'mission1/trunk:.yggdrasil/types/module/log.md'], dir);
+  for (const text of ['Modules keep their exports small.', 'Decision 191', 'Decision 192']) assert.ok(log.includes(text), `the trunk's type log keeps "${text}":\n${log}`);
+  const lock = JSON.parse(git(['show', 'mission1/trunk:.yggdrasil/yg-lock.types.json'], dir));
+  assert.ok(lock.types && lock.types.module && lock.types.module.log, 'the type baseline is recorded on the trunk');
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  const check = yg(dir, ['check', '--no-approve']);
+  assert.doesNotMatch(check.out, /log-integrity|prefix_modified|lock-invalid/, `the merged type log is one Yggdrasil accepts:\n${check.out}`);
+});
+
 test('land.mjs: a catch-up conflict outside the files that merge by rule is still refused, and the result names the files', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
