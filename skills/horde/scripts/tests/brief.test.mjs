@@ -139,7 +139,9 @@ test('brief.mjs: renders worker and architect from a seeded ticket, queue and ro
     // `next:` line asking approval for a paid fill is already approved, so a worker never stops on it.
     assert.match(r.json.brief, /A paid reviewer run needs nobody's consent/);
     assert.match(r.json.brief, /`next:` line in `yg` output that asks\s+for approval of a paid fill[^]*already approved by that "go"/);
+    assert.match(r.json.brief, /every other approval a `next:` line asks for[^]*still goes to the user/);
     assert.doesNotMatch(r.json.brief, /When its\s+`next\.cost\.reviewerPairs` is 0/);
+    assert.doesNotMatch(r.json.brief, /--dry-run --json/);
   });
 
   await t.test('every role requires --name', () => {

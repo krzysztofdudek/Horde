@@ -85,7 +85,7 @@ steps (default: cut):
   frame
       with --json, the data a session renders to the client: what will change and where, what it
       will prove, and what the law gains. Three sections, no tool names, nothing about how any of
-      it is run. The client's "go" is the only approval in the whole mission, and it covers the
+      it is run. The client's "go" is the one approval of the mission as a whole, and it covers the
       paid reviewer runs without naming them: where a reviewer is configured, workers run them.
       When the graph on the trunk has prose rules no reviewer is set up to judge (or one that could
       not be reached), a fourth section comes first — what needs their decision before the work
