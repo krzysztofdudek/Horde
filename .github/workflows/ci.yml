@@ -123,11 +123,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    # The runner's temp directory is a short 8.3 name (C:\Users\RUNNER~1\…) that git prints long, and
-    # the suite compares the two spellings in many places; the job's own temp directory has one.
-    env:
-      TMP: ${{ runner.temp }}
-      TEMP: ${{ runner.temp }}
     steps:
       # The runner's git converts line endings on checkout (core.autocrlf=true); the fixtures the suite
       # builds compare file bytes, as the Linux job does.
@@ -161,10 +156,15 @@ jobs:
         with:
           repository: krzysztofdudek/RatatoskrSkill
           path: ratatoskr
+      # The runner's temp directory is a short 8.3 name (C:\Users\RUNNER~1\…) that git prints long,
+      # and the suite compares the two spellings in many places; the job's own temp directory has
+      # only the one.
       - name: run suite
         working-directory: skills/horde/scripts
         env:
           HORDE_TEST_RATATOSKR_DIR: ${{ github.workspace }}/ratatoskr
+          TMP: ${{ runner.temp }}
+          TEMP: ${{ runner.temp }}
         run: |
           node tests/yg-floor.mjs
           node --test tests/*.test.mjs
