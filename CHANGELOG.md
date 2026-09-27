@@ -10,6 +10,7 @@ Needs Yggdrasil 6.1.0 or newer; an older one is refused with the release to inst
 
 ### Fixed
 
+- `status` again shows when a component your mission touches belongs to another mission. Since missions began leasing areas of the graph rather than single components, it showed nothing there. It now names the other mission and the area that holds the component.
 - A merged ticket now says `merged` in its own status, not only in the queue. Before, the ticket stayed at `landed` for good, so `tk.mjs list --open` kept listing it and the wave-close audit kept treating a finding whose ticket had merged as still open.
 - A one-time answer that lets a branch weaken a rule, a test or a gate is now used up only when the branch actually merges. Before, a single-ticket landing used it up before its tests ran, so a landing that then failed its tests left the next attempt without the answer, and you were asked again.
 - Two tools writing the same state file at once no longer lose one of the writes. A ticket's status change no longer undoes an edit to the ticket made a moment earlier, a lease claimed by one horde no longer disappears when another horde claims one at the same time, and marking a one-time answer as used no longer erases a decision recorded at the same moment. A reader no longer sees a ticket or a report half-written.

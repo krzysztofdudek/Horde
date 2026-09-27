@@ -8,7 +8,7 @@
 
 import {
   hordePath, teamPath, listHordes, readConfig, readJSON, readText, git, fail, parseArgs, emit, isMain,
-  readLeases,
+  leaseHolderForNode,
   runMain,
 } from './_lib.mjs';
 import { currentWaveNumber, evidenceCoverage } from './wave.mjs';
@@ -116,12 +116,16 @@ function hordeDigest(horde, cfg) {
 
   // node-lease-across-hordes: leases another live horde holds on a node THIS horde touches — the
   // exact overlap node.mjs bind would refuse if this horde tried to claim it. Read fresh every
-  // call, straight off the one file every horde on the repository shares.
+  // call, straight off the one file every horde on the repository shares. Since the cut a mission
+  // leases territories, not the nodes inside them, so the holder is resolved both ways round —
+  // the node's own lease, then the leased territory that holds it — and `via` says which.
   const touchedNodes = missionNodes(horde);
-  const { leases } = readLeases();
   const foreignLeases = touchedNodes
-    .filter((node) => leases[node] && leases[node].horde !== horde)
-    .map((node) => ({ node, horde: leases[node].horde, since: leases[node].since }));
+    .map((node) => ({ node, holder: leaseHolderForNode(node) }))
+    .filter(({ holder }) => holder && holder.horde !== horde)
+    .map(({ node, holder }) => ({
+      node, horde: holder.horde, since: holder.since, via: holder.via,
+    }));
 
   // Every charter row, one of six states: no-ticket / prototyping / queued / running / merged /
   // reproduced — wave.mjs's own reading, shared with horde.mjs done's gate, of "does a ticket
@@ -188,7 +192,7 @@ function printHorde(h) {
   }
   if (h.leases.foreign.length > 0) {
     console.log('  leases held by other hordes on nodes this one touches:');
-    for (const l of h.leases.foreign) console.log(`    ${l.node} -> ${l.horde} (since ${l.since})`);
+    for (const l of h.leases.foreign) console.log(`    ${l.node} -> ${l.horde} (${l.via && l.via.startsWith('territory:') ? `territory ${l.via.slice('territory:'.length)}, ` : ''}since ${l.since})`);
   }
   if (h.evidence.total === 0) {
     console.log('  evidence: (no rows in the charter yet)');

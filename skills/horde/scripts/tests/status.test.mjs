@@ -156,6 +156,36 @@ test('status.mjs: leases held by other hordes on nodes this one touches', async 
   });
 });
 
+// Since the cut, a mission leases territories rather than the nodes inside them, so leases.json
+// holds territory names. A node this horde touches that sits inside another live horde's leased
+// territory is still that horde's, and status says so.
+test('status.mjs: a node inside another horde\'s leased territory reads as leased by that horde', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir, 'alpha');
+  initHorde(dir, 'beta');
+
+  writeFileSync(join(dir, '.horde', 'hordes', 'alpha', 'territories.json'), `${JSON.stringify({ doors: { nodes: ['shared'] } }, null, 2)}\n`);
+  const leasesPath = join(dir, '.horde', 'leases.json');
+  writeFileSync(leasesPath, `${JSON.stringify({ leases: { doors: { horde: 'alpha', since: '2026-09-27T00:00:00.000Z' } }, history: [] }, null, 2)}\n`);
+  run('tk.mjs', ['new', 'use-shared', '--title', 'Use shared', '--node', 'shared', '--class', 'standard', '--horde', 'beta'], dir);
+
+  const r = run('status.mjs', ['--horde', 'beta'], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const foreign = r.json.hordes[0].leases.foreign;
+  assert.equal(foreign.length, 1, JSON.stringify(foreign));
+  assert.equal(foreign[0].node, 'shared');
+  assert.equal(foreign[0].horde, 'alpha');
+  assert.equal(foreign[0].via, 'territory:doors');
+
+  const human = run('status.mjs', ['--horde', 'beta'], dir, { json: false });
+  assert.match(human.stdout, /shared -> alpha \(territory doors, since /);
+
+  // The horde that holds the territory sees no foreign lease on its own node.
+  const own = run('status.mjs', ['--horde', 'alpha'], dir);
+  assert.deepEqual(own.json.hordes[0].leases.foreign, []);
+});
+
 // 079 — a ticket branch whose queue.json entry is gone must still surface, as an orphan, not
 // vanish. Liveness is judged by branches, not by silence in the queue.
 test('status.mjs: a ticket branch with no queue entry shows up as orphaned', async (t) => {
