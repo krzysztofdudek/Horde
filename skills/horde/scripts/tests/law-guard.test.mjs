@@ -357,6 +357,32 @@ test('law guard: "scope: once" is spent by the landing that used it; "scope: mis
   });
 });
 
+// A "once" answer is spent by the landing that used it, which means a landing that merged. A red
+// gate after the guards passed merges nothing, so the answer is still there for the next attempt.
+// The batch path already consumed only after its merge; the single-ticket path consumed before the
+// gate ran.
+test('law guard: a "once" answer is not spent by a landing whose gate goes red', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  const { branch } = lawFixture(dir, '127', (dir2) => baseGraph(dir2, { status: 'advisory' }));
+  recordAnswer(dir, { scope: 'once' });
+  const decisionsPath = join(dir, '.horde', 'hordes', 'mission1', 'decisions.md');
+
+  run('horde.mjs', ['config', 'set', 'gates.team', 'false'], dir);
+  const red = run('land.mjs', [branch], dir);
+  assert.equal(red.code, 1, said(red));
+  assert.ok(red.json, said(red));
+  assert.equal(red.json.ok, false, 'the gate went red');
+  assert.equal(red.json.landed, null, 'and nothing merged');
+  assert.doesNotMatch(readFileSync(decisionsPath, 'utf8'), /\*\*Consumed:\*\*/, 'so the answer is not spent');
+
+  run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir);
+  const green = run('land.mjs', [branch], dir);
+  assert.equal(green.code, 0, said(green));
+  assert.ok(green.json.landed, 'the next attempt lands on the same answer');
+  assert.match(readFileSync(decisionsPath, 'utf8'), /\*\*Consumed:\*\* ticket 127 at [0-9a-f]{40} on /);
+});
+
 // ---- what counts as a narrowing --------------------------------------------------------
 
 test('law guard: a WIDENED scope is not a lowering — it goes down the conflict path instead', async (t) => {
