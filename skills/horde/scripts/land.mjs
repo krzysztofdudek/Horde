@@ -41,7 +41,7 @@ import {
   ticketNodes, ygCommand, fillDeterministic, pendingProsePairs, userOnlyRefusal, reviewerMissingIn,
   blockingFindings, splitFindings, routeFindings, renderFindings,
   globToRegExp, pathInBoundary, ticketBoundary, proposalBoundaryOf, ygFileContext, ygAvailable, ygJson,
-  NODE_LOG_FILE, YG_LOCK_FILE, mergesByRule, nodeOfLogFile, ygLogMergeResolve, YG_DOCUMENTS_AFTER,
+  NODE_LOG_FILE, TYPE_LOG_FILE, YG_LOCK_FILE, mergesByRule, nodeOfLogFile, typeOfLogFile, ygLogMergeResolve, YG_DOCUMENTS_AFTER,
 } from './node.mjs';
 import {
   ticketFiles, ticketEvidence, ticketKind, prototypeBranchOf, ticketReopens, findTicket,
@@ -3023,6 +3023,9 @@ function conflictingFiles(tree) {
 //                    whatever next runs `yg check --approve`; a lock is never stitched by hand.
 //   node log.md      `yg log merge-resolve --node <n>`: the union of both sides, verified, with the
 //                    node's baseline recorded in `yg-lock.logs.json`.
+//   type log.md      `yg log merge-resolve --type <t>` for `.yggdrasil/types/<t>/log.md`, the same
+//                    union, with the type's baseline recorded in `yg-lock.types.json` — after that
+//                    lock took the parent's side, so the baseline it holds is this merge's own.
 //   config.appendOnly  accepted only when both sides did nothing but add lines to the common base;
 //                    the result is the base with the parent's additions and then the branch's at
 //                    each place lines were added. A deletion or an edit on either side is refused.
@@ -3113,7 +3116,7 @@ function resolveKnownConflicts(tree, cfg, parentSide) {
     }
     resolved.push({ file: f, how: 'lock: the parent\'s side, whole' });
   }
-  for (const f of files.filter((x) => !YG_LOCK_FILE.test(x) && !NODE_LOG_FILE.test(x))) {
+  for (const f of files.filter((x) => !YG_LOCK_FILE.test(x) && !NODE_LOG_FILE.test(x) && !TYPE_LOG_FILE.test(x))) {
     const parentText = stageText(tree, parentStage, f);
     const branchText = stageText(tree, branchStage, f);
     const merged = parentText === null || branchText === null ? null : appendOnlyMerge(stageText(tree, 1, f) || '', parentText, branchText);
@@ -3132,6 +3135,16 @@ function resolveKnownConflicts(tree, cfg, parentSide) {
     resolved.push({ file: f, how: 'node log: yg log merge-resolve' });
   }
   if (logs.length && existsSync(join(tree, '.yggdrasil', 'yg-lock.logs.json'))) git(['add', '--', '.yggdrasil/yg-lock.logs.json'], tree);
+  const typeLogs = files.filter((x) => TYPE_LOG_FILE.test(x));
+  for (const f of typeLogs) {
+    const type = typeOfLogFile(f);
+    const res = type ? ygLogMergeResolve(cfg, tree, type, 'type') : { ok: false, out: 'not a type log' };
+    if (!res.ok || git(['add', '--', f], tree) === null) {
+      return { ok: false, left: [f], note: `\`yg log merge-resolve --type ${type}\` did not resolve ${f}${res.out ? `: ${res.out.split('\n')[0]}` : ''}` };
+    }
+    resolved.push({ file: f, how: 'type log: yg log merge-resolve --type' });
+  }
+  if (typeLogs.length && existsSync(join(tree, '.yggdrasil', 'yg-lock.types.json'))) git(['add', '--', '.yggdrasil/yg-lock.types.json'], tree);
   if (conflictingFiles(tree).length) return { ok: false, left: conflictingFiles(tree), note: 'files still in conflict after the rules ran' };
   return { ok: true, resolved };
 }

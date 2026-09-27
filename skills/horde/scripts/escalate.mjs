@@ -62,7 +62,7 @@ function fileItCommand(cfg, territory, rule) {
   const quoted = rule.replace(/"/g, '\\"');
   if (territory !== NO_TERRITORY) {
     return `file the rule (.yggdrasil/aspects/<id>/yg-aspect.yaml, attached to ${territory}'s node), then `
-      + `${ygCommand(cfg).display} aspects log add --aspect <id> --reason "${quoted}" — its own log is `
+      + `${ygCommand(cfg).display} log add --aspect <id> --reason "${quoted}" — its own log is `
       + 'where the reasoning belongs, not the node\'s';
   }
   return `decide.mjs add <slug> "${quoted}"`;

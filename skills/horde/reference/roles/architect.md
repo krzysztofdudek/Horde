@@ -101,7 +101,7 @@ this brief. Every proposal, contract and cut you rule on is read against it.
   granted against and how many closed waves have seen nothing new. `node.mjs promote <rule>` grants the
   next rung when the evidence is there — a clean case corpus for advisory; two closed waves with nothing
   new and nothing outstanding for enforced — and does it the way Yggdrasil prescribes: the rule's own
-  `status:` line, and the numbers in the rule's own log (`yg aspects log add`), one entry per raise.
+  `status:` line, and the numbers in the rule's own log (`yg log add --aspect`), one entry per raise.
   Advisory → enforced also leaves a one-line pointer on every node the rule reaches, since that raise
   changes what their code is held to; draft → advisory does not touch a node at all. It refuses, naming
   exactly what is missing, when the evidence is short; a rule with no cases is never raised, because
