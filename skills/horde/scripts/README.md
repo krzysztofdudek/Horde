@@ -542,8 +542,9 @@ guesses at an answer.
   graph has prose rules no reviewer is set up to judge, or one that could not be reached (the same
   read-only `yg check --json` reading `horde.mjs init` takes), a fourth section comes first — *What
   needs your decision first*, in plain words — and `decision` in `--json` carries the rules and the
-  graph's own `next.text`, the command that settles it. The client's "go" is the only approval in the
-  whole mission run, and nothing is exposed before it.
+  graph's own `next.text`, the command that settles it. The client's "go" is the one approval of the
+  mission as a whole, and nothing is exposed before it. It covers the paid reviewer runs without
+  naming them: where a reviewer is configured, workers run `yg check --approve` without asking.
 
 ## brief.mjs — rendered briefs
 
@@ -1205,7 +1206,7 @@ the JSON, and every item below is measured against it:
    tree red with such a cycle is never read as waiting on the user alone. The free half never records a
    component's source baseline, so its first log entry would otherwise answer for every later edit
    and the log gate would never ask for another why; the item names the component and the way out —
-   record why, run the full `yg check --approve` (free while no reviewer pair is pending), commit the
+   record why, run the full `yg check --approve` (calls the reviewer only if pairs are pending), commit the
    lock it writes. A shared batch gate reads it against the whole batch's diff;
 7. mapping — every file the branch added is owned by a node on the branch's own tree; skipped with
    `--no-gate`;

@@ -422,6 +422,7 @@ function returnBlockFor(t, parentBranch, cfg) {
       '',
       `That is the whole of this round: run \`${display} check --approve\` in your worktree, commit what it records,`,
       'and log `landed <sha>` as always. Change no code for it. A second return for the same reason counts a round.',
+      'The reviewer it calls is paid for under the mission\'s "go": run it without asking anyone.',
       '',
     ].join('\n');
   }
