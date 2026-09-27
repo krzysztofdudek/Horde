@@ -70,27 +70,22 @@ jobs:
           node --test tests/*.test.mjs
 
   # The same suite on Windows. Horde's tools start programs through npm's .cmd shims, run gate
-  # commands through Git for Windows' sh, stop process trees with taskkill and compare paths git
-  # prints with forward slashes — none of which the Linux job ever exercises. Same steps, same
-  # command; bash is the step shell so the steps read exactly as they do above.
-  test-windows:
-    runs-on: windows-latest
-    name: tests (windows, node 24)
-    timeout-minutes: 45
-    defaults:
-      run:
-        shell: bash
+  # commands through Git for Windows' sh, stop process trees with taskkill and compare the paths git
+  # prints with forward slashes — none of which the Linux job ever exercises. Same checkout of
+  # Yggdrasil, same suite command; bash is the step shell so the steps read as they do above.
+  #
+  # One step differs: Yggdrasil's CLI is built on Linux (the job below) and only installed and linked
+  # on Windows. Yggdrasil's build compiles a tree-sitter grammar and checks it against a pinned
+  # sha256, and on Windows that build does not yet reproduce the pinned bytes, so the build stops.
+  # What it produces (dist/: a JavaScript bundle and wasm grammars) is the same on every OS, so
+  # building it once on Linux tests Horde against exactly the CLI a Windows user installs.
+  yggdrasil-dist:
+    runs-on: ubuntu-latest
+    name: build Yggdrasil for windows
+    timeout-minutes: 15
+    outputs:
+      ref: ${{ steps.yggdrasil-branch.outputs.ref }}
     steps:
-      - run: git config --global core.autocrlf false
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-      - name: git identity for test fixtures
-        run: |
-          git config --global user.name ci
-          git config --global user.email ci@invalid
-          git config --global init.defaultBranch main
       - name: resolve Yggdrasil branch
         id: yggdrasil-branch
         run: |
@@ -106,11 +101,52 @@ jobs:
           repository: krzysztofdudek/Yggdrasil
           ref: ${{ steps.yggdrasil-branch.outputs.ref }}
           path: yggdrasil
-      - name: build and link Yggdrasil's CLI
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: build Yggdrasil's CLI
         working-directory: yggdrasil/source/cli
         run: |
           npm install
           npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yggdrasil-dist
+          path: yggdrasil/source/cli/dist
+          retention-days: 1
+
+  test-windows:
+    needs: yggdrasil-dist
+    runs-on: windows-latest
+    name: tests (windows, node 24)
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: git identity for test fixtures
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@invalid
+          git config --global init.defaultBranch main
+      - name: checkout Yggdrasil
+        uses: actions/checkout@v4
+        with:
+          repository: krzysztofdudek/Yggdrasil
+          ref: ${{ needs.yggdrasil-dist.outputs.ref }}
+          path: yggdrasil
+      - uses: actions/download-artifact@v4
+        with:
+          name: yggdrasil-dist
+          path: yggdrasil/source/cli/dist
+      - name: install and link Yggdrasil's CLI
+        working-directory: yggdrasil/source/cli
+        run: |
+          npm install
           npm link
       - name: checkout RatatoskrSkill
         uses: actions/checkout@v4
