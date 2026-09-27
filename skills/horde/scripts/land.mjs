@@ -51,6 +51,7 @@ import { recordMerged, buildPlan } from './queue.mjs';
 import { noteFate } from './wave.mjs';
 import { detectEvidenceLayer, HOOK_FILES } from './horde.mjs';
 import { withDecisionsLock } from './decide.mjs';
+import { loadAsks, addAsk } from './ask.mjs';
 
 const USAGE = `usage: land.mjs <ticket|branch>[,<ticket|branch>...] [--level trunk] [--no-gate] [--background] [--tree p] [--horde h]
        land.mjs <ticket> --fate reverted --by <sha> [--tree p] [--horde h]
@@ -1480,13 +1481,18 @@ function markConsumed(horde, answer, ticketId, sha) {
 // merge is made, and the answer is marked spent. A landing that uses no "once" answer takes no lock.
 //
 // Returns {merged, notes}: `merged` is merge()'s own {ok, sha, note}, or a refusal in the same shape;
-// `notes` says what could not be recorded after a merge that did happen. Marking the answer spent never
+// `notes` says what could not be recorded after a merge that did happen. A refusal says which kind it
+// is, because neither is the worker's to fix and neither costs a fix round (refusedMerge below):
+// `spent` lists the answers another landing used up first — a new answer is needed, so the ticket
+// waits on the user — and `lockTimeout` says the lock could not be taken — nothing was wrong with
+// the branch, so it simply goes round again. The wait for the lock is the caller's (`waitMs`): a merge
+// under it runs the repository's own git hooks, which can hold it far longer than a file write does. Marking the answer spent never
 // undoes or hides the merge: a failure there is a note, and the landing is recorded as it is.
 //
 // Lock order: this is the one place the decisions lock is not innermost. The merge under it can make a
 // scratch worktree, which takes that tree's lock (decisions → tree). Nothing that holds a tree lock
 // ever takes the decisions lock, so the pair has one order and no cycle.
-export function mergeSpendingAnswers(horde, answers, ticketId, sha, merge) {
+export function mergeSpendingAnswers(horde, answers, ticketId, sha, merge, { waitMs } = {}) {
   const once = answers.filter((a) => a.scope !== 'mission');
   if (once.length === 0) return { merged: merge(), notes: [] };
   let locked = false;
@@ -1501,7 +1507,8 @@ export function mergeSpendingAnswers(horde, answers, ticketId, sha, merge) {
         return {
           merged: {
             ok: false,
-            note: `the "once" answer${spent.length === 1 ? '' : 's'} this branch leaned on (${spent.map(answerHeading).join(', ')}) ${spent.length === 1 ? 'was' : 'were'} already spent by another landing while this one ran — nothing was merged. One answer lets one landing through: ask again (ask.mjs add --kind lower) if this branch should land too`,
+            spent: spent.map((a) => ({ heading: answerHeading(a), aspect: a.aspect || '' })),
+            note: `the "once" answer${spent.length === 1 ? '' : 's'} this branch leaned on (${spent.map(answerHeading).join(', ')}) ${spent.length === 1 ? 'was' : 'were'} already spent by another landing while this one ran — nothing was merged. One answer lets one landing through, so this branch needs a new one`,
           },
           notes: [],
         };
@@ -1519,13 +1526,57 @@ export function mergeSpendingAnswers(horde, answers, ticketId, sha, merge) {
         }
       }
       return { merged, notes };
-    });
+    }, waitMs ? { waitMs } : {});
   } catch (e) {
     // A throw from inside the lock (the merge itself) is the merge's own, and goes on as it always
     // did. Only a lock that could not be taken is answered here: nothing was merged.
     if (locked) throw e;
-    return { merged: { ok: false, note: `decisions.md could not be locked to check the "once" answers this branch leaned on, so nothing was merged: ${e.message}. Land again` }, notes: [] };
+    return { merged: { ok: false, lockTimeout: true, note: `decisions.md could not be locked to check the "once" answers this branch leaned on, so nothing was merged: ${e.message}. Land again` }, notes: [] };
   }
+}
+
+// What a merge refused by mergeSpendingAnswers leaves on the ticket, and the fields its result
+// carries for tick. Neither refusal is the worker's doing, so neither counts a round:
+//   lockTimeout  another landing held decisions.md past the wait — the result reads as stale (back
+//                in the queue, no round), the same as a branch the parent moved under
+//   spent        the one-time answer the branch leaned on was used up by another landing — only a
+//                new answer lets it through, so a new question is filed for each spent answer (one
+//                already open for this ticket and rule is reused) and the ticket waits on it
+// Anything else refused at the merge is a red landing, and counts its round as before.
+function refusedMerge(horde, ticketId, merged, checks) {
+  if (merged.lockTimeout) return { stale: true, conflictFiles: [] };
+  if (Array.isArray(merged.spent) && merged.spent.length) {
+    const waiting = spentAnswersWaiting(horde, ticketId, merged.spent);
+    const last = checks[checks.length - 1];
+    if (last && last.name === 'merge') last.note = `${last.note}: asked again as ${waiting.asks.join(', ')}`;
+    recordWaiting(horde, ticketId, waiting);
+    return { waitingOnUser: waiting };
+  }
+  recordChanges(horde, ticketId, checks);
+  return {};
+}
+
+function spentAnswersWaiting(horde, ticketId, spent) {
+  const open = loadAsks(horde).items.filter((a) => a && a.kind === 'lower' && a.state === 'open' && a.ticket === String(ticketId));
+  const asks = [];
+  for (const s of spent) {
+    const aspect = s.aspect || 'unnamed';
+    const existing = open.find((a) => a.aspect === aspect);
+    const ask = existing || addAsk(horde, {
+      kind: 'lower',
+      aspect,
+      ticket: String(ticketId),
+      why: `Ticket ${ticketId} leaned on the one-time answer "${s.heading}" to weaken ${aspect}, and another landing used that answer up before this one merged. One answer lets one landing through. Answer "approved — <why>" to let ticket ${ticketId} through as well, or say no and it stays blocked.`,
+    });
+    asks.push(ask.id);
+  }
+  return {
+    text: `the one-time answer${spent.length === 1 ? '' : 's'} ticket ${ticketId} leaned on (${spent.map((s) => s.heading).join(', ')}) ${spent.length === 1 ? 'was' : 'were'} used up by another landing first — a new answer is needed: ${asks.join(', ')}`,
+    reviewerMissing: false,
+    spentAnswers: true,
+    ask: asks[0],
+    asks,
+  };
 }
 
 // ---- reading one tree's graph ---------------------------------------------------------
@@ -4035,6 +4086,7 @@ function finishBatchMember(horde, ctx, outcome, provenanceInfo, flags, group, le
       branch: ctx.branch,
       sha: ctx.branchSha,
       ok: outcome.ok,
+      ...(outcome.extra || {}),
       checks: outcome.checks,
       pairs: [],
       landed: outcome.landed,
@@ -4088,11 +4140,11 @@ function landBatchGreen(root, cfg, horde, level, group, provenanceInfo, shared, 
     const resolved = !!(ctx.combined && ctx.combined.resolved.length);
     const { merged, notes: answerNotes } = mergeSpendingAnswers(horde, ctx.screen.answersUsed, ctx.ticketId, ctx.branchSha, () => mergeIntoParent(root, cfg, ctx.branch, group.parentBranch, currentTip, ctx.ticketId, cleaner, horde, {
       resolve: resolved, expectTree: resolved ? ctx.combined.tree : null,
-    }));
+    }), { waitMs: lockWait(cfg) });
     if (!merged.ok) {
       checks.push({ name: 'merge', ok: false, note: merged.note });
-      recordChanges(horde, ctx.ticketId, checks);
-      landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: false, checks, landed: null }, provenanceInfo, flags, group, level, lockNotes, batchTiming(shared, group)) });
+      const extra = refusedMerge(horde, ctx.ticketId, merged, checks);
+      landedPairs.push({ arg: ctx.arg, full: finishBatchMember(horde, ctx, { ok: false, checks, landed: null, extra }, provenanceInfo, flags, group, level, lockNotes, batchTiming(shared, group)) });
       continue;
     }
 
@@ -4516,12 +4568,12 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       if (nowSha !== branchSha) {
         fail(`${branch} moved while this landing ran — every item above was measured at ${short(branchSha)} and the branch now stands at ${short(nowSha)}. Nothing was merged; land again against the branch as it stands now`);
       }
-      const { merged, notes: answerNotes } = mergeSpendingAnswers(horde, answersUsed, ticketId, branchSha, () => mergeIntoParent(root, cfg, branch, parentBranch, parentTip, ticketId, cleaner, horde));
+      const { merged, notes: answerNotes } = mergeSpendingAnswers(horde, answersUsed, ticketId, branchSha, () => mergeIntoParent(root, cfg, branch, parentBranch, parentTip, ticketId, cleaner, horde), { waitMs: lockWait(cfg) });
       if (!merged.ok) {
         checks.push({ name: 'merge', ok: false, note: merged.note });
-        recordChanges(horde, ticketId, checks);
+        const extra = refusedMerge(horde, ticketId, merged, checks);
         return finish(horde, ticketId, {
-          ticket: ticketId, branch, sha: branchSha, ok: false, checks, pairs: [], landed: null, lock: lockNotes, size, timing: timing(),
+          ticket: ticketId, branch, sha: branchSha, ok: false, ...extra, checks, pairs: [], landed: null, lock: lockNotes, size, timing: timing(),
         }, head, flags, parent, level);
       }
       landed = { ticket: ticketId, sha: merged.sha, at: nowIso() };

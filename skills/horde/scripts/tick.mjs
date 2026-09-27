@@ -458,6 +458,15 @@ function assertLandedBranches(horde, doc, root) {
   }
 }
 
+// Whether a recorded landing result waits on questions of its own (`waitingOnUser.asks`) that are all
+// answered now.
+function ownWaitAnswered(horde, result) {
+  const ids = result && result.waitingOnUser && Array.isArray(result.waitingOnUser.asks) ? result.waitingOnUser.asks : [];
+  if (!ids.length) return false;
+  const items = loadAsksSafe(horde).items;
+  return ids.every((id) => items.some((a) => a && a.id === id && a.state === 'answered'));
+}
+
 function landTheLanded(horde, cfg, root, holds) {
   const doc = readQueue(horde);
   assertLandedBranches(horde, doc, root);
@@ -488,7 +497,10 @@ function landTheLanded(horde, cfg, root, holds) {
     // answer about the branch as it stands now — and all three get the same one, which is to ask
     // the gate again rather than to trust a record of some other commit. Once, before the first of
     // those asks, the ticket's review is raised instead; see "the one review a ticket gets" above.
-    if (!result || result.sha !== tip) {
+    // A landing refused at its merge because the one-time answer it leaned on was used up first filed
+    // its own question for a new answer, and that open question holds the landing (above). Once it is
+    // answered, the recorded refusal is an answer to a question that no longer stands: ask the gate again.
+    if (!result || result.sha !== tip || ownWaitAnswered(horde, result)) {
       const reviewed = reviewedGateStep(horde, item);
       if (!reviewed) {
         plan.push({
