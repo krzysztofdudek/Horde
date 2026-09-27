@@ -829,6 +829,65 @@ test('allocateId: N parallel ticket/ask/proposal filings each get a distinct num
   );
 });
 
+// A folder made by hand — copied in from another horde, or written straight to disk instead of
+// through `tk.mjs new` — never touches counter.json, so the counter can carry a `next` well below
+// a number that already exists on disk. Without a floor computed off the real issue folders, the
+// very next `new` hands that same number to a second, unrelated ticket.
+test('allocateId: a hand-made ticket folder above the counter is never reissued', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  // counter.json still reads `next: 1` — nothing has been allocated through it yet.
+  const manualDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '050-hand-made');
+  mkdirSync(manualDir, { recursive: true });
+  writeFileSync(join(manualDir, 'issue.md'), '**Status:** proposed\n');
+  writeFileSync(join(manualDir, 'log.md'), '');
+
+  const r = newTicket(dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(
+    Number(r.json.id) > 50,
+    `the next allocation should skip past the hand-made 050 folder, got ${r.json.id}`,
+  );
+});
+
+// Same hazard, raced: several tickets filed at once while a hand-made folder above the counter
+// already exists on disk. The floor computed off disk and the counter lock both have to hold at
+// once — a floor alone would not stop two racing callers from agreeing on the same "next" number.
+test('allocateId: parallel filings still never collide when a hand-made ticket sits above the counter', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+
+  const manualDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '050-hand-made');
+  mkdirSync(manualDir, { recursive: true });
+  writeFileSync(join(manualDir, 'issue.md'), '**Status:** proposed\n');
+  writeFileSync(join(manualDir, 'log.md'), '');
+
+  const TICKETS = 12;
+  const jobs = [];
+  for (let i = 0; i < TICKETS; i += 1) {
+    jobs.push(spawnAllocator(dir, 'tk.mjs', [
+      'new', `race-ticket-${i}`, '--title', 'race', '--node', 'core', '--class', 'standard', '--evidence', 'it works',
+    ]));
+  }
+  const results = await Promise.all(jobs);
+  const failed = results.filter((r) => r.code !== 0);
+  assert.deepEqual(failed.map((r) => r.stderr), [], 'every ticket filing should succeed');
+
+  const numbers = results.map((r) => allocatedNumber(r.json));
+  assert.ok(numbers.every((n) => Number.isInteger(n) && n > 50), `every id should clear the hand-made 050 folder: ${numbers}`);
+
+  const distinct = new Set(numbers);
+  assert.equal(
+    distinct.size,
+    numbers.length,
+    `${numbers.length - distinct.size} of ${numbers.length} parallel filings collided on the same number: `
+      + `${[...numbers].sort((a, b) => a - b).join(', ')}`,
+  );
+});
+
 test('tk.mjs: a declared Files list carries the log.md of every node the ticket names, and only that file of the graph', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

@@ -392,6 +392,25 @@ export function allTeamPaths(horde) {
   return out;
 }
 
+// The highest ticket number already on disk, across every team, dropped tickets included — a
+// folder made by hand (or copied in from another horde) never went through allocateId, so
+// counter.json can carry a `next` well below it. Passed as allocateId's own `floor` argument,
+// exactly the way nextGraphId in node.mjs clears graph.json's own out-of-band ids: the number a
+// ticket already owns, on disk, is never handed to a second one, whatever the counter last saw.
+function ticketIdFloor(horde) {
+  let max = 0;
+  for (const team of allTeamPaths(horde)) {
+    const issuesDir = teamPath(horde, team, 'issues');
+    if (!existsSync(issuesDir)) continue;
+    for (const d of readdirSync(issuesDir, { withFileTypes: true })) {
+      if (!d.isDirectory()) continue;
+      const m = /^(\d+)-/.exec(d.name);
+      if (m) max = Math.max(max, parseInt(m[1], 10));
+    }
+  }
+  return max;
+}
+
 // The acceptance lines of a ticket: every `- [ ]` (or `- [x]`) line under "## Acceptance", minus
 // the template's own placeholder. A ticket with none has nothing anybody can reproduce, so
 // nothing can ever prove it done — `queue add` refuses it (a real mission found one at briefing
@@ -774,7 +793,7 @@ export function createTicket(horde, spec) {
   const files = withNodeLogs(nodes, declared);
   checkConsumesHaveProducers(horde, consumes, null);
 
-  const allocated = allocateId(horde, 'ticket');
+  const allocated = allocateId(horde, 'ticket', { floor: ticketIdFloor(horde) });
   const id = allocated.number;
   const dirName = `${id}-${slugify(slug)}`;
   const dir = teamPath(horde, team, 'issues', dirName);
