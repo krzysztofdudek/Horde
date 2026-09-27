@@ -13,6 +13,12 @@ import {
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
+// How long a test waits for a detached landing to write its result. A landing starts git and the
+// Yggdrasil CLI dozens of times, and a process start on Windows costs several times what it does on
+// Linux: a two-ticket batch that finishes in seconds there takes over a minute on a loaded Windows
+// runner, so the wait there is longer. It is a ceiling, never a sleep.
+const BACKGROUND_WAIT_MS = process.platform === 'win32' ? 300000 : 90000;
+
 // A path written into an sh command line bare: sh reads a backslash as an escape, and Windows paths
 // are full of them, so it goes in with forward slashes, which Git for Windows' sh reads the same.
 const shPath = (p) => p.replace(/\\/g, '/');
@@ -905,7 +911,7 @@ test('tick.mjs dispatch: two non-overlapping ready tickets share one gate run th
     assert.equal(step.action, 'gate');
   }
 
-  const deadline = Date.now() + 90000;
+  const deadline = Date.now() + BACKGROUND_WAIT_MS;
   let allMerged = false;
   while (Date.now() < deadline && !allMerged) {
     const items = readQueue(dir).items;

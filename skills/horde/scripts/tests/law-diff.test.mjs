@@ -335,7 +335,7 @@ test('a stale-CLI refusal names the tree it ran on and the version that tree\'s 
     "import { execFileSync } from 'node:child_process';",
     `const REAL = ${JSON.stringify(yg)};`,
     'const argv = process.argv.slice(2);',
-    "if (argv[0] === '--version') { console.log(process.cwd().includes('/scratch/') ? '5.7.3' : '9.9.9'); process.exit(0); }",
+    "if (argv[0] === '--version') { console.log(/[\\\\/]scratch[\\\\/]/.test(process.cwd()) ? '5.7.3' : '9.9.9'); process.exit(0); }",
     "if (argv[0] === 'aspects' && argv.includes('--json') && argv[1] !== 'log') {",
     '  process.stdout.write(JSON.stringify({ schema: "yg-aspects/0", aspects: [] }) + "\\n");',
     '  process.exit(0);',

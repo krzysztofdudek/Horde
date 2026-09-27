@@ -21,6 +21,12 @@ import {
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
+// How long a test waits for a detached landing to write its result. A landing starts git and the
+// Yggdrasil CLI dozens of times, and a process start on Windows costs several times what it does on
+// Linux: a two-ticket batch that finishes in seconds there takes over a minute on a loaded Windows
+// runner, so the wait there is longer. It is a ceiling, never a sleep.
+const BACKGROUND_WAIT_MS = process.platform === 'win32' ? 300000 : 90000;
+
 // git() (retrying the sandbox's transient commit-signing 503s for `commit`/`merge`/`revert`, same
 // as everywhere else in this suite) now lives once, shared and exported, in helpers.mjs — this
 // file was the original source of the full commit/merge/revert distinction; see it there.
@@ -2388,7 +2394,7 @@ test('land.mjs: --background returns a result-file path at once, and the file ha
   assert.match(r.json.resultFile, /\.horde[\\/]hordes[\\/]mission1[\\/]land[\\/]024\.json$/);
   assert.equal(existsSync(r.json.resultFile), false, 'nothing is written yet');
 
-  const deadline = Date.now() + 90000;
+  const deadline = Date.now() + BACKGROUND_WAIT_MS;
   let doc = null;
   while (Date.now() < deadline) {
     try { doc = JSON.parse(readFileSync(r.json.resultFile, 'utf8')); break; } catch { /* not yet, or half-written */ }
@@ -2940,7 +2946,7 @@ function journal(dir, horde = 'mission1') {
 function landInBackground(dir, branch) {
   const started = run('land.mjs', [branch, '--background'], dir);
   assert.equal(started.code, 0, started.stderr);
-  const deadline = Date.now() + 90000;
+  const deadline = Date.now() + BACKGROUND_WAIT_MS;
   while (Date.now() < deadline) {
     try { return JSON.parse(readFileSync(started.json.resultFile, 'utf8')); } catch { /* not yet */ }
     sleepSync(250);
@@ -3770,7 +3776,7 @@ test('land.mjs --background with two or more tickets starts one worker for the w
     assert.equal(existsSync(it.resultFile), false, 'nothing is written yet');
   }
 
-  const deadline = Date.now() + 90000;
+  const deadline = Date.now() + BACKGROUND_WAIT_MS;
   const docs = {};
   while (Date.now() < deadline && Object.keys(docs).length < ids.length) {
     for (const it of r.json.items) {
@@ -3805,7 +3811,7 @@ test('land.mjs --background with a batch: a ticket with no queue item is refused
     assert.equal(it.started, true, JSON.stringify(it));
   }
 
-  const deadline = Date.now() + 90000;
+  const deadline = Date.now() + BACKGROUND_WAIT_MS;
   let bothLanded = false;
   while (Date.now() < deadline && !bothLanded) {
     const items = run('queue.mjs', ['list'], dir).json;
