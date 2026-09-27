@@ -533,6 +533,37 @@ test('E17 — a quality ticket is filed and queued from a grain-advice/1 documen
     assert.match(ticket.json.text, /the rule's own log, once it exists — or, if it does not, the node's/);
     assert.doesNotMatch(ticket.json.text, /or the node's log\s*\n\s*carries one entry/, 'the generic node-only wording is gone for this kind');
   });
+
+  await t.test('the same rule with a different list of places is the one already filed', () => {
+    const ruleDoc = (name, items) => {
+      const doc = join(dir, name);
+      writeFileSync(doc, `${JSON.stringify({
+        schema: 'grain-advice/1', repo: '.', at: 'abc1234', graph: '.yggdrasil', items,
+      }, null, 1)}\n`);
+      return doc;
+    };
+    const convention = (nodes, conforming) => ({
+      kind: 'rule',
+      nodes,
+      evidence: { origin: 'convention', aspect: 'grain-writes-through-helper', conforming, deviating: 0 },
+      text: `${conforming} of ${conforming} writes go through one helper, in ${nodes.join(', ')} — nothing enforces it yet.`,
+    });
+    const boundary = (nodes, violations) => ({
+      kind: 'rule',
+      nodes,
+      evidence: { origin: 'boundary', decision: 'bd-7', from: 'src/ui', neverImports: 'src/db', fromNodes: nodes, violations },
+      text: `src/ui never imports src/db, decided by the maintainer; ${violations} imports cross it today in ${nodes.join(', ')}.`,
+    });
+    const first = run('queue.mjs', ['quality', '--from', ruleDoc('rules-1.json', [convention(['feature'], 4), boundary(['feature'], 2)])], dir);
+    assert.equal(first.code, 0, first.stderr);
+    assert.equal(first.json.filed.length, 2, 'the convention and the boundary are two rules');
+    // The convention now holds in a second node and the boundary is crossed from one more: new node
+    // lists, new counts, new sentences — the same two rules.
+    const again = run('queue.mjs', ['quality', '--from', ruleDoc('rules-2.json', [convention(['feature', 'feature/inner'], 6), boundary(['feature', 'feature/inner'], 3)])], dir);
+    assert.equal(again.code, 0, again.stderr);
+    assert.deepEqual(again.json.filed, [], 'a rule whose places changed must not open a second ticket');
+    assert.deepEqual(again.json.skipped.map((s) => s.why), ['already filed as a ticket', 'already filed as a ticket']);
+  });
 });
 
 test('E17 — only-the-work turns all of it off, and says so at the close', async (t) => {
@@ -631,6 +662,14 @@ test('an advisory is known by what it is about: counts in its text do not make i
   assert.equal(advisoryKey(rule('4 of 4 writes go through one helper')), advisoryKey(rule('5 of 5 writes go through one helper')));
   assert.notEqual(advisoryKey(rule('4 of 4 writes go through one helper')), advisoryKey(rule('4 of 4 reads go through one cache')),
     'two different rule advisories on one node stay two');
+  // A rule Grain drafts carries its identity in its evidence: the decision a boundary rule comes from,
+  // the aspect a convention rule would become. Where it holds and what its sentence says are not it.
+  const convention = (nodes, text) => ({ kind: 'rule', nodes, text, evidence: { origin: 'convention', aspect: 'helper-writes' } });
+  assert.equal(advisoryKey(convention(['feature'], 'in feature')), advisoryKey(convention(['feature', 'api'], 'in feature and api')));
+  assert.notEqual(advisoryKey(convention(['feature'], 'x')), advisoryKey({ ...convention(['feature'], 'x'), evidence: { origin: 'convention', aspect: 'other' } }));
+  const boundary = (decision, nodes) => ({ kind: 'rule', nodes, text: `${nodes.length} nodes`, evidence: { origin: 'boundary', decision } });
+  assert.equal(advisoryKey(boundary('bd-1', ['ui'])), advisoryKey(boundary('bd-1', ['ui', 'web'])));
+  assert.notEqual(advisoryKey(boundary('bd-1', ['ui'])), advisoryKey(boundary('bd-2', ['ui'])), 'two decisions are two rules');
   // A ledger entry written before this key: the nodes, then a hash of the whole text.
   const filed = filedAdvisoryKeys([{ key: 'relation:api+web:1a2b3c4d' }, { key: 'split:feature:ffffffff' }]);
   assert.ok(filed.has(advisoryKey(relation(9))), 'an old relation entry still counts as filed');
