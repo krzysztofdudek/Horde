@@ -4,7 +4,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
   existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, appendFileSync, utimesSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, git,
@@ -2063,7 +2063,7 @@ test('tick.mjs lease: a worker that ended mid-merge has the merge aborted before
   git(['-C', worktree, 'add', 'src/clash.ts'], dir);
   git(['-C', worktree, 'commit', '-qm', 'the worker\'s version'], dir);
   // …the trunk gets another…
-  const trunkTree = join(dir, '..', `${dir.split('/').pop()}-trunk-edit`);
+  const trunkTree = join(dir, '..', `${basename(dir)}-trunk-edit`);
   git(['worktree', 'add', '-q', trunkTree, 'mission1/trunk'], dir);
   mkdirSync(join(trunkTree, 'src'), { recursive: true });
   writeFileSync(join(trunkTree, 'src', 'clash.ts'), 'export const who = "trunk";\n');

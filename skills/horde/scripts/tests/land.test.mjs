@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { sleepSync } from '../_lib.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
 import {
@@ -2391,7 +2392,7 @@ test('land.mjs: --background returns a result-file path at once, and the file ha
   let doc = null;
   while (Date.now() < deadline) {
     try { doc = JSON.parse(readFileSync(r.json.resultFile, 'utf8')); break; } catch { /* not yet, or half-written */ }
-    execFileSync('sleep', ['0.25']);
+    sleepSync(250);
   }
   assert.ok(doc, 'the background run wrote its result');
   assert.equal(doc.ticket, '024');
@@ -2942,7 +2943,7 @@ function landInBackground(dir, branch) {
   const deadline = Date.now() + 90000;
   while (Date.now() < deadline) {
     try { return JSON.parse(readFileSync(started.json.resultFile, 'utf8')); } catch { /* not yet */ }
-    execFileSync('sleep', ['0.25']);
+    sleepSync(250);
   }
   throw new Error(`the background landing of ${branch} wrote no result`);
 }
@@ -3776,7 +3777,7 @@ test('land.mjs --background with two or more tickets starts one worker for the w
       if (docs[it.ticket]) continue;
       try { docs[it.ticket] = JSON.parse(readFileSync(it.resultFile, 'utf8')); } catch { /* not yet, or half-written */ }
     }
-    if (Object.keys(docs).length < ids.length) execFileSync('sleep', ['0.25']);
+    if (Object.keys(docs).length < ids.length) sleepSync(250);
   }
   assert.equal(Object.keys(docs).length, ids.length, 'both background results were written');
   for (const id of ids) {
@@ -3809,7 +3810,7 @@ test('land.mjs --background with a batch: a ticket with no queue item is refused
   while (Date.now() < deadline && !bothLanded) {
     const items = run('queue.mjs', ['list'], dir).json;
     bothLanded = ids.every((id) => items.find((i) => i.ticket === id)?.state === 'merged');
-    if (!bothLanded) execFileSync('sleep', ['0.25']);
+    if (!bothLanded) sleepSync(250);
   }
   assert.ok(bothLanded, 'the two real tickets landed despite the third being unresolvable');
 });

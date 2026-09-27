@@ -4,7 +4,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import {
   existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, rmSync,
 } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeRepo, rmRepo } from './helpers.mjs';
 import { raceTrunk, overlaps, describeRace } from './tree-race/harness.mjs';
@@ -975,6 +975,7 @@ test('removeStaleLock takes over only the lock it judged, never a fresh one take
 // it must never leave the loop spinning without its sleep or its deadline.
 test('an unreadable lock is taken over, not spun on', { timeout: 20000 }, async (t) => {
   if (process.getuid && process.getuid() === 0) { t.skip('root reads a 000 file anyway'); return; }
+  if (process.platform === 'win32') { t.skip('Windows has no file mode that makes a file unreadable to its owner'); return; }
   const mod = await import('../_lib.mjs');
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -994,10 +995,12 @@ test('an unreadable lock is taken over, not spun on', { timeout: 20000 }, async 
 
 // Review of 371: a gate stopped at its timeout is stopped whole. Killing only the shell left what it
 // started (a test runner, here a sleep) running after the gate had already been called red.
-test('_lib.mjs runGateAt: a timeout stops the gate command and every process it started', async () => {
+// On Windows `$!` is the sh's own pid for the child, not a Windows pid, so there is nothing here to
+// look the child up by; tests/platform.test.mjs measures the stop there by the time it takes.
+test('_lib.mjs runGateAt: a timeout stops the gate command and every process it started', { skip: process.platform === 'win32' && 'the child pid sh reports is not a Windows pid' }, async () => {
   const { runGateAt } = await import('../_lib.mjs');
   const dir = makeRepo();
-  const pidFile = join(dir, '..', `${dir.split('/').pop()}-child.pid`);
+  const pidFile = join(dir, '..', `${basename(dir)}-child.pid`);
   try {
     const started = Date.now();
     const res = runGateAt(dir, `sleep 30 & echo $! > "${pidFile}"; wait`, 'HEAD', 1000);
@@ -1022,9 +1025,11 @@ test('_lib.mjs runGateAt: a timeout stops the gate command and every process it 
 // never reaches; the supervisor passes each of them on. The caller here is a detached node process
 // (its own group, standing in for the terminal's foreground group), signalled as a group.
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-  test(`_lib.mjs runCommandGroup: ${sig} to the caller's group stops the gate command and what it started`, { timeout: 30000 }, async () => {
+  // Windows has neither process groups nor these three signals to send one: a process there is
+  // stopped, never signalled, and taskkill /T takes the tree with it.
+  test(`_lib.mjs runCommandGroup: ${sig} to the caller's group stops the gate command and what it started`, { timeout: 30000, skip: process.platform === 'win32' && 'no process groups or POSIX signals on Windows' }, async () => {
     const dir = makeRepo();
-    const pidFile = join(dir, '..', `${dir.split('/').pop()}-${sig}.pid`);
+    const pidFile = join(dir, '..', `${basename(dir)}-${sig}.pid`);
     const lib = join(dirname(dirname(fileURLToPath(import.meta.url))), '_lib.mjs');
     const caller = spawn(process.execPath, ['--input-type=module', '-e', `
       const { runCommandGroup } = await import(${JSON.stringify(lib)});
