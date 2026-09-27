@@ -50,7 +50,7 @@ import {
   runMain, withAsksLock, notifyClient, readConfig, parseDecisionEntries, decisionField, readText,
 } from './_lib.mjs';
 import {
-  loopAsks, fileLoopAsk, answerLoopAsk, withLoopLock, decisionsFile, writeLoopFile,
+  loopAsks, fileLoopAsk, answerLoopAsk, withLoopLock, decisionsFile, writeLoopFile, ticketFile,
 } from './loop.mjs';
 
 export const KINDS = ['stop', 'stuck', 'lower', 'charter'];
@@ -164,10 +164,14 @@ export function addAsk(horde, {
   const filed = withAsksLock(horde, () => withLoopLock(horde, () => {
     // The loop keeps a question on one line; the whole of it stays in the extras.
     const line = String(why).replace(/\s+/g, ' ').trim();
-    const asked = fileLoopAsk(horde, line, { kind, target: aspect ? String(aspect) : undefined, issue: ticketId || undefined });
+    // The loop ties a question to a ticket it holds; a ticket number it does not hold (one named by a
+    // worker before it was filed, say) stays with the question in the extras.
+    const onTicket = ticketId && ticketFile(horde, ticketId) ? ticketId : undefined;
+    const asked = fileLoopAsk(horde, line, { kind, target: aspect ? String(aspect) : undefined, issue: onTicket });
     const id = `a-${asked.id}`;
     const doc = loadExtras(horde);
     const x = { why: String(why), at: nowIso() };
+    if (ticketId && !onTicket) x.ticket = ticketId;
     if (territory) x.territory = String(territory);
     if (log) x.log = String(log);
     doc.questions[id] = x;

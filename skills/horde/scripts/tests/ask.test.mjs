@@ -33,16 +33,24 @@ function writeLandResult(dir, ticket, body, horde = 'mission1') {
   return path;
 }
 
+// A question lives in the mission's Jarl loop: a line of .jarl/asks.md, answered by the ruling
+// ask-NNN in .jarl/decisions.md. What the line has no room for (the whole question, its territory,
+// the log it points at, the scope of its answer) stays in hordes/<h>/asks.json.
 function asksPath(dir, horde = 'mission1') {
   return join(dir, '.horde', 'hordes', horde, 'asks.json');
 }
 
 function asksMdPath(dir, horde = 'mission1') {
-  return join(dir, '.horde', 'hordes', horde, 'asks.md');
+  return join(dir, '.horde', 'hordes', horde, '.jarl', 'asks.md');
 }
 
 function decisionsPath(dir, horde = 'mission1') {
-  return join(dir, '.horde', 'hordes', horde, 'decisions.md');
+  return join(dir, '.horde', 'hordes', horde, '.jarl', 'decisions.md');
+}
+
+// The ruling that answers question a-NNN.
+function ruling(id) {
+  return `ask-${String(id).replace(/^a-/, '')}`;
 }
 
 // ---- input validation --------------------------------------------------------------------
@@ -78,13 +86,13 @@ test('ask.mjs add: input validation', async (t) => {
     assert.match(r.stderr, /add requires "<why>"/);
   });
 
-  await t.test('the id carries prefix "a-" from the same counter as tickets and graph items', () => {
+  await t.test('the id carries prefix "a-", in a sequence of its own: the prefix, not the number, tells it from a ticket', () => {
     const ticket = run('tk.mjs', ['new', 'first-ticket', '--title', 'First', '--node', 'feature', '--class', 'standard', '--evidence', 'it works'], dir);
     assert.equal(ticket.json.id, '001');
     const opened = run('ask.mjs', ['add', 'a question', '--kind', 'stop'], dir);
     assert.equal(opened.code, 0, opened.stderr);
     assert.match(opened.json.id, /^a-\d{3}$/);
-    assert.notEqual(opened.json.id, 'a-001', 'the ticket already took the first number in the shared sequence');
+    assert.equal(opened.json.id, 'a-001', 'the loop numbers questions apart from tickets');
   });
 
   await t.test('add on a horde that does not exist refuses, naming it', () => {
@@ -132,7 +140,7 @@ test('ask.mjs: lifecycle — answer, list, show, and the stop/stuck ticket rule'
   });
 
   await t.test('answer appends ask-<id> to decisions.md, in the client\'s own words', () => {
-    const shown = run('decide.mjs', ['show', `ask-${id}`], dir);
+    const shown = run('decide.mjs', ['show', ruling(id)], dir);
     assert.equal(shown.code, 0, shown.stderr);
     assert.match(shown.json.body, /\*\*Answer:\*\* proceed the way you guessed/);
     assert.equal(shown.json.ticket, '007');
@@ -145,8 +153,8 @@ test('ask.mjs: lifecycle — answer, list, show, and the stop/stuck ticket rule'
     assert.notEqual(open.json[0].id, id);
   });
 
-  await t.test('asks.md regenerates alongside asks.json on every write', () => {
-    assert.ok(readFileSync(asksMdPath(dir), 'utf8').includes(id));
+  await t.test('the question is a line of the loop\'s asks.md, answered there too', () => {
+    assert.ok(readFileSync(asksMdPath(dir), 'utf8').includes(`**${id}** (answered)`));
   });
 
   await t.test('a "stop" item does not let its ticket back onto spawn — filing it never touches the queue', () => {
@@ -185,7 +193,7 @@ test('ask.mjs: an answer to "stuck" either returns the ticket to queue or closes
     // ask.mjs itself never touches queue.json (single responsibility — see tick.mjs, which reads
     // the decision back out through the same land.mjs law-guard style lookup); what this proves is
     // that the item closed cleanly with an answer recorded, which is the half ask.mjs owns.
-    const decision = run('decide.mjs', ['show', `ask-${opened.json.id}`], dir);
+    const decision = run('decide.mjs', ['show', ruling(opened.json.id)], dir);
     assert.equal(decision.code, 0, decision.stderr);
     assert.match(decision.json.body, /try again/);
   });
@@ -217,7 +225,7 @@ test('ask.mjs answer --scope: default "once", explicit "mission", and illegal ou
     const r = run('ask.mjs', ['answer', opened.json.id, 'approved — fine by me'], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.answerScope, 'once');
-    const shown = run('decide.mjs', ['show', `ask-${opened.json.id}`], dir);
+    const shown = run('decide.mjs', ['show', ruling(opened.json.id)], dir);
     assert.match(shown.json.body, /\*\*Scope:\*\* once/);
   });
 
@@ -226,7 +234,7 @@ test('ask.mjs answer --scope: default "once", explicit "mission", and illegal ou
     const r = run('ask.mjs', ['answer', opened.json.id, 'approved — this one stands all mission', '--scope', 'mission'], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.answerScope, 'mission');
-    const shown = run('decide.mjs', ['show', `ask-${opened.json.id}`], dir);
+    const shown = run('decide.mjs', ['show', ruling(opened.json.id)], dir);
     assert.match(shown.json.body, /\*\*Scope:\*\* mission/);
     assert.match(shown.json.body, /\*\*Aspect:\*\* second-rule/);
   });
@@ -261,8 +269,7 @@ test('ask.mjs / tick.mjs: askClient carries only open items, and a "stuck" item 
   const stuck = r.json.askClient.find((a) => a.kind === 'stuck');
   assert.ok(stuck, JSON.stringify(r.json.askClient));
 
-  const asks = JSON.parse(readFileSync(asksPath(dir), 'utf8'));
-  const item = asks.items.find((a) => a.id === stuck.id);
+  const item = run('ask.mjs', ['list'], dir).json.find((a) => a.id === stuck.id);
   assert.match(item.why, /the suite is still red/);
   assert.match(item.log, /log\.md$/);
   assert.ok(item.log.includes(join('teams', 'trunk', 'issues', `${id}-red-forever`, 'log.md')), item.log);
@@ -299,20 +306,20 @@ test('ask.mjs: broken states', async (t) => {
     assert.deepEqual(r.json, []);
   });
 
-  await t.test('decisions.md already carrying slug ask-<id> (answer recorded, asks.json rolled back) refuses a duplicate rather than writing twice', () => {
+  await t.test('decisions.md already carrying slug ask-<id> (answer recorded, asks.md rolled back) refuses a duplicate rather than writing twice', () => {
     const dir = makeRepo();
     t.after(() => rmRepo(dir));
     initHorde(dir);
     const opened = run('ask.mjs', ['add', 'a question', '--kind', 'stop'], dir);
-    const before = JSON.parse(readFileSync(asksPath(dir), 'utf8'));
+    const before = readFileSync(asksMdPath(dir), 'utf8');
     run('ask.mjs', ['answer', opened.json.id, 'an answer'], dir);
-    // Roll back asks.json to before the answer, as if that write never happened.
-    writeFileSync(asksPath(dir), JSON.stringify(before, null, 2));
+    // Roll back the loop's asks.md to before the answer, as if that write never happened.
+    writeFileSync(asksMdPath(dir), before);
     const r = run('ask.mjs', ['answer', opened.json.id, 'a different answer'], dir);
     assert.equal(r.code, 1);
     assert.match(r.stderr, /duplicate slug: ask-/);
     const decisions = readFileSync(decisionsPath(dir), 'utf8');
-    assert.equal((decisions.match(new RegExp(`ask-${opened.json.id}`, 'g')) || []).length, 1);
+    assert.equal((decisions.match(new RegExp(`· ${ruling(opened.json.id)}\\b`, 'g')) || []).length, 1);
   });
 
   await t.test('two concurrent ask answer calls on the same item leave exactly one decisions.md entry', async () => {
@@ -334,27 +341,33 @@ test('ask.mjs: broken states', async (t) => {
     assert.deepEqual(codes, [0, 1], 'one wins, one finds the slug already taken');
 
     const decisions = readFileSync(decisionsPath(dir), 'utf8');
-    assert.equal((decisions.match(new RegExp(`ask-${opened.json.id}`, 'g')) || []).length, 1);
+    assert.equal((decisions.match(new RegExp(`· ${ruling(opened.json.id)}\\b`, 'g')) || []).length, 1);
   });
 
-  await t.test('a read-only decisions.md refuses, naming the file, and the item is not marked answered', (t) => {
+  await t.test('a loop that cannot be written refuses, naming it, and the item is not marked answered', (t) => {
     if (process.getuid && process.getuid() === 0) {
       t.skip('root bypasses file-mode permissions — chmod cannot force a write to fail as root');
+      return;
+    }
+    if (process.platform === 'win32') {
+      t.skip('Windows ignores a directory\'s mode');
       return;
     }
     const dir = makeRepo();
     t.after(() => rmRepo(dir));
     initHorde(dir);
     const opened = run('ask.mjs', ['add', 'a question', '--kind', 'stop'], dir);
-    const path = decisionsPath(dir);
-    chmodSync(path, 0o400);
-    t.after(() => { try { chmodSync(path, 0o600); } catch { /* already gone */ } });
+    // The loop writes every file whole, beside it and then in its place, so a read-only file is no
+    // obstacle: a directory nothing can be written into is.
+    const loop = dirname(decisionsPath(dir));
+    chmodSync(loop, 0o500);
+    t.after(() => { try { chmodSync(loop, 0o700); } catch { /* already gone */ } });
     const r = run('ask.mjs', ['answer', opened.json.id, 'an answer'], dir);
     assert.equal(r.code, 1);
-    assert.match(r.stderr, new RegExp(path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    chmodSync(path, 0o600);
-    const asks = JSON.parse(readFileSync(asksPath(dir), 'utf8'));
-    assert.equal(asks.items.find((a) => a.id === opened.json.id).state, 'open');
+    assert.match(r.stderr, /\.jarl/);
+    chmodSync(loop, 0o700);
+    const item = run('ask.mjs', ['list'], dir).json.find((a) => a.id === opened.json.id);
+    assert.equal(item.state, 'open');
   });
 
   await t.test('an answer with "·" and a newline does not break the entry heading — pinning ENTRY_RE', () => {
@@ -365,11 +378,11 @@ test('ask.mjs: broken states', async (t) => {
     const tricky = 'approved · but only once\nand not again';
     const r = run('ask.mjs', ['answer', opened.json.id, tricky], dir);
     assert.equal(r.code, 0, r.stderr);
-    const shown = run('decide.mjs', ['show', `ask-${opened.json.id}`], dir);
+    const shown = run('decide.mjs', ['show', ruling(opened.json.id)], dir);
     assert.equal(shown.code, 0, shown.stderr);
     const list = run('decide.mjs', ['list'], dir);
     assert.equal(list.code, 0, list.stderr);
-    assert.ok(list.json.some((d) => d.slug === `ask-${opened.json.id}`));
+    assert.ok(list.json.some((d) => d.slug === ruling(opened.json.id)));
   });
 });
 

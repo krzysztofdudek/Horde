@@ -24,7 +24,8 @@ import {
   hordePath, createLockFile, processAlive, readLockText, removeStaleLock, sleepSync, nowIso,
 } from './_lib.mjs';
 import { ygCommand } from './node.mjs';
-import { decideLoop, decisionsFile } from './loop.mjs';
+import { decideLoop, decisionsFile, ticketFile } from './loop.mjs';
+import { loadAsks } from './ask.mjs';
 
 const USAGE = `usage: decide.mjs <command> [options]
 
@@ -44,14 +45,22 @@ options: --json  --help`;
 
 // The rulings this record holds: { date, slug, ticket, node, body }. Any `## ` heading that doesn't
 // match the date-slug pattern is skipped along with its body.
-export function parseEntries(text) {
+export function parseEntries(text, horde) {
+  // A ruling that answers a question (ask-NNN) is about the ticket the question was asked on.
+  let askTickets = new Map();
+  if (horde) {
+    try { askTickets = new Map(loadAsks(horde).items.filter((a) => a.ticket).map((a) => [a.id.slice(2), a.ticket])); } catch { askTickets = new Map(); }
+  }
   return parseDecisionEntries(text)
     .filter((e) => e.slug)
     .map(({
       date, slug, ticket, node, body,
-    }) => ({
-      date, slug, ticket, node, body,
-    }));
+    }) => {
+      const asked = /^ask-(\d+)$/.exec(slug);
+      return {
+        date, slug, ticket: ticket || (asked ? askTickets.get(asked[1]) || null : null), node, body,
+      };
+    });
 }
 
 // The Horde side of the mission's rulings: one lock, held by whatever spends a client's answer. The
@@ -135,6 +144,7 @@ export function appendDecision(horde, {
   }
 
   const settles = ticket ? String(ticket).replace(/^t-/, '').padStart(3, '0') : null;
+  if (settles && !ticketFile(horde, settles)) throw new Error(`no such ticket: ${settles} — a ruling names a ticket of this mission (tk.mjs list)`);
   const done = decideLoop(horde, slug, ruling, {
     by: by || 'director', ...(settles ? { settles } : {}), ...(supersedes ? { supersedes } : {}),
   });
@@ -158,7 +168,7 @@ function cmdAdd(horde, positional, flags) {
 }
 
 function cmdList(horde, positional, flags) {
-  let entries = parseEntries(readText(decisionsFile(horde))).slice().reverse();
+  let entries = parseEntries(readText(decisionsFile(horde)), horde).slice().reverse();
   if (flags.node) entries = entries.filter((e) => e.node === flags.node);
   if (flags.grep) {
     const re = new RegExp(flags.grep, 'i');
@@ -175,7 +185,7 @@ function cmdList(horde, positional, flags) {
 function cmdShow(horde, positional, flags) {
   const slug = positional[0];
   if (!slug) fail('show requires <slug>');
-  const entries = parseEntries(readText(decisionsFile(horde)));
+  const entries = parseEntries(readText(decisionsFile(horde)), horde);
   const e = entries.find((x) => x.slug === slug);
   if (!e) fail(`no such decision: ${slug}`);
   emit(e, flags, () => `## ${e.date} · ${e.slug}\n${e.body}`);
