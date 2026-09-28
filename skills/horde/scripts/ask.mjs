@@ -68,9 +68,10 @@ commands:
   list [--open] [--horde h]
       open first, newest first.
   show <id> [--horde h]
-  answer <id> "<answer>" [--scope once|mission] [--horde h]
+  answer <id> "<answer>" [--scope once|mission] [--by who] [--horde h]
       records the client's answer, closes the item, and appends it to the mission's decisions as
-      "ask-NNN". A ratification item (decide.mjs ratify) is answered with one word first — tak or
+      "ask-NNN". --by names who answered (default: the client), written as that ruling's By; a
+      ratified rule's ratification names them when the mission is done. A ratification item (decide.mjs ratify) is answered with one word first — tak or
       yes admits the area ruling it names, nie or reject leaves it a ruling of this mission. --scope is accepted only for kind "lower": "once" (the default) spends the grant on
       the landing that uses it; "mission" stands until "horde done". land.mjs's guards read this
       decision, not the raw item, to decide whether a branch that weakens a rule, the proof or a
@@ -217,12 +218,44 @@ function prefixRuling(horde, slug, line) {
   writeLoopFile(path, lines.join('\n'));
 }
 
-// answerAsk(horde, id, {answer, scope}) — records the client's answer: the loop writes the ruling
+// Who answered, as a name the record's **By:** field holds and Yggdrasil's `log add --ratify --by` takes:
+// one line with a letter in it, and none of the characters cmd.exe reads inside a quoted word (" % !) or
+// any control character. Returns the name, or null when it is not one. The loop records "owner" when
+// nobody was named, which in a mission is the client.
+export function answererName(by) {
+  const name = String(by ?? '').replace(/\s+/g, ' ').trim();
+  return /^[^"%!\x00-\x1f]{1,120}$/u.test(name) && /\p{L}/u.test(name) ? name : null;
+}
+
+// Names who answered on the ruling ask-NNN the loop just wrote: its **By:** line (the loop writes "owner",
+// last among the ruling's fields, which is the one its own reader takes) becomes the name given. The caller
+// holds the loop's lock.
+function nameAnswerer(horde, slug, by) {
+  const path = decisionsFile(horde);
+  const lines = (readText(path) || '').split('\n');
+  const at = lines.findIndex((l) => new RegExp(`^## \\d{4}-\\d{2}-\\d{2} · ${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`).test(l));
+  if (at === -1) return;
+  let end = lines.findIndex((l, n) => n > at && l.startsWith('## '));
+  if (end === -1) end = lines.length;
+  for (let n = end - 1; n > at; n -= 1) {
+    if (/^\*\*By:\*\*/.test(lines[n])) {
+      lines[n] = `**By:** ${by}`;
+      writeLoopFile(path, lines.join('\n'));
+      return;
+    }
+  }
+}
+
+// answerAsk(horde, id, {answer, scope, by}) — records the client's answer: the loop writes the ruling
 // ask-NNN and marks the question answered in one move, under its own lock, and the fields the guards
-// read go into that same ruling before the lock lets go — a question is never answered with nothing
-// durable behind it, and never recorded half.
-export function answerAsk(horde, id, { answer, scope } = {}) {
+// read (and who answered, with `by`) go into that same ruling before the lock lets go — a question is
+// never answered with nothing durable behind it, and never recorded half.
+export function answerAsk(horde, id, { answer, scope, by } = {}) {
   if (!answer) throw new Error('answer required');
+  if (by !== undefined && (typeof by !== 'string' || !answererName(by))) {
+    throw new Error(`--by names who answered: one line with a letter in it, without " % ! or control characters (got "${by}")`);
+  }
+  const answerer = by !== undefined ? answererName(by) : null;
   const ref = String(id).startsWith('a-') ? String(id) : `a-${String(id).padStart(3, '0')}`;
   return withAsksLock(horde, () => withLoopLock(horde, () => {
     const item = loadAsks(horde).items.find((x) => x.id === ref);
@@ -235,8 +268,9 @@ export function answerAsk(horde, id, { answer, scope } = {}) {
       if (r.state === 'answered') throw new Error(`already answered: ${ref}`);
       if (scope !== undefined) throw new Error('--scope is only accepted for kind "lower" (this ask is "ratify")');
       const done = answerLoopAsk(horde, ref, answer);
+      if (answerer) nameAnswerer(horde, `ask-${ref.slice(2)}`, answerer);
       return {
-        id: ref, kind: 'ratify', why: r.question, state: 'answered', answer, ...(done.ruling ? { ruling: done.ruling, verdict: done.verdict } : {}), answeredAt: nowIso(),
+        id: ref, kind: 'ratify', why: r.question, state: 'answered', answer, ...(done.ruling ? { ruling: done.ruling, verdict: done.verdict } : {}), ...(answerer ? { by: answerer } : {}), answeredAt: nowIso(),
       };
     }
     if (item.state === 'answered') throw new Error(`already answered: ${ref}`);
@@ -248,6 +282,7 @@ export function answerAsk(horde, id, { answer, scope } = {}) {
     }
     const answerScope = item.kind === 'lower' ? (scope || 'once') : undefined;
     answerLoopAsk(horde, ref, answer);
+    if (answerer) nameAnswerer(horde, `ask-${ref.slice(2)}`, answerer);
     prefixRuling(horde, `ask-${ref.slice(2)}`, answerFields(item, answerScope));
     const doc = loadExtras(horde);
     const x = doc.questions[ref] || { why: item.why, at: item.at };
@@ -256,7 +291,7 @@ export function answerAsk(horde, id, { answer, scope } = {}) {
     doc.questions[ref] = x;
     saveExtras(horde, doc);
     return {
-      ...item, state: 'answered', answer, ...(answerScope ? { answerScope } : {}), answeredAt: x.answeredAt,
+      ...item, state: 'answered', answer, ...(answerScope ? { answerScope } : {}), ...(answerer ? { by: answerer } : {}), answeredAt: x.answeredAt,
     };
   }));
 }
@@ -320,7 +355,7 @@ function cmdAnswer(horde, positional, flags) {
   if (!id || !answer) fail('answer requires <id> "<answer>"');
   let item;
   try {
-    item = answerAsk(horde, id, { answer, scope: flags.scope });
+    item = answerAsk(horde, id, { answer, scope: flags.scope, by: flags.by });
   } catch (e) {
     fail(e.message);
   }

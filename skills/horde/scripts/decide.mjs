@@ -45,7 +45,7 @@ import { ygCommand, ygTimeout } from './node.mjs';
 import {
   decideLoop, decisionsFile, ticketFile, loopDecisions, loopAsks, fileLoopAsk, withLoopLock, writeLoopFile, appendLoopLog,
 } from './loop.mjs';
-import { loadAsks } from './ask.mjs';
+import { loadAsks, answererName } from './ask.mjs';
 
 export const USAGE = `usage: decide.mjs <command> [options]
 
@@ -268,13 +268,29 @@ export function ratify(horde) {
 
 // ---- the graph's logs, at done -----------------------------------------------------------------
 
+// Who admitted a rule, as its ratification names them: whoever answered the ratify item that ratified
+// the ruling — the name `ask.mjs answer --by` (or Jarl's own `answer --by`) recorded as the By of the
+// answer's ruling ask-NNN — else "the client", who answers a mission's questions. Never the name git
+// holds: that is whoever runs done, not whoever gave consent. A recorded name yg could not take safely
+// (a hand edit of decisions.md) is read as nobody named.
+function ratifier(d, rulings) {
+  const asked = /^a-(\d+)/.exec(String(d.ratified || ''));
+  const answer = asked ? rulings.find((x) => x.slug === `ask-${asked[1]}`) : null;
+  const name = answer ? answererName(answer.by) : null;
+  return name && name.toLowerCase() !== 'owner' ? name : 'the client';
+}
+
 // What the mission owes the graph's logs: every node ruling in force not yet in its node's log, and
 // every ratified area ruling in force not yet in its type's log (with its rule's ratification, when it
-// names a rule and that is not written yet). Also what stays behind: area rulings in force nobody has
-// ratified or rejected (unratified) and the ratify questions still open (pending).
+// names a rule and that is not written yet, naming who ratified it). Also what stays behind: area
+// rulings in force nobody has ratified or rejected (unratified), the ratify questions still open
+// (pending), and among the unratified those no ratification batch ever asked about (unasked — decide.mjs
+// ratify was never run over them, so the client was never given the choice).
 export function graphLogPlan(horde) {
   const rulings = loopDecisions(horde);
   const blocks = new Map(parseDecisionEntries(readText(decisionsFile(horde)) || '').filter((e) => e.slug).map((e) => [e.slug, e.block]));
+  const asks = loopAsks(horde);
+  const asked = new Set(asks.filter((a) => a.ruling).map((a) => a.ruling));
   const items = [];
   const unratified = [];
   for (const d of rulings) {
@@ -294,17 +310,13 @@ export function graphLogPlan(horde) {
     const prior = d.supersedes ? rulings.find((x) => x.slug === d.supersedes) : null;
     const supersedes = prior && prior.typeLog && prior.typeLog.type === d.area ? prior.typeLog.datetime : null;
     if (!d.typeLog) items.push({ kind: 'type', slug: d.slug, type: d.area, supersedes, text: said });
-    if (d.rule && !d.ruleLog) items.push({ kind: 'rule', slug: d.slug, rule: d.rule, text: said });
+    if (d.rule && !d.ruleLog) items.push({ kind: 'rule', slug: d.slug, rule: d.rule, by: ratifier(d, rulings), text: said });
   }
-  const pending = loopAsks(horde).filter((a) => a.ruling && a.state === 'open').map((a) => `a-${a.id}`);
-  return { items, unratified, pending };
-}
-
-// Who admitted a rule, as its ratification names them: the person git names in the repository (the
-// chairman answering the batch), else "the client". A name a shell would misread is not passed.
-function ratifier(root) {
-  const name = git(['config', 'user.name'], root) || '';
-  return /^[^"%!\r\n\x00-\x1f]{1,120}$/u.test(name) && /\p{L}/u.test(name) ? name : 'the client';
+  const pending = asks.filter((a) => a.ruling && a.state === 'open').map((a) => `a-${a.id}`);
+  const unasked = unratified.filter((slug) => !asked.has(slug));
+  return {
+    items, unratified, pending, unasked,
+  };
 }
 
 const TIMESTAMP_RE = /^\d{4}-\d\d-\d\dT[0-9:.]+Z$/;
@@ -315,14 +327,17 @@ function ygSaid(e) {
   return said.length ? said.slice(0, 12).join(' | ') : String(e.message || e).split('\n')[0];
 }
 
-// One entry: the yg arguments and the command to run by hand when it fails.
-function entryCommand(it, by, file) {
+// One entry: the yg arguments and the command to run by hand when it fails. A type whose log already
+// holds decisions in force refuses an entry that says nothing about them (Yggdrasil's own guard), and
+// the person writing it by hand chooses, having read them: --supersedes <datetime> for each one it
+// replaces, or --adds when it replaces none. The hand-run command names both.
+function entryCommand(it, file) {
   if (it.kind === 'node') return { args: ['log', 'add', '--node', it.node, '--reason-file', file], retry: `log add --node ${it.node} --reason '<the ruling>'` };
   if (it.kind === 'type') {
     const sup = it.supersedes ? ['--supersedes', it.supersedes] : [];
-    return { args: ['log', 'add', '--type', it.type, '--reason-file', file, ...sup], retry: `log add --type ${it.type} --reason '<the ruling>'${it.supersedes ? ` --supersedes ${it.supersedes}` : ''}` };
+    return { args: ['log', 'add', '--type', it.type, '--reason-file', file, ...sup], retry: `log add --type ${it.type} --reason '<the ruling>' ${it.supersedes ? `--supersedes ${it.supersedes}` : '--adds (or --supersedes <datetime> of each decision in force it replaces)'}` };
   }
-  return { args: ['log', 'add', '--aspect', it.rule, '--ratify', '--by', by, '--reason-file', file], retry: `log add --aspect ${it.rule} --ratify --by '${by.replace(/'/g, "'\\''")}' --reason '<what was admitted>'` };
+  return { args: ['log', 'add', '--aspect', it.rule, '--ratify', '--by', it.by, '--reason-file', file], retry: `log add --aspect ${it.rule} --ratify --by '${it.by.replace(/'/g, "'\\''")}' --reason '<what was admitted>'` };
 }
 
 // writeGraphLogs(horde, cfg, {branch, sha}) — what graphLogPlan owes, written into the graph's logs in a
@@ -332,12 +347,12 @@ function entryCommand(it, by, file) {
 // the new one says nothing about) is reported with the command to run by hand, and one that could not
 // reach the trunk (the commit refused by a hook, the branch moved) likewise; each stays a ruling of the
 // mission, unmarked. What reached the trunk is marked on its ruling, so it is never written twice.
-// Returns { commit, from, written: [..], failed: [..], unratified, pending } (and unmarked, a note, when the
+// Returns { commit, from, written: [..], failed: [..], unratified, pending, unasked } (and unmarked, a note, when the
 // entries reached the trunk but marking them on their rulings failed).
 export function writeGraphLogs(horde, cfg, { branch, sha }) {
   const plan = graphLogPlan(horde);
   const out = {
-    commit: null, from: sha, written: [], failed: [], unratified: plan.unratified, pending: plan.pending,
+    commit: null, from: sha, written: [], failed: [], unratified: plan.unratified, pending: plan.pending, unasked: plan.unasked,
   };
   // What decisions.md holds is checked again before it reaches yg: a hand edit could put anything there.
   const items = [];
@@ -349,7 +364,6 @@ export function writeGraphLogs(horde, cfg, { branch, sha }) {
   if (!items.length) return out;
   const yg = ygCommand(cfg);
   const root = repoRoot();
-  const by = ratifier(root);
   const info = resolveTree({ scratch: sha });
   const tmp = mkdtempSync(join(tmpdir(), 'horde-graph-log-'));
   const wrote = [];
@@ -357,12 +371,12 @@ export function writeGraphLogs(horde, cfg, { branch, sha }) {
     items.forEach((it, n) => {
       const file = join(tmp, `${n}.md`);
       writeFileSync(file, `${it.text.trim()}\n`);
-      const { args, retry } = entryCommand(it, by, file);
+      const { args, retry } = entryCommand(it, file);
       try {
         const said = execFileSync(yg.cmd, [...yg.prefix, ...args], {
           cwd: info.path, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: ygTimeout(cfg), killSignal: 'SIGTERM',
         });
-        wrote.push({ ...it, datetime: /Timestamp:\s*(\S+)/.exec(said)?.[1] || 'unknown', ...(it.kind === 'rule' ? { by } : {}) });
+        wrote.push({ ...it, datetime: /Timestamp:\s*(\S+)/.exec(said)?.[1] || 'unknown' });
       } catch (e) {
         out.failed.push({ ...it, reason: ygSaid(e), retry: `${yg.display} ${retry}` });
       }

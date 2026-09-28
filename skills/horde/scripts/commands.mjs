@@ -33,7 +33,7 @@ export const COMMANDS = {
   'ask add': { args: ['why'], flags: { kind: 'value', ticket: 'value', territory: 'value', aspect: 'value' }, writes: true, summary: 'Files a question to the client (kind stop, stuck, lower or charter).' },
   'ask list': { flags: { open: 'bool' }, summary: 'Lists the questions to the client, open first.' },
   'ask show': { args: ['id'], summary: 'Shows one question to the client.' },
-  'ask answer': { args: ['id', 'answer'], flags: { scope: 'value' }, writes: true, summary: "Records the client's answer to a question and closes it." },
+  'ask answer': { args: ['id', 'answer'], flags: { scope: 'value', by: 'value' }, writes: true, summary: "Records the client's answer to a question and closes it." },
 
   // blame.mjs
   blame: { args: ['location'], flags: { ...TREE }, summary: 'Traces <file>:<line> to the ticket that landed it, with its evidence and the verdicts on its component.' },
