@@ -70,12 +70,13 @@ function parseKeys(text) {
   };
 }
 
-const USAGE = `usage: blame.mjs <file>:<line> [--horde h] [--json]
+export const USAGE = `usage: blame.mjs <file>:<line> [--tree p] [--horde h] [--json]
 
 git blame -> commit -> the ticket whose recorded branch tip contains that commit -> its keys,
 approvals, evidence and the rule verdicts standing against the component the graph says owns the
 file. Searches every horde on the repository, live and archived. --horde narrows the
 search to one horde (and its own archived copies); a line no ticket owns reports so plainly.
+--tree names the checkout the line is read in (default: cwd).
 
 options: --json  --help`;
 

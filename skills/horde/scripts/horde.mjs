@@ -9,7 +9,7 @@
 import {
   existsSync, mkdirSync, writeFileSync, readFileSync, renameSync, readdirSync, statSync,
 } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   repoRoot, hordeRoot, hordePath, readConfig, writeConfig, listHordes, readJSON,
@@ -31,7 +31,7 @@ import { ygJson, reviewerGap } from './node.mjs';
 import { openLoop } from './loop.mjs';
 import { loadAsks } from './ask.mjs';
 
-const USAGE = `usage: horde.mjs <command> [options]
+export const USAGE = `usage: horde.mjs <command> [options]
 
 commands:
   init <name> --base <branch> [--title "<t>"] [--test-globs <glob>[,glob…]]
@@ -70,9 +70,9 @@ commands:
       wave closes, with <event>, <kind>, <id>, <text> and <horde> filled in, each written bare,
       never inside quotes (refused); it runs detached (default: none).
   charter show [--horde h]
-  charter edit [--ask id] [--horde h]
-      the mission charter: "show" prints it, "edit" replaces it with what arrives on stdin and
-      reports what that did to the evidence catalogue. Dropping a row is free before the mission's
+  charter edit [--ask id] [--from <file>] [--horde h]
+      the mission charter: "show" prints it, "edit" replaces it with what arrives on stdin (or
+      the file --from names) and reports what that did to the evidence catalogue. Dropping a row is free before the mission's
       wave 1 has started; after it, dropping one refuses unless --ask names an answered ask of
       kind "charter" whose own text mentions the row's id — removing a promised proof is lowering
       the mission's own promise, and that is the client's call. The Quality section's "**Policy:**" line
@@ -878,7 +878,17 @@ function cmdConfig(positional, flags) {
   fail('config requires "get" or "set"');
 }
 
-function readStdin() {
+// The text a command replaces something with: the file --from names, else stdin. A call through the MCP
+// server has no stdin (the server starts the CLI with none), so it names the file.
+function readInput(from) {
+  if (from !== undefined) {
+    if (typeof from !== 'string' || !from.trim()) fail('--from needs the path of the file to read');
+    try {
+      return readFileSync(resolve(from), 'utf8');
+    } catch (e) {
+      fail(`--from ${from}: ${e.code === 'ENOENT' ? 'no such file' : e.message}`);
+    }
+  }
   try {
     return readFileSync(0, 'utf8');
   } catch {
@@ -909,8 +919,8 @@ function cmdCharter(positional, flags) {
   if (sub !== 'edit') fail('charter requires "show" or "edit"');
 
   const before = readText(path) || '';
-  const content = readStdin();
-  if (!content.trim()) fail('charter edit requires content on stdin');
+  const content = readInput(flags.from);
+  if (!content.trim()) fail(`charter edit requires content ${flags.from !== undefined ? `in ${flags.from}` : 'on stdin (or --from <file>)'}`);
 
   // The quality policy is the one field of the charter a tool acts on rather than a person reads,
   // so a value nothing recognises is refused here instead of silently falling back to the default

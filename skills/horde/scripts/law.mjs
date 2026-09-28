@@ -45,7 +45,7 @@ function rung(status) {
   return i === -1 ? RUNGS.length : i;
 }
 
-const USAGE = `usage: law.mjs diff [--wave <n>] [--horde h] [--json]
+export const USAGE = `usage: law.mjs diff [--wave <n>] [--horde h] [--json]
 
 Writes the horde-law/1 document for this mission — what the law has gained between config.base and
 the tip of the horde's trunk — to .horde/hordes/<horde>/law/wave-<n>.json, and prints its path.

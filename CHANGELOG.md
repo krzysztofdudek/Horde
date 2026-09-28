@@ -63,6 +63,9 @@ Finish a mission you started with an earlier Horde on that release: Horde does n
 
 ### Added
 
+- Every Horde command is now an MCP tool. Installing the plugin starts a server named `horde` by itself, with one tool per command of every script (`horde_tick`, `horde_tk_log`, `horde_queue_set`, `horde_land` and the rest, the writing ones included) and `horde_help` with the full usage. A tool runs the same script the command line does, so its answer, its refusals and its locks are the same. The skill now tells the director to call the tools first and use the command line when a session has none.
+- `horde.mjs charter edit` and `tk.mjs edit` take `--from <file>` to read the new text from a file instead of stdin, which is how the MCP tools pass it.
+- Every script reads a bare `--` as the end of its flags, so an argument that starts with `--` is taken as written.
 - `queue.mjs regate <ticket> --note "<why>"` asks the gate again at the same commit when you judge its last red was a flake, with no worker raised and no empty commit to move the branch. What the gate command printed on its last run is now kept, so you can tell a flake from a failure.
 - `decide.mjs add` takes `--by` and `--supersedes`: who ruled, and an earlier ruling this one replaces, which is then marked as replaced.
 - A landing merges with Yggdrasil's own merge drivers, passed to git on every merge, whenever the installed Yggdrasil has them: two tickets that both added entries to a node's or a type's log, or both recorded verdicts, merge in git itself, and the log's baseline is recorded inside the merge commit. The merge stops only where the drivers refuse — history rewritten, or both tickets superseded the same decision — and such a stop is refused as before, never resolved by picking a side. What still conflicts goes to the landing's own rules as before.

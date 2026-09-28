@@ -26,7 +26,7 @@
 import {
   existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
@@ -88,7 +88,7 @@ const KINDS = ['work', 'quality', 'prototype', 'revert'];
 const TICKET_QUALITY = ['autonomous', 'only-the-work'];
 const OPEN_EXCLUDE = new Set(['merged', 'dropped']);
 
-const USAGE = `usage: tk.mjs <command> [options]
+export const USAGE = `usage: tk.mjs <command> [options]
 
 commands:
   new <slug> --title "<t>" --node <n> [--node <n2> …] --class <c> [--severity high|medium|low]
@@ -167,8 +167,9 @@ commands:
       <reason>". The reason is required. The gate is asked on the next tick.mjs run, and nothing
       the review logs after this line is acted on. Refuses a ticket with no review raised.
   edit <ticket> --by <name> [--files a,b] [--boundary-proposal <id>] [--consumes …] [--produces …] [--evidence E1,…]
-      [--depends NNN,MMM] [--horde h]
-      rewrites the body (everything from "## What" on) from stdin, leaving the header block —
+      [--depends NNN,MMM] [--from <file>] [--horde h]
+      rewrites the body (everything from "## What" on) from stdin, or from the file --from
+      names, leaving the header block —
       the id/title heading, Status, Node/Class/Severity/Team, Depends on/Branch, Reopens, Files,
       Consumes/Produces, Evidence — untouched. Appends "body edited by <name>" to the log.
       What the director uses to write ticket bodies. With any of --files/--consumes/--produces/
@@ -1319,7 +1320,17 @@ function cmdMove(horde, positional, flags) {
   emit({ id: ticket.id, from: ticket.team, to: flags.team }, flags, () => `${ticket.id} moved: ${ticket.team} -> ${flags.team}`);
 }
 
-function readStdin() {
+// The text a command replaces something with: the file --from names, else stdin. A call through the MCP
+// server has no stdin (the server starts the CLI with none), so it names the file.
+function readInput(from) {
+  if (from !== undefined) {
+    if (typeof from !== 'string' || !from.trim()) fail('--from needs the path of the file to read');
+    try {
+      return readFileSync(resolve(from), 'utf8');
+    } catch (e) {
+      fail(`--from ${from}: ${e.code === 'ENOENT' ? 'no such file' : e.message}`);
+    }
+  }
   try {
     return readFileSync(0, 'utf8');
   } catch {
@@ -1446,8 +1457,8 @@ function cmdEdit(horde, positional, flags) {
     }
   }
 
-  const stdin = wantsFields ? '' : readStdin();
-  if (!wantsFields && !stdin.trim()) fail('edit requires the new body on stdin (everything from "## What" on), or one of --files/--consumes/--produces/--evidence/--depends');
+  const stdin = wantsFields ? '' : readInput(flags.from);
+  if (!wantsFields && !stdin.trim()) fail('edit requires the new body on stdin or in the file --from names (everything from "## What" on), or one of --files/--consumes/--produces/--evidence/--depends');
 
   let bytes = 0;
   if (stdin.trim()) {

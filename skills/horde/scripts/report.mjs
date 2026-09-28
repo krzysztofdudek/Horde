@@ -36,7 +36,7 @@ import { evidenceCoverage } from './wave.mjs';
 import { landingLoad, readLandResult, formatDuration } from './land.mjs';
 import { findTicket, allTeamPaths } from './tk.mjs';
 
-const USAGE = `usage: report.mjs [--out <path>] [--horde h] [--json]
+export const USAGE = `usage: report.mjs [--out <path>] [--horde h] [--json]
 
 Writes the mission's plain-language report for the client — what waits on them, what has been
 proven, what landed since the last report, what waits to be merged — to hordes/<horde>/report.md,

@@ -19,7 +19,7 @@ import { landingLoad, landingLine } from './land.mjs';
 import { loadAsks } from './ask.mjs';
 import { loopStatus } from './loop.mjs';
 
-const USAGE = `usage: status.mjs [--horde h] [--team t] [--json]
+export const USAGE = `usage: status.mjs [--horde h] [--team t] [--json]
 
 One screen: hordes on this repository, and for each: trunk sha and distance from base, its branch
 tip, ticket branches beyond it (landed / unverified / unmerged), queue counts by state, open asks,

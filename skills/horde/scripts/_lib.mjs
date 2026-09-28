@@ -1960,13 +1960,16 @@ export function isMain(moduleUrl) {
 // (in addition to the always-boolean `json`/`help`); `aliases` maps a short name to its long
 // form before classification. `--k v`, `--k=v`, repeated `--k` (collects into an array, in
 // order), and bare `--k` (true, when it's declared boolean or is trailing/followed by another
-// flag) are all supported. Everything not starting with `--` is positional.
+// flag) are all supported. Everything not starting with `--` is positional, and so is every word after
+// a bare `--`, even one that starts with `--`: the MCP server hands a call over as its flags, inline
+// (`--k=v`), then `--` and the arguments, so an argument is never read as a flag.
 export function parseArgs(argv, { flags: boolNames = [], aliases = {} } = {}) {
   const bools = new Set(['json', 'help', ...boolNames]);
   const flags = {};
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    if (a === '--') { positional.push(...argv.slice(i + 1)); break; }
     if (a === '-h') { flags.help = true; continue; }
     if (!a.startsWith('--')) { positional.push(a); continue; }
     let name = a.slice(2);

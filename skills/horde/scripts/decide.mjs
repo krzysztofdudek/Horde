@@ -27,7 +27,7 @@ import { ygCommand } from './node.mjs';
 import { decideLoop, decisionsFile, ticketFile } from './loop.mjs';
 import { loadAsks } from './ask.mjs';
 
-const USAGE = `usage: decide.mjs <command> [options]
+export const USAGE = `usage: decide.mjs <command> [options]
 
 commands:
   add <slug> "<ruling>" [--ticket NNN] [--node n] [--by who] [--supersedes <slug>] [--horde h]

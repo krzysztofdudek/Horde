@@ -65,7 +65,7 @@ const CONSULT_QUESTIONS = [
   'What contract do I need from a neighbour?',
 ];
 
-const USAGE = `usage: refine.mjs [--step cut|consult|review|frame] [--horde h] [--team t] [--json]
+export const USAGE = `usage: refine.mjs [--step cut|consult|review|frame] [--tree p] [--out <dir>] [--horde h] [--team t] [--json]
 
 steps (default: cut):
   cut
@@ -78,7 +78,8 @@ steps (default: cut):
   consult
       prints one spawn per territory, all of them parallel, each carrying only its own
       territory's context and the five questions. The consultants write the tickets and propose
-      the law themselves; nothing comes back here as prose.
+      the law themselves; nothing comes back here as prose. --out <dir> writes each territory's
+      brief to <dir>/<territory>.md and prints only the paths.
   review
       run once, it writes the plan to a file and prints a one-shot architect's brief with the five
       questions the architect rules a plan by. The architect answers by writing review.json.
@@ -102,6 +103,9 @@ The size a territory is held to is config.territory.maxBytes (default 400000): t
 code its components map, plus the text of every rule that reaches those files, plus those
 components' own logs. One number for the whole horde — the class a territory carries decides which
 model works it, never what fits.
+
+The graph each step reads is the tree --tree names; without it, cwd, and --horde h written out (no
+--tree) resolves to that horde's own trunk worktree, as tick.mjs and land.mjs read it.
 
 options: --json  --help`;
 

@@ -92,6 +92,11 @@ jobs:
       - name: jarl vendor gate
         working-directory: skills/horde/scripts
         run: node vendor.mjs check --source ${{ github.workspace }}/jarl
+      # The vendored Runes copy (the MCP adapter, its command table and test kit) and the skill fragment in
+      # SKILL.md, byte for byte against a fresh clone of the pinned tag (npm test runs the offline half).
+      - name: runes gate
+        working-directory: skills/horde/scripts
+        run: node runes.mjs check --ci --pin vendor/runes.pin.json
       - name: run suite
         working-directory: skills/horde/scripts
         env:
@@ -99,6 +104,7 @@ jobs:
           HORDE_TEST_JARL: ${{ github.workspace }}/jarl/skills/jarl/scripts/jarl.mjs
         run: |
           node vendor.mjs check
+          node runes.mjs check --offline --pin vendor/runes.pin.json
           node tests/yg-floor.mjs
           node --test tests/*.test.mjs
 
@@ -200,6 +206,7 @@ jobs:
           TEMP: ${{ runner.temp }}
         run: |
           node vendor.mjs check
+          node runes.mjs check --offline --pin vendor/runes.pin.json
           node tests/yg-floor.mjs
           node --test tests/*.test.mjs
 

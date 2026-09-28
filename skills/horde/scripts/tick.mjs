@@ -63,7 +63,7 @@ const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 const TEAM = 'trunk';
 const RUNNERS = ['session', 'external'];
 
-const USAGE = `usage: tick.mjs [--runner session|external] [--watch] [--stack] [--reclaim NNN[,MMM]]
+export const USAGE = `usage: tick.mjs [--runner session|external] [--watch] [--stack] [--reclaim NNN[,MMM]]
                 [--tree <path>] [--horde h] [--json]
 
 One run: reconcile what an ended worker left behind, put every ready branch through the gate, print

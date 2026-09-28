@@ -41,7 +41,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const DISCIPLINE_DIR = join(HERE, '..', 'reference', 'discipline');
 const DEFAULT_CORPUS = join(HERE, 'tests', 'drills');
 
-const USAGE = `usage: drill.mjs <command> [options]
+export const USAGE = `usage: drill.mjs <command> [options]
 
 commands:
   list [--corpus <dir>]

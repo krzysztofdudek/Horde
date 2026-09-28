@@ -22,7 +22,7 @@ import {
 import { loadAsks } from './ask.mjs';
 import { ygCommand } from './node.mjs';
 
-const USAGE = `usage: escalate.mjs recurring [--min <n>] [--horde h]
+export const USAGE = `usage: escalate.mjs recurring [--min <n>] [--horde h]
 
 the answered asks grouped by kind, by territory and by the normalized text of the answer itself
 (lower-case, whitespace collapsed, trailing punctuation dropped); a group of <n>
