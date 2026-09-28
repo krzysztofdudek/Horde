@@ -217,9 +217,10 @@ export function grainAsk(cfg, root, args) {
 }
 
 // Where Grain runs: the main checkout, beside `.horde/`, where its own cache (`.grain/`) lives —
-// never a ticket's or the trunk's worktree, which must not gain an untracked directory. A graph read
-// from another tree (the trunk's, most often) is handed over with `--graph <that tree>`: Grain reads
-// the `.yggdrasil/` under the directory it is given.
+// never a ticket's worktree. A graph read from another tree (the trunk's, most often) is handed over
+// with `--graph <that tree>`: Grain reads the `.yggdrasil/` under the directory it is given. The one
+// exception is the report's before-and-after (report.mjs measureMission), which counts a range of the
+// trunk's own history and so runs in the trunk tree, with Grain's store there ignored whole.
 export function grainHome() {
   return dirname(hordeRoot());
 }

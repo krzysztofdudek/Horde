@@ -56,10 +56,13 @@ function splitSubcommand(args) {
   return { prefix: args.slice(), subcommand: undefined };
 }
 
-export function git(args, cwd) {
+// `env`, when given, is laid over the process environment for this one call — a fixture that needs its
+// history dated (GIT_AUTHOR_DATE, GIT_COMMITTER_DATE) says so here instead of changing the suite's own.
+export function git(args, cwd, env) {
   const { prefix, subcommand } = splitSubcommand(args);
+  const base = { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env: { ...process.env, ...env } } : {}) };
   if (!COMMIT_WRITING_SUBCOMMANDS.has(subcommand)) {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    return execFileSync('git', args, base).trim();
   }
   for (let attempt = 1; attempt <= SIGNING_RETRY_ATTEMPTS; attempt += 1) {
     // Attempt 1 always runs the caller's own command. A `merge` or `revert` that failed at the
@@ -74,7 +77,7 @@ export function git(args, cwd) {
     // an already-staged `merge`/`revert`.
     const thisAttempt = (attempt === 1 || subcommand === 'commit') ? args : [...prefix, 'commit', '--no-edit'];
     try {
-      return execFileSync('git', thisAttempt, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      return execFileSync('git', thisAttempt, base).trim();
     } catch (e) {
       const stderr = e.stderr ? e.stderr.toString() : '';
       const transient = isTransientSigningFailure(stderr);

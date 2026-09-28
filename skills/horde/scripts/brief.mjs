@@ -586,9 +586,22 @@ function grainRulesFor(horde, root, cfg, nodes) {
     if (entry && entry.key && entry.ticket) filed.set(entry.key, entry.ticket);
   }
   const rules = asArray(res.doc.items)
-    .filter((it) => it && it.kind === 'rule' && asArray(it.nodes).some((n) => inTerritory(n, nodes)));
+    .filter((it) => it && it.kind === 'rule' && asArray(it.nodes).some((n) => inTerritory(n, nodes)))
+    .map((it) => ({ it, drafts: territoryDrafts(it, nodes) }))
+    .filter(({ it, drafts }) => (it.evidence || {}).origin === 'boundary' || drafts === null || drafts.length > 0);
   if (rules.length === 0) return '(none — Grain drafts no rule for this territory\'s components)';
-  return rules.map((it) => renderGrainRule(it, filed.get(advisoryKey(it)))).join('\n\n');
+  return rules.map(({ it, drafts }) => renderGrainRule(it, filed.get(advisoryKey(it)), drafts, nodes)).join('\n\n');
+}
+
+// One rule Grain finds in several components comes as one item with a draft per component: `draft`
+// is the strongest one's and `alsoIn` the others'. Only the drafts that attach to this territory's own
+// components are its to write — the strongest may well be another territory's. null when the item
+// carries no per-component draft at all.
+function territoryDrafts(item, nodes) {
+  const ev = item.evidence || {};
+  const all = [ev.draft, ...asArray(ev.alsoIn)].filter((d) => d && typeof d === 'object');
+  if (all.length === 0) return null;
+  return all.filter((d) => d.attachTo && inTerritory(d.attachTo, nodes));
 }
 
 function fence(lang, text) {
@@ -596,12 +609,12 @@ function fence(lang, text) {
   return ['  ```' + lang, ...body.split('\n').map((l) => `  ${l}`), '  ```'];
 }
 
-function renderGrainRule(item, ticket) {
+function renderGrainRule(item, ticket, drafts = null, territory = []) {
   const ev = item.evidence || {};
-  const draft = ev.draft || {};
-  const where = asArray(item.nodes).join(', ');
+  const where = asArray(item.nodes).filter((n) => inTerritory(n, territory)).join(', ') || asArray(item.nodes).join(', ');
   const also = ticket ? ` The quality pass already filed it as ticket ${ticket}; writing it here answers that ticket.` : '';
   if (ev.origin === 'boundary') {
+    const draft = ev.draft || {};
     const lines = [
       `- **${ev.from || '?'} never imports ${ev.neverImports || '?'}** — a maintainer's decision (${ev.decidedBy || 'someone'}${ev.decidedAt ? `, ${ev.decidedAt}` : ''}) the graph does not make law yet; ${ev.violations ?? '?'} import(s) cross it today. Components: ${where}.${also}`,
       '',
@@ -609,15 +622,20 @@ function renderGrainRule(item, ticket) {
     ];
     return lines.join('\n');
   }
-  const conforming = Number(ev.conforming) || 0;
-  const deviating = Number(ev.deviating) || 0;
-  const total = conforming + deviating;
-  const lines = [
-    `- **${ev.name || ev.aspect || 'a convention'}** (\`${draft.aspect || ev.aspect || '?'}\` on \`${draft.attachTo || where}\`) — followed at ${conforming} of ${total} site(s)${total ? ` (${Math.round((conforming / total) * 100)}%)` : ''}; holds in ${where}.${also}`,
-  ];
-  if (item.text) lines.push(`  ${String(item.text).trim().split('\n').join(' ')}`);
-  if (draft.yaml) lines.push('', ...fence('yaml', draft.yaml));
-  if (draft.check) lines.push('', ...fence('js', draft.check));
+  const own = drafts === null ? [ev.draft || {}] : drafts;
+  const lines = [];
+  for (const draft of own) {
+    // Counts are the component's own where the draft carries them, the item's otherwise.
+    const perDraft = draft.conforming !== undefined || draft.deviating !== undefined;
+    const conforming = Number(perDraft ? draft.conforming : ev.conforming) || 0;
+    const deviating = Number(perDraft ? draft.deviating : ev.deviating) || 0;
+    const total = conforming + deviating;
+    if (lines.length) lines.push('');
+    lines.push(`- **${ev.name || ev.aspect || 'a convention'}** (\`${draft.aspect || ev.aspect || '?'}\` on \`${draft.attachTo || where}\`) — followed at ${conforming} of ${total} site(s)${total ? ` (${Math.round((conforming / total) * 100)}%)` : ''}; holds in ${draft.attachTo || where}.${also}`);
+    if (item.text) lines.push(`  ${String(item.text).trim().split('\n').join(' ')}`);
+    if (draft.yaml) lines.push('', ...fence('yaml', draft.yaml));
+    if (draft.check) lines.push('', ...fence('js', draft.check));
+  }
   return lines.join('\n');
 }
 

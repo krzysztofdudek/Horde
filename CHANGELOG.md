@@ -6,13 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Needs Yggdrasil 6.1.0 or newer; an older one is refused with the release to install.
+Needs Yggdrasil 6.1.0 or newer and Grain 6.1.0 or newer; an older one is refused with the release to install.
 
 ### Breaking
 
 - Horde needs Grain 6.1.0 or newer. `horde init` and the first step of refining check for it before anything is made, and stop, saying how to install it, when it is missing or older. Name it with `--grain "…"` on `init`, or have `grain` on your `PATH`. `init` writes down the Grain it found, and `grainCommand` can no longer be set to nothing. A repository with no graph now always gets one read out of its code by Grain; a blank graph comes only from running `yg init` yourself first.
-
-- A mission's record is now a Jarl loop. Each mission keeps its tickets, your rulings, your questions and answers, and the journal of every move in a Jarl loop of its own, written in Jarl's format through Jarl's record, which ships inside Horde. With the Jarl plugin installed, `jarl resume` and `jarl status` pointed at a mission show it live: what each worker holds, what waits on you, what waits on what. Jarl's own commands cannot move a ticket past the architect's plan review or anywhere else Horde's scheduler decides, and a ticket counts as done only when its change has landed through the gate.
 - A mission's record is now a Jarl loop. Each mission keeps its tickets, your rulings, your questions and answers, and the journal of every move in a Jarl loop of its own, written in Jarl's format through Jarl's record, which ships inside Horde. With the Jarl plugin installed, `jarl resume` and `jarl status` pointed at a mission show it live: what each worker holds, what waits on you, what waits on what. Jarl's own commands cannot move a ticket past the architect's plan review or anywhere else Horde's scheduler decides, and a ticket counts as done only when its change has landed through the gate. Jarl's own `close` and `archive` refuse a mission, naming `horde.mjs done` and `horde.mjs archive`, so `jarl close` can no longer delete a finished mission's record for good, nor `jarl archive` move a live one out from under Horde. A mission opened before a key was added to Horde's profile gets it on the next `tick.mjs`; the keys it already holds are left as they are.
 - A mission started with an earlier Horde is refused by every command, with a message saying to finish it on the release it was started with. Its history and blame still read it once it is archived.
 - `handoff.mjs write`, `add-waiting` and `rm-waiting` are gone. `handoff.mjs read` shows the state a session picks the mission up from, assembled from the mission's record as it stands, so there is nothing to write at the end of a turn.

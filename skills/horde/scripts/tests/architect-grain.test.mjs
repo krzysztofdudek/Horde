@@ -236,6 +236,11 @@ test('the client report: the mission\'s territory measured before and after by t
     assert.match(page, /- Files: 3 → 4\./);
     assert.match(page, /- Changes this mission made here that also touched something outside: 0 of 1 \(0%\); before the mission, \d+ of \d+/);
     assert.doesNotMatch(page, /grain|Grain|cochange|measure --/, 'the client\'s page names no tool');
+
+    // Grain ran in the trunk tree and kept its store there, and the trunk tree shows nothing for it.
+    const trunkTree = join(dir, '.horde', 'worktrees', 'm1', 'trunk');
+    assert.ok(existsSync(join(trunkTree, '.grain', 'cache')), 'Grain\'s store is in the trunk tree');
+    assert.equal(git(['status', '--porcelain'], trunkTree), '', 'and the trunk tree\'s status is clean');
   });
 
   await t.test('a report that does not measure carries the last reading, as it was', () => {
@@ -292,6 +297,29 @@ test('the legislator starts from the rules Grain drafts for its territory, and f
           draft: { form: 'architecture-relations', deny: [{ type: 'module', mustNotReach: 'module' }] },
         },
       },
+      {
+        // One rule Grain finds in two components, the strongest another territory's: only the draft that
+        // attaches to this territory's own component is its to write.
+        kind: 'rule',
+        nodes: ['gamma', 'alpha'],
+        text: 'every module logs on entry',
+        evidence: {
+          origin: 'convention',
+          rule: 'call|log|true|method',
+          aspect: 'grain/gamma/logs-on-entry',
+          name: 'Every module logs on entry',
+          conforming: 12,
+          deviating: 0,
+          draft: {
+            form: 'aspect', attachTo: 'gamma', aspect: 'grain/gamma/logs-on-entry', conforming: 8, deviating: 0,
+            yaml: 'name: gamma logs on entry\nstatus: draft\n', check: 'export function gammaCheck() { return []; }\n',
+          },
+          alsoIn: [{
+            form: 'aspect', attachTo: 'alpha', aspect: 'grain/alpha/logs-on-entry', conforming: 4, deviating: 0,
+            yaml: 'name: alpha logs on entry\nstatus: draft\n', check: 'export function alphaCheck() { return []; }\n',
+          }],
+        },
+      },
       { kind: 'split', nodes: ['alpha'], text: 'a finer cut', evidence: {} },
     ],
   };
@@ -311,6 +339,9 @@ test('the legislator starts from the rules Grain drafts for its territory, and f
   assert.match(brief, /\*\*src\/beta never imports src\/gamma\*\* — a maintainer's decision \(maintainer, 2026-09-01\)/);
   assert.doesNotMatch(brief, /A gamma habit/, 'a draft for another territory\'s component is that territory\'s');
   assert.doesNotMatch(brief, /a finer cut/, 'only rule drafts reach the legislator');
+  assert.match(brief, /\*\*Every module logs on entry\*\* \(`grain\/alpha\/logs-on-entry` on `alpha`\) — followed at 4 of 4 site\(s\) \(100%\); holds in alpha\./);
+  assert.match(brief, /name: alpha logs on entry/);
+  assert.doesNotMatch(brief, /gamma logs on entry|gammaCheck|grain\/gamma\/logs-on-entry/, 'the draft for another territory\'s component is not this one\'s to write');
   assert.match(brief, /enters this pass no higher than\s+\*\*advisory\*\*/);
 
   // A draft the quality pass already filed says which ticket it answers.

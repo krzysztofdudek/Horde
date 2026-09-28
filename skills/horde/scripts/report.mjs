@@ -33,6 +33,7 @@
 // The hook point beside it is `config.notify` (see notifyClient in _lib.mjs): a command run when a
 // question is filed and when a wave closes, for whatever outer loop reaches the client.
 
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, isAbsolute, dirname } from 'node:path';
 import {
   hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, parseArgs, emit, isMain,
@@ -209,6 +210,20 @@ export function summariseMeasure(doc, { from, to, scope, at = nowIso() }) {
   };
 }
 
+// Grain keeps its store in `.grain/` of the tree it runs in and, the first time, writes a
+// `.grain/.gitignore` that ignores only `cache/` — the rest of `.grain/` is the maintainer's to
+// commit. In the mission's trunk tree nobody commits anything, so that one file would sit there
+// untracked (`?? .grain/` in its status, an uncovered file to `yg check`). Where the trunk does not
+// track `.grain/.gitignore` itself, one that ignores the whole store is written first, which Grain
+// keeps (it writes its own only when there is none). A tracked one is the repository's, left as it is.
+function quietGrainStore(tree) {
+  if (git(['ls-files', '--', '.grain/.gitignore'], tree)) return;
+  const gi = join(tree, '.grain', '.gitignore');
+  if (existsSync(gi) && readText(gi) === '*\n') return;
+  mkdirSync(dirname(gi), { recursive: true });
+  writeFileSync(gi, '*\n');
+}
+
 // measureMission(horde, cfg, {fresh}) — the mission's before-and-after, or why there is none. With
 // `fresh` it asks Grain when the last reading is not of this trunk tip and this scope; without, it
 // hands back the last reading as it is. Never throws: a reading that could not be taken says why.
@@ -236,10 +251,12 @@ export function measureMission(horde, cfg, { fresh = false } = {}) {
       // Run in the mission's trunk tree: the range is counted over the history Grain has indexed,
       // which is the history of the tree it runs in, and only the trunk's reaches the trunk's tip.
       // The components are read from the trunk's graph too, so one the mission added is in scope.
-      // Grain's cache there is untracked and ignored, which a trunk resync leaves alone.
+      // Grain's cache stays there between readings (a trunk resync, `reset --hard`, leaves ignored
+      // files alone), and the trunk tree shows nothing for it (quietGrainStore).
       let tree;
       try {
         tree = resolveTree({ horde }).path;
+        quietGrainStore(tree);
       } catch (e) {
         tree = null;
         result = { measured: false, at, from, to, scope, why: `the mission's trunk tree could not be read: ${e.message}` };

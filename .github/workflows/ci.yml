@@ -64,13 +64,17 @@ jobs:
       # Horde requires Grain (the architect measures with it), and so does the suite: requireGrain() in
       # tests/helpers.mjs throws rather than skip. Grain moves with this repository in a joint release,
       # so the Grain branch of the same name is checked out beside it: a pull request tries its head
-      # branch, then the branch it targets, and otherwise Grain's main. Grain runs with nothing to
-      # install: its parser runtime, grammars and Runes are vendored.
+      # branch, then the branch it targets. With neither on Grain (a feature branch pushed on its own)
+      # it takes Grain's release branch for this repository's own version (release/<plugin.json
+      # version>), which carries the Grain this release needs, and only once that branch is gone —
+      # the release merged — Grain's main. Grain runs with nothing to install: its parser runtime,
+      # grammars and Runes are vendored.
       - name: resolve Grain branch
         id: grain-branch
         run: |
           found="main"
-          for branch in "${{ github.head_ref || github.ref_name }}" "${{ github.base_ref }}"; do
+          release="release/$(node -p "require('./plugin.json').version")"
+          for branch in "${{ github.head_ref || github.ref_name }}" "${{ github.base_ref }}" "$release"; do
             [ -n "$branch" ] || continue
             if git ls-remote --exit-code --heads "https://github.com/krzysztofdudek/Grain.git" "$branch" >/dev/null 2>&1; then
               found="$branch"
@@ -222,13 +226,17 @@ jobs:
       # Horde requires Grain (the architect measures with it), and so does the suite: requireGrain() in
       # tests/helpers.mjs throws rather than skip. Grain moves with this repository in a joint release,
       # so the Grain branch of the same name is checked out beside it: a pull request tries its head
-      # branch, then the branch it targets, and otherwise Grain's main. Grain runs with nothing to
-      # install: its parser runtime, grammars and Runes are vendored.
+      # branch, then the branch it targets. With neither on Grain (a feature branch pushed on its own)
+      # it takes Grain's release branch for this repository's own version (release/<plugin.json
+      # version>), which carries the Grain this release needs, and only once that branch is gone —
+      # the release merged — Grain's main. Grain runs with nothing to install: its parser runtime,
+      # grammars and Runes are vendored.
       - name: resolve Grain branch
         id: grain-branch
         run: |
           found="main"
-          for branch in "${{ github.head_ref || github.ref_name }}" "${{ github.base_ref }}"; do
+          release="release/$(node -p "require('./plugin.json').version")"
+          for branch in "${{ github.head_ref || github.ref_name }}" "${{ github.base_ref }}" "$release"; do
             [ -n "$branch" ] || continue
             if git ls-remote --exit-code --heads "https://github.com/krzysztofdudek/Grain.git" "$branch" >/dev/null 2>&1; then
               found="$branch"
