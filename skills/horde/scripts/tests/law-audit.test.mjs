@@ -18,7 +18,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, requireYg, git,
+  makeRepo, rmRepo, run, initHorde, requireYg, git, forceTicketStatus,
 } from './helpers.mjs';
 import { adviseKeys, adviseRoute } from '../audit.mjs';
 
@@ -700,7 +700,7 @@ test('the law audit: a promotion and a lowering never become a worker\'s ticket;
   assert.equal(first.asked[0].aspect, 'no-marker');
   const queue = JSON.parse(readFileSync(queuePath(dir), 'utf8')).items;
   assert.equal(queue.length, 1, 'one ticket on the queue, for the hot spot');
-  const asks = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json'), 'utf8')).items;
+  const asks = run('ask.mjs', ['list'], dir).json;
   assert.equal(asks.length, 1);
   assert.equal(asks[0].aspect, 'no-marker');
   assert.match(asks[0].why, /decorative-rule:no-marker/);
@@ -735,7 +735,7 @@ test('the law audit: a promotion and a lowering never become a worker\'s ticket;
 
   await t.test('changed evidence once the earlier ticket merged: filed exactly once more', () => {
     const ticket = first.filed[0].ticket;
-    assert.equal(run('tk.mjs', ['status', ticket, 'merged', 'the fixture merges it'], dir).code, 0);
+    forceTicketStatus(dir, 'mission1', ticket, 'merged');
     const refiled = closeWave(dir);
     assert.equal(refiled.filed.length, 1);
     assert.equal(refiled.filed[0].item, 'unguarded-hot-spot:billing');

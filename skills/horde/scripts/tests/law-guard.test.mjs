@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, MARKER_CHECK, git, requireYg, yg,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, MARKER_CHECK, git, requireYg, yg, issueFileOf,
 } from './helpers.mjs';
 
 function write(dir, rel, text) {
@@ -90,7 +90,7 @@ function lawFixture(dir, id, mutate, {
 
   const dst = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${id}-sample-ticket`);
   mkdirSync(dst, { recursive: true });
-  writeFileSync(join(dst, 'issue.md'), [
+  writeFileSync(issueFileOf(join(dst)), [
     `# ${id} · Sample ticket`, '',
     '**Status:** landed',
     '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',
@@ -123,7 +123,7 @@ function recordAnswer(dir, {
   kind = 'lower', aspect = 'no-marker', scope = 'once', answer = 'approved — we agreed this rule is superseded.',
 } = {}) {
   if (kind !== 'lower') {
-    const path = join(dir, '.horde', 'hordes', 'mission1', 'decisions.md');
+    const path = join(dir, '.horde', 'hordes', 'mission1', '.jarl', 'decisions.md');
     const existing = readFileSync(path, 'utf8');
     const id = `manual-${kind}-${aspect}`;
     const block = [`## 2026-09-11 · ask-${id}`, '', `**Kind:** ${kind} · **Aspect:** ${aspect}`,
@@ -307,7 +307,7 @@ test('law guard: "scope: once" is spent by the landing that used it; "scope: mis
     assert.equal(first.code, 0, said(first));
     assert.ok(first.json.landed);
     // The answer now says, in the file itself, which landing spent it.
-    const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'decisions.md'), 'utf8');
+    const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', '.jarl', 'decisions.md'), 'utf8');
     assert.match(decisions, /\*\*Consumed:\*\* ticket 124 at [0-9a-f]{40} on /);
 
     // A second branch weakening the same rule finds the answer spent.
@@ -323,7 +323,7 @@ test('law guard: "scope: once" is spent by the landing that used it; "scope: mis
     git(['checkout', '-q', 'mission1/trunk'], dir);
     const dst = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '125-sample-ticket');
     mkdirSync(dst, { recursive: true });
-    writeFileSync(join(dst, 'issue.md'), [
+    writeFileSync(issueFileOf(join(dst)), [
       '# 125 · Sample ticket', '',
       '**Status:** landed',
       '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',
@@ -352,7 +352,7 @@ test('law guard: "scope: once" is spent by the landing that used it; "scope: mis
 
     const r = run('land.mjs', [branch], dir);
     assert.equal(r.code, 0, said(r));
-    const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'decisions.md'), 'utf8');
+    const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', '.jarl', 'decisions.md'), 'utf8');
     assert.doesNotMatch(decisions, /\*\*Consumed:\*\*/, 'a mission-scope answer stands until the mission closes');
   });
 });
@@ -366,7 +366,7 @@ test('law guard: a "once" answer is not spent by a landing whose gate goes red',
   t.after(() => rmRepo(dir));
   const { branch } = lawFixture(dir, '127', (dir2) => baseGraph(dir2, { status: 'advisory' }));
   recordAnswer(dir, { scope: 'once' });
-  const decisionsPath = join(dir, '.horde', 'hordes', 'mission1', 'decisions.md');
+  const decisionsPath = join(dir, '.horde', 'hordes', 'mission1', '.jarl', 'decisions.md');
 
   run('horde.mjs', ['config', 'set', 'gates.team', 'false'], dir);
   const red = run('land.mjs', [branch], dir);
@@ -738,7 +738,7 @@ const MUTATE = 'node -e "const f=require(\'fs\');f.writeFileSync(\'src/a.mjs\',\
 function seedProtectionTicket(dir, id, branch, declared) {
   const dst = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${id}-sample-ticket`);
   mkdirSync(dst, { recursive: true });
-  writeFileSync(join(dst, 'issue.md'), [
+  writeFileSync(issueFileOf(join(dst)), [
     `# ${id} · Sample ticket`, '',
     '**Status:** landed',
     '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',
@@ -799,7 +799,7 @@ function protectionFixture(dir, id, mutate, { declared = PROTECTED_DECLARED } = 
 }
 
 function decisionsOf(dir) {
-  return readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'decisions.md'), 'utf8');
+  return readFileSync(join(dir, '.horde', 'hordes', 'mission1', '.jarl', 'decisions.md'), 'utf8');
 }
 
 function asRegExp(literal) {

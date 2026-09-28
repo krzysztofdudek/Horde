@@ -39,7 +39,7 @@ between agents are doorbells that say "look at file X".
 
 ```
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/status.mjs                 # hordes on this repo, branches, queues, last gate
-node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/handoff.mjs read           # state of intent: what was in flight, who was waited on, next steps
+node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/handoff.mjs read           # the mission as its loop holds it: tickets in flight with their leases, questions, rulings
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/ask.mjs list --open        # what waits for the client's answer
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/decide.mjs list            # rulings you do NOT re-derive
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/tick.mjs                   # reconciled, landed, and what to dispatch next
@@ -54,8 +54,7 @@ it. So every ticket the first `tick.mjs` lists as `working` without a pid is rec
 --reclaim NNN[,NNN]`, and what its worker left is settled and handed out again. First message to
 the user: one sentence of state, one of what you are doing first, nothing more.
 
-**End of every turn that changed anything:** `handoff.mjs write --summary "…" --next "…"`. Without it
-the next wake-up starts blind.
+**Nothing to write at the end of a turn.** A mission's record is a Jarl loop (`.horde/hordes/<h>/.jarl/`), and everything a wake-up needs is already in it, written by the tools as they ran: `handoff.mjs read` assembles it live (the same data as Jarl's own `resume --root .horde/hordes/<h>`, when the Jarl plugin is installed). Intent lives where it is acted on: order in the plan and its dependencies, reasons in rulings (`decide.mjs add`) and ticket bodies (`tk.mjs edit`), what the client owes in a question (`ask.mjs add`).
 
 ## Framing — the only linear phase, done with the user
 

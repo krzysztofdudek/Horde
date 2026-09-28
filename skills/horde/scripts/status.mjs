@@ -1,20 +1,23 @@
 #!/usr/bin/env node
 // horde skill — status.mjs
 //
-// The session-start digest: every horde on this repository, one screen each. Reads across every
-// other tool's state files directly (queue.json, asks.json, cache/last-gate.json) rather than
-// importing their tools, since it only ever reads — nothing here mutates state, so there's no
-// journal-format contract to share.
+// The session-start digest: every horde on this repository, one screen each. The schedule, the gate
+// cache and the leases are read straight off Horde's own files (queue.json, cache/last-gate.json,
+// leases.json); the tickets and the questions to the client off the mission's loop (loop.mjs), whose
+// counts per status are the loop's own (`record`), the same figures `jarl.mjs status --root
+// .horde/hordes/<h>` prints. Nothing here mutates state.
 
 import {
   hordePath, teamPath, listHordes, readConfig, readJSON, readText, git, fail, parseArgs, emit, isMain,
-  leaseHolderForNode,
+  leaseHolderForNode, hasLoopRecord, oldMissionMessage,
   runMain,
 } from './_lib.mjs';
 import { currentWaveNumber, evidenceCoverage } from './wave.mjs';
 import { missionNodes } from './node.mjs';
 import { findTicket, parseField } from './tk.mjs';
 import { landingLoad, landingLine } from './land.mjs';
+import { loadAsks } from './ask.mjs';
+import { loopStatus } from './loop.mjs';
 
 const USAGE = `usage: status.mjs [--horde h] [--team t] [--json]
 
@@ -104,8 +107,14 @@ function hordeDigest(horde, cfg) {
 
   const teams = [teamDigest(horde, 'trunk')];
 
-  const asks = readJSON(hordePath(horde, 'asks.json'), { items: [] });
-  const askItems = Array.isArray(asks.items) ? asks.items : [];
+  let askItems = [];
+  try { askItems = loadAsks(horde).items; } catch { askItems = []; }
+  // The loop's own counts: tickets per status, as the record holds them.
+  let record = null;
+  try {
+    const st = loopStatus(horde);
+    record = st ? { statuses: st.statuses || {}, inFlight: st.inFlight, waiting: st.waiting, questions: st.questions } : null;
+  } catch { record = null; }
 
   // Keyed by level: {commit, team, trunk}, each {sha, result, count, at} when land.mjs has
   // run at that level; absent levels simply aren't shown.
@@ -151,6 +160,7 @@ function hordeDigest(horde, cfg) {
     queue: { byState: queueTotals(horde), total: Object.values(queueTotals(horde)).reduce((a, b) => a + b, 0) },
     landing: landingLoad(horde, queueItems(horde)),
     asks: { open: askItems.filter((i) => i.state !== 'answered').length, total: askItems.length },
+    record,
     lastGate,
     inherited,
     leases: {
@@ -178,6 +188,7 @@ function printHorde(h) {
   const qParts = Object.entries(h.queue.byState).map(([k, v]) => `${k}=${v}`).join(' ') || '(empty)';
   console.log(`  queue: total ${h.queue.total} — ${qParts}`);
   console.log(`  ${landingLine(h.landing)}`);
+  if (h.record) console.log(`  tickets: ${Object.entries(h.record.statuses).filter(([, n]) => n).map(([k, n]) => `${k}=${n}`).join(' ') || '(none)'}`);
   console.log(`  asks: ${h.asks.open} open / ${h.asks.total} total`);
   const gateLevels = ['commit', 'team', 'trunk'].filter((lvl) => h.lastGate[lvl]);
   if (gateLevels.length === 0) {
@@ -241,11 +252,12 @@ function main() {
   }
 
   const cfg = readConfig();
-  const hordes = names.map((h) => hordeDigest(h, cfg));
+  // A mission started by Horde 6.0.x is named with what to do, never read (see requireLoopHorde).
+  const hordes = names.map((h) => (hasLoopRecord(h) ? hordeDigest(h, cfg) : { name: h, refused: oldMissionMessage(h) }));
   if (flags.json) {
     console.log(JSON.stringify({ hordes }, null, 2));
   } else {
-    hordes.forEach(printHorde);
+    hordes.forEach((h) => (h.refused ? console.log(`${h.name}  ${h.refused}`) : printHorde(h)));
   }
 }
 

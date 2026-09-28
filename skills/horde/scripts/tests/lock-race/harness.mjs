@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 const CONTENDER = join(dirname(fileURLToPath(import.meta.url)), 'contender.mjs');
 
 const LOCK_NAMES = {
-  gate: 'gate.lock', retro: 'retro.lock', queue: 'queue.json.lock', decide: 'decisions.md.lock',
+  gate: 'gate.lock', retro: 'retro.lock', queue: 'queue.json.lock', decide: 'decisions.lock',
   asks: 'asks.json.lock', graph: 'graph.json.lock',
 };
 

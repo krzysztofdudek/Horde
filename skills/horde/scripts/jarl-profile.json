@@ -1,0 +1,38 @@
+{
+  "jarl-profile": 1,
+  "format": 1,
+  "name": "horde",
+  "statuses": {
+    "proposed": { "flags": [], "set-by": "record" },
+    "queued": { "flags": ["dispatchable"], "set-by": "record" },
+    "running": { "flags": ["holds-claim"], "set-by": "record" },
+    "landed": { "flags": [], "set-by": "record" },
+    "changes": { "flags": [], "set-by": "record" },
+    "blocked": { "flags": [], "set-by": "record" },
+    "merged": { "flags": ["settles-dependents", "terminal", "closes-record"], "set-by": "record" },
+    "dropped": { "flags": ["terminal"], "set-by": "record" }
+  },
+  "initial": "proposed",
+  "fields": {
+    "Kind": { "enum": ["work", "quality", "prototype", "revert"], "default": "work" },
+    "Node": { "required": true },
+    "Class": { "required": true },
+    "Severity": { "enum": ["high", "medium", "low"], "default": "medium" },
+    "Team": { "default": "trunk" },
+    "Quality": { "enum": ["autonomous", "only-the-work"], "default": "autonomous" },
+    "Depends on": {},
+    "Reopens": {},
+    "Reverts": {},
+    "Consumes": {},
+    "Produces": {},
+    "Evidence": {},
+    "Boundary proposal": {},
+    "Revert base": {},
+    "Mutate": {},
+    "No new tests": {}
+  },
+  "sections": ["Scope", "Notes for the worker"],
+  "acceptance-heading": "Acceptance — evidence",
+  "external-scheduler": "Horde's tick.mjs --horde <mission> (the director runs it; Jarl's next and queue do not schedule a mission)",
+  "done-gate": { "approve": "none", "requires-merged": true }
+}

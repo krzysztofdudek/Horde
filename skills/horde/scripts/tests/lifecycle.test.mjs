@@ -104,11 +104,10 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     ], dir);
     assert.equal(ticket.code, 0, ticket.stderr);
     ticketId = ticket.json.id;
-    // One counter for the whole mission: the port proposal in step 2 took 001, so the first
-    // ticket is 002. A ticket and a graph item never wear the same number any more, which is what
-    // makes an id on its own an unambiguous question.
-    assert.equal(ticketId, '002');
-    assert.equal(ticket.json.ref, 't-002', 'a ticket reads with its kind on it');
+    // Each kind numbers on its own: the port proposal in step 2 is g-001, and the first ticket is
+    // t-001 — the prefix, not the number, is what tells them apart.
+    assert.equal(ticketId, '001');
+    assert.equal(ticket.json.ref, 't-001', 'a ticket reads with its kind on it');
 
     const queued = run('queue.mjs', ['add', ticketId], dir);
     assert.equal(queued.code, 0, queued.stderr);
@@ -222,9 +221,10 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
   await t.test('11. wave journal, ticket status, wave close, status', () => {
     const waveMerged = run('wave.mjs', ['merged', ticketId, mergeSha], dir);
     assert.equal(waveMerged.code, 0, waveMerged.stderr);
-    const tkMerged = run('tk.mjs', ['status', ticketId, 'merged'], dir);
-    assert.equal(tkMerged.code, 0, tkMerged.stderr);
-    assert.equal(tkMerged.json.status, 'merged');
+    // The landing closed the ticket in the mission's record: merged, through the done gate.
+    const shown = run('tk.mjs', ['show', ticketId], dir);
+    assert.match(shown.json.text, /^\*\*Status:\*\* merged$/m);
+    assert.match(shown.json.text, /^\*\*Merged:\*\* [0-9a-f]{40}$/m);
 
     const waveClose = run('wave.mjs', ['close', '--gate', 'green'], dir);
     assert.equal(waveClose.code, 0, waveClose.stderr);
@@ -242,7 +242,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
 
   // Cold boot: nothing lives between runs, so the only thing that can say what a returned worker
   // left behind is the git state of its branch. queue.mjs's own reconcile is what reads it.
-  await t.test('12. cold boot: a dirty running item is reclaimed, and handoff survives the restart', () => {
+  await t.test('12. cold boot: a dirty running item is reclaimed, and the record a session resumes from says so', () => {
     const ticket2 = run('tk.mjs', ['new', 'second-thing', '--title', 'A second thing', '--node', 'model', '--class', 'standard', '--evidence', 'it works'], dir);
     assert.equal(ticket2.code, 0, ticket2.stderr);
     const ticket2Id = ticket2.json.id;
@@ -263,13 +263,11 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
     const wipLog = git(['log', '-1', '--format=%s'], running2.json.worktree);
     assert.equal(wipLog, 'wip: reclaimed');
 
-    const handoffWrite = run('handoff.mjs', ['write', '--summary', 'x', '--next', 'y'], dir);
-    assert.equal(handoffWrite.code, 0, handoffWrite.stderr);
-    // There is only ever one handoff per horde — it takes neither a name nor a team.
+    // Nothing to write before a restart: the state a session resumes from is the mission's loop,
+    // read live — the reclaimed ticket is back in the queue, and nothing is in flight.
     const handoffRead = run('handoff.mjs', ['read'], dir);
     assert.equal(handoffRead.code, 0, handoffRead.stderr);
-    assert.equal(handoffRead.json.summary, 'x');
-    assert.deepEqual(handoffRead.json.next, ['y']);
+    assert.ok(!handoffRead.json.inFlight.some((i) => i.id === ticket2Id), JSON.stringify(handoffRead.json.inFlight));
   });
 
   // "blocked" (017) is where a ticket stops. The fix rounds are counted off the ticket's own log,

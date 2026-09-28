@@ -28,6 +28,7 @@ import {
   nodeExists, readNodePortsText, ticketNodes, ygAspectsReachJson, ygCommand,
 } from './node.mjs';
 import { collectRetroInput, classesPath } from './retro.mjs';
+import { findTicket as findLoopTicket, ticketsOf } from './tk.mjs';
 
 // HORDE_TEST_ROLES_DIR lets the test suite point this at a scratch copy instead of the real
 // reference/roles/ on disk, so a test exercising a missing or malformed role template never
@@ -291,30 +292,17 @@ function walkTeams(horde, visit, teamDir = hordePath(horde, 'teams'), teamName =
   }
 }
 
-// findTicket(horde, id) — {team, issueDirName, issueText, queueItem} or null. Tries the id as
-// given, then zero-padded to 3 digits (tk.mjs's counter renders NNN that way).
+// findTicket(horde, id) — {team, issueDirName, issueText, logText, queueItem} or null: the ticket as the
+// mission's loop holds it (tk.mjs), its own log, and its queue item.
 function findTicket(horde, rawId) {
-  for (const id of [rawId, normalizeTicketId(rawId)]) {
-    let found = null;
-    walkTeams(horde, (teamName, teamDir) => {
-      if (found) return;
-      const issuesDir = join(teamDir, 'issues');
-      if (!existsSync(issuesDir)) return;
-      const match = readdirSync(issuesDir, { withFileTypes: true })
-        .find((e) => e.isDirectory() && e.name.startsWith(`${id}-`));
-      if (!match) return;
-      const issueText = readText(join(issuesDir, match.name, 'issue.md'));
-      const logText = readText(join(issuesDir, match.name, 'log.md'));
-      const queue = readJSON(join(teamDir, 'queue.json'), { items: [] });
-      const canonicalId = match.name.split('-')[0];
-      const queueItem = asArray(queue.items).find((it) => String(it.ticket) === canonicalId) || null;
-      found = {
-        team: teamName, id: canonicalId, issueDirName: match.name, issueText, logText, queueItem,
-      };
-    });
-    if (found) return found;
-  }
-  return null;
+  let t = null;
+  try { t = findLoopTicket(horde, normalizeTicketId(rawId)); } catch { t = null; }
+  if (!t) return null;
+  const queue = readJSON(teamPath(horde, t.team, 'queue.json'), { items: [] });
+  const queueItem = asArray(queue.items).find((it) => String(it.ticket) === t.id) || null;
+  return {
+    team: t.team, id: t.id, issueDirName: t.dirName, issueText: t.text, logText: readText(t.logPath), queueItem,
+  };
 }
 
 function ticketTitle(issueText) {
@@ -534,23 +522,11 @@ function loadTerritories(horde) {
 // component it names is one of the territory's own.
 function ticketsOfTerritory(horde, nodes) {
   const owned = new Set(nodes);
-  const out = [];
-  walkTeams(horde, (teamName, teamDir) => {
-    const issuesDir = join(teamDir, 'issues');
-    if (!existsSync(issuesDir)) return;
-    for (const e of readdirSync(issuesDir, { withFileTypes: true })) {
-      if (!e.isDirectory()) continue;
-      const issueText = readText(join(issuesDir, e.name, 'issue.md')) || '';
-      if (!ticketNodes(issueText).some((n) => owned.has(n))) continue;
-      out.push({
-        id: e.name.split('-')[0],
-        team: teamName,
-        title: ticketTitle(issueText) || '(untitled)',
-        log: readText(join(issuesDir, e.name, 'log.md')) || '',
-      });
-    }
-  });
-  return out.sort((a, b) => a.id.localeCompare(b.id));
+  return ticketsOf(horde)
+    .filter((t) => ticketNodes(t.text).some((n) => owned.has(n)))
+    .map((t) => ({
+      id: t.id, team: t.team, title: ticketTitle(t.text) || '(untitled)', log: readText(t.logPath) || '',
+    }));
 }
 
 // What the landing gate refused, from the result files `land --result` leaves behind — one per

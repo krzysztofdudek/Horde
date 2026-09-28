@@ -54,7 +54,7 @@ import {
   readLandResult, acquireGateLock, gateLockWaitMs, landingLoad, landingLine, landingDrain, drainLine,
 } from './land.mjs';
 import { refreshReport } from './report.mjs';
-import { asksPath, loadAsks, addAsk } from './ask.mjs';
+import { loadAsks, addAsk } from './ask.mjs';
 import { mentionsEvidenceId } from './wave.mjs';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
@@ -142,21 +142,20 @@ refused for another reason keeps it for the next.
 
 options: --json  --help`;
 
-// ---- asks.json ---------------------------------------------------------------------------
+// ---- the client's questions -----------------------------------------------------------------
 //
-// The client's own in-tray (ask.mjs, 019): the questions this horde cannot answer for itself.
-// Tick is one of two writers — the other is a worker filing "stop" through the same tool — and
-// the only one that ever files "stuck": a ticket whose fix rounds are spent.
+// The client's own in-tray (ask.mjs, 019): the questions this horde cannot answer for itself, kept in
+// the mission's loop. Tick is one of two writers — the other is a worker filing "stop" through the
+// same tool — and the only one that ever files "stuck": a ticket whose fix rounds are spent.
 //
-// Read defensively on purpose, unlike ask.mjs's own strict reader: a missing file is the ordinary
-// state (nothing has ever been asked) and must read as an empty in-tray rather than a refusal; an
-// unreadable one reads the same way, for the same reason the landing gate's result file does — a
-// document that records something is never a substitute for the thing it records, so the worst a
-// bad read costs here is a question asked twice.
+// Read defensively on purpose, unlike ask.mjs's own commands: no question asked yet is the ordinary
+// state and must read as an empty in-tray rather than a refusal; an unreadable record reads the same
+// way, for the same reason the landing gate's result file does — a document that records something is
+// never a substitute for the thing it records, so the worst a bad read costs here is a question asked
+// twice.
 function loadAsksSafe(horde) {
   try {
-    const doc = JSON.parse(readFileSync(asksPath(horde), 'utf8'));
-    return doc && Array.isArray(doc.items) ? doc : { items: [] };
+    return loadAsks(horde);
   } catch {
     return { items: [] };
   }

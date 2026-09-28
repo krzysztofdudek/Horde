@@ -26,12 +26,13 @@ only value there is: nothing spawns a sub-team any more. `<name>` is always a te
 mission started before 6.0.0 can carry on disk — see **pre-6.0.0 history** at the end. A full slash
 path (`trunk/alfa`) is also accepted, but only when it matches what that resolution independently
 finds — anything else, including the literal segment `teams`, is
-refused rather than silently landing in the wrong directory. JSON files are the source of truth; every
-`.md` beside one is rendered on write and never parsed. No tool ever rewrites history in a journal;
-journals append.
+refused rather than silently landing in the wrong directory. JSON files are the source of truth for
+Horde's own state; every `.md` beside one is rendered on write and never parsed. No tool ever rewrites
+history in a journal; journals append.
 
-Shared internals live in `_lib.mjs` (root discovery, JSON read/write with rendering, arg parsing,
-table printing, timestamps, git helpers). Tools import it; nothing else does.
+A mission's **record** is not one of those files: it is a Jarl loop, `.horde/hordes/<horde>/.jarl/`, opened by `horde.mjs init` with Horde's profile and written through Jarl's vendored record module (see `loop.mjs` and `vendor.mjs` below). The tickets, the rulings, the client's questions and answers and the journal of every move live there, in Jarl's format, so Jarl's own tools read the mission like any loop. The schedule, the gate, the leases between hordes and each ticket's own log stay Horde's, in the files named below. A horde directory with no loop was started by Horde 6.0.x: every tool refuses it by name (`requireLoopHorde`), saying to finish that mission on the release it was started on.
+
+Shared internals live in `_lib.mjs` (root discovery, JSON read/write with rendering, arg parsing, table printing, timestamps, git helpers). Tools import it; nothing else does.
 
 ## horde.mjs — hordes
 
@@ -162,11 +163,29 @@ table printing, timestamps, git helpers). Tools import it; nothing else does.
   completion block (`templates/mission-close.md`) is appended to the mission's `plan.md`, and the
   result says what to do next — push, a decision that stays the chairman's, never this tool's.
 
+## loop.mjs — the mission's record, on Jarl's loop
+
+Not a command. The one file that calls Jarl's record module (`vendor/jarl/…/record.mjs`, API `jarl-record/1`, checked against the vendored copy before every call): every other tool reads and writes the mission's record through it. `horde.mjs init` opens the loop with `jarl-profile.json`:
+
+- **statuses** `proposed queued running landed changes blocked merged dropped`, each `"set-by": "record"` — `jarl set` and Jarl's MCP tools cannot move a ticket anywhere, so nothing walks around the architect's veto (proposed → queued is `refine.mjs --step review`'s) or the scheduler;
+- **merged** is the one status that closes a ticket (`closes-record`) and the one that settles what waited on it (`settles-dependents`); **dropped** ends a ticket and settles nothing;
+- **done gate** `approve: none` + `requires-merged: true`: a ticket closes only on a merge recorded (sha) that its base holds, with an evidence row — the landing writes exactly that (`closeMerged`), and `tk.mjs status NNN merged` is refused, naming the landing;
+- **external-scheduler**: Jarl's `next` and `queue` compute nothing for a mission and name `tick.mjs`;
+- **fields** `Kind` (work/quality/prototype/revert), `Node`, `Class`, `Severity`, `Team`, `Quality`, `Depends on`, `Reopens`, `Reverts`, `Consumes`, `Produces`, `Evidence`, `Boundary proposal`, `Revert base`, `Mutate`, `No new tests`, one per line; `Files` is the loop's own field; acceptance under `## Acceptance — evidence`, and the `Scope` and `Notes for the worker` sections.
+
+The goal line names the charter, and its `Check:` line names `land.mjs`, so Jarl's views say the loop lands on a check, never on testimony alone. Each ticket's status follows the schedule where the schedule changes what the ticket is doing: handed to a worker (`running`, with the worker's branch, name and worktree as the loop's lease), back from one (`landed`, or `queued`), sent back by the gate (`changes`, the round recorded in the loop too), blocked, merged, dropped. Its `After` is what the plan orders it after — the ticket's own `Depends on`, its queue item's dependencies, and the producers of the ports it consumes (`queue.mjs syncAfter`) — so `jarl.mjs status --root .horde/hordes/<h>` says which tickets wait and on what. A refusal from the record comes back as Horde's own (`fail`), in Jarl's words.
+
+`jarl.mjs resume --root .horde/hordes/<h>` (or `handoff.mjs read`, which reads the same data without the Jarl plugin) shows the live mission.
+
+## vendor.mjs — the vendored Jarl record, kept honest
+
+`check` (sha256 of every vendored file against `vendor/jarl.pin.json`, no file missing and none extra, and the record API the copy exports against the pin's — offline, run by `npm test`), `check --source <JarlSkill tree>` (the copy byte for byte against a Jarl working tree: CI checks out the Jarl branch of the same name beside this one, or the branch a pull request targets, and with neither the commit the pin names — never Jarl's main), `check --ci` (a fresh shallow fetch of the pinned commit into `.jarl-vendor/`, ignored by git, compared byte for byte), and `update --source <JarlSkill tree>` (copy `record.mjs` and `jarl-lib.mjs` from a clean tree and rewrite the pin: commit, branch, API, every sha256). The pin names a commit rather than a tag because Jarl's release line is untagged while a release is built; moving the pin is a commit of its own, reviewed like code. Exit 0 pass, 1 gate failure, 2 usage or environment error.
+
 ## status.mjs — the digest
 
 One screen: hordes, for each: trunk sha and distance from base, its branch tip, ticket branches
 beyond it (landed, unverified, unmerged, waiting), queue counts by state (including `waiting`), the
-**landing load** (see `tick.mjs` below), open asks, the last recorded gate result per level (and whether it was run or only said), the graph findings the last landing found already on its parent (`cache/inherited.json`), any lease another *live* horde holds on a node this
+**landing load** (see `tick.mjs` below), open asks, the last recorded gate result per level (and whether it was run or only said), the graph findings the last landing found already on its parent (`cache/inherited.json`), the loop's own count of tickets per status (`record`), any lease another *live* horde holds on a node this
 horde's own tickets touch (node-lease-across-hordes — `.horde/leases.json`, shared by every horde
 on the repository), and an **evidence** block: every row of the charter's evidence catalogue in one
 of six states — `no-ticket` (nothing claims it), `prototyping` (every ticket naming it is a
@@ -179,29 +198,18 @@ reading `horde.mjs done` uses for its gate, read here without writing anything. 
 it to one horde. `--team` takes `trunk` and nothing else — every ticket is filed there, so any
 other name is refused rather than answered with a horde that has no team in it at all. `--json`.
 
-## handoff.mjs — state of intent
+## handoff.mjs — the state a session resumes from
 
-`write --summary "…" [--next "…"]…`, `read`, `add-waiting <who> "<what>"`, `rm-waiting <who>` — one
-handoff per horde, always at `hordes/<horde>/handoff.json` (+ `.md`). There is no `--by` or `--team`
-any more: with only a director and one-shots left, a handoff scoped to one team or one name has
-nobody left to read it, and both flags are refused by name rather than silently accepted and
-ignored, so a caller that still passes one finds out at once. `write` fills
-`inFlight` from the queue's running items and `head` from git. `read` prints "fresh start — no
-handoff recorded" when none exists yet.
+`read [--horde h]` — the mission as its loop holds it, assembled live: the goal, the tickets a worker holds with their leases (branch, worker, worktree), the questions waiting on the client, the rulings in force and the journal's last lines — the same data as `jarl.mjs resume --root .horde/hordes/<h>`. Nothing is written by hand any more: `write`, `add-waiting` and `rm-waiting` are refused by name, saying where intent lives (the plan and its dependencies, rulings, ticket bodies, questions).
 
 ## tk.mjs — tickets
 
-Over `teams/<team>/issues/NNN-slug/{issue.md,log.md}`, NNN unique per horde (counter in
-`hordes/<horde>/counter.json` — the one counter EVERYTHING the horde numbers comes out of, see
-"Identifiers" below). A ticket reads as `t-NNN`; NNN alone is the same ticket, and stays the name of
-its folder and of the `id:` its issue.md carries.
+A ticket is an issue of the mission's loop (`loop.mjs`): `.horde/hordes/<horde>/.jarl/issues/NNN-<slug>.md`, numbered by the loop, its fields one per line and its status one the profile names; its own log sits beside the loop at `teams/<team>/issues/NNN-slug/log.md`. A ticket reads as `t-NNN`; NNN alone is the same ticket (see "Identifiers" below). `--json` on `new` carries `dirName`, the name of the directory holding its log.
 - `new <slug> --title "…" --node n --class light|standard|heavy|max [--severity high|medium|low]
   [--kind work|quality|prototype] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
   [--produces <node>/<port>,…] [--evidence "…"]… [--revert-base <ref>] [--mutate "<command>"]
   [--reopens NNN]` —
-  from `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries
-  a contract between them; three or more is refused — nothing in the graph answers for the whole of
-  such a diff.
+  from `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries a contract between them; three or more that hold code are refused — nothing in the graph answers for the whole of such a diff. A node that holds nothing but tests (every tracked file in its boundary matches `config.testGlobs`) does not count toward the two: a graph that keeps a component's tests in a node of their own would otherwise split every change to behaviour its tests pin into two tickets nobody can land green.
   `--revert-base` names the ref where the ticket's new tests must fail (a contract test
   is green on the team tip by design; its red base is e.g. `develop`); `land`'s revert-test item reads it, or
   a "red on <ref>" phrase in the acceptance lines. `--mutate` names a shell command that swaps the
@@ -397,14 +405,8 @@ earning no row at all claims nothing — neither is a mismatch.
   written as usual. `--out <file>` writes the plan (rendered, or JSON with `--json`) to a file instead of stdout,
   for a reader who must see it whole — the architect — rather than a summary relayed through a
   message.
-- `undep NNN --on MMM [--note "…"]` takes a dependency back off `NNN`'s queue item — a note is
-  always recorded, `--note`'s text appended to it where given. Only an edge the queue itself added
-  (`add --depends`, `dep`, `tk.mjs edit --depends`, or `plan --apply-order`) is its to remove: it
-  refuses one that also comes from `NNN`'s own `**Depends on:**` field (that field is written once,
-  at `tk.mjs new`, and nothing today edits it back out — dropping the queue's copy would leave the
-  ticket's own text still declaring it) or from a port `NNN` consumes that `MMM` produces (`plan`
-  recomputes that edge fresh from `**Consumes:**`/`**Produces:**` every time, so the queue never
-  actually held it), naming which and what to edit instead.
+- `undep NNN --on MMM [--note "…"]` takes a dependency back off — a note is always recorded, `--note`'s text appended to it where given. An edge the queue itself added (`add --depends`, `dep`, `tk.mjs edit --depends`, or `plan --apply-order`) comes off `NNN`'s queue item; one `NNN`'s own `**Depends on:**` field declares comes off that field, rewritten in the mission's record with a line in the ticket's log. It refuses one from a port `NNN` consumes that `MMM` produces (`plan` recomputes that edge fresh from `**Consumes:**`/`**Produces:**` every time), naming the edit that drops it.
+- `regate NNN --note "<why>"` — the director's word that `NNN`'s last red gate, at the tip its branch still stands at, was not the branch's doing (a flaky test, a machine under load): the recorded result is set aside, with its gate log, under `land/set-aside/`; the item and the ticket go back to `landed`, and the next `tick` asks the gate again at the same commit — no worker raised, no empty commit to move the branch. The round that red counted stays counted. Refused with nothing red to set aside at the branch's current tip.
 - A dependency (`add`'s `--depends`, `dep`'s and `undep`'s `--on`) is `NNN`, a bare ticket number
   in this same team — there is only ever one team (`trunk`), so a dependency has nowhere else to
   point. Refuses anything with a `:` in it, naming the dependency and saying so, and refuses an
@@ -489,7 +491,7 @@ guesses at an answer.
   one `.gitattributes` marks `linguist-generated=true` (the convention GitHub itself uses for a
   generated template or lockfile), or one git's own content heuristic treats as binary — never enters
   the code sum; no size threshold of its own decides this, only git's own attribute and its own
-  binary detection. Over it, refused with the count broken into code, rules and logs, and the largest
+  binary detection. Nor does a file every change only adds lines to (`config.appendOnly` — a CHANGELOG): it is appended to, never read whole, so a node holding one still fits a territory and a mission can still write it. Over it, refused with the count broken into code, rules and logs, and the largest
   files actually counted named — which part is large, and which files in it, says what to do about
   it. The boundary is closed: exactly the limit fits. One threshold and not a table of them per class, because the class decides
   which model works a territory, never what fits in one.
@@ -837,20 +839,13 @@ Under a charter set to `only-the-work` none of it runs and the block says so.
 
 ## Identifiers
 
-One counter per horde (`hordes/<horde>/counter.json`), three prefixes, no exceptions:
+Three prefixes, each its own sequence, no exceptions:
 
-- `t-NNN` — a ticket
-- `g-NNN` — anything the architect rules on: a graph change, a port proposal, a contract proposal, a
-  rule proposal
-- `a-NNN` — a question put to the client
+- `t-NNN` — a ticket, numbered by the mission's loop
+- `g-NNN` — anything the architect rules on: a graph change, a port proposal, a contract proposal, a rule proposal — numbered by `hordes/<horde>/counter.json`
+- `a-NNN` — a question put to the client, numbered by the mission's loop
 
-There is no `e-` or `d-`: escalation and dissent folded into the client channel and have no kind of
-their own. Because all three share one sequence, a ticket and a graph item never wear the same number,
-so an id on its own is an unambiguous question. An id is rendered with its prefix and accepted either
-way; a bare number still resolves for one release and says so when it does, for a mission started
-before this. A `graph.json` from before the shared counter — where a port and a proposal can both call
-themselves "1" — is read exactly as it stands, and every number issued from then on clears the highest
-of both old sequences.
+There is no `e-` or `d-`: escalation and dissent folded into the client channel and have no kind of their own. The prefix is what tells the kinds apart — t-001, g-001 and a-001 are three things — and every tool takes the id of its own kind, so a bare number is read as that kind. A `graph.json` from before the counter — where a port and a proposal can both call themselves "1" — is read exactly as it stands, and every number issued from then on clears the highest of both old sequences.
 
 ## ask.mjs — the one channel to the client
 
@@ -883,7 +878,7 @@ row).
   branch that weakens a rule, the proof or a gate may land; a `stuck` ticket returns to the queue or
   closes as not-done only through an answer here.
 
-State: `hordes/<horde>/asks.json` (source of truth) + `asks.md` (rendered).
+State: the mission's loop — a question is a line of `.jarl/asks.md` (its number, kind, what it would lower as the target, the ticket it is about as the issue) and its answer is the ruling `ask-NNN` in `.jarl/decisions.md`, which carries the fields the guards read (`**Kind:**`, `**Aspect:**`, `**Scope:**`) as its first line. What the loop's line has no room for — the whole question, the territory, the log path, when it was asked, the scope an answer was given — stays in `hordes/<horde>/asks.json`, keyed by the question's id. A question answered with Jarl's own `answer` against the mission's loop is answered here too: its kind and target are read off the question, and its scope is "once".
 
 Filing one never touches the queue. What an open one holds up is `tick.mjs`'s ruling, and it holds
 only what depends on the answer — `stop` everything, `stuck` that ticket, `charter` the tickets
@@ -955,10 +950,7 @@ own branch, and raises the rule on its own evidence with `node.mjs promote`.
 
 ## decide.mjs — rulings and lessons
 
-`add <slug> "<ruling>" [--ticket NNN] [--node n]`, `list [--grep re] [--node n]`, `show <slug>`.
-Appends to `hordes/<horde>/decisions.md` (`## <date> · <slug> [· ticket NNN] [· node n]`); refuses a
-duplicate slug. Architectural decisions belong in the graph's own log and are not stored here; the tool
-says so whenever `--node` is given, and prints the `yg log add` command instead.
+`add <slug> "<ruling>" [--ticket NNN] [--node n] [--by who] [--supersedes <slug>]`, `list [--grep re] [--node n]`, `show <slug>`. Appends to the mission's loop, `.jarl/decisions.md` (`## <date> · <slug>`, the ruling, then `**Settles:** NNN` for the ticket it is about — written on that ticket too — `**By:**` and `**Supersedes:**`, the earlier ruling marked `**Superseded by:**` in place); refuses a duplicate slug and a ticket the mission does not have. Architectural decisions belong in the graph's own log and are not stored here; the tool says so whenever `--node` is given, and prints the `yg log add` command instead. `withDecisionsLock` is the lock a landing holds while it spends a "once" answer (`hordes/<horde>/decisions.lock`); every single write to decisions.md is under the loop's own lock.
 
 ## wave.mjs — the journal
 
@@ -1140,8 +1132,7 @@ the JSON, and every item below is measured against it:
    is its own red and costs its round, or every move of the parent would hand it another free one;
 3. scope — the diff stays inside the files the ticket declared in `**Files:**`; a ticket that
    declared none falls back to the union of its node boundaries (from `node.mjs`). Either way it
-   touches no protected path, and Yggdrasil's committed lock files (`.yggdrasil/yg-lock.*.json`) are
-   reported as derived and left to `yg check` in the gate. A diff past a declared list is ✗
+   touches no protected path, and what `yg check` writes into a branch by itself — the committed lock files (`.yggdrasil/yg-lock.*.json`) and the committed record of the reviewer's verdicts (`.yggdrasil/yg-events.llm.jsonl` and its sealed months, which no node owns and whichever branch ran the paid check appended to) — is reported as derived and left to `yg check` in the gate. A conflict in that record at catch-up or in a batch keeps both sides' lines. A diff past a declared list is ✗
    "declared `<n>` files, touched `<path>` outside them" — the fix is `tk.mjs edit NNN --files …`,
    which records the widening in the log, never a quiet pass;
 4. revert test — new test files in the diff, extracted onto the parent's tree, show at least one
@@ -1156,7 +1147,7 @@ the JSON, and every item below is measured against it:
    is derived by running them; nothing declares it to this gate, and no flag offers to say so,
    because a declaration about a test is not evidence about a test;
 5. gate — `config.gates.<level>` run fresh on the branch's own tree, **and** the report that run
-   left behind. No recorded green run is accepted from anywhere: a "green at sha …" line in a
+   left behind. What the command printed is kept, whatever it said, at `land/<ticket>.gate.log` (named as `gateLog` in the result): a red is judged by its own words, and a flake is told from a failure there — `queue.mjs regate` asks the gate again at the same commit. No recorded green run is accepted from anywhere: a "green at sha …" line in a
    ticket's log is a claim about a run this gate did not see. A command that hangs is stopped at
    `config.gateTimeoutMs` (default 15 minutes) and the limit is named, rather than a stuck process
    left behind a checklist that never finishes — and a stopped command ends the item there, with
@@ -1203,14 +1194,13 @@ the JSON, and every item below is measured against it:
    architecture change the architect then files. One warning is read as a
    refusal: `log-cycle-open` on a `log_required` component that owns a file the branch changed —
    on the branch's tree, or on the base's for a file the branch deleted. Asked only when there is
-   such a warning, and narrowly: one `yg node --json` per open component narrows the changed files
-   to its mapping, and only those are asked, one per call, which component holds them (Yggdrasil answers one file per call). A
+   such a warning, and in one reading of the graph per tree: the changed files are put to the territory resolver (`node.mjs ownersOf`, Yggdrasil's batch ownership read), and a component is open for this branch when it owns one of them. A
    tree red with such a cycle is never read as waiting on the user alone. The free half never records a
    component's source baseline, so its first log entry would otherwise answer for every later edit
    and the log gate would never ask for another why; the item names the component and the way out —
    record why, run the full `yg check --approve` (calls the reviewer only if pairs are pending), commit the
    lock it writes. A shared batch gate reads it against the whole batch's diff;
-7. mapping — every file the branch added is owned by a node on the branch's own tree; skipped with
+7. mapping — every file the branch added is owned by a node on the branch's own tree, or covered by its type, or excluded from coverage by design — all of them asked at once through the territory resolver (`node.mjs ownersOf`, one reading of the graph for the whole list); skipped with
    `--no-gate`;
 8. journal — `tk log` has an entry newer than the last commit a worker made (a merge of the parent
    into the branch, which the landing itself may have made, is not one);
@@ -1924,6 +1914,10 @@ version and what to install, instead of failing test by test. `npm test` asks th
 whole suite before any test file runs (a preflight in `tests/`, also run by CI), and prints which CLI
 the suite will run against. Rules, ports, refusals and the verdicts
 that clear a prose rule are all the CLI's own; nothing about the graph is stood in for.
+
+### the contract with Jarl — `tests/jarl-contract.test.mjs`
+
+What Horde's schedule and gate decide holds against Jarl's own tools, as data: no ticket leaves `proposed`, or reaches any status the scheduler owns, through `jarl set` (every status is set by the record); only a merge settles a dependency, a dropped ticket settles nothing; a question holds what it holds in `tick.mjs` whoever filed it — `ask.mjs` or Jarl's own `ask` against the mission's loop; a ticket closes only on a recorded merge its base holds, with an evidence row; Jarl's own `resume` shows the live mission, the tickets a worker holds with their leases; and a mission started by Horde 6.0.x is refused by name. The record half runs through the vendored `record.mjs`; the command-line half runs Jarl's own `jarl.mjs`, found at `HORDE_TEST_JARL` or in a JarlSkill checkout beside this repository, and is skipped with the reason printed when there is none — CI checks out the Jarl branch of the same name for it. `tests/vendor.test.mjs` holds the vendored copy to its pin.
 
 ### the family's contract test — `tests/family.e2e.test.mjs`
 

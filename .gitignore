@@ -5,3 +5,4 @@
 node_modules/
 .horde/
 .claude/worktrees/
+.jarl-vendor/

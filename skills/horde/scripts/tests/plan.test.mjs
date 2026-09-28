@@ -5,7 +5,7 @@ import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode,
+  makeRepo, rmRepo, run, initHorde, addNode, writeTicketFixture, forceTicketStatus,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -28,10 +28,12 @@ function charter(dir, rows) {
 }
 
 // The horde numbers tickets from 1; the worked example this fixture reproduces numbers them from
-// 101, and the plan reads better against the design when the ids match it. The counter is a
-// plain integer the ticket tool owns — seeded here, then every ticket is filed by the tool.
+// 101, and the plan reads better against the design when the ids match it. The mission's loop
+// numbers a ticket past the highest one it holds, so a dropped placeholder at n-1 is the seed —
+// dropped, it is out of every plan — and then every ticket is filed by the tool.
 function startTicketsAt(dir, horde, n) {
-  writeFileSync(join(dir, '.horde', 'hordes', horde, 'counter.json'), `${JSON.stringify({ next: n }, null, 2)}\n`);
+  const id = String(n - 1).padStart(3, '0');
+  writeTicketFixture(dir, horde, id, 'seed', `# ${id} · seed\n\n**Status:** dropped\n`);
 }
 
 function tk(dir, args) {
@@ -145,7 +147,8 @@ test('queue.mjs plan: the six-ticket worked example — layers, critical path, o
   });
 
   await t.test('a merged ticket leaves the plan; what remains re-layers itself', () => {
-    run('tk.mjs', ['status', '101', 'merged'], dir);
+    // Merged as the landing leaves it (the tools close a ticket only on a real merge; the scene is set here).
+    forceTicketStatus(dir, 'mission1', '101', 'merged');
     const after = run('queue.mjs', ['plan'], dir);
     assert.equal(after.json.tickets.length, 5);
     assert.deepEqual(after.json.layers, [['102', '103', '104', '106'], ['105']]);

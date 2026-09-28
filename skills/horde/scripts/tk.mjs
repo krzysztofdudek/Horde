@@ -1,15 +1,16 @@
 #!/usr/bin/env node
 // horde skill — tk.mjs
 //
-// Tickets, over teams/<team>/issues/NNN-slug/{issue.md,log.md}. NNN is unique across the whole
-// horde (hordes/<horde>/counter.json), not per team, so a ticket keeps one identity across a
-// `move` — and that counter is shared with everything else the horde numbers, so a ticket and a
-// graph proposal can never wear the same number. A ticket reads as `t-NNN`; NNN alone is the same
-// ticket, and stays the name of its folder and of the `id:` its issue.md carries.
+// Tickets. A ticket is an issue of the mission's Jarl loop (loop.mjs): .horde/hordes/<h>/.jarl/issues/
+// NNN-<slug>.md, numbered by the loop, written through Jarl's record with Horde's profile — its fields
+// (Node, Class, Severity, Kind, Files, Consumes, Produces, Evidence, …) one per line in the header, its
+// status one the profile names and the record alone moves. A ticket reads as `t-NNN`; NNN alone is the
+// same ticket. Beside it, Horde keeps the ticket's own log — teams/<team>/issues/NNN-<slug>/log.md,
+// millisecond stamps, the status lines and the fix-loop rounds read back from it — which is not part of
+// the loop's record.
 //
-// The combined "**Node:** … · **Class:** … · **Severity:** … · **Team:** …" line and the
-// "**Depends on:** … · **Branch:** …" line are parsed positionally by label, stopping at the
-// next `**Label:**` or end of line — none of those values contain a literal "·".
+// Fields are parsed by label, stopping at the next `**Label:**` or end of line — a ticket written by
+// an older release put several on one line separated by "·", and none of the values contain one.
 //
 // Four more fields — **Files:**, **Consumes:**, **Produces:**, **Evidence:** — are what the plan
 // is computed from: the paths the ticket touches, the ports it needs and delivers, the charter
@@ -25,15 +26,18 @@
 import {
   existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
-  allocateId, latestChangesRound, parseAcceptanceLines, parseEvidenceRows, parseLogEntries,
-  runMain, git, withTicketLock, updateTicketFile, appendTicketLog, withCharterLock, renameReplacing,
+  latestChangesRound, parseAcceptanceLines, parseEvidenceRows, parseLogEntries,
+  runMain, git, withTicketLock, appendTicketLog, withCharterLock, renameReplacing, TICKET_LOCK,
 } from './_lib.mjs';
 import {
-  ticketBoundary, pathInBoundary, portExists, nodeExists, nodeGraphPathPrefix,
+  ticketFile, loopTickets, fileTicket, moveTicket, roundTicket, editTicket, hasLoop,
+} from './loop.mjs';
+import {
+  ticketBoundary, pathInBoundary, portExists, nodeExists, nodeGraphPathPrefix, nodeBoundary, globToRegExp,
   approvedBoundaryProposal, proposalBoundaryOf, grainLine, grainAsk, ygFileContext,
 } from './node.mjs';
 // `queue.mjs` imports this file in turn. The cycle is the one this tool set already runs on (see
@@ -41,7 +45,7 @@ import {
 // module calls the other while it is still being evaluated. The alternative — a second writer of
 // dependencies here — is exactly the thing worth avoiding, because a cycle is only caught once the
 // whole DAG is built, and that lives there.
-import { addDependency, loadQueue } from './queue.mjs';
+import { addDependency, loadQueue, syncAfter } from './queue.mjs';
 // The charter is wave.mjs's document: setReproducedBy's own note calls itself the one edit any
 // tool here makes to it, and a prototype's acceptance is the second. Both writers therefore live
 // there, beside the readers that have to agree with them — the alternative, a second private
@@ -182,13 +186,15 @@ options: --json  --help`;
 // --- field parsing -----------------------------------------------------
 
 export function parseField(text, label) {
-  const re = new RegExp(`\\*\\*${label}:\\*\\*\\s*([^\\n·]*?)\\s*(?:·|$)`, 'm');
+  // Blanks, never a newline: an empty field (`**Mutate:**` with nothing after it) is empty, and must
+  // never read the line below it as its value.
+  const re = new RegExp(`\\*\\*${label}:\\*\\*[ \\t]*([^\\n·]*?)[ \\t]*(?:·|$)`, 'm');
   const m = re.exec(text);
   return m ? m[1].trim() : '';
 }
 
 function setField(text, label, value) {
-  const re = new RegExp(`(\\*\\*${label}:\\*\\*\\s*)[^\\n·]*`, 'm');
+  const re = new RegExp(`(\\*\\*${label}:\\*\\*[ \\t]*)[^\\n·]*`, 'm');
   return text.replace(re, `$1${value}`);
 }
 
@@ -352,16 +358,18 @@ export function lastChangesRoundInfo(horde, ticket) {
 // `ticket.text` holds: that copy was read whenever the caller found the ticket, and writing it back
 // would undo anything written since (an edit to the body, another transition). The caller's copy is
 // brought up to date with what was written.
-export function transitionStatus(ticket, status, note, roundInfo) {
-  return withTicketLock(ticket.dir, () => writeTransition(ticket, status, note, roundInfo));
+export function transitionStatus(ticket, status, note, roundInfo, lease = {}) {
+  return withTicketLock(ticket.dir, () => writeTransition(ticket, status, note, roundInfo, lease));
 }
 
-// The write itself; the caller holds the ticket lock.
-function writeTransition(ticket, status, note, roundInfo) {
+// The write itself; the caller holds the ticket lock. The status is the loop's: moved through the
+// record (its lock, its log line, the lease a move into running records — branch, worker, worktree —
+// and every refusal the profile makes), then written into the ticket's own log with the round, where
+// the fix loop counts it.
+function writeTransition(ticket, status, note, roundInfo, lease = {}) {
   const roundSuffix = roundInfo ? ` (round ${roundInfo.round}/${roundInfo.cap ?? roundInfo.resume + roundInfo.fresh} — ${roundInfo.label})` : '';
-  const text = setStatus(readText(ticket.issuePath) ?? ticket.text, status);
-  writeText(ticket.issuePath, text);
-  ticket.text = text;
+  moveTicket(ticket.horde, ticket.id, status, note, status === 'running' ? lease : {});
+  ticket.text = readText(ticket.issuePath) ?? ticket.text;
   appendText(ticket.logPath, `- ${nowIso()} status: ${status}${note ? ` — ${note}` : ''}${roundSuffix}\n`);
   return roundSuffix;
 }
@@ -375,7 +383,10 @@ export function advanceChangesRound(horde, ticket, note) {
   return withTicketLock(ticket.dir, () => {
     const info = changesRoundInfo(horde, ticket);
     if (info.refused) return info;
-    return { ...info, suffix: writeTransition(ticket, 'changes', note, info) };
+    const suffix = writeTransition(ticket, 'changes', note, info);
+    // The round is the loop's too, so Jarl's own views count it where they count every loop's rounds.
+    roundTicket(horde, ticket.id, note || `round ${info.round}/${info.cap}`);
+    return { ...info, suffix };
   });
 }
 
@@ -416,25 +427,6 @@ export function allTeamPaths(horde) {
   return out;
 }
 
-// The highest ticket number already on disk, across every team, dropped tickets included — a
-// folder made by hand (or copied in from another horde) never went through allocateId, so
-// counter.json can carry a `next` well below it. Passed as allocateId's own `floor` argument,
-// exactly the way nextGraphId in node.mjs clears graph.json's own out-of-band ids: the number a
-// ticket already owns, on disk, is never handed to a second one, whatever the counter last saw.
-function ticketIdFloor(horde) {
-  let max = 0;
-  for (const team of allTeamPaths(horde)) {
-    const issuesDir = teamPath(horde, team, 'issues');
-    if (!existsSync(issuesDir)) continue;
-    for (const d of readdirSync(issuesDir, { withFileTypes: true })) {
-      if (!d.isDirectory()) continue;
-      const m = /^(\d+)-/.exec(d.name);
-      if (m) max = Math.max(max, parseInt(m[1], 10));
-    }
-  }
-  return max;
-}
-
 // The acceptance lines of a ticket: every `- [ ]` (or `- [x]`) line under "## Acceptance", minus
 // the template's own placeholder. A ticket with none has nothing anybody can reproduce, so
 // nothing can ever prove it done — `queue add` refuses it (a real mission found one at briefing
@@ -442,23 +434,43 @@ function ticketIdFloor(horde) {
 export function acceptanceLines(issueText) {
   return parseAcceptanceLines(issueText).map((l) => l.raw);
 }
+// The directory beside the loop that holds a ticket's own log, found by its number under whichever
+// team it sits in. Made when it is missing — a ticket filed straight into the loop (Jarl's own `new`
+// with --root) has no log yet — under the team its **Team:** field names, named after its file.
+function sidecarOf(horde, id, issuePath, text) {
+  for (const team of allTeamPaths(horde)) {
+    const dir = teamPath(horde, team, 'issues');
+    if (!existsSync(dir)) continue;
+    const match = readdirSync(dir, { withFileTypes: true })
+      .find((d) => d.isDirectory() && d.name.startsWith(`${id}-`));
+    if (match) return { team, dirName: match.name, dir: join(dir, match.name) };
+  }
+  const team = parseField(text, 'Team') || 'trunk';
+  const dirName = basename(issuePath).replace(/\.md$/, '');
+  const dir = teamPath(horde, team, 'issues', dirName);
+  mkdirSync(dir, { recursive: true });
+  if (!existsSync(join(dir, 'log.md'))) writeText(join(dir, 'log.md'), '');
+  return { team, dirName, dir };
+}
+
 export function findTicket(horde, idInput) {
   const id = padId(idInput);
-  for (const team of allTeamPaths(horde)) {
-    const issuesDir = teamPath(horde, team, 'issues');
-    if (!existsSync(issuesDir)) continue;
-    const match = readdirSync(issuesDir, { withFileTypes: true })
-      .find((d) => d.isDirectory() && d.name.startsWith(`${id}-`));
-    if (match) {
-      const dir = join(issuesDir, match.name);
-      const issuePath = join(dir, 'issue.md');
-      const logPath = join(dir, 'log.md');
-      return {
-        id, team, dir, issuePath, logPath, dirName: match.name, text: readText(issuePath) || '',
-      };
-    }
-  }
-  return null;
+  const issuePath = ticketFile(horde, id);
+  if (!issuePath) return null;
+  const text = readText(issuePath) || '';
+  const side = sidecarOf(horde, id, issuePath, text);
+  return {
+    horde, id, team: side.team, dir: side.dir, issuePath, logPath: join(side.dir, 'log.md'), dirName: side.dirName, text,
+  };
+}
+
+// Every ticket of the mission, dropped ones included, each as findTicket gives one — for the readers
+// that walk the whole mission (a brief's territory, the retrospective, a wave close).
+export function ticketsOf(horde) {
+  return loopTickets(horde)
+    .map((issue) => findTicket(horde, issue.id))
+    .filter(Boolean)
+    .sort((a, b) => a.id.localeCompare(b.id));
 }
 
 function requireTicket(horde, idInput) {
@@ -663,14 +675,35 @@ function parsePortList(raw, label) {
 
 // Every ticket of the horde that is not dropped, as {id, team, text} — the population a
 // `Consumes` looks for its producer in, and the one the plan is derived over.
+//
+// `dirName` is the directory holding the ticket's own log (teams/<team>/issues/<dirName>/log.md). A
+// horde directory with no loop is a mission archived before 6.1.0 (history and blame still read
+// those): its tickets are read the way that release wrote them, issue.md beside log.md.
 export function allTickets(horde) {
   const out = [];
+  if (!hasLoop(horde)) return legacyTickets(horde);
+  for (const issue of loopTickets(horde)) {
+    const text = readText(issue.file) || '';
+    const status = parseField(text, 'Status');
+    if (status === 'dropped') continue;
+    const side = sidecarOf(horde, issue.id, issue.file, text);
+    out.push({
+      id: issue.id, team: side.team, dirName: side.dirName, text, status,
+    });
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// A pre-6.1.0 mission's tickets, read only: teams/<team>/issues/NNN-slug/issue.md, every team nested
+// under teams/<parent>/teams/ included.
+function legacyTickets(horde) {
+  const out = [];
   for (const team of allTeamPaths(horde)) {
-    const issuesDir = teamPath(horde, team, 'issues');
-    if (!existsSync(issuesDir)) continue;
-    for (const d of readdirSync(issuesDir, { withFileTypes: true })) {
+    const dir = teamPath(horde, team, 'issues');
+    if (!existsSync(dir)) continue;
+    for (const d of readdirSync(dir, { withFileTypes: true })) {
       if (!d.isDirectory()) continue;
-      const text = readText(join(issuesDir, d.name, 'issue.md')) || '';
+      const text = readText(join(dir, d.name, 'issue.md')) || '';
       const status = parseField(text, 'Status');
       if (status === 'dropped') continue;
       out.push({
@@ -748,10 +781,14 @@ export function createTicket(horde, spec) {
   if (!Array.isArray(nodes) || nodes.length === 0) fail('new requires --node <n> (repeatable)');
   // The model allows a ticket one node, or two when the ticket carries a contract between them —
   // and no more, because a ticket spanning three nodes is one diff three separate components
-  // have to answer for, and nothing in the graph answers for the whole of it. Three were being
-  // accepted in silence.
-  if (nodes.length > 2) {
-    fail(`a ticket names one node, or two when it carries a contract between them — this one names ${nodes.length} (${nodes.join(', ')}). Split it into one ticket per node, with the contract between them on its own ticket if they need one`);
+  // have to answer for, and nothing in the graph answers for the whole of it. A node that holds
+  // nothing but tests is not one of those: a graph that keeps a component's tests in a node of its
+  // own would otherwise make every change to behaviour its tests pin a split nobody can land green,
+  // the code in one ticket and the tests that must change with it in another. So the two are counted
+  // over the nodes that hold code; a test node rides along with the change it tests.
+  const workNodes = nodes.filter((n) => !isTestNode(n));
+  if (workNodes.length > 2) {
+    fail(`a ticket names one node, or two when it carries a contract between them — this one names ${workNodes.length} that hold code (${workNodes.join(', ')}). Split it into one ticket per node, with the contract between them on its own ticket if they need one (a node that holds only tests, by config.testGlobs, does not count)`);
   }
   const cfg = readConfig();
   const classes = (cfg && cfg.classes) || {};
@@ -817,49 +854,44 @@ export function createTicket(horde, spec) {
   const files = withNodeLogs(nodes, declared);
   checkConsumesHaveProducers(horde, consumes, null);
 
-  const allocated = allocateId(horde, 'ticket', { floor: ticketIdFloor(horde) });
-  const id = allocated.number;
-  const dirName = `${id}-${slugify(slug)}`;
-  const dir = teamPath(horde, team, 'issues', dirName);
-  if (existsSync(dir)) fail(`issue folder already exists: ${dirName}`);
-
-  let text = renderTemplate('ticket', {
-    id,
-    title,
-    status: 'proposed',
-    node: nodes.join(', '),
-    class: cls,
-    severity,
-    team,
-    kind,
-    quality,
-    branch: '—',
-    ...(depends.length ? { dependsOn: depends.join(', ') } : {}),
-    ...(reopensRef ? { reopens: reopensRef } : {}),
-    ...(files.length ? { files: files.join(', ') } : {}),
-    ...(consumes.length ? { consumes: consumes.map((c) => c.ref).join(', ') } : {}),
-    ...(produces.length ? { produces: produces.map((p) => p.ref).join(', ') } : {}),
-    ...(evidenceIds.length ? { evidence: evidenceIds.join(', ') } : {}),
-    ...(revertBase ? { revertBase } : {}),
-    ...(mutate ? { mutate } : {}),
-  });
-  if (proposal) text = setHeaderField(text, 'Boundary proposal', proposal.id);
+  // What a revert declares beyond its merge: no test of its own, and one acceptance line — the merge
+  // undone on the branch.
+  let noNewTests = '';
   if (revertOf) {
-    text = setHeaderField(text, 'Reverts', `t-${revertOf.id}`);
-    // A revert adds no test and needs none of its own: what it is checked by is that the change it
-    // takes back is gone from the tree, which the landing measures itself.
-    text = setHeaderField(text, 'No new tests', `a revert takes back t-${revertOf.id}'s landed change (${revertOf.sha.slice(0, 12)}); it adds no test of its own`);
+    noNewTests = `a revert takes back t-${revertOf.id}'s landed change (${revertOf.sha.slice(0, 12)}); it adds no test of its own`;
     acceptance.length = 0;
     acceptance.push(`t-${revertOf.id}'s merge is undone on this branch: \`git revert -m 1 --no-edit ${revertOf.sha}\`, with any conflict resolved to the tree as it stood before that merge, and a log line saying why`);
   }
-  if (acceptance.length) {
-    text = text.replace('- [ ] …', acceptance.map((e) => `- [ ] ${e}`).join('\n'));
-  }
 
+  // The ticket as the loop files it: its fields, one per line, in the profile's order, and its body
+  // from templates/ticket.md — the same sections and the same guidance a ticket has always carried.
+  const body = ticketTemplateBody();
+  const acceptanceBody = body.acceptance.replace('- [ ] …', acceptance.length ? acceptance.map((e) => `- [ ] ${e}`).join('\n') : '- [ ] …');
+  const field = [
+    ['Node', nodes.join(', ')], ['Class', cls], ['Severity', severity], ['Team', team], ['Quality', quality],
+    ['Depends on', depends.join(', ')], ['Reopens', reopensRef || ''], ['Reverts', revertOf ? `t-${revertOf.id}` : ''],
+    ['Consumes', consumes.map((c) => c.ref).join(', ')], ['Produces', produces.map((p) => p.ref).join(', ')],
+    ['Evidence', evidenceIds.join(', ')], ['Boundary proposal', proposal ? proposal.id : ''],
+    ['Revert base', revertBase || ''], ['Mutate', mutate || ''], ['No new tests', noNewTests],
+  ].filter(([, v]) => v !== '').map(([k, v]) => `${k}=${v}`);
+  const filed = fileTicket(horde, title, {
+    kind,
+    files: files.join(','),
+    field,
+    what: body.what,
+    why: body.why,
+    acceptance: acceptanceBody,
+    section: [`Scope=${body.scope}`, `Notes for the worker=${body.notes}`],
+  });
+  const id = filed.id;
+  const dirName = `${id}-${slugify(slug)}`;
+  const dir = teamPath(horde, team, 'issues', dirName);
   mkdirSync(dir, { recursive: true });
-  const issuePath = join(dir, 'issue.md');
-  writeText(issuePath, text);
-  writeText(join(dir, 'log.md'), '');
+  if (!existsSync(join(dir, 'log.md'))) writeText(join(dir, 'log.md'), '');
+  const issuePath = filed.file;
+  const allocated = { id: `t-${id}` };
+  // What it waits on, in the loop's own terms (queue.mjs syncAfter).
+  syncAfter(horde, team);
 
   return {
     id,
@@ -877,6 +909,38 @@ export function createTicket(horde, spec) {
     reopens: reopensRef,
     reverts: revertOf ? `t-${revertOf.id}` : null,
   };
+}
+
+// The body a ticket is filed with, read out of templates/ticket.md: the guidance under What, Why,
+// Scope, Acceptance — evidence and Notes for the worker, the same text a ticket has always started from.
+function ticketTemplateBody() {
+  const text = renderTemplate('ticket', {
+    id: '000', title: '-', status: 'proposed', node: '-', class: '-', severity: '-', team: '-', kind: '-', branch: '-',
+  });
+  const section = (heading) => {
+    const m = new RegExp(`^## ${heading}\\s*$\\n([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, 'm').exec(text);
+    return m ? m[1].trim() : '';
+  };
+  return {
+    what: section('What'), why: section('Why'), scope: section('Scope'), acceptance: section('Acceptance — evidence'), notes: section('Notes for the worker'),
+  };
+}
+
+// A node holding nothing but tests: every tracked file inside its boundary matches the repository's
+// own test patterns (config.testGlobs), and there is at least one. Read in the tree this command runs
+// from, like every other graph reading tk.mjs takes.
+function isTestNode(node) {
+  const cfg = readConfig() || {};
+  const globs = asArray(cfg.testGlobs).map(String).filter(Boolean);
+  if (!globs.length) return false;
+  const root = resolveTree({}).path;
+  let boundary = [];
+  try { boundary = nodeBoundary(root, cfg, node); } catch { boundary = []; }
+  if (!boundary.length) return false;
+  const tracked = (git(['ls-files'], root) || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const files = tracked.filter((f) => pathInBoundary(f, boundary));
+  const res = globs.map((g) => globToRegExp(g));
+  return files.length > 0 && files.every((f) => res.some((re) => re.test(f)));
 }
 
 // A rule a node's own boundary check cannot see: the graph says "this file is inside your node",
@@ -981,23 +1045,18 @@ function cmdNew(horde, positional, flags) {
 
 function cmdList(horde, positional, flags) {
   const team = flags.team || 'trunk';
-  const issuesDir = teamPath(horde, team, 'issues');
-  let rows = [];
-  if (existsSync(issuesDir)) {
-    rows = readdirSync(issuesDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .map((d) => {
-        const text = readText(join(issuesDir, d.name, 'issue.md')) || '';
-        return {
-          id: parseField(text, 'id') || d.name.slice(0, 3),
-          title: (/^#\s*\S+\s*·\s*(.*)$/.exec((text.split('\n')[0] || '').trim()) || [])[1] || '',
-          status: parseField(text, 'Status'),
-          node: nodesOf(text),
-          severity: parseField(text, 'Severity'),
-        };
-      })
-      .sort((a, b) => a.id.localeCompare(b.id));
-  }
+  teamPath(horde, team); // a team name that does not resolve is refused, never answered with no tickets
+  let rows = loopTickets(horde)
+    .map((issue) => ({ issue, text: readText(issue.file) || '' }))
+    .filter(({ text }) => (parseField(text, 'Team') || 'trunk') === team)
+    .map(({ issue, text }) => ({
+      id: issue.id,
+      title: issue.title,
+      status: parseField(text, 'Status'),
+      node: nodesOf(text),
+      severity: parseField(text, 'Severity'),
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
   if (flags.state) rows = rows.filter((r) => r.status === flags.state);
   if (flags.node) rows = rows.filter((r) => r.node.includes(flags.node));
   if (flags.open) rows = rows.filter((r) => !OPEN_EXCLUDE.has(r.status));
@@ -1028,6 +1087,11 @@ function cmdStatus(horde, positional, flags) {
   }
   if (!STATUSES.includes(status)) fail(`unknown state: ${status} (allowed: ${STATUSES.join(', ')})`);
   const ticket = requireTicket(horde, idRaw);
+  // Merged is the one status this command does not write: the mission's record closes a ticket only
+  // on a merge its base holds, and the merge is recorded where it is made.
+  if (status === 'merged') {
+    fail(`${ticket.id} is marked merged by its landing (land.mjs ${ticket.id}), or by queue.mjs set ${ticket.id} merged --sha <sha> for a merge made by hand — the mission's record closes a ticket only on a merge its base holds, with the sha that landed`);
+  }
 
   let roundInfo = null;
   let roundSuffix;
@@ -1037,6 +1101,7 @@ function cmdStatus(horde, positional, flags) {
     roundSuffix = roundInfo.suffix;
   } else {
     roundSuffix = transitionStatus(ticket, status, note, null);
+    if (status === 'dropped') syncAfter(horde, String(ticket.team).split('/').pop());
   }
 
   emit(
@@ -1060,17 +1125,11 @@ function cmdGrep(horde, positional, flags) {
   let re;
   try { re = new RegExp(pattern); } catch (e) { fail(`bad regex: ${e.message}`); }
   const results = [];
-  for (const team of allTeamPaths(horde)) {
-    const issuesDir = teamPath(horde, team, 'issues');
-    if (!existsSync(issuesDir)) continue;
-    for (const d of readdirSync(issuesDir, { withFileTypes: true })) {
-      if (!d.isDirectory()) continue;
-      const id = d.name.slice(0, 3);
-      for (const file of ['issue.md', 'log.md']) {
-        const text = readText(join(issuesDir, d.name, file)) || '';
-        for (const line of text.split('\n')) {
-          if (re.test(line)) results.push({ id, file, line });
-        }
+  for (const t of ticketsOf(horde)) {
+    for (const [file, path] of [['issue.md', t.issuePath], ['log.md', t.logPath]]) {
+      const text = readText(path) || '';
+      for (const line of text.split('\n')) {
+        if (re.test(line)) results.push({ id: t.id, file, line });
       }
     }
   }
@@ -1091,7 +1150,9 @@ function cmdGrep(horde, positional, flags) {
 // carries a verdict, and no reading here has a way to let a ticket through: the closing line counts
 // findings, and what tick does next depends on the findings alone.
 
-const REVIEW_CHANGE_REQUEST_RE = /^review:\s*(\S+)\s+changes\s+by\s+(\S+)/;
+// A change request names the node it is about, or the ticket's two nodes — written "a+b" or, as a
+// reviewer naturally writes a list, "a, b". Both are one change request.
+const REVIEW_CHANGE_REQUEST_RE = /^review:\s*(\S+(?:,\s*\S+)*)\s+changes\s+by\s+(\S+)/;
 const REVIEW_FINDING_LEAD_RE = /^(Critical|Important|Minor):/;
 const REVIEW_SEVERITY_RE = /\b(Critical|Important|Minor):/g;
 const REVIEW_CLOSED_RE = /^review closed by (\S+) — /;
@@ -1251,9 +1312,9 @@ function cmdMove(horde, positional, flags) {
   // the lock on the old directory in between and write into a directory that is about to move. The
   // lock file travels with the directory, so it is removed at the new path before the lock lets go.
   withTicketLock(ticket.dir, () => {
-    writeText(ticket.issuePath, setField(readText(ticket.issuePath) ?? ticket.text, 'Team', flags.team));
+    editTicket(horde, ticket.id, (current) => setField(current, 'Team', flags.team));
     renameReplacing(ticket.dir, destDir);
-    rmSync(join(destDir, 'issue.md.lock'), { force: true });
+    rmSync(join(destDir, TICKET_LOCK), { force: true });
   });
   emit({ id: ticket.id, from: ticket.team, to: flags.team }, flags, () => `${ticket.id} moved: ${ticket.team} -> ${flags.team}`);
 }
@@ -1279,11 +1340,21 @@ const FIELD_AFTER = {
 function setHeaderField(text, label, value) {
   // In place, and only the field's own value: Consumes and Produces share one line, so the
   // replacement stops at the "·" that separates them (and keeps the spaces around it).
-  const inPlace = new RegExp(`(\\*\\*${label}:\\*\\*[ \\t]*)[^\\n·]*?(?=[ \\t]*(?:·|$))`, 'm');
-  if (inPlace.test(text)) return text.replace(inPlace, `$1${value}`);
+  const inPlace = new RegExp(`\\*\\*${label}:\\*\\*[ \\t]*[^\\n·]*?(?=[ \\t]*(?:·|$))`, 'm');
+  if (inPlace.test(text)) return text.replace(inPlace, () => `**${label}:**${value ? ` ${value}` : ''}`);
   const anchor = new RegExp(`^(\\*\\*${FIELD_AFTER[label]}:\\*\\*[^\\n]*)$`, 'm');
   if (anchor.test(text)) return text.replace(anchor, `$1\n**${label}:** ${value}`);
   return text.replace(/^(\*\*Status:\*\*[^\n]*)$/m, `$1\n**${label}:** ${value}`);
+}
+
+// setTicketField(horde, id, label, value, note) — one header field of a ticket rewritten in the loop,
+// under its lock, with a line in the ticket's own log saying what changed and why.
+export function setTicketField(horde, id, label, value, note) {
+  const ticket = findTicket(horde, padId(id));
+  if (!ticket) fail(`no such ticket: ${id}`);
+  editTicket(horde, ticket.id, (current) => setHeaderField(current, label, value));
+  appendLog(ticket, `${label.toLowerCase()}: ${value || 'none'}${note ? ` — ${note}` : ''}`);
+  return { id: ticket.id, field: label, value };
 }
 
 // The header block is everything above "## What" (id/title heading, Status, the combined
@@ -1295,10 +1366,15 @@ function setHeaderField(text, label, value) {
 // Everything from "## What" on, replaced; the header block (the fields every other tool parses)
 // left exactly as it was. One derivation, because a ticket filed by a tool writes its body the
 // same way a hand-written one does through `edit`.
+// The loop's own `## Evidence` section — the record of the work: evidence rows, the merge's row, a
+// ruling that settles the ticket — is not part of the body a person writes, and stays below it.
 function replaceTicketBody(ticket, text, body) {
   const idx = text.indexOf('## What');
   if (idx === -1) fail(`ticket ${ticket.id}: could not find the "## What" section to replace`);
-  return `${text.slice(0, idx)}${body.replace(/\s+$/, '')}\n`;
+  const evidence = /^## Evidence\s*$[\s\S]*/m.exec(text.slice(idx));
+  const written = body.replace(/\s+$/, '');
+  const keep = evidence && !/^## Evidence\s*$/m.test(written) ? `\n\n${evidence[0].replace(/\s+$/, '')}\n` : '\n';
+  return `${text.slice(0, idx)}${written}${keep}`;
 }
 
 // setTicketBody(horde, id, body, by) — the same write, addressed by ticket id, for a caller that
@@ -1307,7 +1383,7 @@ function replaceTicketBody(ticket, text, body) {
 export function setTicketBody(horde, id, body, by) {
   const ticket = findTicket(horde, padId(id));
   if (!ticket) fail(`no such ticket: ${id}`);
-  updateTicketFile(ticket.dir, ticket.issuePath, (current) => replaceTicketBody(ticket, current, body));
+  editTicket(horde, ticket.id, (current) => replaceTicketBody(ticket, current, body));
   appendLog(ticket, `body edited by ${by}`);
   return { id: ticket.id, bytes: body.replace(/\s+$/, '').length };
 }
@@ -1379,13 +1455,14 @@ function cmdEdit(horde, positional, flags) {
     bytes = stdin.replace(/\s+$/, '').length;
   }
 
-  updateTicketFile(ticket.dir, ticket.issuePath, (current) => {
+  editTicket(horde, ticket.id, (current) => {
     let next = current;
     for (const [label, value] of fieldEdits) next = setHeaderField(next, label, value);
     return bytes ? replaceTicketBody(ticket, next, stdin) : next;
   });
   if (bytes) appendLog(ticket, `body edited by ${flags.by}`);
   for (const c of changed) appendLog(ticket, `${c} — changed by ${flags.by}`);
+  if (changed.length) syncAfter(horde, String(ticket.team).split('/').pop());
   emit({ id: ticket.id, bytes, changed }, flags, () => (changed.length
     ? `${ticket.id}: ${changed.join(' · ')}${bytes ? ` · body updated (${bytes} bytes)` : ''}`
     : `${ticket.id}: body updated (${bytes} bytes)`));

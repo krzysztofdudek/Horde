@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, requireYg, addNode, addAspect, MARKER_CHECK, git,
+  makeRepo, rmRepo, run, initHorde, requireYg, addNode, addAspect, MARKER_CHECK, git, issueFileOf,
 } from './helpers.mjs';
 
 // Horde requires Yggdrasil: `init` creates the graph when a repository has none, so every direct
@@ -515,7 +515,7 @@ test('horde.mjs charter edit: dropping a row is free before wave 1, refused afte
     const r = charterEditRaw(`${withOne}\n_E2 dropped per ask-${opened.json.id}._\n`, ['--ask', opened.json.id]);
     assert.equal(r.code, 0);
     assert.equal(r.json.evidenceRows, 1);
-    const decision = run('decide.mjs', ['show', `ask-${opened.json.id}`], dir);
+    const decision = run('decide.mjs', ['show', `ask-${opened.json.id.slice(2)}`], dir);
     assert.equal(decision.code, 0, decision.stderr);
     assert.match(decision.json.body, /E2 is dropped/);
   });
@@ -550,7 +550,7 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
   // hand, matching wave.test.mjs's own convention.
   const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-slug');
   mkdirSync(ticketDir, { recursive: true });
-  writeFileSync(join(ticketDir, 'issue.md'), '# 001 · slug\n\n**Status:** merged\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
+  writeFileSync(issueFileOf(join(ticketDir)), '# 001 · slug\n\n**Status:** merged\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
   writeFileSync(join(ticketDir, 'log.md'), '## Verdict · 001 · 2026-01-01 · by verifier-1 (standard)\n\n**Result:** reproduced\n');
 
   const retroClasses = join(dir, '.horde', 'hordes', 'mission1', 'retro-classes.json');

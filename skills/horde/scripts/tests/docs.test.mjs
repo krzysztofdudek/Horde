@@ -289,7 +289,10 @@ test('every *.mjs named in SKILL.md exists in scripts/, and every scripts/*.mjs 
 //     scripts/README.md's law-guard section).
 //   - test.mjs — not a name at all: the tail of a glob the regex reads on its own, e.g.
 //     `*.test.mjs` or `family.e2e.test.mjs` in scripts/README.md's own Tests section.
-const NOT_A_SCRIPT_NAME = new Set(['check.mjs', 'companion.mjs', 'test.mjs']);
+//   - jarl.mjs, record.mjs, lib.mjs — Jarl's own scripts (its command line, its record module and the
+//     tail of jarl-lib.mjs), named where the docs say what Horde vendors from Jarl and what Jarl's own
+//     command line shows of a mission; they live in vendor/jarl or in the Jarl plugin, never in scripts/.
+const NOT_A_SCRIPT_NAME = new Set(['check.mjs', 'companion.mjs', 'test.mjs', 'jarl.mjs', 'record.mjs', 'lib.mjs']);
 
 function docFiles() {
   return [

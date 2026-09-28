@@ -37,7 +37,7 @@ import {
 } from './_lib.mjs';
 import {
   ygCommand, ygNode, ygContext, nodeExists, nodeBoundary, nodeRules, renderRules, listAllNodes,
-  pathInBoundary, nodeDir, loadGraph, grainLine, grainAsk, reviewerGap,
+  pathInBoundary, nodeDir, loadGraph, grainLine, grainAsk, reviewerGap, isAppendOnly,
 } from './node.mjs';
 import { buildPlan, renderPlan, titleOf, loadQueue } from './queue.mjs';
 import {
@@ -208,7 +208,10 @@ function territoryBytes(root, cfg, nodes) {
   let generatedOrBinaryCount = 0;
   for (const rel of codeFiles) {
     const bytes = fileBytes(join(root, rel));
-    if (generated.has(rel) || looksBinary(join(root, rel))) {
+    // A file every change only adds lines to (config.appendOnly — a CHANGELOG) is appended to, never
+    // read whole: it is left out of the sum like a generated or a binary file, so a node holding one
+    // still fits a territory and a mission can still write it.
+    if (generated.has(rel) || looksBinary(join(root, rel)) || isAppendOnly(rel, cfg)) {
       generatedOrBinaryCount += 1;
       continue;
     }

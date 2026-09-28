@@ -4,7 +4,7 @@
 
 import { execFileSync } from 'node:child_process';
 import {
-  existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync,
+  existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, readdirSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -188,6 +188,51 @@ export async function writeEvidenceJudgement(dir, layer, horde = 'mission1') {
 // requireYg() — the real Yggdrasil CLI, or a refusal that says why the suite cannot run without
 // one. Horde requires Yggdrasil; a suite that quietly measured a stand-in instead would be proving
 // something no adopter ever runs.
+// A mission's tickets live in its Jarl loop: .horde/hordes/<h>/.jarl/issues/NNN-<slug>.md, with the
+// ticket's own log beside the loop at teams/<team>/issues/NNN-<slug>/log.md. The path of one ticket's
+// file, found by its number.
+export function ticketIssuePath(dir, horde, id) {
+  const issues = join(dir, '.horde', 'hordes', horde, '.jarl', 'issues');
+  const hit = existsSync(issues) ? readdirSync(issues).find((f) => f.startsWith(`${id}-`) && f.endsWith('.md')) : null;
+  return hit ? join(issues, hit) : null;
+}
+
+// The loop's file for the ticket whose own directory (its log's) is `ticketDir` —
+// .horde/hordes/<h>/teams/<team>/issues/NNN-<slug> → .horde/hordes/<h>/.jarl/issues/NNN-<...>.md: the
+// file the loop already holds for that number, else NNN-<slug>.md. For a test that writes or edits a
+// ticket's text by hand where it used to write the directory's issue.md.
+export function issueFileOf(ticketDir) {
+  const m = /^(.*)[\\/]\.horde[\\/]hordes[\\/](.+?)[\\/]teams[\\/].+?[\\/]issues[\\/]((\d+)-[^\\/]+)[\\/]?$/.exec(ticketDir);
+  if (!m) throw new Error(`not a ticket directory: ${ticketDir}`);
+  const [, root, horde, name, id] = m;
+  const issues = join(root, '.horde', 'hordes', horde, '.jarl', 'issues');
+  mkdirSync(issues, { recursive: true });
+  return ticketIssuePath(root, horde, id) || join(issues, `${name}.md`);
+}
+
+// A ticket's status written straight into its file — for a fixture that needs a ticket to stand in a
+// status no tool would move it to there (merged with no merge behind it, say). The tools refuse that
+// move on purpose; a test setting the scene is not a tool.
+export function forceTicketStatus(dir, horde, id, status) {
+  const path = ticketIssuePath(dir, horde, id);
+  if (!path) throw new Error(`no ticket ${id} in ${horde}`);
+  writeFileSync(path, readFileSync(path, 'utf8').replace(/^\*\*Status:\*\*.*$/m, `**Status:** ${status}`));
+}
+
+// A ticket written by hand, the way a test sets one up: its file in the loop (text as given — a
+// ticket written with the fields a test needs and nothing else is read like any other), and the
+// directory holding its own log. Returns that directory.
+export function writeTicketFixture(dir, horde, id, slug, text, { team = 'trunk', log = '' } = {}) {
+  const issues = join(dir, '.horde', 'hordes', horde, '.jarl', 'issues');
+  mkdirSync(issues, { recursive: true });
+  const existing = ticketIssuePath(dir, horde, id);
+  writeFileSync(existing || join(issues, `${id}-${slug}.md`), text);
+  const side = join(dir, '.horde', 'hordes', horde, 'teams', team, 'issues', `${id}-${slug}`);
+  mkdirSync(side, { recursive: true });
+  if (log !== null && (log || !existsSync(join(side, 'log.md')))) writeFileSync(join(side, 'log.md'), log);
+  return side;
+}
+
 export function requireYg() {
   const found = findRealYg();
   if (!found) {

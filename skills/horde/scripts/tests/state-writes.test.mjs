@@ -13,7 +13,7 @@ import {
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, yg, addNode, git,
+  makeRepo, rmRepo, run, initHorde, yg, addNode, git, issueFileOf,
 } from './helpers.mjs';
 
 const REWRITER = join(dirname(fileURLToPath(import.meta.url)), 'lock-race', 'rewriter.mjs');
@@ -167,7 +167,7 @@ test('a spent "once" answer is marked under the decisions lock, so nothing recor
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  const path = join(dir, '.horde', 'hordes', 'mission1', 'decisions.md');
+  const path = join(dir, '.horde', 'hordes', 'mission1', '.jarl', 'decisions.md');
   const block = [
     '## 2026-09-27 · ask-lower-no-marker', '',
     '**Kind:** lower · **Aspect:** no-marker · **Scope:** once',
@@ -198,7 +198,7 @@ test('consumeAnswer reports an answer another landing already spent', async (t) 
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  const path = join(dir, '.horde', 'hordes', 'mission1', 'decisions.md');
+  const path = join(dir, '.horde', 'hordes', 'mission1', '.jarl', 'decisions.md');
   const block = [
     '## 2026-09-27 · ask-lower-twice', '',
     '**Kind:** lower · **Aspect:** no-marker · **Scope:** once',
@@ -226,7 +226,7 @@ test('mergeSpendingAnswers: a mark that fails after the merge is a note, not a t
   t.after(() => rmRepo(dir));
   initHorde(dir);
   const hordeDir = join(dir, '.horde', 'hordes', 'mission1');
-  const path = join(hordeDir, 'decisions.md');
+  const path = join(hordeDir, '.jarl', 'decisions.md');
   const block = [
     '## 2026-09-27 · ask-lower-unwritable', '',
     '**Kind:** lower · **Aspect:** no-marker · **Scope:** once',
@@ -243,11 +243,11 @@ test('mergeSpendingAnswers: a mark that fails after the merge is a note, not a t
         // The merge succeeds, and then the file can no longer be replaced. A read-only directory does
         // that on POSIX; Windows ignores a directory's mode, but refuses a rename over a read-only file.
         if (process.platform === 'win32') chmodSync(path, 0o444);
-        else chmodSync(hordeDir, 0o555);
+        else chmodSync(dirname(path), 0o555);
         return { ok: true, sha: 'c'.repeat(40), note: 'merged' };
       });
     } finally {
-      chmodSync(hordeDir, 0o755);
+      chmodSync(dirname(path), 0o755);
       chmodSync(path, 0o644);
     }
     assert.equal(out.merged.ok, true, 'the merge stands');
@@ -292,15 +292,15 @@ test('tk.mjs move renames the ticket\'s directory while holding the ticket lock'
     if (Date.now() > deadline) throw new Error(`the move never reached its rename: ${err}`);
     await new Promise((r) => { setTimeout(r, 10); });
   }
-  const lock = join(ticketDir, 'issue.md.lock');
+  const lock = join(ticketDir, 'ticket.lock');
   const heldDuringRename = existsSync(lock) ? JSON.parse(readFileSync(lock, 'utf8')).pid : null;
   const code = await done;
   assert.equal(code, 0, err);
   assert.equal(heldDuringRename, child.pid, 'the ticket lock was held by the move while it renamed the directory');
 
   const moved = join(realpathSync(dir), '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'teams', 'allies', 'issues', basename(ticketDir));
-  assert.ok(existsSync(join(moved, 'issue.md')), 'the ticket is in its new team');
-  assert.equal(existsSync(join(moved, 'issue.md.lock')), false, 'with no lock left behind');
+  assert.ok(existsSync(issueFileOf(join(moved))), 'the ticket is in its new team');
+  assert.equal(existsSync(join(moved, 'ticket.lock')), false, 'with no lock left behind');
   assert.equal(existsSync(ticketDir), false, 'and nothing left at the old path');
 });
 
@@ -535,7 +535,7 @@ test('wave.mjs close waits for a writer holding the charter lock, and both chang
   writeFileSync(path, readFileSync(path, 'utf8').replace('| | | | |', '| E1 | some check | auth | |'));
   const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-slug');
   mkdirSync(ticketDir, { recursive: true });
-  writeFileSync(join(ticketDir, 'issue.md'), '# 001 · slug\n\n**Status:** landed\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
+  writeFileSync(issueFileOf(join(ticketDir)), '# 001 · slug\n\n**Status:** landed\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
   writeFileSync(join(ticketDir, 'log.md'), '## Verdict · 001 · 2026-01-01 · by verifier-1 (standard)\n\n**Result:** reproduced\n');
   assert.equal(run('wave.mjs', ['start'], dir).code, 0);
   assert.equal(run('wave.mjs', ['merged', '001', 'abc1234'], dir).code, 0);

@@ -7,7 +7,7 @@ import {
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, git,
+  makeRepo, rmRepo, run, initHorde, addNode, git, issueFileOf,
 } from './helpers.mjs';
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 
@@ -219,12 +219,12 @@ test('queue.mjs: add, set (running/merged with real branches+worktrees), next, r
 
 // ---- undep: the other half of dep -----------------------------------------------------------
 //
-// `dep` writes a queue edge; nothing took one back off until this. Only a queue-added edge is
-// undep's to remove — a ticket's own "Depends on" field and a port are both recomputed by `plan`
-// from what the ticket declares every time, never read out of queue.json, so dropping the
-// queue's copy of either would leave the dependency exactly where it was.
+// `dep` writes a queue edge; nothing took one back off until this. undep removes a queue-added edge,
+// or one the ticket's own "Depends on" field declares — rewriting that field in the mission's record,
+// with a line in the ticket's log. A port edge is recomputed by `plan` from what the ticket consumes
+// every time, so it is refused, naming the edit that drops it.
 
-test('queue.mjs undep: removes a queue edge with a note; refuses one from the ticket\'s own Depends on field, and one from a port, naming which', async (t) => {
+test('queue.mjs undep: removes a queue edge with a note, or one from the ticket\'s own Depends on field; refuses one from a port, naming it', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -255,7 +255,7 @@ test('queue.mjs undep: removes a queue edge with a note; refuses one from the ti
     assert.match(r.stderr, /no queue edge/);
   });
 
-  await t.test('refuses an edge that comes from the ticket\'s own "Depends on" field', () => {
+  await t.test('takes an edge off the ticket\'s own "Depends on" field too, saying so in the ticket\'s log', () => {
     const dep = readyTicket(dir, 'undep-field-dep', { severity: 'medium' });
     const r0 = run('tk.mjs', ['new', 'undep-field-owner', '--title', 'undep-field-owner', '--node', 'core',
       '--class', 'standard', '--depends', dep, '--evidence', 'it works'], dir);
@@ -268,10 +268,16 @@ test('queue.mjs undep: removes a queue edge with a note; refuses one from the ti
     // to have anything to catch: `dep` records the same number the ticket's field already names.
     run('queue.mjs', ['add', owner, '--depends', dep], dir);
 
-    const r = run('queue.mjs', ['undep', owner, '--on', dep], dir);
-    assert.equal(r.code, 1);
-    assert.match(r.stderr, /Depends on.*field/);
-    assert.match(r.stderr, new RegExp(owner));
+    const r = run('queue.mjs', ['undep', owner, '--on', dep, '--note', 'the order was a guess'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.json.dependsOn, []);
+    const text = run('tk.mjs', ['show', owner], dir).json.text;
+    assert.match(text, /^\*\*Depends on:\*\*$/m, 'the field no longer names it');
+    const log = run('tk.mjs', ['show', owner, '--log'], dir).json.log;
+    assert.match(log, new RegExp(`depends on: none — undep: no longer waits on ${dep} — the order was a guess`));
+    const plan = run('queue.mjs', ['plan'], dir);
+    assert.equal(plan.code, 0, plan.stderr);
+    assert.ok(!plan.json.edges.some((e) => e.from === owner && e.on === dep), 'and the plan no longer orders it after that ticket');
   });
 
   await t.test('refuses an edge that comes from a port', () => {
@@ -306,7 +312,7 @@ function tkNew(dir, slug, { produces, consumes } = {}) {
 function writeMergeableTicket(dir, ticket, { evidenceId = 'E1', verifier = 'verifier-1' } = {}) {
   const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${ticket}-slug`);
   mkdirSync(ticketDir, { recursive: true });
-  writeFileSync(join(ticketDir, 'issue.md'), [
+  writeFileSync(issueFileOf(join(ticketDir)), [
     `# ${ticket} · slug`, '',
     '**Status:** landed',
     '**Node:** auth · **Class:** standard · **Severity:** medium · **Team:** trunk',
@@ -336,16 +342,19 @@ test('queue.mjs set merged: the merge is recorded in the wave journal by the sam
   writeFileSync(queuePath, JSON.stringify(doc, null, 2));
 
   run('wave.mjs', ['start'], dir);
-  const merged = run('queue.mjs', ['set', '001', 'merged', '--sha', 'abc1234'], dir);
+  // A merge recorded by hand names a commit the trunk holds: the mission's record closes a ticket
+  // only on such a merge.
+  const sha = git(['rev-parse', '--short', 'mission1/trunk'], dir);
+  const merged = run('queue.mjs', ['set', '001', 'merged', '--sha', sha], dir);
   assert.equal(merged.code, 0, merged.stderr);
   assert.equal(merged.json.journal.appended, true);
-  // The ticket's own Status says merged too, so a reader of issue.md sees what the queue says.
+  // The ticket's own Status says merged too, so a reader of the ticket sees what the queue says.
   const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-slug');
-  assert.match(readFileSync(join(ticketDir, 'issue.md'), 'utf8'), /^\*\*Status:\*\* merged$/m);
-  assert.match(readFileSync(join(ticketDir, 'log.md'), 'utf8'), /status: merged — merged as abc1234/);
+  assert.match(readFileSync(issueFileOf(join(ticketDir)), 'utf8'), /^\*\*Status:\*\* merged$/m);
+  assert.match(readFileSync(join(ticketDir, 'log.md'), 'utf8'), new RegExp(`status: merged — merged as ${sha}`));
 
   const plan = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
-  assert.match(plan, /merged: 001 abc1234/);
+  assert.match(plan, new RegExp(`merged: 001 ${sha}`));
 
   // …and that one write is enough for the catalogue to go green at wave close.
   const closed = run('wave.mjs', ['close', '--gate', 'green'], dir);
@@ -353,10 +362,10 @@ test('queue.mjs set merged: the merge is recorded in the wave journal by the sam
   assert.equal(closed.json.total, 1);
 
   // The older habit of also calling wave.mjs merged records nothing twice.
-  const again = run('wave.mjs', ['merged', '001', 'abc1234'], dir);
+  const again = run('wave.mjs', ['merged', '001', sha], dir);
   assert.equal(again.json.appended, false);
   const planAfter = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
-  assert.equal(planAfter.match(/merged: 001 abc1234/g).length, 1);
+  assert.equal(planAfter.match(new RegExp(`merged: 001 ${sha}`, 'g')).length, 1);
 });
 
 // ---- next: locks, critical path, quality-last, --why ---------------------------------

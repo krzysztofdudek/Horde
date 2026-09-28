@@ -12,17 +12,18 @@
 // delivers, the files each touches, the evidence each earns — plus whatever order somebody wrote by
 // hand. The queue stays the state; the plan is a view of the tickets, recomputed every time.
 
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   hordePath, teamPath, hordeRoot, readJSON, writeJSON, readText, readConfig, nowIso, fail, parseArgs, emit, isMain, resolveHorde, git, parentBranchOf, qualityPolicy, asArray, writeText, leaseHolderForNode,
   resolveTree, provisionTree, provenanceLine, withProvenance, firstClass, withQueueLock, appendTicketLog,
   parseEvidenceRows, diffSize, sizeRanks, parseLogEntries, processAlive, processStartedAt, REASON_RECLAIM_REFUSED,
-  runMain, splitCommandLine, programFor,
+  runMain, splitCommandLine, programFor, withTicketLock, appendText, HordeError,
 } from './_lib.mjs';
+import { closeMerged, moveTicket, setTicketAfter } from './loop.mjs';
 import {
-  findTicket, parseField, padId, allTickets, transitionStatus, nodesOf, ticketWorkFiles, ticketPorts, ticketEvidence, ticketKind, prototypeBranchOf, createTicket, setTicketBody, acceptanceLines, charterPushback,
+  findTicket, parseField, padId, allTickets, transitionStatus, setTicketField, nodesOf, ticketWorkFiles, ticketPorts, ticketEvidence, ticketKind, prototypeBranchOf, createTicket, setTicketBody, acceptanceLines, charterPushback,
 } from './tk.mjs';
 import { noteMerged, parsePrototypeArtifacts } from './wave.mjs';
 import { loadAsks } from './ask.mjs';
@@ -101,11 +102,18 @@ commands:
       "running" item that gains one goes back to "queued" (its worktree kept) until the
       dependency merges. Refuses a cycle and an unknown dependency.
   undep <ticket> --on <dep> [--note "…"] [--team t] [--horde h]
-      takes a dependency back off an item's queue record, with a note (an automatic one, plus
-      --note's text where given). Only a queue-added edge is its to remove: it refuses one that
-      also comes from the ticket's own "Depends on" field, or from a port <ticket> consumes that
-      <dep> produces, naming which — dropping the queue.json copy while either still stands would
-      leave the dependency exactly where it was.
+      takes a dependency back off, with a note (an automatic one, plus --note's text where given):
+      off the item's queue record, or off the ticket's own "Depends on" field, which is rewritten in
+      the mission's record with a line in the ticket's log. It refuses an edge from a port <ticket>
+      consumes that <dep> produces, naming it — plan recomputes that edge from what the ticket
+      consumes every time, so the fix is tk.mjs edit <ticket> --consumes.
+  regate <ticket> --note "<why>" [--team t] [--horde h]
+      the director's word that the last red gate of <ticket>, at the tip its branch still stands at,
+      was not the branch's doing (a flaky test, a machine under load): the recorded result is set
+      aside (kept under land/set-aside/, with its gate's output), the item and the ticket go back
+      to "landed", and the next tick asks the gate again at the same commit — no worker raised and
+      no empty commit made to move the branch. The round that red counted stays counted. Refused
+      when there is no red result at the branch's current tip to set aside.
   next [--class c] [--why] [--stack] [--team t] [--horde h]
       the first ready queued item — every dependency merged, and its declared Files (a ticket with
       none locks every file of every node it names) clear of every "running" ticket's own Files in
@@ -313,6 +321,10 @@ function cmdAdd(horde, positional, flags) {
     save(horde, team, doc);
     return created;
   });
+  syncAfter(horde, team);
+  // Queued by the director (no --proposed) is queued in the mission's record too: Jarl's views of the
+  // loop must not show a ticket the schedule will hand out as one still waiting on the architect.
+  if (item.state === 'queued') followQueue(horde, item.ticket, 'queued', 'queued by the director', { always: true });
   emit(item, flags, () => `${item.state}: ${item.ticket}${ask ? ` — taken in on ask ${ask.id}` : ''}`);
 }
 
@@ -651,7 +663,7 @@ function resolveStackParent(horde, team, key, item, raw, plan) {
 // calls recordMerged below the moment it has made the merge commit itself — the two must not drift,
 // since a landing that recorded a merge differently from a hand-recorded one would leave two
 // shapes of the same event in one queue.
-function applyMerged(horde, team, doc, item, key, sha, { tree } = {}) {
+function applyMerged(horde, team, doc, item, key, sha, { tree, byHand = false } = {}) {
   // Merge order is the dependency order, stack or no stack: a ticket written on top of an
   // unmerged one still lands after it — and a port edge is a dependency here exactly like a
   // hand-written one, read off `plan`'s own derived set rather than the queue item's raw
@@ -666,6 +678,15 @@ function applyMerged(horde, team, doc, item, key, sha, { tree } = {}) {
   const ticket = findTicket(horde, key);
   if (!ticket) fail(`ticket ${key} not found`);
   const mergeRoot = resolveTree({ tree }).path;
+  // A merge recorded by hand is one its base already holds: the mission's record closes a ticket
+  // only on such a merge, so a sha the branch does not carry is refused here, before the branch and
+  // the worktree are taken away. The landing's own merge is one it has just made there.
+  if (byHand) {
+    const base = mergeBase(horde, team, key);
+    if (git(['merge-base', '--is-ancestor', sha, base], mergeRoot) === null) {
+      fail(`${sha} is not a commit on ${base} — a merge is recorded once ${base} holds it, and this mission's record closes a ticket only on such a merge; land it (land.mjs ${key}), or name the sha that landed`);
+    }
+  }
   if (item.worktree) git(['worktree', 'remove', '--force', item.worktree], mergeRoot);
   if (item.branch) git(['branch', '-D', item.branch], mergeRoot);
   item.worktree = null;
@@ -685,15 +706,54 @@ function applyMerged(horde, team, doc, item, key, sha, { tree } = {}) {
 // landing's recordMerged, and `set <t> merged` by hand) call this once the queue item is saved, so a
 // reader of issue.md (`tk.mjs list --open`, the wave-close audit asking whether a filing is closed)
 // sees the same state the queue holds.
-function markTicketMerged(horde, key, sha) {
+//
+// In the loop the move into merged is the record's done gate: a merge recorded (the sha), an evidence
+// row saying what proved it (`ran`/`saw`), and the base — the branch the merge landed in — holding that
+// sha. A ticket that cannot pass it is refused by name and nothing is written.
+function mergeBase(horde, team, key) {
+  const ticket = findTicket(horde, key);
+  return ticket && ticketKind(ticket.text) === 'prototype' ? prototypeBranchOf(horde) : `${horde}/${String(team).split('/').pop()}`;
+}
+
+function markTicketMerged(horde, key, sha, {
+  team = 'trunk', ran, saw, base: landedIn,
+} = {}) {
   const ticket = findTicket(horde, key);
   if (!ticket || parseField(ticket.text, 'Status') === 'merged') return;
-  transitionStatus(ticket, 'merged', `merged as ${sha}`);
+  const base = landedIn || mergeBase(horde, team, key);
+  withTicketLock(ticket.dir, () => {
+    closeMerged(horde, ticket.id, {
+      sha, base, ran: ran || `queue.mjs set ${key} merged --sha ${sha}`, saw: saw || `${sha} is on ${base}`, why: `merged as ${sha}`,
+    });
+    appendText(ticket.logPath, `- ${nowIso()} status: merged — merged as ${sha}\n`);
+  });
+}
+
+// The ticket's status in the loop follows the scheduler where the scheduler changes what the ticket is
+// doing: handed to a worker (running, with the worker's lease — branch, name, worktree — which Jarl's
+// views show), and back from one (landed: work on the branch for the gate; queued: nothing to land).
+// Only the loop's record moves: the ticket's own log is the worker's history, and a line written there
+// by the scheduler would count as the worker's journal entry at the landing. A ticket the gate sent back
+// (changes) or one that is blocked keeps that status until it is handed out again.
+function followQueue(horde, key, state, note, lease = {}) {
+  const ticket = findTicket(horde, key);
+  if (!ticket) return;
+  const status = parseField(ticket.text, 'Status');
+  if (!status || status === state || status === 'merged' || status === 'dropped') return;
+  if (state !== 'running' && status !== 'running' && !lease.always) return;
+  moveTicket(horde, ticket.id, state, note, state === 'running' ? {
+    ...(lease.branch ? { branch: lease.branch } : {}), ...(lease.worker ? { worker: lease.worker } : {}), ...(lease.worktree ? { worktree: lease.worktree } : {}),
+  } : {});
 }
 
 // The landing gate's own way in: it has already made the merge commit, so all that is left is the
 // record. Returns the journal bullet the wave close reads, exactly as `set <t> merged` does.
-export function recordMerged(horde, team, key, sha, { tree } = {}) {
+//
+// The merge has already happened when this runs, so the loop's record of it is written last and never
+// undoes the queue's: a record the loop refuses comes back as `recordNote`, which the landing prints.
+export function recordMerged(horde, team, key, sha, {
+  tree, ran, saw, base,
+} = {}) {
   const item = withQueueLock(horde, team, () => {
     const found = findItem(horde, team, key);
     if (!found.item) fail(`no queue item: ${key}`);
@@ -702,8 +762,16 @@ export function recordMerged(horde, team, key, sha, { tree } = {}) {
     save(horde, team, found.doc);
     return found.item;
   });
-  markTicketMerged(horde, key, String(sha));
-  return { item, journal: noteMerged(horde, team, key, String(sha)) };
+  let recordNote = null;
+  try {
+    markTicketMerged(horde, key, String(sha), {
+      team, ran, saw, base,
+    });
+  } catch (e) {
+    if (!(e instanceof HordeError)) throw e;
+    recordNote = `the merge is made, but the mission's record did not close t-${key}: ${e.message} — once the cause is fixed, record it again: queue.mjs set ${key} merged --sha ${sha}${team !== 'trunk' ? ` --team ${team}` : ''} --horde ${horde}`;
+  }
+  return { item, journal: noteMerged(horde, team, key, String(sha)), recordNote };
 }
 
 // Where a ticket's branch is cut from. Every ticket but one is cut from the team's own tip; a
@@ -768,7 +836,7 @@ function provisionRunning(horde, team, key, item, { tree, on, adopt = false } = 
 // worktree made already — that is what lets the brief beside it render against a tree that exists,
 // and what stops the next run, or a second tick racing this one, from handing it out twice.
 export function startRunning(horde, team, key, { tree, on, agent } = {}) {
-  return withQueueLock(horde, team, () => {
+  const started = withQueueLock(horde, team, () => {
     const { doc, item } = findItem(horde, team, key);
     if (!item) fail(`no queue item: ${key}`);
     provisionRunning(horde, team, key, item, { tree, on });
@@ -778,6 +846,8 @@ export function startRunning(horde, team, key, { tree, on, agent } = {}) {
     save(horde, team, doc);
     return item;
   });
+  followQueue(horde, key, 'running', 'handed to a worker', { branch: started.branch, worker: started.agent || 'worker', worktree: started.worktree });
+  return started;
 }
 
 // ---- the worker's lease ------------------------------------------------------------------------
@@ -902,7 +972,7 @@ function cmdSet(horde, positional, flags) {
 
     if (state === 'merged') {
       if (!flags.sha) fail('set merged requires --sha');
-      applyMerged(horde, team, found.doc, found.item, key, String(flags.sha), { tree: flags.tree });
+      applyMerged(horde, team, found.doc, found.item, key, String(flags.sha), { tree: flags.tree, byHand: true });
     }
 
     found.item.state = state;
@@ -919,9 +989,15 @@ function cmdSet(horde, positional, flags) {
   // independent command — so the state change writes the journal bullet itself.
   let journal = null;
   if (state === 'merged' && flags.sha) {
-    markTicketMerged(horde, key, String(flags.sha));
+    markTicketMerged(horde, key, String(flags.sha), { team });
     journal = noteMerged(horde, team, key, String(flags.sha));
+  } else if (state !== 'waiting') {
+    followQueue(horde, key, state, flags.note || `queue: ${state}`, state === 'running'
+      ? { branch: item.branch, worker: item.agent || 'worker', worktree: item.worktree }
+      : { always: true });
   }
+  // A ticket dropped is out of the plan: nothing waits on it any more.
+  if (state === 'dropped' || state === 'merged') syncAfter(horde, team);
 
   emit(
     { ...item, journal },
@@ -952,7 +1028,7 @@ function dependsTransitively(doc, from, target, seen = new Set()) {
 // `plan` refused. Returns the item it changed.
 export function addDependency(horde, team, ticket, on) {
   const key = normalizeKey(ticket);
-  return withQueueLock(horde, team, () => {
+  const out = withQueueLock(horde, team, () => {
     const { doc, item } = findItem(horde, team, key);
     if (!item) fail(`no queue item: ${key} (in team ${team}) — a dependency hangs off a queued ticket; add it to the queue first`);
 
@@ -969,6 +1045,8 @@ export function addDependency(horde, team, ticket, on) {
     save(horde, team, doc);
     return { item, on: ref.canonical };
   });
+  syncAfter(horde, team);
+  return out;
 }
 
 function cmdDep(horde, positional, flags) {
@@ -992,7 +1070,7 @@ function cmdDep(horde, positional, flags) {
 // name, before the one edge this file actually owns is even looked at.
 export function removeDependency(horde, team, ticket, on, { note } = {}) {
   const key = normalizeKey(ticket);
-  return withQueueLock(horde, team, () => {
+  const out = withQueueLock(horde, team, () => {
     const { doc, item } = findItem(horde, team, key);
     if (!item) fail(`no queue item: ${key} (in team ${team})`);
 
@@ -1006,8 +1084,16 @@ export function removeDependency(horde, team, ticket, on, { note } = {}) {
       const fromField = field && field !== 'none'
         ? field.split(',').map((s) => s.trim()).filter(Boolean).map((d) => { try { return padId(d); } catch { return d; } })
         : [];
+      // An edge the ticket's own Depends on field declares is taken off there, with a line in the
+      // ticket's log saying so — the field is the ticket's record, written through the loop like any
+      // other field of it, so nobody has to edit the file by hand to drop a dependency.
       if (fromField.includes(target)) {
-        fail(`${key} -> ${target} comes from ${key}'s own "Depends on" field, not the queue — queue.mjs undep only takes off an edge the queue itself added; change that field to drop it (edit the ticket's issue.md — no tool writes that field after "tk.mjs new" today)`);
+        const left = fromField.filter((d) => d !== target);
+        setTicketField(horde, key, 'Depends on', left.join(', '), `undep: no longer waits on ${target}${note ? ` — ${note}` : ''}`);
+        item.dependsOn = item.dependsOn.filter((d) => d !== target);
+        item.notes.push({ at: nowIso(), text: `undep: removed dependency on ${target} from the ticket's Depends on${note ? ` — ${note}` : ''}` });
+        save(horde, team, doc);
+        return { item, on: target, field: true };
       }
       const consumed = ticketPorts(ticketRow.text, 'Consumes');
       const targetTicket = findTicket(horde, target);
@@ -1026,6 +1112,8 @@ export function removeDependency(horde, team, ticket, on, { note } = {}) {
     save(horde, team, doc);
     return { item, on: target };
   });
+  syncAfter(horde, team);
+  return out;
 }
 
 function cmdUndep(horde, positional, flags) {
@@ -1352,6 +1440,45 @@ function manualDeps(ticketText, item) {
 // `tree` — so this fallback is never actually exercised by anything that ships. A future caller
 // that leaves `tree` unset would reach it and get this horde's trunk unconditionally, the same gap
 // wave.mjs's own call used to have; pass a pre-resolved `tree` instead of relying on this.
+// The loop's After on every open ticket, kept to what the plan orders it after: the tickets it names
+// by hand (its **Depends on:** field and its queue item's dependsOn) and the ones producing a port it
+// consumes. Horde derives the order — the schedule is Horde's — and the loop records it, so Jarl's
+// own views say which tickets wait and on what. A dropped ticket is out of the plan, so nothing waits
+// on it; only a merged one settles those that waited on it (the profile's settles-dependents). A
+// dependency the loop cannot record (one that would close a circle, which the plan itself refuses by
+// name) is left as it was here, never a refusal of the command that changed it. Nothing is written
+// where the record already says it.
+export function syncAfter(horde, team = 'trunk') {
+  let tickets;
+  try { tickets = allTickets(horde); } catch (e) { if (e instanceof HordeError) return []; throw e; }
+  let queue = { items: [] };
+  try { queue = load(horde, team); } catch (e) { if (!(e instanceof HordeError)) throw e; }
+  const items = new Map(asArray(queue.items).map((i) => [i.ticket, i]));
+  const ids = new Set(tickets.map((t) => t.id));
+  const written = [];
+  for (const t of tickets) {
+    if (t.status === 'merged') continue;
+    const deps = new Set();
+    for (const d of manualDeps(t.text, items.get(t.id))) if (ids.has(d) && d !== t.id) deps.add(d);
+    for (const c of ticketPorts(t.text, 'Consumes')) {
+      for (const o of tickets) {
+        if (o.id !== t.id && ticketPorts(o.text, 'Produces').some((p) => p.node === c.node && p.port === c.port)) deps.add(o.id);
+      }
+    }
+    const want = [...deps].sort();
+    const raw = parseField(t.text, 'After');
+    const have = raw ? raw.split(',').map((x) => x.trim()).filter(Boolean).sort() : [];
+    if (want.join(',') === have.join(',')) continue;
+    try {
+      setTicketAfter(horde, t.id, want);
+      written.push({ ticket: t.id, after: want });
+    } catch (e) {
+      if (!(e instanceof HordeError)) throw e;
+    }
+  }
+  return written;
+}
+
 export function buildPlan(horde, team, cfg, { tree } = {}) {
   const root = resolveTree({ tree, horde }).path;
   const queue = load(horde, team);
@@ -1848,6 +1975,7 @@ export function reconcileRunning(horde, team, { tree, reclaim = [] } = {}) {
 
 function reconcileRunningLocked(horde, team, { tree, reclaim = [] } = {}) {
   const doc = load(horde, team);
+  const followed = [];
   const root = resolveTree({ tree }).path;
   const results = [];
   for (const raw of reclaim) {
@@ -1885,6 +2013,7 @@ function reconcileRunningLocked(horde, team, { tree, reclaim = [] } = {}) {
     if (count > 0) {
       item.state = 'landed';
       results.push({ ticket: item.ticket, state: item.state, note: `${ended}${midMerge}${count} commit(s) beyond ${parent} on ${item.branch} — the work is safe and the branch is ready for the gate` });
+      followed.push([item.ticket, 'landed', `reconcile: ${count} commit(s) beyond ${parent}`]);
       continue;
     }
     // A worktree git still has on record but that is gone from disk is not an error to throw on:
@@ -1904,9 +2033,11 @@ function reconcileRunningLocked(horde, team, { tree, reclaim = [] } = {}) {
       if (ticket) {
         appendTicketLog(ticket.dir, `- ${nowIso()} status: queued — reconcile: worktree was dirty, committed as "wip: reclaimed" (${reclaimedSha})\n`);
       }
+      followed.push([item.ticket, 'queued', `reconcile: worktree was dirty, committed as "wip: reclaimed" (${reclaimedSha})`]);
       continue;
     }
     item.state = 'queued';
+    followed.push([item.ticket, 'queued', 'reconcile: nothing was committed']);
     const hadWorktree = item.worktree;
     if (item.worktree) {
       git(['worktree', 'remove', '--force', item.worktree], root);
@@ -1922,6 +2053,7 @@ function reconcileRunningLocked(horde, team, { tree, reclaim = [] } = {}) {
     });
   }
   save(horde, team, doc);
+  for (const [key, state, note] of followed) followQueue(horde, key, state, note);
   return results;
 }
 
@@ -1930,6 +2062,46 @@ function cmdReconcile(horde, positional, flags) {
   const reclaim = flags.reclaim ? String(flags.reclaim).split(',').map((x) => x.trim()).filter(Boolean) : [];
   const results = reconcileRunning(horde, team, { tree: flags.tree, reclaim });
   emit(results, flags, () => (results.length ? results.map((r) => `${r.ticket} -> ${r.state} · ${r.note}`).join('\n') : '(nothing running)'));
+}
+
+// regate: a red gate the director reads as the gate's own flake, asked again at the same commit. The
+// result is kept (land/set-aside/<ticket>.<time>.json, and its gate log beside it) — the record says a
+// gate ran red here, and why it was asked again.
+function cmdRegate(horde, positional, flags) {
+  const idRaw = positional[0];
+  if (!idRaw) fail('regate requires <ticket>');
+  if (!flags.note || flags.note === true) fail('regate requires --note "<why>" — why the last red was not the branch\'s doing is the one thing this records');
+  const team = flags.team || 'trunk';
+  const key = normalizeKey(idRaw);
+  const root = resolveTree({ tree: flags.tree }).path;
+  const landDir = hordePath(horde, 'land');
+  const at = nowIso().replace(/[:.]/g, '-');
+  const item = withQueueLock(horde, team, () => {
+    const { doc, item: it } = findItem(horde, team, key);
+    if (!it) fail(`no queue item: ${key}`);
+    if (!it.branch) fail(`${key} has no branch — there is no gate result to ask again`);
+    const tip = git(['rev-parse', '--verify', it.branch], root);
+    const resultFile = join(landDir, `${key}.json`);
+    const result = readJSON(resultFile, null);
+    if (!result || result.ok || result.sha !== tip) {
+      fail(`${key} has no red gate result at ${it.branch}'s tip ${tip || '(gone)'} to set aside — ${!result ? 'nothing was recorded' : result.ok ? 'the last result is green' : `the last result is about ${result.sha}, and the gate is asked again anyway once the item is landed`}`);
+    }
+    const aside = join(landDir, 'set-aside');
+    mkdirSync(aside, { recursive: true });
+    renameSync(resultFile, join(aside, `${key}.${at}.json`));
+    const log = join(landDir, `${key}.gate.log`);
+    if (existsSync(log)) renameSync(log, join(aside, `${key}.${at}.gate.log`));
+    it.state = 'landed';
+    it.notes.push({ at: nowIso(), text: `regate: the red at ${tip} is asked again — ${flags.note}` });
+    save(horde, team, doc);
+    return it;
+  });
+  const ticket = findTicket(horde, key);
+  if (ticket) {
+    appendTicketLog(ticket.dir, `- ${nowIso()} regate by the director: the gate is asked again at the same commit — ${flags.note}\n`);
+    followQueue(horde, key, 'landed', `regate: ${flags.note}`, { always: true });
+  }
+  emit(item, flags, () => `${item.ticket} -> landed · the gate is asked again on the next tick (${flags.note})`);
 }
 
 function main() {
@@ -1947,6 +2119,7 @@ function main() {
     case 'set': return cmdSet(horde, positional, flags);
     case 'dep': return cmdDep(horde, positional, flags);
     case 'undep': return cmdUndep(horde, positional, flags);
+    case 'regate': return cmdRegate(horde, positional, flags);
     case 'next': return cmdNext(horde, positional, flags);
     case 'plan': return cmdPlan(horde, positional, flags);
     case 'rm': return cmdRm(horde, positional, flags);

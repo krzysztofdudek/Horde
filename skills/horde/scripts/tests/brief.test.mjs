@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, git, MARKER_CHECK,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, git, MARKER_CHECK, writeTicketFixture,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -31,10 +31,8 @@ function seedTicket(dir, horde, team, id, {
   title = 'Sample ticket', node = 'nodeA', body = 'What this does.\n\n## Acceptance — evidence\n\n- [ ] it works',
   branch, worktree, sha,
 } = {}) {
-  const issueDir = join(dir, '.horde', 'hordes', horde, 'teams', team, 'issues', `${id}-sample-ticket`);
-  mkdirSync(issueDir, { recursive: true });
   const header = title === null ? '' : `# ${id} · ${title}\n\n`;
-  writeFileSync(join(issueDir, 'issue.md'), `${header}**Node:** ${node} · **Class:** standard · **Severity:** medium · **Team:** ${team}\n\n${body}\n`);
+  writeTicketFixture(dir, horde, id, 'sample-ticket', `${header}**Node:** ${node} · **Class:** standard · **Severity:** medium · **Team:** ${team}\n\n${body}\n`, { team });
 
   const queuePath = join(dir, '.horde', 'hordes', horde, 'teams', team, 'queue.json');
   const existing = JSON.parse(readFileSync(queuePath, 'utf8'));

@@ -31,9 +31,10 @@ import {
   fail, parseArgs, asArray, emit, isMain, resolveHorde, parentBranchOf, parseVerdictBlocks,
   runMain, noEvidenceLayerNote, posixShell,
 } from './_lib.mjs';
+import { loopTickets } from './loop.mjs';
 import { findTicket, ticketFiles } from './tk.mjs';
 import {
-  nodeExists, nodeBoundary, nodeGraphPathPrefix, ticketNodes, pathInBoundary,
+  nodeExists, nodeBoundary, nodeGraphPathPrefix, ticketNodes, pathInBoundary, ygDerivedFile,
 } from './node.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -206,22 +207,7 @@ function runTestsAt(root, cfg, ref, contentRef, paths) {
 // ---- the ticket under drill -----------------------------------------------------------
 
 function onlyTicketId(horde) {
-  const ids = [];
-  const teamsRoot = hordePath(horde, 'teams');
-  const walk = (dir) => {
-    if (!existsSync(dir)) return;
-    for (const d of readdirSync(dir, { withFileTypes: true })) {
-      if (!d.isDirectory()) continue;
-      const issues = join(dir, d.name, 'issues');
-      if (existsSync(issues)) {
-        for (const i of readdirSync(issues, { withFileTypes: true })) {
-          if (i.isDirectory()) ids.push(i.name.split('-')[0]);
-        }
-      }
-      walk(join(dir, d.name, 'teams'));
-    }
-  };
-  walk(teamsRoot);
+  const ids = loopTickets(horde).map((i) => i.id);
   const unique = [...new Set(ids)].sort();
   if (unique.length === 1) return unique[0];
   if (unique.length === 0) fail('this horde has no tickets — a drill reads one ticket\'s state');
@@ -411,7 +397,7 @@ const SEVERITIES = ['Critical', 'Important', 'Minor'];
 function reviewLines(logText) {
   const out = [];
   for (const line of (logText || '').split('\n')) {
-    const m = /review:\s*(\S+)\s+changes\s+by\s+(\S+)(.*)$/.exec(line.trim());
+    const m = /review:\s*(\S+(?:,\s*\S+)*)\s+changes\s+by\s+(\S+)(.*)$/.exec(line.trim());
     if (!m) continue;
     const tail = m[3] || '';
     const dash = tail.indexOf(' — ');
@@ -466,7 +452,7 @@ function checkReview(ctx) {
 
 // ---- drill: scope ---------------------------------------------------------------------
 
-const DERIVED_LOCK = /^\.yggdrasil\/yg-lock\.[^/]+\.json$/;
+const DERIVED_LOCK = { test: (f) => ygDerivedFile(f) };
 
 function checkScope(ctx) {
   const {
@@ -580,6 +566,13 @@ function restoreCase(caseDir, ygCommand) {
   execFileSync('git', ['checkout', '-q', meta.parentBranch], { cwd: tmp, stdio: 'pipe' });
   cpSync(join(caseDir, 'horde'), join(tmp, '.horde'), { recursive: true });
   writeFileSync(join(tmp, '.horde', '.gitignore'), '*\n');
+  // Each mission's loop gets back the ignore file the record left out of the case.
+  const hordesDir = join(tmp, '.horde', 'hordes');
+  if (existsSync(hordesDir)) {
+    for (const h of readdirSync(hordesDir)) {
+      if (existsSync(join(hordesDir, h, '.jarl'))) writeFileSync(join(hordesDir, h, '.jarl', '.gitignore'), '*\n**/*\n');
+    }
+  }
   // How a machine invokes the Yggdrasil CLI is a property of the machine, not of the case: a
   // recorded snapshot carries none, and the drill puts this machine's own in before it runs. A
   // case that carried one would only be runnable on the laptop it was recorded on.
@@ -683,7 +676,12 @@ function snapshotHorde(root, dest) {
     filter: (from) => {
       const rel = from.slice(src.length + 1);
       if (!rel) return true;
-      return !SNAPSHOT_SKIP.has(rel.split(/[\\/]/)[0]);
+      const parts = rel.split(/[\\/]/);
+      // A mission's loop keeps a `.gitignore` of its own (`*`) and, while a write runs, its lock:
+      // neither is state, and the first would hide the case from git. restoreCase puts the ignore
+      // file back.
+      if (parts.includes('.jarl') && ['.gitignore', '.lock', '.lock.break'].includes(parts[parts.length - 1])) return false;
+      return !SNAPSHOT_SKIP.has(parts[0]);
     },
   });
   // A case is state, not a machine. `ygCommand` on the recording machine is very often an

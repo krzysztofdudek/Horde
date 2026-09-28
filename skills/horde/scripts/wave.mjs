@@ -41,7 +41,7 @@ import { auditLaw, auditBlock } from './audit.mjs';
 import {
   ygQualityIndex, observeAspects, pendingPromotions, markPromotionsReported,
 } from './node.mjs';
-import { findTicket, ticketKind, parseField } from './tk.mjs';
+import { findTicket, ticketKind, parseField, ticketsOf } from './tk.mjs';
 
 const START_RE = /^# Wave (\S+) — start \d{4}-\d{2}-\d{2}$/;
 const CLOSE_RE = /^# Wave (\S+) — close \d{4}-\d{2}-\d{2}$/;
@@ -342,13 +342,10 @@ function achievedParallelism(merges) {
   return byDate.size === 0 ? 0 : Math.max(...byDate.values());
 }
 
-// A ticket's folder is "NNN-slug"; only NNN is known at the call site.
-function findTicketDir(horde, team, ticket) {
-  const issuesDir = teamPath(horde, team, 'issues');
-  if (!existsSync(issuesDir)) return null;
-  const match = readdirSync(issuesDir, { withFileTypes: true })
-    .find((d) => d.isDirectory() && d.name.startsWith(`${ticket}-`));
-  return match ? join(issuesDir, match.name) : null;
+// A ticket as the mission's loop holds it, with its own log beside it (tk.mjs); only NNN is known at
+// the call site.
+function findTicketRec(horde, ticket) {
+  try { return findTicket(horde, ticket); } catch { return null; }
 }
 
 // The "## Acceptance" section of a ticket's issue.md — the checklist tk.mjs wrote from `--evidence`.
@@ -689,11 +686,11 @@ function computeEvidenceLocked(horde, team, mergedTickets) {
     let verifier = null;
     let by = null;
     for (const ticket of mergedTickets) {
-      const dir = findTicketDir(horde, team, ticket);
-      if (!dir) continue;
-      const issueText = readText(join(dir, 'issue.md')) || '';
+      const rec = findTicketRec(horde, ticket);
+      if (!rec) continue;
+      const issueText = rec.text || '';
       if (!mentionsEvidenceId(acceptanceSection(issueText), row.id)) continue;
-      const verdict = latestVerdict(readText(join(dir, 'log.md')));
+      const verdict = latestVerdict(readText(rec.logPath));
       if (verdict && verdict.result === 'reproduced') { verifier = verdict.verifier; by = ticket; break; }
     }
     if (verifier) {
@@ -781,17 +778,11 @@ function evidenceClassBlock({ byClass, unrecognized }) {
 // Only "trunk" exists.
 function allHordeTickets(horde) {
   const out = [];
-  const team = 'trunk';
-  const issuesDir = teamPath(horde, team, 'issues');
-  if (!existsSync(issuesDir)) return out;
-  for (const d of readdirSync(issuesDir, { withFileTypes: true })) {
-    if (!d.isDirectory()) continue;
-    const dir = join(issuesDir, d.name);
-    const text = readText(join(dir, 'issue.md')) || '';
-    const status = (/^\*\*Status:\*\*\s*(\S+)/m.exec(text) || [])[1] || '';
+  for (const t of ticketsOf(horde)) {
+    const status = (/^\*\*Status:\*\*\s*(\S+)/m.exec(t.text) || [])[1] || '';
     if (status === 'dropped') continue;
     out.push({
-      id: d.name.slice(0, 3), team, text, status, logText: readText(join(dir, 'log.md')) || '',
+      id: t.id, team: t.team, text: t.text, status, logText: readText(t.logPath) || '',
     });
   }
   return out;

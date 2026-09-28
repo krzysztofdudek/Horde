@@ -21,17 +21,18 @@
 // "what an open question holds up"), not here, so there is one statement of them rather than two
 // that can drift apart.
 //
-// State: hordes/<horde>/asks.json (source of truth) + asks.md (rendered) — same writeJSON(path,
-// doc, {render}) mechanism escalations.json and dissents.json used, which is the only thing that
-// survives from either.
+// State: the mission's Jarl loop (loop.mjs). A question is a line of the loop's asks.md — its number
+// (a-NNN, numbered by the loop), its kind, what it would lower (target) and the ticket it is about
+// (issue) — and its answer is the loop's ruling ask-NNN in decisions.md. What the loop's line has no room
+// for stays beside it in hordes/<horde>/asks.json, keyed by the question's id: the whole question (the
+// line holds it on one line), the territory it was asked about, the log it points at, when it was asked,
+// and the scope an answer was given. The state of a question is never there: open or answered is the
+// loop's. So a question answered with Jarl's own command (`jarl.mjs answer a-NNN "…" --root
+// .horde/hordes/<h>`) is answered here too, and its guards read it (with the scope "once").
 //
-// "ask answer" is the one place a client's word gets recorded: it appends the answer to
-// decisions.md (decide.mjs's appendDecision, slug "ask-<id>") BEFORE marking the item answered, so
-// a decision that failed to record — a duplicate slug, a read-only file — never leaves an item
-// silently closed with nothing durable behind it. The ruling body is one line of bold fields
-// (Kind, Territory, Aspect, Scope where they apply) followed by the question and the client's own
-// answer — the exact shape land.mjs's guards already read to decide whether a "lower" ask lets a
-// landing through.
+// "ask answer" is the one place a client's word gets recorded here: the loop writes the ruling ask-NNN
+// and marks the question answered in one move, under its own lock, and the fields land.mjs's guards read
+// (Kind, Territory, Aspect, Scope where they apply) go into that same ruling before the lock lets go.
 //
 // `--aspect` names WHAT is being weakened, and it has never been more than a string those guards
 // match on exactly. Three spellings share it, one per guard, chosen so no two can ever collide:
@@ -45,10 +46,12 @@
 // means to lower three things files three questions.
 
 import {
-  hordePath, readJSON, writeJSON, allocateId, nowIso, fail, parseArgs, emit, isMain, resolveHorde,
-  runMain, withAsksLock, notifyClient, readConfig,
+  hordePath, readJSON, writeJSON, nowIso, fail, parseArgs, emit, isMain, resolveHorde,
+  runMain, withAsksLock, notifyClient, readConfig, parseDecisionEntries, decisionField, readText,
 } from './_lib.mjs';
-import { appendDecision } from './decide.mjs';
+import {
+  loopAsks, fileLoopAsk, answerLoopAsk, withLoopLock, decisionsFile, writeLoopFile, ticketFile,
+} from './loop.mjs';
 
 export const KINDS = ['stop', 'stuck', 'lower', 'charter'];
 
@@ -66,24 +69,28 @@ commands:
       open first, newest first.
   show <id> [--horde h]
   answer <id> "<answer>" [--scope once|mission] [--horde h]
-      records the client's answer, closes the item, and appends it to decisions.md as "ask-<id>".
-      --scope is accepted only for kind "lower": "once" (the default) spends the grant on the
-      landing that uses it; "mission" stands until "horde done". land.mjs's guards read this
+      records the client's answer, closes the item, and appends it to the mission's decisions as
+      "ask-NNN". --scope is accepted only for kind "lower": "once" (the default) spends the grant on
+      the landing that uses it; "mission" stands until "horde done". land.mjs's guards read this
       decision, not the raw item, to decide whether a branch that weakens a rule, the proof or a
       gate may land; a "stuck" ticket returns to the queue or closes as not-done only through an
       answer here.
 
 options: --json  --help`;
 
-export function asksPath(horde) { return hordePath(horde, 'asks.json'); }
+// What a question carries beyond what the loop's asks.md holds on its line: the whole question (the
+// line is one line of it), the territory it was asked about, the log it points at, when it was asked,
+// and the scope an answer was given. Keyed by the question's id; written only by this file. Nothing in
+// it is the question's state — open or answered is the loop's, and so is the answer itself.
+export function extrasPath(horde) { return hordePath(horde, 'asks.json'); }
 
-export function loadAsks(horde) {
-  const doc = readJSON(asksPath(horde), null);
-  return doc && Array.isArray(doc.items) ? doc : { items: [] };
+function loadExtras(horde) {
+  const doc = readJSON(extrasPath(horde), null);
+  return doc && doc.questions && typeof doc.questions === 'object' ? doc : { questions: {} };
 }
 
-function save(horde, doc) {
-  writeJSON(asksPath(horde), doc, { render });
+function saveExtras(horde, doc) {
+  writeJSON(extrasPath(horde), doc);
 }
 
 function sortItems(items) {
@@ -91,37 +98,60 @@ function sortItems(items) {
     const aOpen = a.state !== 'answered';
     const bOpen = b.state !== 'answered';
     if (aOpen !== bOpen) return aOpen ? -1 : 1;
-    return (b.at || '').localeCompare(a.at || '');
+    return (b.at || '').localeCompare(a.at || '') || b.id.localeCompare(a.id);
   });
 }
 
-function render(doc) {
-  const items = sortItems(doc.items);
-  const lines = ['# Asks', ''];
-  if (items.length === 0) lines.push('(none)');
-  for (const it of items) {
-    const head = [`[${it.id}] ${it.kind}`];
-    if (it.ticket) head.push(`ticket ${it.ticket}`);
-    if (it.territory) head.push(it.territory);
-    head.push(it.state);
-    lines.push(`## ${head.join(' · ')}`);
-    lines.push(`at: ${it.at}`);
-    if (it.aspect) lines.push(`aspect: ${it.aspect}`);
-    lines.push(it.why);
-    if (it.log) lines.push('', `log: ${it.log}`);
-    if (it.state === 'answered') {
-      lines.push('', `answer (${it.answeredAt}${it.answerScope ? `, scope ${it.answerScope}` : ''}): ${it.answer}`);
-    }
-    lines.push('');
-  }
-  return lines.join('\n');
+// The answer a ruling ask-NNN records: the text after **Answer:** up to the fields a landing or this file
+// add below it.
+function answerOf(block) {
+  const m = /\*\*Answer:\*\*[ \t]*([\s\S]*?)(?=\n\*\*(?:Scope|Consumed|By|Kind|Territory|Aspect|At):\*\*|\n\s*\n\*\*By:\*\*|$)/.exec(String(block || ''));
+  return m ? m[1].trim() : '';
 }
 
-// addAsk(horde, {kind, why, ticket, territory, aspect, log}) — opens one ask and returns it.
-// Exported so tick.mjs (017's "stuck") can file one without shelling out to this file; throws
-// rather than exiting, so its caller decides how to report it. `log` carries a ticket's log path
-// (tick's own use, "stuck" only) — it has no meaning tick doesn't give it, but nothing here
-// restricts which kind may carry one, since a fifth field is not a fifth kind.
+// The rulings that answer a question, by the question's number: ask-NNN.
+function answerRulings(horde) {
+  const out = new Map();
+  for (const e of parseDecisionEntries(readText(decisionsFile(horde)) || '')) {
+    const m = /^ask-(?:a-)?(\d+)$/.exec(e.slug || '');
+    if (m) out.set(m[1].padStart(3, '0'), e);
+  }
+  return out;
+}
+
+// loadAsks(horde) — every question to the client, as {items}: the loop's own record (its state, kind,
+// target and ticket, and the answer its ruling holds) with Horde's extras beside it. `id` reads a-NNN.
+export function loadAsks(horde) {
+  const extras = loadExtras(horde).questions;
+  const rulings = answerRulings(horde);
+  const items = loopAsks(horde).filter((a) => a.kind !== 'ratify').map((a) => {
+    const id = `a-${a.id}`;
+    const x = extras[id] || {};
+    const item = {
+      id, kind: a.kind || 'stuck', why: x.why || a.question, state: a.state === 'answered' ? 'answered' : 'open', at: x.at || null,
+    };
+    if (a.issue) item.ticket = a.issue;
+    else if (x.ticket) item.ticket = x.ticket;
+    if (x.territory) item.territory = x.territory;
+    if (a.target) item.aspect = a.target;
+    if (x.log) item.log = x.log;
+    if (item.state === 'answered') {
+      const ruling = rulings.get(a.id);
+      item.answer = ruling ? answerOf(ruling.block) : '';
+      const scope = ruling ? decisionField(ruling.block, 'Scope').toLowerCase() : '';
+      if (item.kind === 'lower') item.answerScope = x.answerScope || scope || 'once';
+      item.answeredAt = x.answeredAt || (ruling && ruling.date) || null;
+    }
+    return item;
+  });
+  return { items };
+}
+
+// addAsk(horde, {kind, why, ticket, territory, aspect, log}) — opens one question in the loop and
+// returns it. Exported so tick.mjs (017's "stuck") can file one without shelling out to this file;
+// throws rather than exiting, so its caller decides how to report it. `log` carries a ticket's log
+// path (tick's own use, "stuck" only). The loop numbers the question (a-NNN, a sequence of its own:
+// a ticket is t-NNN and a graph item g-NNN, so the prefix is what tells them apart).
 export function addAsk(horde, {
   kind, why, ticket, territory, aspect, log,
 } = {}) {
@@ -129,20 +159,32 @@ export function addAsk(horde, {
   if (typeof kind !== 'string' || !KINDS.includes(kind)) throw new Error(`kind must be one of: ${KINDS.join('|')}`);
   if (kind === 'lower' && !aspect) throw new Error('--aspect is required for kind "lower" — nothing to lower without naming it');
   if (kind !== 'lower' && aspect) throw new Error(`--aspect has no meaning for kind "${kind}" — only "lower" names something to weaken`);
-  const filed = withAsksLock(horde, () => {
-    const doc = loadAsks(horde);
-    const { id } = allocateId(horde, 'ask');
+  if (aspect && /\s/.test(String(aspect))) throw new Error(`--aspect names one thing, with no spaces in it (got "${aspect}")`);
+  const ticketId = ticket ? String(ticket).replace(/^t-/, '').padStart(3, '0') : null;
+  const filed = withAsksLock(horde, () => withLoopLock(horde, () => {
+    // The loop keeps a question on one line; the whole of it stays in the extras.
+    const line = String(why).replace(/\s+/g, ' ').trim();
+    // The loop ties a question to a ticket it holds; a ticket number it does not hold (one named by a
+    // worker before it was filed, say) stays with the question in the extras.
+    const onTicket = ticketId && ticketFile(horde, ticketId) ? ticketId : undefined;
+    const asked = fileLoopAsk(horde, line, { kind, target: aspect ? String(aspect) : undefined, issue: onTicket });
+    const id = `a-${asked.id}`;
+    const doc = loadExtras(horde);
+    const x = { why: String(why), at: nowIso() };
+    if (ticketId && !onTicket) x.ticket = ticketId;
+    if (territory) x.territory = String(territory);
+    if (log) x.log = String(log);
+    doc.questions[id] = x;
+    saveExtras(horde, doc);
     const item = {
-      id, kind, why, state: 'open', at: nowIso(),
+      id, kind, why: String(why), state: 'open', at: x.at,
     };
-    if (ticket) item.ticket = String(ticket);
+    if (ticketId) item.ticket = ticketId;
     if (territory) item.territory = String(territory);
     if (aspect) item.aspect = String(aspect);
     if (log) item.log = String(log);
-    doc.items.push(item);
-    save(horde, doc);
     return item;
-  });
+  }));
   // Every question filed reaches the client's own hook, whoever filed it — a worker, tick, the wave
   // close's audit — once, as it is filed. Its outcome is returned beside the item, never stored.
   const notified = notifyClient(horde, readConfig() || {}, {
@@ -151,32 +193,40 @@ export function addAsk(horde, {
   return notified ? Object.defineProperty(filed, 'notified', { value: notified, enumerable: false }) : filed;
 }
 
-// The decision body land.mjs's law guard already knows how to read: one line of bold fields, the
-// question, the client's own answer — in that order, so a multi-line answer never reaches back
-// into the fields above it.
-function buildRulingBody(item, answer, answerScope) {
+// The fields land.mjs's guards read, written into the answer's own ruling as its first line: what kind
+// of question it answered, the one thing it lets through, and for how long. A question answered with
+// Jarl's own command carries none of them; the guards then read the kind and the target off the
+// question and the scope as "once".
+function answerFields(item, answerScope) {
   const head = [`**Kind:** ${item.kind}`];
   if (item.territory) head.push(`**Territory:** ${item.territory}`);
   if (item.aspect) head.push(`**Aspect:** ${item.aspect}`);
   if (item.kind === 'lower') head.push(`**Scope:** ${answerScope}`);
-  const lines = [head.join(' · ')];
-  if (item.why) lines.push(`**Question:** ${item.why}`);
-  lines.push(`**Answer:** ${answer}`);
-  lines.push(`**By:** client · **At:** ${nowIso()}`);
-  return lines.join('\n');
+  return head.join(' · ');
 }
 
-// answerAsk(horde, id, {answer, scope}) — records the client's answer as a decision first, and
-// only marks the item answered once that succeeds: a decision that could not be written (a
-// duplicate slug, a read-only decisions.md) leaves the item exactly as open as it was, because
-// answering it and recording why must never come apart in that direction.
+// Puts `line` as the first line of ruling `slug`'s text in the loop's decisions.md. The caller holds the
+// loop's lock.
+function prefixRuling(horde, slug, line) {
+  const path = decisionsFile(horde);
+  const lines = (readText(path) || '').split('\n');
+  const at = lines.findIndex((l) => new RegExp(`^## \\d{4}-\\d{2}-\\d{2} · ${slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`).test(l));
+  if (at === -1) return;
+  lines.splice(at + 1, 0, line);
+  writeLoopFile(path, lines.join('\n'));
+}
+
+// answerAsk(horde, id, {answer, scope}) — records the client's answer: the loop writes the ruling
+// ask-NNN and marks the question answered in one move, under its own lock, and the fields the guards
+// read go into that same ruling before the lock lets go — a question is never answered with nothing
+// durable behind it, and never recorded half.
 export function answerAsk(horde, id, { answer, scope } = {}) {
   if (!answer) throw new Error('answer required');
-  return withAsksLock(horde, () => {
-    const doc = loadAsks(horde);
-    const item = doc.items.find((x) => x.id === id);
-    if (!item) throw new Error(`no such ask: ${id}`);
-    if (item.state === 'answered') throw new Error(`already answered: ${id}`);
+  const ref = String(id).startsWith('a-') ? String(id) : `a-${String(id).padStart(3, '0')}`;
+  return withAsksLock(horde, () => withLoopLock(horde, () => {
+    const item = loadAsks(horde).items.find((x) => x.id === ref);
+    if (!item) throw new Error(`no such ask: ${ref}`);
+    if (item.state === 'answered') throw new Error(`already answered: ${ref}`);
     if (scope !== undefined && item.kind !== 'lower') {
       throw new Error(`--scope is only accepted for kind "lower" (this ask is "${item.kind}")`);
     }
@@ -184,19 +234,18 @@ export function answerAsk(horde, id, { answer, scope } = {}) {
       throw new Error('--scope must be "once" or "mission"');
     }
     const answerScope = item.kind === 'lower' ? (scope || 'once') : undefined;
-    const ruling = buildRulingBody(item, answer, answerScope);
-    appendDecision(horde, { slug: `ask-${id}`, ruling, ticket: item.ticket });
-
-    // The lock held across the decisions-lock call above rules out anything else changing this
-    // item in between, so the item read at the top is still the one to write back — no second
-    // read needed the way an unlocked read-decide-write would have wanted one.
-    item.state = 'answered';
-    item.answer = answer;
-    if (answerScope) item.answerScope = answerScope;
-    item.answeredAt = nowIso();
-    save(horde, doc);
-    return item;
-  });
+    answerLoopAsk(horde, ref, answer);
+    prefixRuling(horde, `ask-${ref.slice(2)}`, answerFields(item, answerScope));
+    const doc = loadExtras(horde);
+    const x = doc.questions[ref] || { why: item.why, at: item.at };
+    x.answeredAt = nowIso();
+    if (answerScope) x.answerScope = answerScope;
+    doc.questions[ref] = x;
+    saveExtras(horde, doc);
+    return {
+      ...item, state: 'answered', answer, ...(answerScope ? { answerScope } : {}), answeredAt: x.answeredAt,
+    };
+  }));
 }
 
 async function cmdAdd(horde, positional, flags) {
@@ -235,9 +284,10 @@ function cmdList(horde, positional, flags) {
 function cmdShow(horde, positional, flags) {
   const id = positional[0];
   if (!id) fail('show requires <id>');
+  const ref = String(id).startsWith('a-') ? String(id) : `a-${String(id).padStart(3, '0')}`;
   const doc = loadAsks(horde);
-  const it = doc.items.find((x) => x.id === id);
-  if (!it) fail(`no such ask: ${id}`);
+  const it = doc.items.find((x) => x.id === ref);
+  if (!it) fail(`no such ask: ${ref}`);
   emit(it, flags, () => {
     const head = [`[${it.id}] ${it.kind}`];
     if (it.ticket) head.push(`ticket ${it.ticket}`);
@@ -261,7 +311,7 @@ function cmdAnswer(horde, positional, flags) {
   } catch (e) {
     fail(e.message);
   }
-  emit(item, flags, () => `ask ${id} answered — recorded as ask-${id}`);
+  emit(item, flags, () => `ask ${item.id} answered — recorded as ask-${item.id.slice(2)}`);
 }
 
 function main() {

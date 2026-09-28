@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode,
+  makeRepo, rmRepo, run, initHorde, addNode, ticketIssuePath, writeTicketFixture, git,
 } from './helpers.mjs';
 import { charterMismatches } from '../tk.mjs';
 
@@ -81,7 +81,8 @@ test('tk.mjs: new, list, show, status, log, grep, move', async (t) => {
     assert.equal(byNode.json.length, 2);
     const byState = run('tk.mjs', ['list', '--state', 'proposed'], dir);
     assert.equal(byState.json.length, 2);
-    run('tk.mjs', ['status', '002', 'merged'], dir);
+    // merged is the landing's to record (a merge the base holds); dropped closes it just the same here.
+    run('tk.mjs', ['status', '002', 'dropped'], dir);
     const open = run('tk.mjs', ['list', '--open'], dir);
     assert.equal(open.json.length, 1);
     assert.equal(open.json[0].id, '001');
@@ -496,6 +497,37 @@ test('tk.mjs new: a ticket names one node, or two — never three', async (t) =>
   assert.match(three.stderr, /Split it into one ticket per node/);
 });
 
+// Replay defect 3: a graph that keeps a component's tests in a node of their own made every change
+// to pinned behaviour a three-node ticket — the two nodes of a contract and the tests that must
+// change with them — refused by the cap, so the code and its tests had to land apart and neither
+// half could land green. A node whose every tracked file matches config.testGlobs rides along; a
+// node holding code beside its tests still counts.
+test('tk.mjs new: a node holding only tests does not count toward the two-node cap; one holding code beside tests does', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'suite', { mapping: ['tests/**'] });
+  addNode(dir, 'mixed', { mapping: ['mixed/**'] });
+  for (const [path, text] of [
+    ['tests/a.test.mjs', 'export {};\n'],
+    ['tests/b.spec.mjs', 'export {};\n'],
+    ['mixed/c.test.mjs', 'export {};\n'],
+    ['mixed/c.mjs', 'export const c = 1;\n'],
+  ]) {
+    mkdirSync(join(dir, dirname(path)), { recursive: true });
+    writeFileSync(join(dir, path), text);
+  }
+  git(['add', 'tests', 'mixed'], dir);
+  git(['commit', '-qm', 'a node of tests, and one of code with its tests'], dir);
+
+  const withTests = run('tk.mjs', ['new', 'contract-with-tests', '--title', 'A contract and its tests', '--node', 'a', '--node', 'b', '--node', 'suite', '--class', 'standard'], dir);
+  assert.equal(withTests.code, 0, withTests.stderr);
+
+  const withCode = run('tk.mjs', ['new', 'contract-with-code', '--title', 'A contract and more code', '--node', 'a', '--node', 'b', '--node', 'mixed', '--class', 'standard'], dir);
+  assert.equal(withCode.code, 1);
+  assert.match(withCode.stderr, /names 3 that hold code \(a, b, mixed\)/);
+});
+
 test('tk.mjs: Files, Consumes, Produces and Evidence on the ticket', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
@@ -513,7 +545,9 @@ test('tk.mjs: Files, Consumes, Produces and Evidence on the ticket', async (t) =
     producer = r.json.id;
     const text = run('tk.mjs', ['show', producer], dir).json.text;
     assert.match(text, /\*\*Files:\*\* src\/auth\/policy\.ts, src\/auth\/policy\.test\.ts/);
-    assert.match(text, /\*\*Consumes:\*\* none · \*\*Produces:\*\* auth\/policy/);
+    // One field per line, as the mission's loop writes a ticket; a field with nothing in it is empty.
+    assert.match(text, /^\*\*Consumes:\*\*$/m);
+    assert.match(text, /^\*\*Produces:\*\* auth\/policy$/m);
     assert.match(text, /\*\*Evidence:\*\* E1/);
   });
 
@@ -582,7 +616,8 @@ test('tk.mjs: Files, Consumes, Produces and Evidence on the ticket', async (t) =
     const r = run('tk.mjs', ['edit', consumer, '--by', 'owner-api', '--produces', 'api/guard', '--evidence', 'E2'], dir);
     assert.equal(r.code, 0, r.stderr);
     const text = run('tk.mjs', ['show', consumer], dir).json.text;
-    assert.match(text, /\*\*Consumes:\*\* auth\/policy · \*\*Produces:\*\* api\/guard/);
+    assert.match(text, /^\*\*Consumes:\*\* auth\/policy$/m);
+    assert.match(text, /^\*\*Produces:\*\* api\/guard$/m);
     assert.match(text, /\*\*Evidence:\*\* E2/);
     assert.match(text, /\*\*Files:\*\* src\/api\/guard\.ts, src\/api\/guard\.test\.ts/);
   });
@@ -605,8 +640,7 @@ test('tk.mjs show: a pre-migration **Keys:** line in issue.md is inert — show 
 
   const created = newTicket(dir);
   const id = created.json.id;
-  const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', created.json.dirName);
-  const issuePath = join(ticketDir, 'issue.md');
+  const issuePath = ticketIssuePath(dir, 'mission1', id);
   const before = readFileSync(issuePath, 'utf8');
   // Splice in an old-format Keys line right after Status, the way a pre-migration ticket would
   // have carried it — nothing in the current template writes this line any more.
@@ -788,82 +822,55 @@ function allocatedNumber(json) {
   return m ? parseInt(m[1], 10) : null;
 }
 
-test('allocateId: N parallel ticket/ask/proposal filings each get a distinct number', async (t) => {
+// Each kind of thing a mission numbers has one sequence and one prefix: a ticket is t-NNN and a
+// question a-NNN, both numbered by the mission's loop, and a graph item g-NNN, numbered by the horde's
+// own counter. Filed in parallel, no two of one kind ever share a number.
+test('ids: N parallel ticket filings, questions and proposals each get a distinct number within their own kind', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
 
-  // A ticket writes only into its own new directory, so many can be filed at once with nothing
-  // of theirs to collide on beyond the shared counter — which is exactly what this races. An ask
-  // and a proposal each also rewrite their own kind's one shared document (asks.json,
-  // graph.json) — a read-modify-write with no lock of its own, same as the counter used to be,
-  // but that document's race is a separate bug from the one this ticket fixes. Filing exactly one
-  // of each keeps that other race out of the picture while still proving the counter is shared,
-  // and safely, across all three kinds at once.
-  const TICKETS = 48;
+  const TICKETS = 24;
+  const ASKS = 6;
+  const PROPOSALS = 6;
   const jobs = [];
   for (let i = 0; i < TICKETS; i += 1) {
     jobs.push(spawnAllocator(dir, 'tk.mjs', [
       'new', `race-ticket-${i}`, '--title', 'race', '--node', 'core', '--class', 'standard', '--evidence', 'it works',
-    ]));
+    ]).then((r) => ({ ...r, kind: 't' })));
   }
-  jobs.push(spawnAllocator(dir, 'ask.mjs', ['add', 'a racing question', '--kind', 'stop']));
-  jobs.push(spawnAllocator(dir, 'node.mjs', ['propose', 'rule', 'a racing proposal', '--by', 'racer']));
+  for (let i = 0; i < ASKS; i += 1) jobs.push(spawnAllocator(dir, 'ask.mjs', ['add', `a racing question ${i}`, '--kind', 'stop']).then((r) => ({ ...r, kind: 'a' })));
+  for (let i = 0; i < PROPOSALS; i += 1) jobs.push(spawnAllocator(dir, 'node.mjs', ['propose', 'rule', `a racing proposal ${i}`, '--by', 'racer']).then((r) => ({ ...r, kind: 'g' })));
 
   const results = await Promise.all(jobs);
   const failed = results.filter((r) => r.code !== 0);
   assert.deepEqual(failed.map((r) => r.stderr), [], 'every ticket/ask/proposal filing should succeed');
 
-  const numbers = results.map((r) => allocatedNumber(r.json));
-  assert.ok(
-    numbers.every((n) => Number.isInteger(n)),
-    `every result should carry a numbered id: ${JSON.stringify(results.map((r) => r.json))}`,
-  );
-
-  const distinct = new Set(numbers);
-  assert.equal(
-    distinct.size,
-    numbers.length,
-    `${numbers.length - distinct.size} of ${numbers.length} parallel ticket/ask/proposal filings collided on the `
-      + `same shared-counter number: ${[...numbers].sort((a, b) => a - b).join(', ')}`,
-  );
+  for (const kind of ['t', 'a', 'g']) {
+    const numbers = results.filter((r) => r.kind === kind).map((r) => allocatedNumber(r.json));
+    assert.ok(numbers.every((n) => Number.isInteger(n)), `every ${kind}- result should carry a numbered id: ${JSON.stringify(results.map((r) => r.json))}`);
+    assert.equal(new Set(numbers).size, numbers.length, `${kind}- filings collided: ${[...numbers].sort((a, b) => a - b).join(', ')}`);
+  }
 });
 
-// A folder made by hand — copied in from another horde, or written straight to disk instead of
-// through `tk.mjs new` — never touches counter.json, so the counter can carry a `next` well below
-// a number that already exists on disk. Without a floor computed off the real issue folders, the
-// very next `new` hands that same number to a second, unrelated ticket.
-test('allocateId: a hand-made ticket folder above the counter is never reissued', async (t) => {
+// A ticket written straight into the loop by hand (or filed by Jarl's own command against the
+// mission's loop) holds its number: the next ticket is numbered past it, never onto it.
+test('ids: a ticket written into the loop by hand is never numbered over', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-
-  // counter.json still reads `next: 1` — nothing has been allocated through it yet.
-  const manualDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '050-hand-made');
-  mkdirSync(manualDir, { recursive: true });
-  writeFileSync(join(manualDir, 'issue.md'), '**Status:** proposed\n');
-  writeFileSync(join(manualDir, 'log.md'), '');
+  writeTicketFixture(dir, 'mission1', '050', 'hand-made', '# 050 · hand made\n\n**Status:** proposed\n');
 
   const r = newTicket(dir);
   assert.equal(r.code, 0, r.stderr);
-  assert.ok(
-    Number(r.json.id) > 50,
-    `the next allocation should skip past the hand-made 050 folder, got ${r.json.id}`,
-  );
+  assert.ok(Number(r.json.id) > 50, `the next ticket should be numbered past the hand-made 050, got ${r.json.id}`);
 });
 
-// Same hazard, raced: several tickets filed at once while a hand-made folder above the counter
-// already exists on disk. The floor computed off disk and the counter lock both have to hold at
-// once — a floor alone would not stop two racing callers from agreeing on the same "next" number.
-test('allocateId: parallel filings still never collide when a hand-made ticket sits above the counter', async (t) => {
+test('ids: parallel filings never collide when a hand-made ticket sits in the loop', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-
-  const manualDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '050-hand-made');
-  mkdirSync(manualDir, { recursive: true });
-  writeFileSync(join(manualDir, 'issue.md'), '**Status:** proposed\n');
-  writeFileSync(join(manualDir, 'log.md'), '');
+  writeTicketFixture(dir, 'mission1', '050', 'hand-made', '# 050 · hand made\n\n**Status:** proposed\n');
 
   const TICKETS = 12;
   const jobs = [];
@@ -877,15 +884,8 @@ test('allocateId: parallel filings still never collide when a hand-made ticket s
   assert.deepEqual(failed.map((r) => r.stderr), [], 'every ticket filing should succeed');
 
   const numbers = results.map((r) => allocatedNumber(r.json));
-  assert.ok(numbers.every((n) => Number.isInteger(n) && n > 50), `every id should clear the hand-made 050 folder: ${numbers}`);
-
-  const distinct = new Set(numbers);
-  assert.equal(
-    distinct.size,
-    numbers.length,
-    `${numbers.length - distinct.size} of ${numbers.length} parallel filings collided on the same number: `
-      + `${[...numbers].sort((a, b) => a - b).join(', ')}`,
-  );
+  assert.ok(numbers.every((n) => Number.isInteger(n) && n > 50), `every id should clear the hand-made 050: ${numbers}`);
+  assert.equal(new Set(numbers).size, numbers.length, `parallel filings collided: ${[...numbers].sort((a, b) => a - b).join(', ')}`);
 });
 
 test('tk.mjs: a declared Files list carries the log.md of every node the ticket names, and only that file of the graph', async (t) => {
@@ -914,7 +914,8 @@ test('tk.mjs: a declared Files list carries the log.md of every node the ticket 
 
   await t.test('a ticket with no Files stays with none — its scope is the node already', () => {
     const id = fresh('no-files', ['--node', 'core']);
-    assert.equal(filesOf(id), 'none');
+    // Nothing declared: the field is empty, and the ticket's scope is its node's boundary.
+    assert.equal(filesOf(id), '');
   });
 
   await t.test('edit --files does the same, and yg-node.yaml still takes an explicit edit', () => {

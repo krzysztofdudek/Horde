@@ -11,8 +11,27 @@ import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
+// The lock whatever spends a client's answer holds (withDecisionsLock): Horde's own, beside the
+// mission's loop, whose own lock guards each single write to decisions.md.
 function decisionsLockFile(dir, horde = 'mission1') {
-  return join(dir, '.horde', 'hordes', horde, 'decisions.md.lock');
+  return join(dir, '.horde', 'hordes', horde, 'decisions.lock');
+}
+
+// One real process taking the answers lock and letting it go at once — what a landing spending a
+// "once" answer does around its merge.
+function takeDecisionsLock(dir) {
+  const decidePath = join(SCRIPTS_DIR, 'decide.mjs');
+  const script = [
+    `import { withDecisionsLock } from ${JSON.stringify(pathToFileURL(decidePath).href)};`,
+    "withDecisionsLock('mission1', () => {});",
+    "console.log(JSON.stringify({ ok: true }));",
+  ].join('\n');
+  try {
+    const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], { cwd: dir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return { code: 0, json: JSON.parse(out.trim().split('\n').pop()), stderr: '' };
+  } catch (e) {
+    return { code: e.status ?? 1, json: null, stderr: String(e.stderr || '') };
+  }
 }
 
 test('decide.mjs: add, list, show, refusals', async (t) => {
@@ -20,14 +39,22 @@ test('decide.mjs: add, list, show, refusals', async (t) => {
   t.after(() => rmRepo(dir));
   initHorde(dir);
 
-  await t.test('add records an entry and show returns it', () => {
-    const r = run('decide.mjs', ['add', 'lesson-1', 'Always check base freshness first.', '--ticket', '7'], dir);
-    assert.equal(r.code, 0);
+  const ticket = run('tk.mjs', ['new', 'freshness', '--title', 'Freshness', '--node', 'core', '--class', 'standard', '--evidence', 'it works'], dir).json.id;
+
+  await t.test('add records an entry in the mission\'s loop and show returns it, with the ticket it settles', () => {
+    const r = run('decide.mjs', ['add', 'lesson-1', 'Always check base freshness first.', '--ticket', ticket], dir);
+    assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.slug, 'lesson-1');
     const shown = run('decide.mjs', ['show', 'lesson-1'], dir);
     assert.equal(shown.code, 0);
-    assert.equal(shown.json.body, 'Always check base freshness first.');
-    assert.equal(shown.json.ticket, '7');
+    assert.match(shown.json.body, /^Always check base freshness first\./);
+    assert.equal(shown.json.ticket, ticket);
+  });
+
+  await t.test('a ticket this mission does not have is refused', () => {
+    const r = run('decide.mjs', ['add', 'lesson-2', 'Anything.', '--ticket', '77'], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /no such ticket: 077/);
   });
 
   await t.test('add refuses a duplicate slug', () => {
@@ -75,7 +102,7 @@ test('decide.mjs: --node always redirects to the graph\'s own log', async (t) =>
 // hard refusal (issue 119) — the same fix land.test.mjs already proves for the gate lock and
 // queue.test.mjs for the queue lock.
 
-test('decide.mjs: a lock left by a dead process is taken over, not waited out', async (t) => {
+test('decide.mjs: an answers lock left by a dead process is taken over, not waited out', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -88,10 +115,9 @@ test('decide.mjs: a lock left by a dead process is taken over, not waited out', 
   }, null, 2));
 
   const started = Date.now();
-  const r = run('decide.mjs', ['add', 'lesson-1', 'Always check base freshness first.'], dir);
+  const r = takeDecisionsLock(dir);
   const elapsed = Date.now() - started;
   assert.equal(r.code, 0, r.stderr);
-  assert.equal(r.json.slug, 'lesson-1');
   assert.ok(elapsed < 5000, `it did not wait out the lock timeout (${elapsed}ms)`);
   assert.equal(existsSync(lock), false, 'and released its own lock on the way out');
 });
@@ -105,9 +131,8 @@ test('decide.mjs: a half-written lock file names no process to wait on, so it is
   mkdirSync(dirname(lock), { recursive: true });
   writeFileSync(lock, '{"pid": 12');
 
-  const r = run('decide.mjs', ['add', 'lesson-1', 'Always check base freshness first.'], dir);
+  const r = takeDecisionsLock(dir);
   assert.equal(r.code, 0, r.stderr);
-  assert.equal(r.json.slug, 'lesson-1');
 });
 
 // A holder that is genuinely alive is a different case from one that is gone, and both matter: the
@@ -115,7 +140,7 @@ test('decide.mjs: a half-written lock file names no process to wait on, so it is
 // waits for the fact that it holds the lock (never a fixed sleep — see waitGateLockHeldBy's own
 // comment in land.test.mjs for why), and asserts the second writer waited out most of the hold
 // before it got its own turn.
-test('decide.mjs: a second writer waits out a held decisions lock rather than writing alongside it', async (t) => {
+test('decide.mjs: a second holder waits out a held answers lock rather than holding it alongside', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
@@ -146,14 +171,13 @@ test('decide.mjs: a second writer waits out a held decisions lock rather than wr
   }
 
   const start = Date.now();
-  const r = run('decide.mjs', ['add', 'lesson-1', 'Always check base freshness first.'], dir);
+  const r = takeDecisionsLock(dir);
   const elapsedMs = Date.now() - start;
   const holderCode = await holderDone;
 
   assert.equal(holderCode, 0, `lock-holder process failed: ${holderErr}`);
   assert.equal(r.code, 0, r.stderr);
   assert.ok(elapsedMs >= HOLD_MS * 0.7, `writer returned after ${elapsedMs}ms — expected it to wait out most of the ${HOLD_MS}ms held lock`);
-  assert.equal(r.json.slug, 'lesson-1');
 });
 
 // The case above shows a live holder is waited on, but never past the point of proving it: the
