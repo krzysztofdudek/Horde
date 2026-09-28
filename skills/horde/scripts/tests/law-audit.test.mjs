@@ -351,7 +351,7 @@ test('the law audit: the Grain sweep reads the leased territories, down the same
   const stub = join(dir, 'grain-advise-stub.mjs');
   writeFileSync(stub, [
     "const argv = process.argv.slice(2);",
-    "if (argv[0] === '--version') { console.log('0.0.0-stub'); process.exit(0); }",
+    "if (argv[0] === 'version') { console.log('grain 6.1.0 · stub'); process.exit(0); }",
     "if (argv[0] !== 'advise') process.exit(2);",
     "console.error('[grain] indexing');",
     'console.log(JSON.stringify({',
