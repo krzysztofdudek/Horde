@@ -34,7 +34,7 @@ import {
 import { loopTickets } from './loop.mjs';
 import { findTicket, ticketFiles } from './tk.mjs';
 import {
-  nodeExists, nodeBoundary, nodeGraphPathPrefix, ticketNodes, pathInBoundary,
+  nodeExists, nodeBoundary, nodeGraphPathPrefix, ticketNodes, pathInBoundary, ygDerivedFile,
 } from './node.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -397,7 +397,7 @@ const SEVERITIES = ['Critical', 'Important', 'Minor'];
 function reviewLines(logText) {
   const out = [];
   for (const line of (logText || '').split('\n')) {
-    const m = /review:\s*(\S+)\s+changes\s+by\s+(\S+)(.*)$/.exec(line.trim());
+    const m = /review:\s*(\S+(?:,\s*\S+)*)\s+changes\s+by\s+(\S+)(.*)$/.exec(line.trim());
     if (!m) continue;
     const tail = m[3] || '';
     const dash = tail.indexOf(' — ');
@@ -452,7 +452,7 @@ function checkReview(ctx) {
 
 // ---- drill: scope ---------------------------------------------------------------------
 
-const DERIVED_LOCK = /^\.yggdrasil\/yg-lock\.[^/]+\.json$/;
+const DERIVED_LOCK = { test: (f) => ygDerivedFile(f) };
 
 function checkScope(ctx) {
   const {

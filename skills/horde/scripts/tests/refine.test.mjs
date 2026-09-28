@@ -5,7 +5,7 @@ import {
 } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 import {
-  makeRepo, rmRepo, initHorde, addNode, addAspect, run, yg, MARKER_CHECK, git,
+  makeRepo, rmRepo, initHorde, addNode, addAspect, run, yg, MARKER_CHECK, git, issueFileOf,
 } from './helpers.mjs';
 
 // Every refusal below is exercised through run() — a child process — and never by importing
@@ -815,9 +815,9 @@ test('refine.mjs --step review: a circle is refused, and the circle travels with
   // is built is written onto the tickets themselves — which is exactly the case plan catches.
   const issues = join(dir, '.horde', 'hordes', 'm1', 'teams', 'trunk', 'issues');
   for (const [id, dep] of [[a, b], [b, a]]) {
-    const folder = readFileSync(join(issues, `${id}-${id === a ? 'first' : 'second'}`, 'issue.md'), 'utf8');
+    const folder = readFileSync(issueFileOf(join(issues, `${id}-${id === a ? 'first' : 'second'}`)), 'utf8');
     writeFileSync(
-      join(issues, `${id}-${id === a ? 'first' : 'second'}`, 'issue.md'),
+      issueFileOf(join(issues, `${id}-${id === a ? 'first' : 'second'}`)),
       folder.replace(/\*\*Depends on:\*\*[^·\n]*/, `**Depends on:** ${dep} `),
     );
   }

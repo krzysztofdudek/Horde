@@ -41,7 +41,7 @@ import {
   ticketNodes, ygCommand, fillDeterministic, pendingProsePairs, userOnlyRefusal, reviewerMissingIn,
   blockingFindings, splitFindings, routeFindings, renderFindings,
   globToRegExp, pathInBoundary, ticketBoundary, proposalBoundaryOf, ygFileContext, ygAvailable, ygJson,
-  NODE_LOG_FILE, TYPE_LOG_FILE, YG_LOCK_FILE, mergesByRule, nodeOfLogFile, typeOfLogFile, ygLogMergeResolve, YG_DOCUMENTS_AFTER,
+  NODE_LOG_FILE, TYPE_LOG_FILE, YG_LOCK_FILE, ygDerivedFile, mergesByRule, ownersOf, nodeOfLogFile, typeOfLogFile, ygLogMergeResolve, YG_DOCUMENTS_AFTER,
   ygMergeDriverSettings, ygLogMergeResolveAll,
 } from './node.mjs';
 import {
@@ -399,11 +399,13 @@ function checkBaseFreshness(branch, parentBranch) {
 // touches, and a diff that reaches past it is a widened ticket nobody agreed to. The fix is never
 // a quiet pass — it is `tk.mjs edit NNN --files …`, which writes the new list and a log line
 // saying who widened it and when.
-const DERIVED_LOCK = /^\.yggdrasil\/yg-lock\.[^/]+\.json$/;
+//
+// Yggdrasil's committed verdict record (`yg-events.llm.jsonl`, and its sealed months) is derived the
+// same way: `yg check --approve` appends to it on whichever branch ran it, and no node owns it.
 function checkScope(root, cfg, nodes, files, declared = [], moved = []) {
   const boundary = declared.length ? declared : [...ticketBoundary(root, cfg, nodes), ...moved];
-  const derived = files.filter((f) => DERIVED_LOCK.test(f));
-  files = files.filter((f) => !DERIVED_LOCK.test(f));
+  const derived = files.filter((f) => ygDerivedFile(f));
+  files = files.filter((f) => !ygDerivedFile(f));
   const outside = boundary.length ? files.filter((f) => !pathInBoundary(f, boundary)) : files;
   const protectedPaths = cfg.protectedPaths || [];
   const touchedProtected = files.filter((f) => protectedPaths.some((p) => f === p || f.startsWith(p)));
@@ -418,7 +420,7 @@ function checkScope(root, cfg, nodes, files, declared = [], moved = []) {
     parts.push(outside.length ? `outside boundary: ${shown}` : 'diff inside node boundary');
   }
   parts.push(touchedProtected.length ? `protected paths touched: ${touchedProtected.join(', ')}` : 'no protected path touched');
-  if (derived.length) parts.push(`derived lock files left to yg check: ${derived.join(', ')}`);
+  if (derived.length) parts.push(`derived files left to yg check: ${derived.join(', ')}`);
   return { ok, note: parts.join(' · ') };
 }
 
@@ -479,8 +481,10 @@ function revertBaseRef(issueText) {
   // and pick up whatever non-space token starts the next line.
   const header = /\*\*Revert base:\*\*[ \t]*(\S+)/.exec(issueText)?.[1];
   if (header) return header;
-  const m = /\bred on (\S+)/.exec(issueText);
-  return m ? m[1].replace(/[.,;:]+$/, '') : null;
+  // An acceptance line quotes the ref as it would any code: "red on `develop`," is the ref develop,
+  // never the backticks and the comma around it.
+  const m = /\bred on `?([^\s`]+)`?/.exec(issueText);
+  return m ? m[1].replace(/[.,;:)]+$/, '') : null;
 }
 
 // The command that swaps the revert-to-base variant for a mutation one — the issue's own
@@ -980,7 +984,29 @@ function checkGate(cfg, level, worktree, branchSha, noGate) {
     ok,
     note: `${green ? 'green' : 'red'} (${cmd}) — ${report.note}`,
     cache: { sha: branchSha, result: ok ? 'green' : 'red', count: summary.tests },
+    output: { cmd, green, text: out },
   };
+}
+
+// What the gate command printed, kept: a red gate is judged by its own words, and a note that only
+// says "red" leaves a flake and a real failure looking the same. The last run's output for a ticket
+// stays at hordes/<h>/land/<ticket>.gate.log (the tail, at most GATE_LOG_CHARS), and the result file
+// names it.
+const GATE_LOG_CHARS = 200000;
+function gateLogPath(horde, ticketId) { return hordePath(horde, 'land', `${ticketId}.gate.log`); }
+function keepGateOutput(horde, ticketId, sha, gate) {
+  if (!gate || !gate.output) return null;
+  const { cmd, green, text } = gate.output;
+  const tail = text.length > GATE_LOG_CHARS ? `… (the first ${text.length - GATE_LOG_CHARS} characters left out)\n${text.slice(-GATE_LOG_CHARS)}` : text;
+  const path = gateLogPath(horde, ticketId);
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `# gate ${green ? 'green' : 'red'} · ${cmd} · ${sha || 'combined tree'} · ${nowIso()}\n\n${tail}`);
+  } catch {
+    return null;
+  }
+  delete gate.output;
+  return path;
 }
 
 // Writes a gate measurement to the file wave.mjs's `close` reads (hordes/<horde>/cache/last-gate.json),
@@ -1231,33 +1257,25 @@ function architectureDecision(doc, findings) {
 // The `log_required` components this branch changed whose log cycle is open on its tree: the graph's
 // own `log-cycle-open` warnings, each kept only when that component owns a file the branch changed —
 // on the branch's tree, or, for a file the branch deleted, on the base's. Asked only when there is
-// such a warning at all, and only about the files that could be that component's: one `yg node` per
-// open component narrows the changed files to its mapping, and only those are put to `yg owner`
-// (Yggdrasil answers one file per call, and a deeper component can own a file inside a mapping).
+// such a warning at all: the changed files are put to the territory resolver once per tree (`yg owner
+// --files`, one reading of the graph for all of them), and a component is open for this branch when it
+// owns one of them.
 function openLogCycles(cfg, worktree, baseTree, doc, changedFiles) {
   const open = [...new Set(asArray(doc && doc.issues)
     .filter((i) => i && i.code === 'log-cycle-open' && i.node).map((i) => i.node))].sort();
   if (!open.length) return [];
   const code = changedFiles.filter((f) => !f.startsWith('.yggdrasil/'));
-  const mappingOf = (tree, node) => {
-    const res = ygJson(tree, cfg, ['node', node, '--json'], 'yg-node/1');
-    return res.state === 'ok' ? asArray(res.doc.mapping) : [];
-  };
-  const ownedBy = (tree, file, node) => {
-    const res = ygJson(tree, cfg, ['owner', '--file', file, '--json'], 'yg-owner/1');
-    return res.state === 'ok' && res.doc.node === node;
-  };
-  const hit = [];
-  for (const node of open) {
-    const here = mappingOf(worktree, node);
-    const there = baseTree ? mappingOf(baseTree, node) : [];
-    const found = code.some((f) => {
-      if (existsSync(join(worktree, f))) return pathInBoundary(f, here) && ownedBy(worktree, f, node);
-      return !!baseTree && pathInBoundary(f, there) && ownedBy(baseTree, f, node);
-    });
-    if (found) hit.push(node);
+  const present = code.filter((f) => existsSync(join(worktree, f)));
+  const deleted = baseTree ? code.filter((f) => !existsSync(join(worktree, f))) : [];
+  const owners = new Set();
+  for (const [tree, files] of [[worktree, present], [baseTree, deleted]]) {
+    if (!files.length) continue;
+    let found = new Map();
+    // A graph that cannot answer here holds nothing against the branch, as it did before.
+    try { found = ownersOf(tree, cfg, files); } catch (e) { if (!(e instanceof HordeError)) throw e; }
+    for (const o of found.values()) if (o.kind === 'node' && o.node) owners.add(o.node);
   }
-  return hit;
+  return open.filter((node) => owners.has(node));
 }
 
 // Whether the prose rules are judged. They have one judge: the reviewer configured inside
@@ -1347,8 +1365,12 @@ function checkMapping(cfg, worktree, addedFiles, noGate) {
   const candidates = addedFiles.filter((f) => !graphOwn.test(f));
   if (candidates.length === 0) return { ok: true, note: 'no files added outside the graph' };
   if (!ygAvailable(cfg, worktree)) return { ok: false, note: 'the Yggdrasil CLI cannot be run, so the graph cannot say who owns the added files' };
-  const contexts = new Map(candidates.map((f) => [f, ygFileContext(worktree, cfg, f)]));
-  const unmapped = unmappedFiles(contexts);
+  // One reading of the graph for every added file (the territory resolver, `yg owner --files`).
+  const owners = ownersOf(worktree, cfg, candidates);
+  const unmapped = candidates.filter((f) => {
+    const o = owners.get(f);
+    return !o || !(o.kind === 'node' || o.kind === 'type' || o.kind === 'excluded');
+  });
   if (unmapped.length === 0) return { ok: true, note: `${candidates.length} added file(s), every one owned by a node, covered by its type, or excluded from coverage by design` };
   const shown = unmapped.slice(0, 5).join(', ') + (unmapped.length > 5 ? '…' : '');
   return {
@@ -4399,6 +4421,10 @@ function runMany(horde, root, cfg, tickets, level, noGate, flags) {
       }
       // How long the shared gate took, once — every member's result carries it, marked as shared.
       shared.gateMs = Date.now() - sharedStart;
+      // The shared run's output, kept for every member: each one's gate log is this run's.
+      const sharedOutput = shared.gate.output;
+      for (const ctx of combined.surviving) keepGateOutput(horde, ctx.ticketId, combinedSha, { output: sharedOutput });
+      delete shared.gate.output;
       noteInherited(horde, group.parentBranch, combined.surviving.map((c) => c.ticketId).join(","), shared.graph);
       const sharedOk = shared.gate.ok && shared.graph.ok && shared.mapping.ok && shared.judge.ok;
       if (!sharedOk) {
@@ -4581,6 +4607,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
     const gateStart = Date.now();
     try {
       results.gate = checkGate(cfg, level, head.path, branchSha, noGate);
+      results.gateLog = keepGateOutput(horde, ticketId, branchSha, results.gate);
       results.graph = checkGraph(cfg, head.path, noGate, changedFiles, base.path);
       results.mapping = checkMapping(cfg, head.path, addedFiles, noGate);
     } finally {
@@ -4628,7 +4655,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
         checks.push({ name: 'merge', ok: false, note: merged.note });
         const extra = refusedMerge(horde, ticketId, merged, checks);
         return finish(horde, ticketId, {
-          ticket: ticketId, branch, sha: branchSha, ok: false, ...extra, checks, pairs: [], landed: null, lock: lockNotes, size, timing: timing(),
+          ticket: ticketId, branch, sha: branchSha, ok: false, ...extra, checks, pairs: [], landed: null, lock: lockNotes, size, timing: timing(), ...(results.gateLog ? { gateLog: results.gateLog } : {}),
         }, head, flags, parent, level);
       }
       landed = { ticket: ticketId, sha: merged.sha, at: nowIso() };
@@ -4666,6 +4693,7 @@ function run(horde, root, cfg, arg, level, noGate, flags) {
       lock: lockNotes,
       size,
       timing: timing(),
+      ...(results.gateLog ? { gateLog: results.gateLog } : {}),
     }, head, flags, parent, level);
   } finally {
     cleaner.runAll();

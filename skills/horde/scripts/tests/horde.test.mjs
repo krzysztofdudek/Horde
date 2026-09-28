@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, requireYg, addNode, addAspect, MARKER_CHECK, git,
+  makeRepo, rmRepo, run, initHorde, requireYg, addNode, addAspect, MARKER_CHECK, git, issueFileOf,
 } from './helpers.mjs';
 
 // Horde requires Yggdrasil: `init` creates the graph when a repository has none, so every direct
@@ -550,7 +550,7 @@ test('horde.mjs done: refuses listing every reason, then passes once each is met
   // hand, matching wave.test.mjs's own convention.
   const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-slug');
   mkdirSync(ticketDir, { recursive: true });
-  writeFileSync(join(ticketDir, 'issue.md'), '# 001 · slug\n\n**Status:** merged\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
+  writeFileSync(issueFileOf(join(ticketDir)), '# 001 · slug\n\n**Status:** merged\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
   writeFileSync(join(ticketDir, 'log.md'), '## Verdict · 001 · 2026-01-01 · by verifier-1 (standard)\n\n**Result:** reproduced\n');
 
   const retroClasses = join(dir, '.horde', 'hordes', 'mission1', 'retro-classes.json');

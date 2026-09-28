@@ -12,7 +12,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, requireYg, MARKER_CHECK, git,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, requireYg, MARKER_CHECK, git, issueFileOf,
 } from './helpers.mjs';
 
 // Merges `sourceBranch` into `targetBranch` from a scratch worktree — nothing checks out another
@@ -479,7 +479,7 @@ function seedLandableTicket(dir, id) {
 
   const issueDirPath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${id}-sample-ticket`);
   mkdirSync(issueDirPath, { recursive: true });
-  writeFileSync(join(issueDirPath, 'issue.md'), [
+  writeFileSync(issueFileOf(join(issueDirPath)), [
     `# ${id} · Sample ticket`, '',
     '**Status:** landed',
     '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',

@@ -197,6 +197,19 @@ export function ticketIssuePath(dir, horde, id) {
   return hit ? join(issues, hit) : null;
 }
 
+// The loop's file for the ticket whose own directory (its log's) is `ticketDir` —
+// .horde/hordes/<h>/teams/<team>/issues/NNN-<slug> → .horde/hordes/<h>/.jarl/issues/NNN-<...>.md: the
+// file the loop already holds for that number, else NNN-<slug>.md. For a test that writes or edits a
+// ticket's text by hand where it used to write the directory's issue.md.
+export function issueFileOf(ticketDir) {
+  const m = /^(.*)[\\/]\.horde[\\/]hordes[\\/](.+?)[\\/]teams[\\/].+?[\\/]issues[\\/]((\d+)-[^\\/]+)[\\/]?$/.exec(ticketDir);
+  if (!m) throw new Error(`not a ticket directory: ${ticketDir}`);
+  const [, root, horde, name, id] = m;
+  const issues = join(root, '.horde', 'hordes', horde, '.jarl', 'issues');
+  mkdirSync(issues, { recursive: true });
+  return ticketIssuePath(root, horde, id) || join(issues, `${name}.md`);
+}
+
 // A ticket written by hand, the way a test sets one up: its file in the loop (text as given — a
 // ticket written with the fields a test needs and nothing else is read like any other), and the
 // directory holding its own log. Returns that directory.

@@ -18,7 +18,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, requireYg, MARKER_CHECK, git,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, requireYg, MARKER_CHECK, git, ticketIssuePath,
 } from './helpers.mjs';
 
 // One real component with one real rule attached to it. Which component owns a file, and which
@@ -39,8 +39,9 @@ function writeLockVerdict(dir, aspectId, unitKey, verdict) {
   }, null, 2) + '\n');
 }
 
-function issuePathOf(dir, horde, team, dirName) {
-  return join(dir, '.horde', 'hordes', horde, 'teams', team, 'issues', dirName, 'issue.md');
+// A ticket lives in the mission's loop (.jarl/issues/NNN-<slug>.md); its own log beside the loop.
+function issuePathOf(dir, horde, id) {
+  return ticketIssuePath(dir, horde, id);
 }
 
 function logPathOf(dir, horde, team, dirName) {
@@ -93,7 +94,7 @@ function landOneTicket(dir, horde) {
 
   // Pre-migration Keys line: author, verifier, and one owner approval per node, exactly the shape
   // tk.mjs's own writeKeys() used to produce.
-  const issuePath = issuePathOf(dir, horde, team, dirName);
+  const issuePath = issuePathOf(dir, horde, id);
   const issueText = readFileSync(issuePath, 'utf8');
   writeFileSync(
     issuePath,
@@ -119,7 +120,7 @@ function landOneTicket(dir, horde) {
 
   const merged = run('queue.mjs', ['set', id, 'merged', '--sha', mergeSha], dir);
   assert.equal(merged.code, 0, merged.stderr);
-  assert.equal(run('tk.mjs', ['status', id, 'merged'], dir).code, 0);
+  assert.match(readFileSync(issuePathOf(dir, horde, id), 'utf8'), /^\*\*Status:\*\* merged$/m);
 
   return {
     id, dirName, team, landedSha, mergeSha,
@@ -195,7 +196,7 @@ test('blame.mjs: a ticket with an old ## Verdict block but no **Keys:** line at 
 
   // A genuinely new-format ticket never gets a **Keys:** line written to it any more — confirm
   // the fixture really has none before leaning on that shape below.
-  const issueText = readFileSync(issuePathOf(dir, horde, team, dirName), 'utf8');
+  const issueText = readFileSync(issuePathOf(dir, horde, id), 'utf8');
   assert.doesNotMatch(issueText, /\*\*Keys:\*\*/);
 
   assert.equal(run('queue.mjs', ['add', id], dir).code, 0);

@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, initHorde, addNode, run, yg, git,
-  writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE,
+  writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE, issueFileOf,
 } from './helpers.mjs';
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 
@@ -48,7 +48,7 @@ function seedTicket(dir, horde, id, {
   const issues = hordeFile(dir, horde, 'teams', 'trunk', 'issues');
   const ticketDir = join(issues, `${id}-${slug}`);
   mkdirSync(ticketDir, { recursive: true });
-  writeFileSync(join(ticketDir, 'issue.md'), [
+  writeFileSync(issueFileOf(join(ticketDir)), [
     `# ${id} · ${slug}`, '', '**Status:** merged',
     // The real **Files:** bold field (templates/ticket.md), not a heading — ticketFiles() parses
     // this exact shape, and a fixture that wrote something else would let a substring match pass

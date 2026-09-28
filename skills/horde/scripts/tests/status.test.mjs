@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
+import { makeRepo, rmRepo, run, initHorde, issueFileOf } from './helpers.mjs';
 
 test('status.mjs: no horde, then a populated digest', async (t) => {
   const dir = makeRepo();
@@ -296,7 +296,7 @@ test('status.mjs: the evidence block shows all six coverage states', async (t) =
     const dst = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${id}-slug`);
     mkdirSync(dst, { recursive: true });
     const kindLine = kind ? `\n**Kind:** ${kind}` : '';
-    writeFileSync(join(dst, 'issue.md'), `# ${id} · slug\n\n**Status:** ${status}${kindLine}\n\n## Acceptance — evidence\n\n- [ ] covers ${evidenceId}\n`);
+    writeFileSync(issueFileOf(join(dst)), `# ${id} · slug\n\n**Status:** ${status}${kindLine}\n\n## Acceptance — evidence\n\n- [ ] covers ${evidenceId}\n`);
     // The log's contents are not what the evidence block reads — a row's state comes from the
     // ticket's own **Status:**, **Kind:** and its acceptance checklist, and "reproduced" comes
     // from the charter's own last column. The file exists here because a ticket directory has one.

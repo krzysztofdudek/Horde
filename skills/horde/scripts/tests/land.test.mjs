@@ -11,7 +11,7 @@ import { createServer } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode, addAspect, yg, requireYg, MARKER_CHECK, git,
-  writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE,
+  writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE, issueFileOf,
 } from './helpers.mjs';
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 import {
@@ -56,7 +56,7 @@ function writeIssue(dir, team, id, {
 } = {}) {
   const dst = issueDir(dir, team, id);
   mkdirSync(dst, { recursive: true });
-  writeFileSync(join(dst, 'issue.md'), [
+  writeFileSync(issueFileOf(join(dst)), [
     `# ${id} · Sample ticket`, '',
     '**Status:** landed',
     `**Node:** ${node} · **Class:** standard · **Severity:** medium · **Team:** ${team}${kind ? ` · **Kind:** ${kind}` : ''}`,
@@ -223,7 +223,7 @@ test('land.mjs: nine items green, and the gate merges the branch itself', async 
   assert.equal(item.sha, trunkAfter);
   assert.match(readFileSync(join(issueDir(dir, 'trunk', '001'), 'log.md'), 'utf8'), new RegExp(`landed 001 on mission1/trunk as ${trunkAfter}`));
   // The ticket's own Status moves with the queue item, not only the queue item.
-  assert.match(readFileSync(join(issueDir(dir, 'trunk', '001'), 'issue.md'), 'utf8'), /^\*\*Status:\*\* merged$/m);
+  assert.match(readFileSync(issueFileOf(join(issueDir(dir, 'trunk', '001'))), 'utf8'), /^\*\*Status:\*\* merged$/m);
 
   // And the wave journal carries the merge, the way a recorded merge always has.
   assert.match(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8'), /001/);
@@ -497,7 +497,7 @@ test('land + tick: two tickets on a prose-ruled node with no reviewer wait on on
     assert.equal(item.state, 'blocked');
     assert.equal(item.returnReason.kind, 'waiting-on-user');
     assert.equal(item.returnReason.ask, asks[0].id);
-    assert.match(readFileSync(join(issue, 'issue.md'), 'utf8'), /\*\*Status:\*\* blocked/);
+    assert.match(readFileSync(issueFileOf(join(issue)), 'utf8'), /\*\*Status:\*\* blocked/);
     const log = readFileSync(join(issue, 'log.md'), 'utf8');
     assert.match(log, /status: blocked — waiting on a user decision/);
     assert.doesNotMatch(log, /round \d+\//, `${id}: still no round`);
@@ -634,7 +634,7 @@ test('land.mjs: a ticket that names an approved boundary move is judged against 
   const { branch, issueDir: issue } = setupLandable(dir, '009', { mapping: ['feature-009.mjs'] });
 
   const nameProposal = (id) => {
-    const path = join(issue, 'issue.md');
+    const path = issueFileOf(join(issue));
     writeFileSync(path, readFileSync(path, 'utf8').replace(/^(\*\*Status:\*\*[^\n]*)$/m, `$1\n**Boundary proposal:** ${id}`));
   };
   const proposed = run('node.mjs', ['propose', 'move-boundary', 'the feature owns its tests too', '--by', 'owner', '--node', 'feature', '--boundary', 'feature-009.*'], dir);
@@ -691,7 +691,7 @@ test('land.mjs: the revert test refuses a diff that carries no new or changed te
 // Rewrites an already-written issue.md to add a header ahead of the acceptance section — the same
 // insertion point addMutateField uses below, generalised to any "**Field:** value" line.
 function addField(dst, line) {
-  const path = join(dst, 'issue.md');
+  const path = issueFileOf(join(dst));
   const text = readFileSync(path, 'utf8');
   writeFileSync(path, text.replace('## Acceptance', `${line}\n\n## Acceptance`));
 }
@@ -817,7 +817,7 @@ test('land.mjs: the revert test uses the ticket\'s "**Revert base:**" header ins
   const branch = makeContractRevertFixture(dir, '011');
   const dst = issueDir(dir, 'trunk', '011');
   mkdirSync(dst, { recursive: true });
-  writeFileSync(join(dst, 'issue.md'), [
+  writeFileSync(issueFileOf(join(dst)), [
     '# 011 · Sample ticket', '',
     '**Status:** landed',
     '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',
@@ -839,7 +839,7 @@ test('land.mjs: the revert test uses the ticket\'s "**Revert base:**" header ins
 // --mutate` would have rendered it — inserted ahead of the acceptance section, since neither
 // mutateCommand nor revertBaseRef in land.mjs care about a header's position in the file.
 function addMutateField(dst, command) {
-  const path = join(dst, 'issue.md');
+  const path = issueFileOf(join(dst));
   const text = readFileSync(path, 'utf8');
   assert.doesNotMatch(text, /\*\*Mutate:\*\*/, 'fixture already carries a Mutate header');
   writeFileSync(path, text.replace('## Acceptance', `**Mutate:** ${command}\n\n## Acceptance`));
@@ -894,7 +894,7 @@ test('land.mjs: a ticket naming both "**Mutate:**" and "**Revert base:**" is ref
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   const { branch, issueDir: dst } = setupLandable(dir, '073');
-  const path = join(dst, 'issue.md');
+  const path = issueFileOf(join(dst));
   writeFileSync(path, readFileSync(path, 'utf8').replace('## Acceptance', '**Revert base:** develop\n**Mutate:** true\n\n## Acceptance'));
 
   const r = run('land.mjs', [branch, '--no-gate'], dir);
@@ -1159,7 +1159,7 @@ test('land.mjs revert test via gates.commit: the mutation variant runs its contr
   assert.match(caught.note, /feature-084\.test\.json: gates\.commit red with it in place, green on the mutated tree without it, and 1 failing case\(s\) from it/);
 
   // A mutation that breaks the tree for everyone is not the file's red.
-  const path = join(dst, 'issue.md');
+  const path = issueFileOf(join(dst));
   const setMutate = (command) => writeFileSync(path, readFileSync(path, 'utf8').replace(/\*\*Mutate:\*\* .*$/m, `**Mutate:** ${command}`));
   setMutate(`node -e "require('fs').writeFileSync('always.test.json', '{}')"`);
   const everyone = byName(run('land.mjs', [branch, '--no-gate'], dir))['revert test'];
@@ -3038,7 +3038,7 @@ test('land.mjs --fate reopened: the new ticket has to say so itself', async (t) 
   const reopening = run('tk.mjs', ['new', 'second-attempt', '--title', 'Earn it back', '--node', 'feature', '--class', 'standard', '--reopens', '071'], dir);
   assert.equal(reopening.code, 0, reopening.stderr);
   assert.equal(reopening.json.reopens, 't-071');
-  const issuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${reopening.json.id}-second-attempt`, 'issue.md');
+  const issuePath = issueFileOf(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${reopening.json.id}-second-attempt`));
   assert.match(readFileSync(issuePath, 'utf8'), /^\*\*Reopens:\*\* t-071$/m);
 
   await t.test('a number this horde never filed is refused where it is written, on the ticket', () => {
@@ -3241,7 +3241,7 @@ test('land.mjs: the no-evidence-layer exemption is checked before even the ticke
   // A ticket that would otherwise be refused outright for naming both fields (see the "names both
   // --mutate and a revert base" test above) — proof the exemption really runs first, ahead of every
   // other branch in the function, not only the two the ticket names by name.
-  const path = join(dst, 'issue.md');
+  const path = issueFileOf(join(dst));
   writeFileSync(path, readFileSync(path, 'utf8').replace('## Acceptance', '**Revert base:** develop\n**Mutate:** true\n\n## Acceptance'));
 
   const r = run('land.mjs', [branch, '--no-gate'], dir);
@@ -3562,7 +3562,7 @@ test('land.mjs: a merge refused because decisions.md stayed locked counts no rou
   const step = ticked.json.landed.find((l) => l.ticket === '121');
   assert.ok(step && ['review', 'gate'].includes(step.action), `the gate is asked again: ${JSON.stringify(ticked.json.landed)}`);
   assert.equal((ticked.json.spawn || []).filter((w) => w.ticket === '121').length, 0, 'no worker is raised for it');
-  const issue = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', readdirSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues')).find((n) => n.startsWith('121')), 'issue.md'), 'utf8');
+  const issue = readFileSync(issueFileOf(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', readdirSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues')).find((n) => n.startsWith('121')))), 'utf8');
   assert.doesNotMatch(issue, /^\*\*Status:\*\* changes$/m, 'the ticket is not sent back to changes');
 });
 
@@ -4486,7 +4486,7 @@ test('land.mjs graph item: a type-only import across components the architecture
   assert.match(graph.note, /\[relation-undeclared-dependency\]/);
   assert.match(graph.note, /feature-403\.ts:1 → money — Add - \{ target: money, type: uses \} under relations: in \.yggdrasil\/model\/feature\/yg-node\.yaml, or remove the import/);
   assert.equal(r.json.waitingOnUser, undefined, 'a relation the architecture allows is no decision of the user\'s');
-  assert.match(readFileSync(join(dst, 'issue.md'), 'utf8'), /\*\*Status:\*\* changes/, 'it is the worker\'s round');
+  assert.match(readFileSync(issueFileOf(join(dst)), 'utf8'), /\*\*Status:\*\* changes/, 'it is the worker\'s round');
 });
 
 test('land.mjs graph item: a dependency the architecture forbids waits on the user, with no round', async (t) => {
@@ -4685,7 +4685,7 @@ test('tk.mjs new --reverts: a revert ticket names the landing it takes back, its
   const byDefault = run('tk.mjs', ['new', 'take-back-again', '--title', 'Again', '--node', 'feature', '--class', 'standard', '--reverts', '001'], dir);
   assert.equal(byDefault.code, 0, byDefault.stderr);
   assert.deepEqual([...byDefault.json.files].sort(), ['.yggdrasil/model/feature/log.md', 'feature-001.mjs', 'feature-001.test.mjs'], 'without --files: what the merge changed');
-  const text = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${created.id}-take-back-001`, 'issue.md'), 'utf8');
+  const text = readFileSync(issueFileOf(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${created.id}-take-back-001`)), 'utf8');
   assert.match(text, /\*\*Kind:\*\* revert/);
   assert.match(text, /\*\*Reverts:\*\* t-001/);
   assert.match(text, new RegExp(`git revert -m 1 --no-edit ${mergeSha}`));

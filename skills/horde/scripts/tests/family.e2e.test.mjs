@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  run, findRealYg, git, initHorde, addNode, addAspect, MARKER_CHECK, makeRepo, rmRepo,
+  run, findRealYg, git, initHorde, addNode, addAspect, MARKER_CHECK, makeRepo, rmRepo, issueFileOf,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -456,13 +456,13 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     ], dir);
     assert.equal(ticket.code, 0, ticket.stderr);
     assert.equal(ticket.json.id, '001');
-    assert.equal(ticket.json.ref, 't-001', 'one counter for the whole mission, and the kind is on the id');
+    assert.equal(ticket.json.ref, 't-001', 'the kind is on the id');
     assert.deepEqual(ticket.json.evidence, ['E1', 'E2']);
     assert.deepEqual(ticket.json.produces, ['src/orders/apply-discount']);
 
-    const issue = readFileSync(join(
-      dir, '.horde', 'hordes', 'family', 'teams', 'trunk', 'issues', ticket.json.dirName, 'issue.md',
-    ), 'utf8');
+    const issue = readFileSync(issueFileOf(join(
+      dir, '.horde', 'hordes', 'family', 'teams', 'trunk', 'issues', ticket.json.dirName,
+    )), 'utf8');
     assert.match(issue, /\*\*Files:\*\* src\/orders\/discount\.mjs, src\/orders\/discount\.test\.mjs/);
     assert.match(issue, /\*\*Produces:\*\* src\/orders\/apply-discount/);
     assert.match(issue, /\*\*Evidence:\*\* E1, E2/);
@@ -902,7 +902,7 @@ function buildContractTicket(t, {
     '--files', files.join(','), '--evidence', "E1 — the repository's own gate is green on the merged tree",
   ], dir);
   assert.equal(ticket.code, 0, ticket.stderr);
-  const issuePath = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', ticket.json.dirName, 'issue.md');
+  const issuePath = issueFileOf(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', ticket.json.dirName));
   declareNoNewTests(issuePath, noNewTests);
   assert.equal(run('queue.mjs', ['add', ticket.json.id, '--proposed'], dir).code, 0);
 

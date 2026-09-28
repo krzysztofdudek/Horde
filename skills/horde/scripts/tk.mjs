@@ -37,7 +37,7 @@ import {
   ticketFile, loopTickets, fileTicket, moveTicket, roundTicket, editTicket, hasLoop,
 } from './loop.mjs';
 import {
-  ticketBoundary, pathInBoundary, portExists, nodeExists, nodeGraphPathPrefix,
+  ticketBoundary, pathInBoundary, portExists, nodeExists, nodeGraphPathPrefix, nodeBoundary, globToRegExp,
   approvedBoundaryProposal, proposalBoundaryOf, grainLine, grainAsk, ygFileContext,
 } from './node.mjs';
 // `queue.mjs` imports this file in turn. The cycle is the one this tool set already runs on (see
@@ -45,7 +45,7 @@ import {
 // module calls the other while it is still being evaluated. The alternative — a second writer of
 // dependencies here — is exactly the thing worth avoiding, because a cycle is only caught once the
 // whole DAG is built, and that lives there.
-import { addDependency, loadQueue } from './queue.mjs';
+import { addDependency, loadQueue, syncAfter } from './queue.mjs';
 // The charter is wave.mjs's document: setReproducedBy's own note calls itself the one edit any
 // tool here makes to it, and a prototype's acceptance is the second. Both writers therefore live
 // there, beside the readers that have to agree with them — the alternative, a second private
@@ -781,10 +781,14 @@ export function createTicket(horde, spec) {
   if (!Array.isArray(nodes) || nodes.length === 0) fail('new requires --node <n> (repeatable)');
   // The model allows a ticket one node, or two when the ticket carries a contract between them —
   // and no more, because a ticket spanning three nodes is one diff three separate components
-  // have to answer for, and nothing in the graph answers for the whole of it. Three were being
-  // accepted in silence.
-  if (nodes.length > 2) {
-    fail(`a ticket names one node, or two when it carries a contract between them — this one names ${nodes.length} (${nodes.join(', ')}). Split it into one ticket per node, with the contract between them on its own ticket if they need one`);
+  // have to answer for, and nothing in the graph answers for the whole of it. A node that holds
+  // nothing but tests is not one of those: a graph that keeps a component's tests in a node of its
+  // own would otherwise make every change to behaviour its tests pin a split nobody can land green,
+  // the code in one ticket and the tests that must change with it in another. So the two are counted
+  // over the nodes that hold code; a test node rides along with the change it tests.
+  const workNodes = nodes.filter((n) => !isTestNode(n));
+  if (workNodes.length > 2) {
+    fail(`a ticket names one node, or two when it carries a contract between them — this one names ${workNodes.length} that hold code (${workNodes.join(', ')}). Split it into one ticket per node, with the contract between them on its own ticket if they need one (a node that holds only tests, by config.testGlobs, does not count)`);
   }
   const cfg = readConfig();
   const classes = (cfg && cfg.classes) || {};
@@ -886,6 +890,8 @@ export function createTicket(horde, spec) {
   if (!existsSync(join(dir, 'log.md'))) writeText(join(dir, 'log.md'), '');
   const issuePath = filed.file;
   const allocated = { id: `t-${id}` };
+  // What it waits on, in the loop's own terms (queue.mjs syncAfter).
+  syncAfter(horde, team);
 
   return {
     id,
@@ -918,6 +924,23 @@ function ticketTemplateBody() {
   return {
     what: section('What'), why: section('Why'), scope: section('Scope'), acceptance: section('Acceptance — evidence'), notes: section('Notes for the worker'),
   };
+}
+
+// A node holding nothing but tests: every tracked file inside its boundary matches the repository's
+// own test patterns (config.testGlobs), and there is at least one. Read in the tree this command runs
+// from, like every other graph reading tk.mjs takes.
+function isTestNode(node) {
+  const cfg = readConfig() || {};
+  const globs = asArray(cfg.testGlobs).map(String).filter(Boolean);
+  if (!globs.length) return false;
+  const root = resolveTree({}).path;
+  let boundary = [];
+  try { boundary = nodeBoundary(root, cfg, node); } catch { boundary = []; }
+  if (!boundary.length) return false;
+  const tracked = (git(['ls-files'], root) || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const files = tracked.filter((f) => pathInBoundary(f, boundary));
+  const res = globs.map((g) => globToRegExp(g));
+  return files.length > 0 && files.every((f) => res.some((re) => re.test(f)));
 }
 
 // A rule a node's own boundary check cannot see: the graph says "this file is inside your node",
@@ -1078,6 +1101,7 @@ function cmdStatus(horde, positional, flags) {
     roundSuffix = roundInfo.suffix;
   } else {
     roundSuffix = transitionStatus(ticket, status, note, null);
+    if (status === 'dropped') syncAfter(horde, String(ticket.team).split('/').pop());
   }
 
   emit(
@@ -1126,7 +1150,9 @@ function cmdGrep(horde, positional, flags) {
 // carries a verdict, and no reading here has a way to let a ticket through: the closing line counts
 // findings, and what tick does next depends on the findings alone.
 
-const REVIEW_CHANGE_REQUEST_RE = /^review:\s*(\S+)\s+changes\s+by\s+(\S+)/;
+// A change request names the node it is about, or the ticket's two nodes — written "a+b" or, as a
+// reviewer naturally writes a list, "a, b". Both are one change request.
+const REVIEW_CHANGE_REQUEST_RE = /^review:\s*(\S+(?:,\s*\S+)*)\s+changes\s+by\s+(\S+)/;
 const REVIEW_FINDING_LEAD_RE = /^(Critical|Important|Minor):/;
 const REVIEW_SEVERITY_RE = /\b(Critical|Important|Minor):/g;
 const REVIEW_CLOSED_RE = /^review closed by (\S+) — /;
@@ -1321,6 +1347,16 @@ function setHeaderField(text, label, value) {
   return text.replace(/^(\*\*Status:\*\*[^\n]*)$/m, `$1\n**${label}:** ${value}`);
 }
 
+// setTicketField(horde, id, label, value, note) — one header field of a ticket rewritten in the loop,
+// under its lock, with a line in the ticket's own log saying what changed and why.
+export function setTicketField(horde, id, label, value, note) {
+  const ticket = findTicket(horde, padId(id));
+  if (!ticket) fail(`no such ticket: ${id}`);
+  editTicket(horde, ticket.id, (current) => setHeaderField(current, label, value));
+  appendLog(ticket, `${label.toLowerCase()}: ${value || 'none'}${note ? ` — ${note}` : ''}`);
+  return { id: ticket.id, field: label, value };
+}
+
 // The header block is everything above "## What" (id/title heading, Status, the combined
 // Node/Class/Severity/Team line, Depends-on/Branch, Files, Consumes/Produces, Evidence) —
 // edit replaces only what comes after it, so none of that state can be clobbered by a body
@@ -1426,6 +1462,7 @@ function cmdEdit(horde, positional, flags) {
   });
   if (bytes) appendLog(ticket, `body edited by ${flags.by}`);
   for (const c of changed) appendLog(ticket, `${c} — changed by ${flags.by}`);
+  if (changed.length) syncAfter(horde, String(ticket.team).split('/').pop());
   emit({ id: ticket.id, bytes, changed }, flags, () => (changed.length
     ? `${ticket.id}: ${changed.join(' · ')}${bytes ? ` · body updated (${bytes} bytes)` : ''}`
     : `${ticket.id}: body updated (${bytes} bytes)`));

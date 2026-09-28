@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde,
+  makeRepo, rmRepo, run, initHorde, issueFileOf,
 } from './helpers.mjs';
 
 const hordeDir = (dir) => join(dir, '.horde', 'hordes', 'mission1');
@@ -40,7 +40,7 @@ function withRows(dir) {
 function ticket(dir, id, status, evidenceId) {
   const dst = join(hordeDir(dir), 'teams', 'trunk', 'issues', `${id}-slug`);
   mkdirSync(dst, { recursive: true });
-  writeFileSync(join(dst, 'issue.md'), `# ${id} · Sign-up form\n\n**Status:** ${status}\n\n## Acceptance — evidence\n\n- [ ] covers ${evidenceId}\n`);
+  writeFileSync(issueFileOf(join(dst)), `# ${id} · Sign-up form\n\n**Status:** ${status}\n\n## Acceptance — evidence\n\n- [ ] covers ${evidenceId}\n`);
   writeFileSync(join(dst, 'log.md'), `- 2026-01-01 status: ${status}\n`);
 }
 

@@ -471,6 +471,41 @@ export function ygFileContext(root, cfg, relFile) {
   return doc;
 }
 
+// The territory resolver: which unit owns each of many files, in one reading of the graph —
+// `yg owner --files <list> --json` (yg-owner-batch/1). A unit is a node, or, for a file only a node
+// type covers, `type:<name>@<top directory>`; a file the coverage config excludes, one nothing maps,
+// and one that is not there are named as such. Asked in batches of OWNER_BATCH files, so a landing
+// that added two hundred files makes one or two calls where it made two hundred. A path holding a
+// comma (the list's separator) is asked on its own through `yg context --file`. Returns
+// Map(file -> {kind, node, type, unit, excludedBecause}).
+export const OWNER_BATCH_SCHEMA = 'yg-owner-batch/1';
+const OWNER_BATCH = 200;
+export function ownersOf(root, cfg, files) {
+  const out = new Map();
+  const listed = [...new Set(files)].filter((f) => !f.includes(','));
+  for (let i = 0; i < listed.length; i += OWNER_BATCH) {
+    const chunk = listed.slice(i, i + OWNER_BATCH);
+    const res = ygJson(root, cfg, ['owner', '--files', chunk.join(','), '--json'], OWNER_BATCH_SCHEMA);
+    if (res.state === 'no-cli') failNoCli(cfg, res.command);
+    if (res.state === 'stale') failStaleCli(cfg, res);
+    if (res.state !== 'ok') fail(`\`${res.command}\` — ${res.detail || 'the graph did not answer which node owns these files'}`);
+    for (const e of asArray(res.doc.files)) {
+      out.set(String(e.file), {
+        kind: e.kind, node: e.node || null, type: e.type || null, unit: e.unit || null, excludedBecause: e.excludedBecause || null,
+      });
+    }
+  }
+  for (const f of files.filter((x) => x.includes(','))) {
+    const doc = ygFileContext(root, cfg, f);
+    const owner = doc && doc.owner;
+    const kind = !owner ? 'unmapped' : owner.kind === 'none' ? (owner.reason === 'excluded' ? 'excluded' : 'unmapped') : owner.kind;
+    out.set(f, {
+      kind, node: owner && owner.kind === 'node' ? owner.path : null, type: owner && owner.kind === 'type' ? owner.type || null : null, unit: owner && owner.path ? owner.path : null, excludedBecause: null,
+    });
+  }
+  return out;
+}
+
 // `yg impact --node <path> --json` — Yggdrasil's own answer to "who depends on this node".
 const impactCache = new Map();
 export function ygImpact(root, cfg, node) {
@@ -1916,6 +1951,13 @@ export function globToRegExp(glob) {
 export const NODE_LOG_FILE = /^\.yggdrasil\/model\/(?:.+\/)?log\.md$/;
 export const TYPE_LOG_FILE = /^\.yggdrasil\/types\/[^/]+\/log\.md$/;
 export const YG_LOCK_FILE = /^\.yggdrasil\/yg-lock\.[^/]+\.json$/;
+// Yggdrasil's committed record of its reviewer's verdicts (`events: { committed_llm: true }`), written
+// by `yg check --approve` and sealed by month: every line is one append, and the repository merges it
+// by union. It belongs to no node and to no ticket — whoever ran the paid check on a branch wrote to it —
+// so a landing leaves it to the graph like the lock files, and a conflict in it keeps both sides' lines.
+export const YG_EVENTS_FILE = /^\.yggdrasil\/yg-events\.llm(?:\.\d{4}-\d{2})?\.jsonl$/;
+// What `yg check` writes into a branch by itself: the lock files and the committed verdict record.
+export function ygDerivedFile(path) { return YG_LOCK_FILE.test(path) || YG_EVENTS_FILE.test(path); }
 
 export function appendOnlyGlobs(cfg) {
   return asArray(cfg && cfg.appendOnly).map((g) => String(g).trim()).filter(Boolean);
@@ -1927,7 +1969,7 @@ export function isAppendOnly(path, cfg) {
 
 // A file whose conflicts the landing resolves by rule — one of the three kinds above.
 export function mergesByRule(path, cfg) {
-  return NODE_LOG_FILE.test(path) || TYPE_LOG_FILE.test(path) || YG_LOCK_FILE.test(path) || isAppendOnly(path, cfg);
+  return NODE_LOG_FILE.test(path) || TYPE_LOG_FILE.test(path) || YG_LOCK_FILE.test(path) || YG_EVENTS_FILE.test(path) || isAppendOnly(path, cfg);
 }
 
 // The node a `log.md` belongs to, as `yg log --node` names it (relative to `.yggdrasil/model/`).

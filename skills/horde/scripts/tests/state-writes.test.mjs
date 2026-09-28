@@ -13,7 +13,7 @@ import {
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, yg, addNode, git,
+  makeRepo, rmRepo, run, initHorde, yg, addNode, git, issueFileOf,
 } from './helpers.mjs';
 
 const REWRITER = join(dirname(fileURLToPath(import.meta.url)), 'lock-race', 'rewriter.mjs');
@@ -299,7 +299,7 @@ test('tk.mjs move renames the ticket\'s directory while holding the ticket lock'
   assert.equal(heldDuringRename, child.pid, 'the ticket lock was held by the move while it renamed the directory');
 
   const moved = join(realpathSync(dir), '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'teams', 'allies', 'issues', basename(ticketDir));
-  assert.ok(existsSync(join(moved, 'issue.md')), 'the ticket is in its new team');
+  assert.ok(existsSync(issueFileOf(join(moved))), 'the ticket is in its new team');
   assert.equal(existsSync(join(moved, 'issue.md.lock')), false, 'with no lock left behind');
   assert.equal(existsSync(ticketDir), false, 'and nothing left at the old path');
 });
@@ -535,7 +535,7 @@ test('wave.mjs close waits for a writer holding the charter lock, and both chang
   writeFileSync(path, readFileSync(path, 'utf8').replace('| | | | |', '| E1 | some check | auth | |'));
   const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-slug');
   mkdirSync(ticketDir, { recursive: true });
-  writeFileSync(join(ticketDir, 'issue.md'), '# 001 · slug\n\n**Status:** landed\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
+  writeFileSync(issueFileOf(join(ticketDir)), '# 001 · slug\n\n**Status:** landed\n\n## Acceptance — evidence\n\n- [x] covers E1\n');
   writeFileSync(join(ticketDir, 'log.md'), '## Verdict · 001 · 2026-01-01 · by verifier-1 (standard)\n\n**Result:** reproduced\n');
   assert.equal(run('wave.mjs', ['start'], dir).code, 0);
   assert.equal(run('wave.mjs', ['merged', '001', 'abc1234'], dir).code, 0);

@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, MARKER_CHECK, git, requireYg, yg,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, MARKER_CHECK, git, requireYg, yg, issueFileOf,
 } from './helpers.mjs';
 
 function write(dir, rel, text) {
@@ -90,7 +90,7 @@ function lawFixture(dir, id, mutate, {
 
   const dst = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${id}-sample-ticket`);
   mkdirSync(dst, { recursive: true });
-  writeFileSync(join(dst, 'issue.md'), [
+  writeFileSync(issueFileOf(join(dst)), [
     `# ${id} · Sample ticket`, '',
     '**Status:** landed',
     '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',
@@ -323,7 +323,7 @@ test('law guard: "scope: once" is spent by the landing that used it; "scope: mis
     git(['checkout', '-q', 'mission1/trunk'], dir);
     const dst = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '125-sample-ticket');
     mkdirSync(dst, { recursive: true });
-    writeFileSync(join(dst, 'issue.md'), [
+    writeFileSync(issueFileOf(join(dst)), [
       '# 125 · Sample ticket', '',
       '**Status:** landed',
       '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',
@@ -738,7 +738,7 @@ const MUTATE = 'node -e "const f=require(\'fs\');f.writeFileSync(\'src/a.mjs\',\
 function seedProtectionTicket(dir, id, branch, declared) {
   const dst = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', `${id}-sample-ticket`);
   mkdirSync(dst, { recursive: true });
-  writeFileSync(join(dst, 'issue.md'), [
+  writeFileSync(issueFileOf(join(dst)), [
     `# ${id} · Sample ticket`, '',
     '**Status:** landed',
     '**Node:** feature · **Class:** standard · **Severity:** medium · **Team:** trunk',

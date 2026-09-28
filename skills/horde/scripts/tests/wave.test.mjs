@@ -7,7 +7,7 @@ import {
 import { join } from 'node:path';
 import {
   makeRepo, rmRepo, run, initHorde, requireYg, git,
-  writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE,
+  writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE, issueFileOf,
 } from './helpers.mjs';
 
 const charterPath = (dir, horde = 'mission1') => join(dir, '.horde', 'hordes', horde, 'charter.md');
@@ -20,7 +20,7 @@ function writeTicketFixture(dir, { team = 'trunk', ticket, evidenceId, verifier,
   const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', team, 'issues', `${ticket}-slug`);
   mkdirSync(ticketDir, { recursive: true });
   writeFileSync(
-    join(ticketDir, 'issue.md'),
+    issueFileOf(join(ticketDir)),
     `# ${ticket} · slug\n\n**Status:** landed\n\n## Acceptance — evidence\n\n- [x] covers ${evidenceId}\n`,
   );
   writeFileSync(
