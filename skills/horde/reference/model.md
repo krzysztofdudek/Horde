@@ -275,18 +275,28 @@ file ever conflicts in a merge.
     territories.json                the cut: {"<territory>": {nodes, class, why}}, written by the
                                     architect at `refine.mjs --step cut`
     review.json                     the architect's plan ruling, written at `refine.mjs --step review`; set aside as review.applied-<time>.json once applied
-    counter.json                    the one shared counter every id in this horde comes out of
+    .jarl/                          the mission's record: a Jarl loop opened with Horde's profile
+      profile.json                  (scripts/jarl-profile.json) — Jarl's own tools read it as any loop
+      goal.md                       the mission's line and the check it lands through
+      issues/NNN-<slug>.md          a ticket: status, node, class, files, ports, evidence, spec, acceptance
+      decisions.md                  rulings (decide.mjs) and the client's answers (ask-NNN)
+      asks.md                       the questions to the client (ask.mjs), a-NNN
+      log.md                        every move of the record, one line each
+    counter.json                    the sequence graph items (g-NNN) come out of; the loop numbers
+                                    tickets (t-NNN) and questions (a-NNN), each kind on its own
     plan.md                         wave journal: starts, merges, closes
-    decisions.md                    build decisions and the answered asks recorded through them
-    asks.json (+ .md)               the one channel to the client
-    handoff.json (+ .md)            state of intent between director sessions
+    asks.json                       what a question carries beyond its line in the loop: the whole
+                                    question, its territory, the log it points at, the scope of an answer
+    decisions.lock                  held by whatever spends a "once" answer, across its merge
     land/<ticket>.json              the merge checklist's own result, one file per ticket
+    land/<ticket>.gate.log          what the gate command printed on its last run for that ticket
     retro-classes.json, retro.json  the retrospective's classification and its finished document
     teams/trunk/
-      queue.json (+ .md)            the DAG of tickets
-      issues/NNN-slug/issue.md      the ticket: node, class, spec, acceptance
-      issues/NNN-slug/log.md        the work log
+      queue.json (+ .md)            the schedule: the DAG's queue items, worker leases, gate runs
+      issues/NNN-slug/log.md        the ticket's own work log, millisecond stamps
 ```
+
+A mission started by Horde 6.0.x has no `.jarl/`: every tool refuses it by name, saying to finish it on the release it was started on; `horde.mjs archive` still sets it aside, and `history` and `blame` still read it there.
 
 ### Node leases, kept as territories
 

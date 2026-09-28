@@ -61,11 +61,40 @@ jobs:
           # (tests/ratatoskr-product-language-drift.test.mjs) only reads two text files off this
           # checkout; no build or install step is needed.
           path: ratatoskr
+      # A mission's record is a Jarl loop, written through Jarl's record module vendored under
+      # skills/horde/scripts/vendor (jarl-vendor.mjs). Jarl moves with this repository in a joint
+      # release, so the Jarl branch of the same name is checked out beside it, the way Yggdrasil is
+      # above: a pull request tries its head branch, then the branch it targets, and only then main.
+      - name: resolve Jarl branch
+        id: jarl-branch
+        run: |
+          found=""
+          for branch in "${{ github.head_ref || github.ref_name }}" "${{ github.base_ref }}"; do
+            [ -n "$branch" ] || continue
+            if git ls-remote --exit-code --heads "https://github.com/krzysztofdudek/JarlSkill.git" "$branch" >/dev/null 2>&1; then
+              found="$branch"
+              break
+            fi
+          done
+          echo "ref=${found:-main}" >> "$GITHUB_OUTPUT"
+      - name: checkout JarlSkill
+        uses: actions/checkout@v4
+        with:
+          repository: krzysztofdudek/JarlSkill
+          ref: ${{ steps.jarl-branch.outputs.ref }}
+          path: jarl
+      # The vendored record, byte for byte against that branch: a Jarl change the copy does not carry
+      # is red here until it is vendored (node jarl-vendor.mjs update --source <JarlSkill>).
+      - name: jarl vendor gate
+        working-directory: skills/horde/scripts
+        run: node jarl-vendor.mjs check --source ${{ github.workspace }}/jarl
       - name: run suite
         working-directory: skills/horde/scripts
         env:
           HORDE_TEST_RATATOSKR_DIR: ${{ github.workspace }}/ratatoskr
+          HORDE_TEST_JARL: ${{ github.workspace }}/jarl/skills/jarl/scripts/jarl.mjs
         run: |
+          node jarl-vendor.mjs check
           node tests/yg-floor.mjs
           node --test tests/*.test.mjs
 
@@ -166,6 +195,7 @@ jobs:
           TMP: ${{ runner.temp }}
           TEMP: ${{ runner.temp }}
         run: |
+          node jarl-vendor.mjs check
           node tests/yg-floor.mjs
           node --test tests/*.test.mjs
 

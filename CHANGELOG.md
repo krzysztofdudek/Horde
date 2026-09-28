@@ -8,8 +8,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Needs Yggdrasil 6.1.0 or newer; an older one is refused with the release to install.
 
+### Breaking
+
+- A mission's record is now a Jarl loop. Each mission keeps its tickets, your rulings, your questions and answers, and the journal of every move in a Jarl loop of its own, written in Jarl's format through Jarl's record, which ships inside Horde. With the Jarl plugin installed, `jarl resume` and `jarl status` pointed at a mission show it live: what each worker holds, what waits on you, what waits on what. Jarl's own commands cannot move a ticket past the architect's plan review or anywhere else Horde's scheduler decides, and a ticket counts as done only when its change has landed through the gate.
+- A mission started with an earlier Horde is refused by every command, with a message saying to finish it on the release it was started with. Its history and blame still read it once it is archived.
+- `handoff.mjs write`, `add-waiting` and `rm-waiting` are gone. `handoff.mjs read` shows the state a session picks the mission up from, assembled from the mission's record as it stands, so there is nothing to write at the end of a turn.
+- Tickets and questions are numbered each on their own now: the first ticket is t-001 and the first question a-001. The prefix tells them apart. The ruling that records an answer is named `ask-001`, not `ask-a-001`.
+- `tk.mjs status <ticket> merged` is refused. A ticket is marked merged by its landing, or by `queue.mjs set <ticket> merged --sha <sha>` for a merge you made yourself, and that sha has to be on the mission's trunk.
+- A ticket's fields are written one per line now, where several shared a line before.
+
+### Upgrading a mission in flight
+
+Finish a mission you started with an earlier Horde on that release: Horde does not move a mission from one record to another mid-flight. Then update Horde and start the next mission; `horde.mjs archive <mission>` sets the old one aside, and `history` and `blame` still read it. Nothing in your repository changes: the mission's state stays out of git as before.
+
 ### Fixed
 
+- A branch that ran Yggdrasil's paid check no longer fails the scope check over Yggdrasil's committed record of the reviewer's verdicts, which belongs to no component. Two branches that both appended to it merge with both sides kept.
+- A review finding marked Important or Critical now sends the ticket back when the review names its components as a list (`a, b`), not only when they are joined by `+`. Before, such a finding was not counted and the review closed with Important 0.
+- A ticket field left empty is read as empty. Before, an empty field such as `Mutate` could be read as the line below it.
+- An acceptance line that names its base in backticks (red on `develop`,) now reads the base as `develop`.
+- A ticket dropped from the queue is dropped as a ticket too, so a ticket consuming a port only it produced no longer waits on it.
 - `wave.mjs evidence` no longer stamps a row whose wording or kind of proof was changed while its proof was running. The proof was taken for the old row, so nothing is stamped and you are told to prove the row again as it stands.
 - Horde now runs on Windows, and CI runs the whole suite on `windows-latest` as well as Linux. A CLI npm installed as a `.cmd` shim (`yg`, `grain`, and so on) is started as node on its script, since Node cannot start a `.cmd` without a shell, and a quoted path with spaces in `ygCommand` or `grainCommand` is kept as one word. Gate, notify and runner commands run under Git for Windows' `sh.exe` (or `HORDE_SH`), with a clear refusal when there is none. A gate that times out or is interrupted stops its whole process tree with `taskkill` there. Worktree paths git prints (`C:/…`, long names) are matched to the ones Node builds (`C:\…`, sometimes short 8.3 names), `blame` finds a file's repository path the same way, and node ids read off the graph use `/`. A charter, ticket or log saved with CRLF line endings, and a promise document the `promises` rules read, parse as if it had LF. A process started under `--runner external` is told apart from a later one given the same pid only where `ps` exists, so not on Windows. See Requirements in the README.
 - A landing whose catch-up merge conflicts in a node type's decision log (`.yggdrasil/types/<t>/log.md`, new in Yggdrasil 6.1.0) no longer stops as stale. The landing takes the parent's side of `yg-lock.types.json`, runs `yg log merge-resolve --type <t>`, which keeps both sides' decisions and records the type's baseline again, and goes on, the same way it already handled a node's `log.md`. The worker's brief names the command for a merge the worker resolves by hand.
@@ -44,6 +62,9 @@ Needs Yggdrasil 6.1.0 or newer; an older one is refused with the release to inst
 
 ### Added
 
+- `queue.mjs regate <ticket> --note "<why>"` asks the gate again at the same commit when you judge its last red was a flake, with no worker raised and no empty commit to move the branch. What the gate command printed on its last run is now kept, so you can tell a flake from a failure.
+- `decide.mjs add` takes `--by` and `--supersedes`: who ruled, and an earlier ruling this one replaces, which is then marked as replaced.
+
 - A landing merges with Yggdrasil's own merge drivers, passed to git on every merge, whenever the installed Yggdrasil has them: two tickets that both added entries to a node's or a type's log, or both recorded verdicts, merge in git itself, and the log's baseline is recorded inside the merge commit. The merge stops only where the drivers refuse — history rewritten, or both tickets superseded the same decision — and such a stop is refused as before, never resolved by picking a side. What still conflicts goes to the landing's own rules as before.
 - The conflicts that parallel tickets on one node always meet are resolved at landing instead of refused: a node's `log.md` through `yg log merge-resolve`, Yggdrasil's lock files by taking the parent's side, and the files `config.appendOnly` lists when both sides only added lines. This works both when a landing brings the parent into a branch and when a batch of tickets is combined for one shared gate. Any other conflict is refused as before. When both sides open the same new heading at the same place, the merged file has that heading once, with both sides' lines under it. `horde init` lists a changelog it finds at the repository root in `appendOnly`, and the plan and the dispatch list no longer hold tickets back for touching an append-only file.
 - Under the external runner, each worker's and review's output goes to a log of its own, and `tick` prints the process id and the log path of everything it starts.
@@ -53,6 +74,11 @@ Needs Yggdrasil 6.1.0 or newer; an older one is refused with the release to inst
 - `tick` prints, beside the list of workers to start, how many landings the gate gets through in one tick interval at its measured speed, and how many of the workers you run at once would wait at landing. It is a reading to set the number of parallel workers against, not a limit.
 
 ### Changed
+
+- A ticket may name a component that holds only tests beside the one or two it changes, so a fix and the tests that pin its behaviour land together in one green change.
+- A file every change only adds lines to, such as a CHANGELOG, no longer counts toward the size of an area of the mission, so the area holding it can still be worked on.
+- `queue.mjs undep` now takes a dependency off the ticket's own dependency list too, and says so in the ticket's log. Before, only a queue edge came off, and the list itself could only be edited by hand.
+- A landing asks Yggdrasil who owns the files it touched in one call for all of them, not one call per file.
 
 - Horde now needs Yggdrasil 6.1.0 or newer, the release it ships with. An older one is refused, naming the version it reports and the release to install. Horde no longer reads anything Yggdrasil prints for a person: `yg drill` and `yg aspects --health` are read only as their documents, and a refusal is read by its code, never by its wording. An option the CLI does not know means the CLI is too old.
 - `horde done` trusts only what it runs itself. It runs the trunk gate at the trunk tip every time, and runs the command of every row filled by a command again there, refusing a row whose command fails now. What Horde recorded about earlier runs no longer counts as proof, because it is a file anyone can edit. `wave close --gate green --sha <sha>` now runs the gate at that commit, which must be on the trunk, and refuses to close the wave when it fails. `--gate red` is recorded as said. `--evidence` on a wave close needs `--gate green --sha`, and never fills a client-testimony or artifact row.

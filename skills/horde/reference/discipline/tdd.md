@@ -18,7 +18,7 @@ betting that a test written afterwards happens to be load-bearing. That bet is u
 is lost at the merge, after all the work is done.
 
 A change that adds no test at all — a rename, a move, a settings change — declares it on the
-ticket itself (`**No new tests:** <reason>` in `issue.md`) and is verified on its evidence rows
+ticket itself (`**No new tests:** <reason>` on the ticket) and is verified on its evidence rows
 instead. That is a claim about the diff, and the checklist reads the diff itself.
 
 ## The loop
