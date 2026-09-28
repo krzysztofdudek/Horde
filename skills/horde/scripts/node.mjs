@@ -1778,7 +1778,16 @@ export function markPromotionsReported(horde, promotions) {
 // writes "touched in the same commit 7 times — 7 of 12 for one" and "owns 9 files", and one more
 // commit or one more file changes those numbers without changing the advisory. A relation is one
 // pair of nodes and a split is one node, so for those two kinds the nodes are the whole identity;
-// any other kind can say several things about one node, so its text stays in the key with every
+// A rule is named by its own evidence instead: a boundary rule by the maintainer's decision it
+// drafts law for (`evidence.decision`), a convention rule by the rule itself (`evidence.rule`:
+// what it checks, for what value, over which kind of scope). Its node list and its text are where
+// it holds today — one more node following the convention, or one more import crossing the
+// boundary, changes both without making it another rule, and keying on them filed the same rule
+// again. The aspect id Grain drafts (`evidence.aspect`) is not the rule either: it names the node
+// that holds the rule most strongly, so it moves when another node overtakes that one; it is the
+// key only for a Grain that does not send `evidence.rule`. Grain has emitted rules only since
+// 6.1.0, so no ledger from before holds a rule entry to stay compatible with.
+// Any other kind can say several things about one node, so its text stays in the key with every
 // number in it read as the same number.
 const ADVISORIES_NAMED_BY_NODES = new Set(['relation', 'split']);
 
@@ -1786,6 +1795,10 @@ export function advisoryKey(item) {
   const kind = (item && item.kind) || 'item';
   const nodes = asArray(item && item.nodes).join('+');
   if (ADVISORIES_NAMED_BY_NODES.has(kind)) return `${kind}:${nodes}`;
+  const evidence = (item && item.evidence) || {};
+  if (kind === 'rule' && evidence.decision) return `rule:decision:${evidence.decision}`;
+  if (kind === 'rule' && evidence.rule) return `rule:convention:${evidence.rule}`;
+  if (kind === 'rule' && evidence.aspect) return `rule:aspect:${evidence.aspect}`;
   const text = String((item && item.text) || '').replace(/\d+/g, '#');
   let hash = 0;
   for (let i = 0; i < text.length; i++) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0;
