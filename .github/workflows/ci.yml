@@ -64,7 +64,10 @@ jobs:
       # A mission's record is a Jarl loop, written through Jarl's record module vendored under
       # skills/horde/scripts/vendor (vendor.mjs). Jarl moves with this repository in a joint
       # release, so the Jarl branch of the same name is checked out beside it, the way Yggdrasil is
-      # above: a pull request tries its head branch, then the branch it targets, and only then main.
+      # above: a pull request tries its head branch, then the branch it targets. With neither on Jarl
+      # (a feature branch pushed on its own, or main once the release branches are deleted) it checks
+      # out the commit the pin names, never Jarl's main: the copy is held to what it was taken from, and
+      # a Jarl change reaches this repository only through a pin moved in a commit here.
       - name: resolve Jarl branch
         id: jarl-branch
         run: |
@@ -76,7 +79,8 @@ jobs:
               break
             fi
           done
-          echo "ref=${found:-main}" >> "$GITHUB_OUTPUT"
+          [ -n "$found" ] || found="$(node -p "require('./skills/horde/scripts/vendor/jarl.pin.json').commit")"
+          echo "ref=${found}" >> "$GITHUB_OUTPUT"
       - name: checkout JarlSkill
         uses: actions/checkout@v4
         with:

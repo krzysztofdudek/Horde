@@ -1747,6 +1747,19 @@ export function hasLoopRecord(horde) {
 }
 
 export function oldMissionMessage(horde) {
+  // A .jarl/ with no live loop in it is not a 6.0.x mission: Jarl's own `archive` (or `close`) was run
+  // against the mission's loop. Nothing is lost by archive — the record moved under .jarl/archive/ — but
+  // calling it a 6.0.x mission would send the director to the wrong release.
+  const jarl = hordePath(horde, '.jarl');
+  if (existsSync(jarl)) {
+    const archiveDir = join(jarl, 'archive');
+    const kept = existsSync(archiveDir) ? readdirSync(archiveDir).sort() : [];
+    return `the mission "${horde}" has no live loop in .horde/hordes/${horde}/.jarl/ — Jarl's own archive or close was run on it`
+      + (kept.length
+        ? `; its record was moved to .horde/hordes/${horde}/.jarl/archive/${kept[kept.length - 1]}/ — move that directory's contents back into .horde/hordes/${horde}/.jarl/ to go on with the mission. `
+        : '. ')
+      + 'A mission\'s loop is closed by Horde (horde.mjs done, then archive), never by Jarl\'s own commands.';
+  }
   return `the mission "${horde}" was started by Horde 6.0.x, and this Horde keeps a mission's record in a Jarl loop `
     + `(.horde/hordes/${horde}/.jarl/) — it cannot read that mission's tickets, rulings and questions. `
     + 'Finish it with the Horde 6.0.x release it was started on (a mission does not change release mid-flight), '

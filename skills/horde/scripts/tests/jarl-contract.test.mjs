@@ -281,3 +281,27 @@ test('contract: a mission started by Horde 6.0.x is refused by name, with what t
   });
 
 });
+
+// Jarl's views must not lie about a mission: a ticket the director queued (queue.mjs add, no --proposed)
+// is one the schedule hands out, so the loop says queued, not proposed as if it still waited on the
+// architect. And a loop Jarl's own archive moved away is named as that, with where the record went —
+// never as a 6.0.x mission, which would send the director to the wrong release.
+test('contract: the loop says queued for a ticket the director queued, and a loop archived by Jarl is named as such', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const direct = newTicket(dir, 'direct');
+  const proposed = newTicket(dir, 'proposal');
+  assert.equal(run('queue.mjs', ['add', direct], dir).code, 0);
+  assert.equal(run('queue.mjs', ['add', proposed, '--proposed'], dir).code, 0);
+  assert.equal(statusOf(dir, direct), 'queued');
+  assert.equal(statusOf(dir, proposed), 'proposed');
+
+  if (!JARL.ok) { t.diagnostic(`archive half skipped — ${JARL.reason}`); return; }
+  assert.equal(jarl(['archive', 'oops', '--root', loopOf(dir)], dir).code, 0);
+  const r = run('tk.mjs', ['list'], dir);
+  assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /Jarl's own archive or close was run on it/);
+  assert.match(r.stderr, /\.jarl\/archive\/\d{4}\.\d{2}\.\d{2}-oops\//);
+  assert.doesNotMatch(r.stderr, /6\.0\.x/);
+});

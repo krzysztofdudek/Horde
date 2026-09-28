@@ -322,6 +322,9 @@ function cmdAdd(horde, positional, flags) {
     return created;
   });
   syncAfter(horde, team);
+  // Queued by the director (no --proposed) is queued in the mission's record too: Jarl's views of the
+  // loop must not show a ticket the schedule will hand out as one still waiting on the architect.
+  if (item.state === 'queued') followQueue(horde, item.ticket, 'queued', 'queued by the director', { always: true });
   emit(item, flags, () => `${item.state}: ${item.ticket}${ask ? ` — taken in on ask ${ask.id}` : ''}`);
 }
 
@@ -766,7 +769,7 @@ export function recordMerged(horde, team, key, sha, {
     });
   } catch (e) {
     if (!(e instanceof HordeError)) throw e;
-    recordNote = `the merge is made, but the mission's record did not close t-${key}: ${e.message}`;
+    recordNote = `the merge is made, but the mission's record did not close t-${key}: ${e.message} — once the cause is fixed, record it again: queue.mjs set ${key} merged --sha ${sha}${team !== 'trunk' ? ` --team ${team}` : ''} --horde ${horde}`;
   }
   return { item, journal: noteMerged(horde, team, key, String(sha)), recordNote };
 }
