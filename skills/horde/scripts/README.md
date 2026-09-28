@@ -1745,6 +1745,10 @@ retrospective runs at a time (`hordes/<h>/retro.lock`, taken over when the pid h
 That `yg log add` write runs in a scratch tree at the tip of `<h>/trunk` and is committed there as one
 commit on the trunk (`tasteCommit`), so the entries travel with the trunk and nothing is left
 uncommitted in any checkout; an entry that could not be committed is a note, and is not marked logged.
+The trunk is moved by `update-ref` naming its old tip, so none of this happens while `<h>/trunk` is
+checked out in any worktree: that would leave the checkout on a commit it no longer holds, and each
+entry is a note instead, written on the next run once the checkout has moved off the trunk. `done`'s
+log commit of rulings refuses the same way.
 The tree `--tree` names (or `--horde h` written out, or cwd) is still resolved, as on every other command.
 Gate refusals come from the ticket's log as well as its result file: every "changes" line the gate
 wrote (`land refused: …`) is one, keyed `gate:<ticket>:log<line>`, so a refusal a later green landing

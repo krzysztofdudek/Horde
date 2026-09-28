@@ -221,6 +221,11 @@ export function ticketGateState(text) {
     const m = new RegExp(`^\\*\\*${label}:\\*\\*(.*)$`, 'm').exec(String(text || ''));
     return `${label}=${m ? m[1].trim() : ''}`;
   });
+  // With no "**Revert base:**" header the revert test takes its base from a "red on <ref>" phrase in
+  // the body (land.mjs revertBaseRef), and a body rewrite (`tk.mjs edit --from`) changes it with no
+  // new commit, so that phrase is part of what the gate read too.
+  const redOn = /\bred on `?([^\s`]+)`?/.exec(String(text || ''));
+  lines.push(`red on=${redOn ? redOn[1].replace(/[.,;:)]+$/, '') : ''}`);
   return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
 }
 

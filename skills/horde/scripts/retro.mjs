@@ -40,7 +40,7 @@ import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   hordePath, readJSON, writeJSON, nowIso, fail, parseArgs, emit, isMain,
-  resolveHorde, resolveTree, readConfig, asArray, parseLogEntries, noEvidenceLayerNote, git, gitError, repoRoot,
+  resolveHorde, resolveTree, readConfig, asArray, parseLogEntries, noEvidenceLayerNote, git, gitError, repoRoot, checkoutOn,
   createLockFile, processAlive, readLockText, removeStaleLock, sleepSync,
   runMain,
 } from './_lib.mjs';
@@ -165,8 +165,10 @@ export function collectRetroInput(horde) {
     // The result file holds the LAST landing only; a refusal a later green landing wrote over is
     // still in the ticket's log, as the "changes" line the gate wrote when it refused (land.mjs
     // recordChanges: "land refused: …"). Every such line is a gate refusal; the last one is the result
-    // file's own when that result is still red, and is read from there instead.
-    let currentRed = false;
+    // file's own when that result is still red and the line says what it says, and is read from there
+    // instead. A red result that wrote no such line (a refusal waiting on the user, rounds already
+    // spent) leaves every line standing on its own.
+    let currentRed = null;
     if (existsSync(resultFile)) {
       let doc = null;
       try { doc = JSON.parse(readFileSync(resultFile, 'utf8')); } catch { doc = null; }
@@ -174,7 +176,8 @@ export function collectRetroInput(horde) {
         notes.push(`ticket ${t.id}: ${resultFile} would not parse, so what the gate refused on it was not read. Nothing else on this document was affected.`);
       } else {
         if (doc.landed && doc.landed.sha) landed.push({ ticket: t.id, sha: String(doc.landed.sha) });
-        currentRed = doc.ok === false && asArray(doc.checks).some((c) => c && !c.ok);
+        const red = asArray(doc.checks).filter((c) => c && !c.ok);
+        if (doc.ok === false && red.length) currentRed = red.map((c) => `${c.name}: ${c.note}`).join(' · ');
         asArray(doc.checks).forEach((c, i) => {
           if (!c || c.ok) return;
           items.push({
@@ -207,7 +210,10 @@ export function collectRetroInput(horde) {
     // about a status is still a remark, which is why this asks the log's own parser.
     const entries = parseLogEntries(readFileSync(t.logPath, 'utf8'));
     const refusedAt = entries.filter((e) => e.isStatus && e.status === 'changes' && /^land refused: /.test(e.note || ''));
-    const earlier = currentRed ? refusedAt.slice(0, -1) : refusedAt;
+    const flat = (x) => String(x || '').replace(/\s+/g, ' ').trim();
+    const lastSaid = refusedAt.length ? flat(refusedAt[refusedAt.length - 1].note.replace(/^land refused: /, '')) : '';
+    const sameAsResult = currentRed !== null && lastSaid !== '' && flat(currentRed).startsWith(lastSaid);
+    const earlier = sameAsResult ? refusedAt.slice(0, -1) : refusedAt;
     for (const entry of earlier) {
       items.push({
         key: `gate:${t.id}:log${entry.index}`,
@@ -325,6 +331,15 @@ function logTaste(horde, cfg, items, alreadyLogged) {
   const sha = git(['rev-parse', '--verify', `${branch}^{commit}`], root);
   if (!sha) {
     out.failed = `there is no ${branch} to write them onto`;
+    out.missed = todo.map((it) => ({ key: it.key, node: it.node }));
+    return out;
+  }
+  // The trunk is moved with `update-ref`, which is only safe while nobody has it checked out: a
+  // checkout on it would be left on a commit it no longer holds. Refused then, and the entries stand
+  // on this document until the next run, after the checkout has moved off the trunk.
+  const checkout = checkoutOn(branch, root);
+  if (checkout) {
+    out.failed = `${branch} is checked out at ${checkout}, and the entries are committed onto it without touching any checkout — switch that tree off ${branch} and run the retrospective again`;
     out.missed = todo.map((it) => ({ key: it.key, node: it.node }));
     return out;
   }

@@ -536,6 +536,58 @@ test('retro.mjs: a ticket directory named in unicode is read through without dis
   assert.match(log.out, /zażółć gęślą jaźń/);
 });
 
+// The result file holds the last landing only; the refusals before it are read from the ticket's log.
+// The last "land refused" line stands for the red result on file only when it says what that result
+// says: a red result that wrote no such line (one waiting on the user) leaves every line counted.
+test('retro.mjs: a refusal in the log is dropped for the red result on file only when the two are the same refusal', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  initHorde(dir);
+  const refused = (what, n) => `changes — land refused: gate: ${what} (round ${n}/5 — resume same worker)`;
+  seedTicket(dir, 'mission1', '001', {
+    states: ['queued', refused('first refusal', 1), refused('second refusal', 2)],
+    refusals: ['second refusal'],
+  });
+  seedTicket(dir, 'mission1', '002', {
+    slug: 'waiting',
+    states: ['queued', refused('the only counted refusal', 1)],
+    refusals: ['a decision only the user can make'],
+  });
+  const r = run('retro.mjs', [], dir);
+  assert.equal(r.code, 0, r.stderr);
+  const gate = (id) => r.json.items.filter((i) => i.source === 'gate' && i.ticket === id).map((i) => i.text);
+  assert.equal(gate('001').length, 2, gate('001').join('\n'));
+  assert.ok(gate('001').some((x) => /first refusal/.test(x)));
+  assert.ok(gate('001').some((x) => /second refusal/.test(x)));
+  assert.equal(gate('002').length, 2, gate('002').join('\n'));
+  assert.ok(gate('002').some((x) => /the only counted refusal/.test(x)));
+  assert.ok(gate('002').some((x) => /only the user can make/.test(x)));
+});
+
+// Taste is committed onto the trunk by moving the branch with update-ref, which would strand a checkout
+// sitting on the trunk. With the trunk checked out, nothing is moved: the entries stand on the document.
+test('retro.mjs: taste is not put on a trunk somebody has checked out, and that checkout is left as it was', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  initHorde(dir);
+  seedTicket(dir, 'mission1', '001', { remarks: ['keep the login path free of IO'] });
+  const first = run('retro.mjs', [], dir);
+  assert.equal(first.code, 0, first.stderr);
+  writeClasses(dir, 'mission1', { 'log:001:1': { class: 'taste', node: 'auth' } });
+  const wt = join(dir, 'trunk-checkout');
+  git(['worktree', 'add', '-q', wt, 'mission1/trunk'], dir);
+  const before = git(['rev-parse', 'mission1/trunk'], dir).trim();
+  const r = run('retro.mjs', ['--tree', dir], dir);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(git(['rev-parse', 'mission1/trunk'], dir).trim(), before, 'the trunk did not move');
+  assert.equal(r.json.tasteCommit, null);
+  assert.deepEqual(r.json.logged, []);
+  assert.ok(r.json.notes.some((n) => /checked out at/.test(n)), r.json.notes.join('\n'));
+  assert.equal(git(['status', '--porcelain'], wt).trim(), '', 'the checkout on the trunk is clean');
+});
+
 // ---- what came back after landing --------------------------------------------------------------
 //
 // A refusal is the law catching something before it landed. A return is the evidence failing after

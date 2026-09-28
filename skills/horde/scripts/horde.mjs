@@ -679,6 +679,9 @@ function commitGraph(root, base, paths) {
       execFileSync('git', ['commit', '-q', '-m', GRAPH_COMMIT_MESSAGE, '--', ...present], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
       const said = ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || '');
+      // What this staged is taken back out of the index, so a refused commit leaves the checkout's
+      // index as the user had it; the files stay on disk.
+      git(['reset', '-q', '--', ...present], root);
       return { sha: null, why: `git commit on ${base} was refused:\n${said.trim() || e.message}` };
     }
     return { sha: git(['rev-parse', 'HEAD'], root), where: base };
@@ -772,8 +775,10 @@ function cmdInit(positional, flags) {
   // A graph this init made is committed before the trunk is cut, so the trunk carries it.
   let cutFrom = flags.base;
   let graphCommitNote = null;
+  let graphCommit = null;
   if (graph.created) {
     const committed = commitGraph(root, flags.base, graph.graphPaths || ['.yggdrasil']);
+    graphCommit = committed.sha || null;
     if (committed.sha) {
       if (!committed.where) cutFrom = committed.sha;
       graphCommitNote = committed.where
@@ -870,7 +875,7 @@ function cmdInit(positional, flags) {
       branch,
       base: flags.base,
       graph: {
-        created: graph.created, mined: !!graph.mined, notes: [...graph.lines, ...(graphCommitNote ? [graphCommitNote] : [])], committed: graph.created ? startSha : null,
+        created: graph.created, mined: !!graph.mined, notes: [...graph.lines, ...(graphCommitNote ? [graphCommitNote] : [])], committed: graphCommit,
       },
       grain: { command: graph.grain.display, version: graph.grain.version },
       graphGate,

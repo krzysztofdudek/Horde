@@ -107,7 +107,11 @@ turns both off, and `tk.mjs new --no-quality` turns them off for one ticket**; t
 The graph is the repository's Yggdrasil graph and nothing else — `node.mjs bind` reads it, the horde
 never edits it except through `yg`. A repository that has no graph gets one at `horde init` — created
 with `yg`, proposed by Grain from the repository's own code and accepted, which is the only way a
-first graph arrives with rules describing how the code is already written. Grain is required beside
+first graph arrives with rules describing how the code is already written. `init` commits that graph
+before it cuts the trunk, so the trunk carries it: on the base branch, through the repository's own
+hooks, when the checkout is on it, and otherwise as the trunk's first commit, leaving the base alone.
+A commit on the user's own branch is theirs to know about, so tell them which of the two `init` said it
+did. Grain is required beside
 Yggdrasil, because the architect measures with it (below). Without either, `init` refuses before
 anything exists and names the install step. A graph that needs a further cut — a
 node too big to hold, a piece that does not belong where it sits — is not something you negotiate

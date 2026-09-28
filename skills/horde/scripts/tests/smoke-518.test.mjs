@@ -126,6 +126,9 @@ test('519 — init with --yg naming a build while an older yg sits on PATH mines
     // …committed on main, and the trunk carries them.
     assert.equal(git(['log', '-1', '--format=%s', 'main'], dir), 'architecture graph: yg init, and the proposal Grain mined from this repository adopted');
     assert.equal(git(['rev-parse', 'truncate/trunk'], dir), git(['rev-parse', 'main'], dir));
+    // A commit on the user's own branch is said, with its sha, in what init prints.
+    assert.equal(r.json.graph.committed, git(['rev-parse', 'main'], dir));
+    assert.ok(r.json.graph.notes.some((n) => /^graph committed on main as [0-9a-f]{7}/.test(n)), r.json.graph.notes.join('\n'));
     const onTrunk = git(['ls-tree', '-r', '--name-only', 'truncate/trunk'], dir).split('\n');
     assert.ok(onTrunk.some((p) => p.startsWith('.yggdrasil/model/') && p.endsWith('yg-node.yaml')), onTrunk.join('\n'));
     assert.ok(onTrunk.includes('.yggdrasil/yg-architecture.yaml'));

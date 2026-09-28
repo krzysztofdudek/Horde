@@ -39,7 +39,7 @@ import { dirname, join } from 'node:path';
 import {
   fail, parseArgs, emit, isMain, resolveHorde, readText, parseDecisionEntries, runMain,
   hordePath, createLockFile, processAlive, readLockText, removeStaleLock, sleepSync, nowIso,
-  decisionField, resolveTree, git, gitError, repoRoot,
+  decisionField, resolveTree, git, gitError, repoRoot, checkoutOn,
 } from './_lib.mjs';
 import { ygCommand, ygTimeout } from './node.mjs';
 import {
@@ -364,6 +364,14 @@ export function writeGraphLogs(horde, cfg, { branch, sha }) {
   if (!items.length) return out;
   const yg = ygCommand(cfg);
   const root = repoRoot();
+  // The trunk is moved with `update-ref`, safe only while nobody has it checked out: a checkout on
+  // it would be left on a commit it no longer holds. Each entry is reported instead, and none is
+  // marked, exactly as when the trunk moved under the run.
+  const checkout = checkoutOn(branch, root);
+  if (checkout) {
+    for (const it of items) out.failed.push({ ...it, reason: `${branch} is checked out at ${checkout}, and moving it there would leave that tree on a commit it no longer holds, so the entries were not put on it`, retry: null });
+    return out;
+  }
   const info = resolveTree({ scratch: sha });
   const tmp = mkdtempSync(join(tmpdir(), 'horde-graph-log-'));
   const wrote = [];
