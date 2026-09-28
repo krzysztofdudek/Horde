@@ -11,7 +11,7 @@ import { createServer } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode, addAspect, yg, requireYg, MARKER_CHECK, git,
-  writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE, issueFileOf,
+  writeEvidenceJudgement, NO_EVIDENCE_LAYER, A_TEST_SUITE, issueFileOf, requireGrain,
 } from './helpers.mjs';
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 import {
@@ -398,7 +398,7 @@ test('horde.mjs init reads a missing reviewer off the graph, and names it as the
     t.after(() => rmRepo(dir));
     assert.equal(yg(dir, ['init']).code, 0);
     proseRuleOnMain(dir);
-    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg(), '--grain', requireGrain()], dir, { json: false });
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /prose rules here wait on a decision only the user can make/);
     assert.match(r.stdout, /configuring a reviewer/, 'the graph\'s own next step is carried');
@@ -410,7 +410,7 @@ test('horde.mjs init reads a missing reviewer off the graph, and names it as the
   await t.test('no prose rule at all: nothing waits on a reviewer, and nothing is said to be missing', () => {
     const dir = makeRepo();
     t.after(() => rmRepo(dir));
-    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir);
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg(), '--grain', requireGrain()], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual(r.json.reviewerGap, { read: true, gap: false });
   });
@@ -420,7 +420,7 @@ test('horde.mjs init reads a missing reviewer off the graph, and names it as the
     t.after(() => rmRepo(dir));
     assert.equal(yg(dir, ['init', '--provider', 'claude-code', '--model', 'sonnet']).code, 0);
     proseRuleOnMain(dir);
-    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir, { json: false });
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg(), '--grain', requireGrain()], dir, { json: false });
     assert.equal(r.code, 0, r.stderr);
     assert.match(r.stdout, /prose rules are judged by the reviewer configured in this repository's graph/);
     assert.doesNotMatch(r.stdout, /decision only the user can make/);
@@ -434,7 +434,7 @@ test('horde.mjs init refuses a commit hook that runs a full check while a prose 
   proseRuleOnMain(dir);
   writeFileSync(join(dir, '.git', 'hooks', 'pre-commit'), '#!/bin/sh\nyg check\n');
 
-  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg()], dir);
+  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', '--yg', requireYg(), '--grain', requireGrain()], dir);
   assert.equal(r.code, 1);
   assert.match(r.stderr, /runs a full `yg check` on every commit, and this repository has no Yggdrasil reviewer configured for its prose rules \(reads-well\)/);
   assert.match(r.stderr, /Prose rules are judged only by that reviewer/);

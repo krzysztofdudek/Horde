@@ -24,7 +24,7 @@ import assert from 'node:assert/strict';
 import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, requireYg, git,
+  makeRepo, rmRepo, run, initHorde, addNode, requireYg, git, requireGrain, yg,
 } from './helpers.mjs';
 
 test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async (t) => {
@@ -32,15 +32,18 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
   t.after(() => rmRepo(dir));
 
   await t.test('1. horde init', () => {
-    const init = run('horde.mjs', ['init', 'pilot', '--base', 'develop', '--title', 'Pilot', '--yg', requireYg(), '--test-globs', '**/*.test.*'], dir);
+    // A blank graph from the real `yg init` first: `init` on a repository with no graph mines one with
+    // Grain (E10 covers that), and this walk builds its components by hand on a blank one.
+    assert.equal(yg(dir, ['init']).code, 0);
+    const init = run('horde.mjs', ['init', 'pilot', '--base', 'develop', '--title', 'Pilot', '--yg', requireYg(), '--grain', requireGrain(), '--test-globs', '**/*.test.*'], dir);
     assert.equal(init.code, 0, init.stderr);
     // The gate this repository is held to for the rest of the walk, and the judge policy, said
     // once here rather than at each step that needs them.
     assert.equal(run('horde.mjs', ['config', 'set', 'gates.team', 'true'], dir).code, 0);
     assert.equal(existsSync(join(dir, '.horde')), true);
-    // horde-requires-yggdrasil: a repository with no graph gets one, made by the real CLI.
+    // horde-requires-yggdrasil: the graph is the real CLI's, and init kept it.
     assert.equal(existsSync(join(dir, '.yggdrasil', 'yg-architecture.yaml')), true);
-    assert.equal(init.json.graph.created, true);
+    assert.equal(init.json.graph.created, false);
     assert.equal(readFileSync(join(dir, '.horde', '.gitignore'), 'utf8').trim(), '*');
     assert.match(git(['branch', '--list', 'pilot/trunk'], dir), /pilot\/trunk/);
     const charter = readFileSync(join(dir, '.horde', 'hordes', 'pilot', 'charter.md'), 'utf8');

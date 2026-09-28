@@ -61,6 +61,33 @@ jobs:
           # (tests/ratatoskr-product-language-drift.test.mjs) only reads two text files off this
           # checkout; no build or install step is needed.
           path: ratatoskr
+      # Horde requires Grain (the architect measures with it), and so does the suite: requireGrain() in
+      # tests/helpers.mjs throws rather than skip. Grain moves with this repository in a joint release,
+      # so the Grain branch of the same name is checked out beside it: a pull request tries its head
+      # branch, then the branch it targets. With neither on Grain (a feature branch pushed on its own)
+      # it takes Grain's release branch for this repository's own version (release/<plugin.json
+      # version>), which carries the Grain this release needs, and only once that branch is gone —
+      # the release merged — Grain's main. Grain runs with nothing to install: its parser runtime,
+      # grammars and Runes are vendored.
+      - name: resolve Grain branch
+        id: grain-branch
+        run: |
+          found="main"
+          release="release/$(node -p "require('./plugin.json').version")"
+          for branch in "${{ github.head_ref || github.ref_name }}" "${{ github.base_ref }}" "$release"; do
+            [ -n "$branch" ] || continue
+            if git ls-remote --exit-code --heads "https://github.com/krzysztofdudek/Grain.git" "$branch" >/dev/null 2>&1; then
+              found="$branch"
+              break
+            fi
+          done
+          echo "ref=${found}" >> "$GITHUB_OUTPUT"
+      - name: checkout Grain
+        uses: actions/checkout@v4
+        with:
+          repository: krzysztofdudek/Grain
+          ref: ${{ steps.grain-branch.outputs.ref }}
+          path: grain
       # A mission's record is a Jarl loop, written through Jarl's record module vendored under
       # skills/horde/scripts/vendor (vendor.mjs). Jarl moves with this repository in a joint
       # release, so the Jarl branch of the same name is checked out beside it, the way Yggdrasil is
@@ -102,6 +129,7 @@ jobs:
         env:
           HORDE_TEST_RATATOSKR_DIR: ${{ github.workspace }}/ratatoskr
           HORDE_TEST_JARL: ${{ github.workspace }}/jarl/skills/jarl/scripts/jarl.mjs
+          HORDE_TEST_GRAIN: node ${{ github.workspace }}/grain/plugins/grain/bin/grain.mjs
         run: |
           node vendor.mjs check
           node runes.mjs check --offline --pin vendor/runes.pin.json
@@ -195,6 +223,33 @@ jobs:
         with:
           repository: krzysztofdudek/RatatoskrSkill
           path: ratatoskr
+      # Horde requires Grain (the architect measures with it), and so does the suite: requireGrain() in
+      # tests/helpers.mjs throws rather than skip. Grain moves with this repository in a joint release,
+      # so the Grain branch of the same name is checked out beside it: a pull request tries its head
+      # branch, then the branch it targets. With neither on Grain (a feature branch pushed on its own)
+      # it takes Grain's release branch for this repository's own version (release/<plugin.json
+      # version>), which carries the Grain this release needs, and only once that branch is gone —
+      # the release merged — Grain's main. Grain runs with nothing to install: its parser runtime,
+      # grammars and Runes are vendored.
+      - name: resolve Grain branch
+        id: grain-branch
+        run: |
+          found="main"
+          release="release/$(node -p "require('./plugin.json').version")"
+          for branch in "${{ github.head_ref || github.ref_name }}" "${{ github.base_ref }}" "$release"; do
+            [ -n "$branch" ] || continue
+            if git ls-remote --exit-code --heads "https://github.com/krzysztofdudek/Grain.git" "$branch" >/dev/null 2>&1; then
+              found="$branch"
+              break
+            fi
+          done
+          echo "ref=${found}" >> "$GITHUB_OUTPUT"
+      - name: checkout Grain
+        uses: actions/checkout@v4
+        with:
+          repository: krzysztofdudek/Grain
+          ref: ${{ steps.grain-branch.outputs.ref }}
+          path: grain
       # The runner's temp directory is a short 8.3 name (C:\Users\RUNNER~1\…) that git prints long,
       # and the suite compares the two spellings in many places; the job's own temp directory has
       # only the one.
@@ -202,6 +257,7 @@ jobs:
         working-directory: skills/horde/scripts
         env:
           HORDE_TEST_RATATOSKR_DIR: ${{ github.workspace }}/ratatoskr
+          HORDE_TEST_GRAIN: node ${{ github.workspace }}/grain/plugins/grain/bin/grain.mjs
           TMP: ${{ runner.temp }}
           TEMP: ${{ runner.temp }}
         run: |

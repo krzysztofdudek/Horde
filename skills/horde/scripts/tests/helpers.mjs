@@ -9,7 +9,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { YG_DOCUMENTS_AFTER } from '../node.mjs';
+import { YG_DOCUMENTS_AFTER, grainCheck } from '../node.mjs';
 import { splitCommandLine, programFor } from '../_lib.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -56,10 +56,13 @@ function splitSubcommand(args) {
   return { prefix: args.slice(), subcommand: undefined };
 }
 
-export function git(args, cwd) {
+// `env`, when given, is laid over the process environment for this one call — a fixture that needs its
+// history dated (GIT_AUTHOR_DATE, GIT_COMMITTER_DATE) says so here instead of changing the suite's own.
+export function git(args, cwd, env) {
   const { prefix, subcommand } = splitSubcommand(args);
+  const base = { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env: { ...process.env, ...env } } : {}) };
   if (!COMMIT_WRITING_SUBCOMMANDS.has(subcommand)) {
-    return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    return execFileSync('git', args, base).trim();
   }
   for (let attempt = 1; attempt <= SIGNING_RETRY_ATTEMPTS; attempt += 1) {
     // Attempt 1 always runs the caller's own command. A `merge` or `revert` that failed at the
@@ -74,7 +77,7 @@ export function git(args, cwd) {
     // an already-staged `merge`/`revert`.
     const thisAttempt = (attempt === 1 || subcommand === 'commit') ? args : [...prefix, 'commit', '--no-edit'];
     try {
-      return execFileSync('git', thisAttempt, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      return execFileSync('git', thisAttempt, base).trim();
     } catch (e) {
       const stderr = e.stderr ? e.stderr.toString() : '';
       const transient = isTransientSigningFailure(stderr);
@@ -144,13 +147,21 @@ export function run(toolName, args, cwd, { json = true, env } = {}) {
 // its tests are called; every test that reaches the merge checklist declares it here the way a
 // real adopter would, unless it passes its own --test-globs to exercise the detection itself.
 //
-// `--yg` names the real Yggdrasil build on this machine, because Horde requires Yggdrasil: on a
-// repository with no graph `init` creates one through that CLI, so every fixture below gets a real
-// `.yggdrasil/` made by the real thing, never a hand-written stand-in.
+// `--yg` names the real Yggdrasil build on this machine, because Horde requires Yggdrasil: every
+// fixture below gets a real `.yggdrasil/` made by the real thing, never a hand-written stand-in.
+// `--grain` names the real Grain build, because Horde requires Grain too. A fixture with no graph
+// yet gets a blank one from the real `yg init` first: `init` on a repository with no graph mines
+// one with Grain (`grain propose` + `yg adopt`), which is its own test (E10, E18), and a fixture
+// that wants a blank graph to build on by hand is not asking for that.
 export function initHorde(dir, name = 'mission1', extra = []) {
   const globs = extra.includes('--test-globs') ? [] : ['--test-globs', '**/*.test.*,**/*.spec.*'];
   const ygFlag = extra.includes('--yg') ? [] : ['--yg', requireYg()];
-  const r = run('horde.mjs', ['init', name, '--base', 'develop', ...globs, ...ygFlag, ...extra], dir);
+  const grainFlag = extra.includes('--grain') ? [] : ['--grain', requireGrain()];
+  if (!existsSync(join(dir, '.yggdrasil'))) {
+    const made = yg(dir, ['init']);
+    if (made.code !== 0) throw new Error(`initHorde: yg init failed: ${made.out}`);
+  }
+  const r = run('horde.mjs', ['init', name, '--base', 'develop', ...globs, ...ygFlag, ...grainFlag, ...extra], dir);
   if (r.code !== 0) throw new Error(`initHorde failed: ${r.stderr}`);
   return r.json;
 }
@@ -239,6 +250,46 @@ export function requireYg() {
     throw new Error(ygFloorRefusal() || (
       'no Yggdrasil CLI on this machine — Horde requires it, and so does this suite. Put `yg` on '
       + 'PATH, set HORDE_TEST_YG to a command line, or check out Yggdrasil beside this repository.'));
+  }
+  return found;
+}
+
+// requireGrain() — the real Grain CLI, or a refusal that says why the suite cannot run without one.
+// Horde requires Grain (the architect measures with it); a suite that stood in for it would prove
+// something no adopter runs. Found once per process: HORDE_TEST_GRAIN, then GRAIN_BIN (the name the
+// family end-to-end test uses), then `grain` on PATH, then a Grain checkout beside this repository.
+let resolvedGrain;
+export function findRealGrain() {
+  if (resolvedGrain !== undefined) return resolvedGrain;
+  const asLine = (raw) => {
+    const t = String(raw || '').trim();
+    if (!t) return null;
+    return /\.(mjs|js|cjs)$/.test(t) && !/\s/.test(t) ? `node "${t}"` : t;
+  };
+  const candidates = [];
+  if (process.env.HORDE_TEST_GRAIN) candidates.push(asLine(process.env.HORDE_TEST_GRAIN));
+  else if (process.env.GRAIN_BIN) candidates.push(asLine(process.env.GRAIN_BIN));
+  else {
+    candidates.push('grain');
+    let dir = SCRIPTS_DIR;
+    for (let i = 0; i < 12; i++) {
+      const candidate = join(dir, 'Grain', 'plugins', 'grain', 'bin', 'grain.mjs');
+      if (existsSync(candidate)) { candidates.push(`node "${candidate}"`); break; }
+      const up = resolve(dir, '..');
+      if (up === dir) break;
+      dir = up;
+    }
+  }
+  resolvedGrain = candidates.filter(Boolean).find((c) => grainCheck(c).ok) || null;
+  return resolvedGrain;
+}
+
+export function requireGrain() {
+  const found = findRealGrain();
+  if (!found) {
+    throw new Error('no Grain CLI (6.1.0 or newer) on this machine — Horde requires it, and so does this suite. '
+      + 'Set HORDE_TEST_GRAIN to a command line (node <path to Grain>/plugins/grain/bin/grain.mjs), put `grain` '
+      + 'on PATH, or check Grain out beside this repository.');
   }
   return found;
 }

@@ -53,13 +53,16 @@ A copy of Runes' own `tools/vendor.mjs`, pinned in `vendor/runes.pin.json` besid
 - `init <name> --base <branch> [--title "…"] [--test-globs <glob>[,glob…]]
   [--nodes <node>[,node…]]` —
   **the graph first.** horde-requires-yggdrasil: on a repository with no `.yggdrasil/` it runs
-  `<ygCommand> init` from the repository root (never a subdirectory — Yggdrasil's own rule) and then,
-  when `config.grainCommand` names a Grain CLI or a bare `grain` resolves on PATH, `grain propose
-  .yggdrasil-proposal` followed by `<ygCommand> adopt .yggdrasil-proposal --replace`, whose own report
-  — components, rules by status, and how many sites in the code already here the new rules refuse —
-  is printed verbatim. With no graph and no Yggdrasil CLI it refuses outright, naming the install
-  step, **before** `.horde/` or anything else of this horde exists. With Grain absent the graph is
-  created empty and the result says how to name a Grain command and what that would add.
+  `<ygCommand> init` from the repository root (never a subdirectory — Yggdrasil's own rule) and then
+  `grain propose .yggdrasil-proposal` followed by `<ygCommand> adopt .yggdrasil-proposal --replace`,
+  whose own report — components, rules by status, and how many sites in the code already here the new
+  rules refuse — is printed verbatim. With no graph and no Yggdrasil CLI it refuses outright, naming
+  the install step, **before** `.horde/` or anything else of this horde exists. **Grain is required
+  too** (since 6.1.0; the architect measures with it): `--grain`, else `config.grainCommand`, else a
+  bare `grain` on PATH, asked `grain version` and held to 6.1.0 or newer, the first release that
+  answers `grain-cochange/1` and `grain-measure/1`. Without one that runs, `init` refuses the same
+  way, before anything exists, naming the install step; with one, it writes the command that answered
+  into `config.grainCommand` and says which version it is (`--json`: `grain: {command, version}`).
   Then: creates `.horde/` if missing (with
   `.gitignore` = `*` and a default `config.json`), `hordes/<name>/` with `charter.md` from the template,
   empty journals, `teams/trunk/`, and the branch `<name>/trunk` off `<base>` (no checkout of the
@@ -99,7 +102,8 @@ A copy of Runes' own `tools/vendor.mjs`, pinned in `vendor/runes.pin.json` besid
   against that tree: to nothing, or to the install of a directory above it, which may be another version
   than the graph was written with. Give an absolute path to a CLI at the version of the trunk's graph. A
   refusal for an old CLI names the tree it ran in and the version the CLI reports from there), `grainCommand`
-  (how it invokes Grain, when it has one — default none, and `init` says what naming one would add),
+  (how it invokes Grain — default `grain`; required, so `config set` refuses an empty value, and `init`
+  and the cut refuse one that does not run),
   `protectedPaths[]`, `appendOnly[]` (files where every change only adds lines, such as a
   CHANGELOG — `init` lists a changelog it finds at the root; a merge where both sides only added
   lines to one keeps both, at catch-up and when a batch is combined, and the files hold no ticket
@@ -174,7 +178,9 @@ A copy of Runes' own `tools/vendor.mjs`, pinned in `vendor/runes.pin.json` besid
   other file (the run's answer is written there); no retrospective has been run on this mission at all, or the one on file was taken over
   a different set of landed tickets than the mission now has (run `retro.mjs --horde h` again).
   Otherwise: the charter is already stamped (a side effect of the evidence check above), the
-  completion block (`templates/mission-close.md`) is appended to the mission's `plan.md`, and the
+  completion block (`templates/mission-close.md`) is appended to the mission's `plan.md`, the
+  client's report is written one last time with the mission's territory measured before and after
+  (`report.mjs` below; `measure` in the result, and one line of it in the text), and the
   result says what to do next — push, a decision that stays the chairman's, never this tool's.
 
 ## loop.mjs — the mission's record, on Jarl's loop
@@ -489,8 +495,11 @@ the spawn lists and takes their results back off disk. Every step runs twice —
 brief, once to read back the file that brief asked for — and a step with nothing to read yet never
 guesses at an answer.
 
-- `--step cut` — first run prints a one-shot architect's brief (the mission card, the `yg
-  tree`/`structure`/`node`/`impact` reads, Grain's map where there is one, and what a territory is).
+- `--step cut` — refuses first, naming the install step, when there is no Grain 6.1.0 or newer that
+  runs: the architect measures with it. The first run prints a one-shot architect's brief (the
+  mission card, the `yg tree`/`structure`/`node`/`impact` reads, Grain's map and the two `grain
+  cochange` reads a cut is weighed with — which components change together more often than chance,
+  and how a candidate cut follows those seams — and what a territory is).
   The architect answers by writing `hordes/<horde>/territories.json`:
   `{"<territory>": {"nodes": ["<node>", …], "class": "<class>", "why": "<one sentence>"}}`. Second
   run checks it and leases every territory in it. Three rules are checked by the script, not asked
@@ -499,6 +508,20 @@ guesses at an answer.
   subtree root included; and one node sits in at most one territory. The class is validated against
   `config.classes`, never against a literal here. Everything is checked before anything is claimed,
   so a refused cut leaves no lease behind.
+- **The score.** An accepted cut is scored by Grain against the repository's own history: the
+  territories as a partition (`grain cochange --partition hordes/<horde>/cut-partition.json --level
+  node --runs 3 --json`, `grain-cochange/1`, run from the main checkout, reading the graph of the tree
+  the cut was checked in with `--graph`). `hordes/<horde>/cut-score.json` and the step's own output
+  carry how many retained commits that touched the territories stayed inside one (`commits`), how many
+  imports between their files did (`imports`), how many of the component pairs the history changes
+  together more often than chance sit inside one territory or across two (`pairs`, and the strongest
+  crossing ones by name in `crossing`), the same shares for 30 random cuts along the directory tree
+  (`control`), and one sentence of advice from those numbers. Every share carries its denominator. It
+  is advice, never a refusal: the cut stands whatever it says, and a score that could not be taken
+  (one territory, territories that map no file yet, a Grain that failed or answered another schema
+  version) is `scored: false` with the reason. A node that maps no file is left out of the partition
+  and named. The review step's brief carries the score, so the architect ruling the plan reads the
+  seams the cut crosses beside the tickets on both sides of them.
 - **The size.** `config.territory.maxBytes` (default 400000), one number for the whole horde: the
   bytes of the code a territory's nodes map, plus the text of every rule that reaches those files
   (counted once per rule), plus those nodes' own logs. A mapped file the consultant does not read —
@@ -525,8 +548,8 @@ guesses at an answer.
   and is it already law; what contract do I need from a neighbour. The consultant writes its own
   tickets (`tk.mjs new`, then `queue.mjs add --proposed`, with `tk.mjs edit --depends` for the
   edges) and its own law proposals (`node.mjs propose rule`). Nothing comes back as prose. It decides
-  the inside of its territory; it does not decide the boundary. Grain is optional, so a brief without
-  it still renders and says what is missing rather than falling over.
+  the inside of its territory; it does not decide the boundary. A Grain read that fails leaves the
+  brief rendered, saying which read is missing, rather than falling over.
 - **What closed missions already learned here.** The brief also carries the part of the archive
   (`horde.mjs history`, above) that belongs to this territory and to no other: the rule proposals
   past retrospectives made about its nodes, the things those missions found the law will not say
@@ -605,8 +628,15 @@ has no branch yet, since there is no change to read.
 
 `legislate <territory>` is the one-shot that writes a territory's law down. Everything in its brief is
 scoped to that territory and to nothing else: the landing gate's refusals on ITS tickets (from
-`land`'s own result files under `hordes/<horde>/land/`), those tickets' own logs, and the rules the
-graph declares that reach nothing at all here. It writes rules in its own branch, attaches them to its
+`land`'s own result files under `hordes/<horde>/land/`), those tickets' own logs, the rules the
+graph declares that reach nothing at all here, and the rules Grain drafts for the territory's own
+components — the `kind: rule` items of `grain advise --json` (`grain-advice/1`, run from the main
+checkout with `--graph` naming the tree the brief reads) whose nodes are the territory's or under
+them, each with its conforming and deviating counts and its draft (`yg-aspect.yaml` and `check.mjs`
+for a convention, the type-table denial for a maintainer's boundary), and the ticket the quality pass
+already filed for it, by the same advisory key. A draft enters no higher than advisory: law the
+territory proposes for the client to ratify. A Grain read that fails says so in that section, and the
+brief still renders. It writes rules in its own branch, attaches them to its
 own components, and raises them on evidence with `node.mjs promote`; it never lowers one, and the
 landing gate's law guard refuses a branch that tries. The territory comes from `territories.json`
 (`refine.mjs --step cut`); without one the command refuses rather than write law for an area nobody
@@ -901,7 +931,7 @@ section below.
 
 ## report.mjs — the mission as the client sees it
 
-`report [--out <path>] [--horde h] [--json]`. One page of plain language for the client who never
+`report [--out <path>] [--no-measure] [--horde h] [--json]`. One page of plain language for the client who never
 opens the terminal — the frame's rule, no tool names, no commands, no branches — answering what is
 waiting on them and what has been proven. It holds the open questions, each in its own words with
 when it was asked and what kind of decision it is; every row of the charter's evidence catalogue in
@@ -910,7 +940,18 @@ proven, proven — and "came back" for a row whose landed work was reverted or r
 landing results' own fates); what landed since the last report was written (`report.json` keeps
 only which merged tickets the last one already counted) and how much in all, over every team's queue (a nested team of a mission from before 6.0.0
 included); the work in progress,
-and how many finished branches wait to be merged, with the forecast `tick` measures.
+and how many finished branches wait to be merged, with the forecast `tick` measures; and what the
+work did to the mission's territory, before and after: Grain's `grain measure --from <start> --to
+<trunk tip> --scope <the cut's components> --json` (`grain-measure/1`), run in the mission's trunk tree
+(the range is counted over the history of the tree Grain runs in), from the commit `start.json`
+recorded to the trunk's tip, in plain words — files, links inside the territory, out of it and into
+it, the share that stays inside, the dependencies between components the graph does not declare, and
+how many of the mission's commits there also touched something outside against the territory's own
+commits just before, each with its count. Measuring builds the model at two commits, so it is taken
+by a wave close, by `horde.mjs done` and by this command (unless `--no-measure`), and kept in
+`hordes/<horde>/measure.json` (reused while the trunk tip and the scope are unchanged); `tick` and a
+filed question carry the last reading as it was. With no cut, nothing landed yet, or a Grain that
+failed, the section says why in one sentence.
 
 It is rewritten, never appended to: by every `tick` pass (`report: {path, paths}` in its result, or
 `{path: null, note}` when it could not be written — the pass goes on), by every `wave close`
@@ -918,7 +959,10 @@ It is rewritten, never appended to: by every `tick` pass (`report: {path, paths}
 `config.report.out` when set (`<horde>` in the path names one file per horde; a relative path is
 from the repository root), and at `--out` for a run by hand. `--json` is a `horde-report/1`
 document: `{horde, title, at, waiting[], evidence[], landed: {total, sinceLastReport[]}, inWork,
-waitingToMerge: {count, forecastMs}, previousAt, paths}`.
+waitingToMerge: {count, forecastMs}, previousAt, measure, paths}`, where `measure` is `{measured:
+true, at, from, to, scope[], before, after, range, notes[]}` (`before`/`after`: `files, importsInside,
+importsOut, importsIn, purity, undeclaredNodeDependencies`; `range`: `commits, crossing, crossingShare,
+baseline`), `{measured: false, why}`, or `null` before the first reading.
 
 **`config.notify`** is the hook beside it: a command template run when a question is filed —
 whoever files it, a worker's `ask.mjs add`, `tick`'s `stuck`, a wave close's audit — and when a wave

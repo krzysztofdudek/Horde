@@ -21,8 +21,9 @@
 //
 // It is skipped — loudly, with the reason and the path it looked at printed — when either build
 // is missing, and never silently: a family test that quietly measures nothing is worse than no
-// family test at all. `YG_BIN` and `GRAIN_BIN` name the two builds; both fall back to a sibling
-// checkout's own build on a machine that has all three repositories out.
+// family test at all. `YG_BIN` (else HORDE_TEST_YG) and HORDE_TEST_GRAIN (else `GRAIN_BIN`) name the
+// two builds — the same ones the rest of the suite requires; both fall back to a sibling checkout's own
+// build on a machine that has all three repositories out.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,7 +35,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  run, findRealYg, git, initHorde, addNode, addAspect, MARKER_CHECK, makeRepo, rmRepo, issueFileOf,
+  run, findRealYg, git, initHorde, addNode, addAspect, MARKER_CHECK, makeRepo, rmRepo, issueFileOf, ticketIssuePath,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -103,7 +104,10 @@ function findYg() {
 // next to each other under the same name, and only one of them is a program that runs.
 function findGrain() {
   const candidates = [];
-  if (process.env.GRAIN_BIN) candidates.push(asCommandLine(process.env.GRAIN_BIN));
+  // HORDE_TEST_GRAIN is the Grain the rest of this suite requires (helpers.mjs) and the one CI hands
+  // it; GRAIN_BIN is this walk's own older name for the same thing.
+  if (process.env.HORDE_TEST_GRAIN) candidates.push(asCommandLine(process.env.HORDE_TEST_GRAIN));
+  else if (process.env.GRAIN_BIN) candidates.push(asCommandLine(process.env.GRAIN_BIN));
   else {
     candidates.push('grain');
     const sibling = siblingPath('Grain', 'plugins', 'grain', 'bin', 'grain.mjs');
@@ -117,7 +121,7 @@ function findGrain() {
     ok: false,
     reason: `no Grain build that answers \`--help\` with a \`propose\` command (tried: ${
       candidates.filter(Boolean).join(', ') || 'nothing'}) — set GRAIN_BIN to Grain's own `
-      + 'dispatcher, or check Grain out beside this repository',
+      + 'dispatcher (or HORDE_TEST_GRAIN, as the rest of this suite reads it), or check Grain out beside this repository',
   };
 }
 
@@ -167,6 +171,18 @@ function handlerTest(area, name, expected) {
 // A real repository with real history: two directories of source, a directory of tests, a build
 // file that says how it is tested, and four commits that touch them. Grain has nothing to read
 // but this, so this is what the graph will be made of.
+//
+// The history is dated, weeks apart, the way a repository a mission starts on has lived. Grain states
+// a convention only from code that has survived (its survival gate: a scope at least 14 days old,
+// counted back from HEAD's own commit), so four commits made in the same second are a repository
+// whose every line is brand new — and Grain, rightly, certifies nothing in it. Dating the commits is
+// what makes this fixture the repository it stands for, not a way round the gate.
+const HISTORY_DAYS_AGO = [90, 60, 40, 30];
+function commitAt(dir, message, daysAgo) {
+  const when = new Date(Date.now() - daysAgo * 86400 * 1000).toISOString();
+  git(['commit', '-qm', message], dir, { GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when });
+}
+
 function buildRepository() {
   const dir = mkdtempSync(join(tmpdir(), 'horde-family-'));
   git(['init', '-q'], dir);
@@ -184,7 +200,7 @@ function buildRepository() {
     name: 'shop', version: '1.0.0', scripts: { test: 'node --test' },
   }, null, 2)}\n`);
   git(['add', '-A'], dir);
-  git(['commit', '-qm', 'orders and billing handlers'], dir);
+  commitAt(dir, 'orders and billing handlers', HISTORY_DAYS_AGO[0]);
 
   for (const name of ['place', 'cancel', 'amend']) {
     write(dir, `tests/orders-${name}.test.mjs`, handlerTest('orders', name, 1));
@@ -193,15 +209,15 @@ function buildRepository() {
     write(dir, `tests/billing-${name}.test.mjs`, handlerTest('billing', name, 2));
   }
   git(['add', '-A'], dir);
-  git(['commit', '-qm', 'tests for the handlers'], dir);
+  commitAt(dir, 'tests for the handlers', HISTORY_DAYS_AGO[1]);
 
   write(dir, 'src/orders/place.mjs', `${handler('place')}export const placeName = 'place';\n`);
   git(['add', '-A'], dir);
-  git(['commit', '-qm', 'orders: name the handler'], dir);
+  commitAt(dir, 'orders: name the handler', HISTORY_DAYS_AGO[2]);
 
   write(dir, 'src/billing/issue.mjs', `${handler('issue')}export const issueName = 'issue';\n`);
   git(['add', '-A'], dir);
-  git(['commit', '-qm', 'billing: name the handler'], dir);
+  commitAt(dir, 'billing: name the handler', HISTORY_DAYS_AGO[3]);
 
   return dir;
 }
@@ -316,7 +332,11 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     assert.ok(nodes.includes('src/billing'), `mined nodes: ${nodes.join(', ')}`);
 
     // …and at least one rule, on the status ladder rather than enforced out of nowhere: a mined
-    // rule arrives as a proposal about how the code is already written.
+    // rule arrives as a proposal about how the code is already written, and only a convention Grain
+    // certified, whose drill a real Yggdrasil passed, arrives enforced. The dated history is what
+    // lets Grain certify one here at all; the count says it did.
+    assert.ok(proposal.counts.aspectsActive >= 1,
+      `Grain certified no convention in the fixture: ${JSON.stringify(proposal.counts)}`);
     const aspectsDir = join(dir, '.yggdrasil', 'aspects');
     const aspects = [];
     const walkAspects = (rel) => {
@@ -349,7 +369,7 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
   await t.test('3. horde init on the graph the family just made, and the nodes it binds', () => {
     const init = run('horde.mjs', [
       'init', 'family', '--base', 'develop', '--title', 'Discounts on orders',
-      ...YG_FLAGS, '--nodes', 'src/orders',
+      ...YG_FLAGS, '--grain', GRAIN.cmd, '--nodes', 'src/orders',
     ], dir);
     assert.equal(init.code, 0, init.stderr);
     // horde-requires-yggdrasil: the graph was already here, so init kept it rather than making one.
@@ -405,6 +425,8 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     // never to one it composed itself.
     assert.match(asked.json.file, /\.horde[\\/]hordes[\\/]family[\\/]territories\.json$/);
     assert.doesNotMatch(asked.json.brief, /\{\{/);
+    // The architect is told to cut along the seams the history shows, with the command that weighs a cut.
+    assert.match(asked.json.brief, /cochange --partition/);
     // Asking takes nothing. The file already holds the node lease `init --nodes` took in step 3;
     // what must not be in it yet is a territory, because no territory has been named yet.
     const beforeCut = JSON.parse(readFileSync(join(dir, '.horde', 'leases.json'), 'utf8')).leases;
@@ -432,6 +454,20 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     const leases = JSON.parse(readFileSync(join(dir, '.horde', 'leases.json'), 'utf8')).leases;
     assert.equal(leases['the shop front'].horde, 'family');
     assert.equal(leases['the ledger'].horde, 'family');
+
+    // The accepted cut is scored by the real Grain against this repository's own history
+    // (grain-cochange/1 read through --partition): commits and imports counted against random cuts
+    // along the directory tree, every share with its denominator, and the same score on disk for
+    // the plan's review. Advice only: the cut was accepted whatever it says.
+    const score = accepted.json.score;
+    assert.equal(score.scored, true, JSON.stringify(score));
+    assert.equal(score.territories, 2);
+    assert.ok(score.commits && score.commits.total > 0, `commits counted: ${JSON.stringify(score.commits)}`);
+    assert.equal(score.commits.inside + score.commits.crossing, score.commits.total);
+    assert.equal(score.imports.inside + score.imports.crossing, score.imports.total);
+    assert.ok(score.control && score.control.cuts >= 10, `random cuts: ${JSON.stringify(score.control)}`);
+    assert.equal(typeof score.advice, 'string');
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'family', 'cut-score.json'), 'utf8')), score);
   });
 
   await t.test('6. refine --step consult: one spawn per territory, each carrying only its own', () => {
@@ -628,7 +664,12 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
 
   await t.test('13. the landing left its own record, and the wave close turns both evidence rows green', () => {
     assert.equal(runGate(trunkWorktree), 0, 'the gate is green at the trunk tip');
-    assert.equal(runCommandLine(YG.cmd, ['check'], { cwd: trunkWorktree }).code, 0, 'and so is the graph');
+    // The mined graph carries a rule Grain certified and a real drill raised to enforced: a script
+    // rule, whose results live in each checkout's own gitignored cache. This worktree is a fresh
+    // checkout, so the rule is run here — free, no reviewer, the committed lock untouched — rather
+    // than read as unverified: green means the rule passed on the trunk's own files.
+    const graphCheck = runCommandLine(YG.cmd, ['check', '--approve', '--only-deterministic'], { cwd: trunkWorktree });
+    assert.equal(graphCheck.code, 0, `and so is the graph:\n${graphCheck.out}`);
 
     assert.equal(existsSync(worktree), false);
     assert.equal(git(['branch', '--list', 'family/t-001'], dir), '');
@@ -637,7 +678,8 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
       readFileSync(join(dir, '.horde', 'hordes', 'family', 'teams', 'trunk', 'issues', '001-order-discount', 'log.md'), 'utf8'),
       /landed 001 on family\/trunk as [0-9a-f]{7}/,
     );
-    assert.equal(run('tk.mjs', ['status', '001', 'merged'], dir).json.status, 'merged');
+    // The landing marked the ticket merged itself; no tool may say it by hand.
+    assert.match(readFileSync(ticketIssuePath(dir, 'family', '001'), 'utf8'), /^\*\*Status:\*\* merged$/m);
 
     // A catalogue row is filled by something the tool checks, never by a name typed into it: these
     // two rows name no kind of proof, so each is filled by a command the tool runs at the trunk
@@ -668,6 +710,20 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     for (const section of ['added', 'raised', 'attached']) {
       assert.ok(Array.isArray(law[section]), `${section} is a list, empty or not`);
     }
+
+    // The close measured the mission's territory before and after with the real Grain
+    // (grain-measure/1, from the commit the trunk was cut at to its tip, over the cut's components),
+    // and the client's page says it in their words.
+    const measure = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'family', 'measure.json'), 'utf8'));
+    assert.equal(measure.measured, true, JSON.stringify(measure));
+    assert.deepEqual(measure.scope, ['src/orders', 'src/billing']);
+    assert.equal(measure.to, git(['rev-parse', 'family/trunk'], dir));
+    assert.ok(measure.after.files >= measure.before.files, `files ${measure.before.files} → ${measure.after.files}`);
+    assert.ok(measure.range && measure.range.commits >= 1, `range: ${JSON.stringify(measure.range)}`);
+    const page = readFileSync(join(dir, '.horde', 'hordes', 'family', 'report.md'), 'utf8');
+    assert.match(page, /## What the work did to its part of the code/);
+    assert.match(page, new RegExp(`- Files: ${measure.before.files} → ${measure.after.files}\\.`));
+    assert.doesNotMatch(page, /grain|Grain/, 'the client\'s page names no tool');
   });
 
   // `done` counts three things: evidence reproduced, trunk gate green, and the retrospective run
@@ -700,6 +756,8 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     assert.equal(done.json.evidence.total, 2);
     assert.equal(done.json.cost, undefined, 'done no longer reports a cost figure');
     assert.equal(done.json.retro.inexpressible, gathered.json.items.length);
+    // done measured the mission whole, one last time, for the client's page it archives.
+    assert.equal(done.json.measure.measured, true, JSON.stringify(done.json.measure));
 
     // "done" is also where the mission files itself away: the horde's directory is marked with the
     // date and the trunk sha it handed over at, and moved under _archive/. Everything it wrote is
@@ -851,7 +909,8 @@ function buildContractTicket(t, {
   t.after(() => rmRepo(dir));
 
   const init = initHorde(dir);
-  assert.equal(init.graph.created, true, 'a blank graph, made fresh by the real yg init — nothing mined');
+  // initHorde gives a fixture with no graph a blank one from the real yg init first — nothing mined.
+  assert.equal(init.graph.created, false, 'a blank graph, made fresh by the real yg init — nothing mined');
 
   git(['checkout', '-q', 'mission1/trunk'], dir);
   write(dir, 'promises/adds-two-numbers.md', contractPromiseDoc('implemented'));

@@ -103,7 +103,7 @@ function graphFixture(dir, ygCommand, { status = 'draft', cases = true } = {}) {
 // with the fields the contract names.
 const GRAIN_ADVISE_STUB = [
   "const argv = process.argv.slice(2);",
-  "if (argv[0] === '--version') { console.log('0.0.0-stub'); process.exit(0); }",
+  "if (argv[0] === 'version') { console.log('grain 6.1.0 · stub'); process.exit(0); }",
   "if (argv[0] !== 'advise') process.exit(2);",
   "console.error('[grain] indexing');",
   'console.log(JSON.stringify({',

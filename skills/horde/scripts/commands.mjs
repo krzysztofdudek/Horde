@@ -115,7 +115,7 @@ export const COMMANDS = {
   refine: { flags: { step: 'value', team: 'value', tree: 'path', out: 'path' }, writes: true, summary: 'Refining, one step at a time: cut, consult, review or frame.' },
 
   // report.mjs
-  report: { flags: { out: 'path' }, writes: true, summary: "Writes the client's plain-language report now." },
+  report: { flags: { out: 'path', 'no-measure': 'bool' }, writes: true, summary: "Writes the client's plain-language report now, with Grain's before-and-after reading of the territory unless no-measure." },
 
   // retro.mjs
   retro: { flags: { ...TREE }, writes: true, summary: "The mission's retrospective: gathers its input, or writes the document once the one-shot has classified it." },

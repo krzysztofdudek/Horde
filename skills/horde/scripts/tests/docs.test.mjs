@@ -281,7 +281,7 @@ test('every *.mjs named in SKILL.md exists in scripts/, and every scripts/*.mjs 
 // This walks every doc a person or an agent reads to learn the tool set and checks the reverse
 // direction there too.
 //
-// Three tokens mjsNamesIn's regex correctly extracts from that prose but that are not scripts/
+// Tokens mjsNamesIn's regex correctly extracts from that prose but that are not scripts/
 // files, so they are excluded by name rather than chased:
 //   - check.mjs, companion.mjs — the generic Yggdrasil per-rule file names
 //     (.yggdrasil/aspects/<id>/check.mjs), a naming convention from outside this tool set, named
@@ -292,7 +292,9 @@ test('every *.mjs named in SKILL.md exists in scripts/, and every scripts/*.mjs 
 //   - jarl.mjs, record.mjs, lib.mjs — Jarl's own scripts (its command line, its record module and the
 //     tail of jarl-lib.mjs), named where the docs say what Horde vendors from Jarl and what Jarl's own
 //     command line shows of a mission; they live in vendor/jarl or in the Jarl plugin, never in scripts/.
-const NOT_A_SCRIPT_NAME = new Set(['check.mjs', 'companion.mjs', 'test.mjs', 'jarl.mjs', 'record.mjs', 'lib.mjs']);
+//   - grain.mjs — Grain's own command line (`<Grain>/plugins/grain/bin/grain.mjs`), named where the
+//     docs say how to point Horde at the Grain it requires; it lives in Grain, never in scripts/.
+const NOT_A_SCRIPT_NAME = new Set(['check.mjs', 'companion.mjs', 'test.mjs', 'jarl.mjs', 'record.mjs', 'lib.mjs', 'grain.mjs']);
 
 function docFiles() {
   return [

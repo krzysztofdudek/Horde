@@ -27,9 +27,12 @@ import {
 } from './wave.mjs';
 import { writeLawDiff } from './law.mjs';
 import { RETRO_SCHEMA, collectRetroInput, missionState } from './retro.mjs';
-import { ygJson, reviewerGap } from './node.mjs';
+import {
+  ygJson, reviewerGap, requireGrain, GRAIN_FLOOR, GRAIN_INSTALL,
+} from './node.mjs';
 import { openLoop } from './loop.mjs';
 import { loadAsks } from './ask.mjs';
+import { refreshReport } from './report.mjs';
 
 export const USAGE = `usage: horde.mjs <command> [options]
 
@@ -38,16 +41,18 @@ commands:
        [--nodes <node>[,node…]] [--yg <command>] [--grain <command>]
        [--quality autonomous|only-the-work]
       creates the architecture graph when the repository has none — "yg init" from the repository
-      root, and, where a Grain CLI is configured or on PATH, a proposal mined from this
-      repository's own code accepted with "yg adopt". Refuses outright, before anything is
-      created, when there is no graph and no Yggdrasil CLI to make one. Then: .horde/ if missing,
+      root, then a proposal Grain mines from this repository's own code, accepted with "yg adopt".
+      Refuses outright, before anything is created, when there is no graph and no Yggdrasil CLI to
+      make one, and when there is no Grain 6.1.0 or newer that runs (--grain, else
+      config.grainCommand, else "grain" on PATH): the architect measures with it. Then: .horde/ if missing,
       hordes/<name>/ with a charter rendered from the template, an
       empty journals, teams/trunk/, and the branch <name>/trunk off <branch> (not
       checked out). Reads the repository's build files for its gate command and the patterns its
       tests are named with, and says what it found — or what it could not work out, and how to
       tell it. --test-globs names those patterns outright. --yg and --grain say how to invoke those
-      two CLIs when they are not on PATH (a local build: --yg "node path/to/bin.js"); both are
-      written to the config, so they are said once. Refuses an existing name. --nodes binds
+      two CLIs when they are not on PATH (a local build: --yg "node path/to/bin.js", --grain "node
+      path/to/Grain/plugins/grain/bin/grain.mjs"); both are written to the config, so they are said
+      once. Refuses an existing name. --nodes binds
       the charter's touched nodes at creation (node-lease-across-hordes): each one is leased to
       this horde in .horde/leases.json, and init refuses outright — before creating anything — a
       node already leased by another horde that is not archived, naming that horde and its last
@@ -61,7 +66,7 @@ commands:
       dotted paths into .horde/config.json, e.g. "gates.trunk", "territory.maxBytes",
       "fixRounds.resume". A list-valued key takes a comma-separated list or a JSON array.
       "ygCommand" is how this repository invokes the Yggdrasil CLI (default "yg"); "grainCommand"
-      how it invokes Grain, when it has one (default: none). "worktree.copy" (default: none) is a
+      how it invokes Grain (default "grain"; required, so an empty value is refused). "worktree.copy" (default: none) is a
       list of repository-root-relative paths copied into every ticket, trunk or scratch tree the
       moment it is made — for whatever a worker's tools need that git itself does not check out
       (an untracked env file, a dependency cache); a path git already tracks is refused.
@@ -404,11 +409,11 @@ function defaultConfig(root) {
   return {
     base: null,
     gates: detectGates(root),
-    // How this repository invokes the Yggdrasil CLI, and — when it has one — the Grain CLI that
-    // can propose the first graph from the code itself. Both are command lines, so a checkout
-    // running a local build needs no other change.
+    // How this repository invokes the Yggdrasil CLI and the Grain CLI. Both are required and both are
+    // command lines, so a checkout running a local build needs no other change; `init` writes the
+    // Grain it found here.
     ygCommand: 'yg',
-    grainCommand: null,
+    grainCommand: 'grain',
     testGlobs: detectTestGlobs(root),
     protectedPaths: [],
     // Files where every change only adds lines (a CHANGELOG): a merge where both sides only added
@@ -473,9 +478,9 @@ function defaultConfig(root) {
 // horde-requires-yggdrasil. The node map is Yggdrasil's graph and there is no second one, so a
 // repository without `.yggdrasil/` is not a repository the horde works around — it is one where
 // the first thing to do is create the graph. That is `yg init`, run from the repository root
-// (never a subdirectory: Yggdrasil's own rule), and then, where a Grain CLI is available, a
-// proposal mined from this repository's own code and accepted with `yg adopt`, which is the only
-// way a first graph arrives with rules that describe how the code is already written.
+// (never a subdirectory: Yggdrasil's own rule), and then a proposal Grain mines from this
+// repository's own code, accepted with `yg adopt`, which is the only way a first graph arrives with
+// rules that describe how the code is already written.
 
 // A command line ("yg", "node ./yg/bin.js") split into a program and its fixed leading arguments.
 function commandLine(raw, fallback) {
@@ -500,18 +505,6 @@ function resolves(cl) {
   }
 }
 
-// The Grain CLI to mine a proposal with: what the config names, else a bare `grain` on PATH.
-// Default: none — a repository that has no Grain still gets a graph, it just gets an empty one.
-function grainCommandFor(cfg, override) {
-  const configured = override || (cfg && cfg.grainCommand);
-  if (configured) {
-    const cl = commandLine(configured);
-    return resolves(cl) ? cl : null;
-  }
-  const bare = commandLine('grain');
-  return resolves(bare) ? bare : null;
-}
-
 function runIn(root, cl, args) {
   try {
     return { ok: true, out: execFileSync(cl.cmd, [...cl.prefix, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) };
@@ -527,14 +520,12 @@ function runIn(root, cl, args) {
 const PROPOSAL_DIR = '.yggdrasil-proposal';
 
 // Creates the graph when the repository has none. Returns what happened, in the words `init`
-// prints; fails outright — before a single file of this horde's own state exists — when there is
-// no graph and no way to make one.
+// prints, and the Grain it found; fails outright — before a single file of this horde's own state
+// exists — when there is no graph and no way to make one, or no Grain that runs.
 function ensureGraph(root, cfg, flags) {
   const yg = commandLine(flags.yg || (cfg && cfg.ygCommand) || 'yg');
-  if (existsSync(join(root, '.yggdrasil'))) {
-    return { created: false, lines: [`architecture graph: already here (${yg.display} reads it)`] };
-  }
-  if (!resolves(yg)) {
+  const hasGraph = existsSync(join(root, '.yggdrasil'));
+  if (!hasGraph && !resolves(yg)) {
     fail(
       `this repository has no architecture graph and there is no Yggdrasil CLI at "${yg.display}" to create one.\n`
       + 'A horde reads its node map, the rules over every node, and the verdict that says a merge is '
@@ -544,6 +535,12 @@ function ensureGraph(root, cfg, flags) {
       + 'Already have a build? Name it here: init --yg "node path/to/bin.js"',
     );
   }
+  // Grain is required: checked before anything is created, whether the graph is made here or not.
+  const found = requireGrain(cfg, root, { override: flags.grain, what: 'A horde' });
+  const grain = commandLine(found.display);
+  if (hasGraph) {
+    return { created: false, grain: found, lines: [`architecture graph: already here (${yg.display} reads it)`] };
+  }
 
   const init = runIn(root, yg, ['init']);
   if (!init.ok || !existsSync(join(root, '.yggdrasil'))) {
@@ -551,33 +548,28 @@ function ensureGraph(root, cfg, flags) {
   }
   const lines = [`architecture graph created by \`${yg.display} init\``];
 
-  const grain = grainCommandFor(cfg, flags.grain);
-  if (!grain) {
-    lines.push(
-      'the graph is empty — no component, no rule. Cut the first nodes with the user, or mine a '
-      + 'proposal from this repository\'s own code with Grain and accept it: '
-      + 'init --grain "<how to run grain>" (or horde.mjs config set grainCommand "…") on a '
-      + 'repository with no graph.',
-    );
-    return { created: true, mined: false, lines };
-  }
-
   const propose = runIn(root, grain, ['propose', PROPOSAL_DIR]);
   if (!propose.ok) {
     lines.push(`\`${grain.display} propose\` failed (exit ${propose.code}) — the graph stays empty:\n${propose.out.trim()}`);
-    return { created: true, mined: false, lines };
+    return {
+      created: true, mined: false, grain: found, lines,
+    };
   }
   const adopt = runIn(root, yg, ['adopt', PROPOSAL_DIR, '--replace']);
   if (!adopt.ok) {
     lines.push(`\`${yg.display} adopt ${PROPOSAL_DIR}\` refused the proposal (exit ${adopt.code}) — the graph stays empty:\n${adopt.out.trim()}`);
-    return { created: true, mined: false, lines };
+    return {
+      created: true, mined: false, grain: found, lines,
+    };
   }
   lines.push(
     `graph proposed by \`${grain.display} propose\` and accepted with \`${yg.display} adopt\` — `
     + 'its own report, including how much of the code already here the new rules refuse:',
     adopt.out.trim(),
   );
-  return { created: true, mined: true, lines };
+  return {
+    created: true, mined: true, grain: found, lines,
+  };
 }
 
 function cmdInit(positional, flags) {
@@ -630,10 +622,9 @@ function cmdInit(positional, flags) {
   // How this repository invokes the two CLIs is said once and remembered, whether or not this is
   // the first horde on it — an operator who had to name a local build to get the graph made should
   // not have to name it again for every tool that reads it.
-  if (flags.yg || flags.grain) {
-    if (flags.yg) cfg.ygCommand = flags.yg;
-    if (flags.grain) cfg.grainCommand = flags.grain;
-  }
+  if (flags.yg) cfg.ygCommand = flags.yg;
+  // The Grain that answered above is the one written down, whichever way it was found.
+  cfg.grainCommand = graph.grain.display;
   writeConfig(cfg);
 
   // --nodes binds the charter's touched nodes the moment this horde exists (node-lease-across-
@@ -735,6 +726,7 @@ function cmdInit(positional, flags) {
       branch,
       base: flags.base,
       graph: { created: graph.created, mined: !!graph.mined, notes: graph.lines },
+      grain: { command: graph.grain.display, version: graph.grain.version },
       graphGate,
       ecosystems,
       gates: cfg.gates,
@@ -749,6 +741,7 @@ function cmdInit(positional, flags) {
       `horde "${name}" created — trunk branch ${branch} off ${flags.base}`,
       ...(leaseNote ? [leaseNote] : []),
       ...graph.lines,
+      `Grain ${graph.grain.version}: \`${graph.grain.display}\` — the architect scores the cut against this repository's history with it, the legislator starts from its rule drafts, and the client's report measures the mission's territory before and after`,
       graphGate,
       gateNote,
       globsNote,
@@ -869,6 +862,12 @@ function cmdConfig(positional, flags) {
     if (key === 'notify') {
       const problem = notifyTemplateProblem(value);
       if (problem) fail(problem);
+    }
+    // Grain is required: a config that names none is a mission the architect cannot measure. What
+    // it names is not probed here — a command set by hand may be a local build that is not built yet;
+    // the cut and init say whether it runs.
+    if (key === 'grainCommand' && !String(value).trim()) {
+      fail(`grainCommand cannot be empty — Horde needs Grain ${GRAIN_FLOOR} or newer. ${GRAIN_INSTALL}`);
     }
     setPath(cfg, key, value);
     writeConfig(cfg);
@@ -1472,6 +1471,11 @@ function cmdDone(positional, flags) {
   // to remember: the same move `archive` makes, with the same marker, releasing the same leases.
   // Everything above has already been written, so the paths this reports are the paths inside the
   // archived directory — where the documents now are, rather than where they were made.
+  // The client's page, rewritten one last time with the mission measured whole: its territory at the
+  // commit it started from and at the trunk it hands over.
+  const report = refreshReport(horde, { cfg, measure: true });
+  const measure = report.ok ? report.doc.measure : null;
+
   const lawPath = law.path;
   const retroPath = hordePath(horde, 'retro.json');
   const archived = archiveHorde(horde);
@@ -1485,6 +1489,8 @@ function cmdDone(positional, flags) {
       path: relocate(lawPath), added: law.doc.added.length, raised: law.doc.raised.length, attached: law.doc.attached.length,
     },
     retro: { path: relocate(retroPath), law: retro.law.length, inexpressible: retro.inexpressible.length },
+    measure,
+    ...(report.ok ? {} : { reportNote: report.note }),
     archived: { to: archived.to, date: archived.date, releasedLeases: archived.releasedLeases },
   };
   emit(result, flags, () => [
@@ -1493,9 +1499,25 @@ function cmdDone(positional, flags) {
       + `${law.doc.attached.length} newly attached: ${result.law.path}`,
     `What the law still cannot say — ${retro.inexpressible.length} item(s), beside ${retro.law.length} rule proposal(s) `
       + `the retrospective raised: ${result.retro.path}`,
+    measureLine(measure),
+    ...(report.ok ? [] : [report.note]),
     `Archived: ${archived.to} — marked ${archived.date} at ${short(archived.sha)}, and nothing of it is committed.`,
     `Push when ready: git push <remote> ${trunkBranch} — and open the pull request. That decision is the chairman's, never this tool's.`,
   ].join('\n'));
+}
+
+// One line on what the mission did to its territory, for the director at done.
+function measureLine(m) {
+  if (!m) return 'What the work did to its territory: not measured.';
+  if (!m.measured) return `What the work did to its territory: not measured — ${m.why}.`;
+  const b = m.before;
+  const a = m.after;
+  const pct = (x) => (x === null || x === undefined ? 'none' : `${Math.round(x * 100)}%`);
+  return `What the work did to its territory (${m.scope.length} component(s), ${short(m.from)}..${short(m.to)}): `
+    + `files ${b.files} → ${a.files}, imports kept inside ${pct(b.purity)} → ${pct(a.purity)}, `
+    + `undeclared dependencies ${b.undeclaredNodeDependencies ?? '?'} → ${a.undeclaredNodeDependencies ?? '?'}`
+    + (m.range ? `, commits reaching outside ${m.range.crossing} of ${m.range.commits} (before: ${m.range.baseline ? `${m.range.baseline.crossing} of ${m.range.baseline.commits}` : '?'})` : '')
+    + ' — in the client\'s report.';
 }
 
 function main() {

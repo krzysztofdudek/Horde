@@ -18,10 +18,10 @@
 // hordes/<horde>/graph.json — until an approval turns one into a filing the architect makes.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
-  hordePath, readJSON, writeJSON, readText, writeText, readConfig, nowIso,
+  hordePath, hordeRoot, readJSON, writeJSON, readText, writeText, readConfig, nowIso,
   fail, parseArgs, asArray, emit, isMain, resolveHorde, claimLease, qualityPolicy,
   resolveTree, assertGraphWritable, provenanceLine, withProvenance,
   allocateId, idNumber, migrationNote, withGraphLock,
@@ -107,42 +107,161 @@ alone. bind, show, log --run, promote and demote end with "tree: <path> · branc
 
 options: --json  --help`;
 
+// ---- talking to the Grain CLI -------------------------------------------------------------------
+//
+// Grain is required, like Yggdrasil (since 6.1.0). The architect measures with it: the cut is scored
+// against the seams the repository's own history shows (`grain cochange --partition`, grain-cochange/1),
+// the legislator starts from the rules Grain drafts out of the code (`grain advise --json`, the
+// `kind: rule` items of grain-advice/1), and the client's report says what the mission did to its
+// territory, before and after (`grain measure`, grain-measure/1). `config.grainCommand` names it — a
+// command line like `ygCommand`, default the bare `grain` on PATH — and `horde init` and the cut refuse
+// to start without one that runs. What Grain answers is never a refusal of anything: every reading of
+// it is advisory, with its denominator, and a call that fails is reported as not measured.
+export const GRAIN_FLOOR = '6.1.0';
+export const GRAIN_COCHANGE_SCHEMA = 'grain-cochange/1';
+export const GRAIN_MEASURE_SCHEMA = 'grain-measure/1';
+
+// Grain's own command line, exactly as `config.grainCommand` names it — `null` when the config names
+// none (a config written before Grain was required, or edited by hand).
+export function grainLine(cfg) {
+  const raw = cfg && cfg.grainCommand;
+  return raw ? String(raw).trim() : null;
+}
+
+function atLeast(version, floor) {
+  const a = String(version).split('.').map((n) => Number.parseInt(n, 10) || 0);
+  const b = String(floor).split('.').map((n) => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  }
+  return true;
+}
+
+// Whether a Grain command line runs and is new enough: `grain version` is the one question Grain
+// answers without reading a repository. { ok, display, version } or { ok: false, display, why }.
+export function grainCheck(raw, cwd = process.cwd()) {
+  const line = raw ? String(raw).trim() : '';
+  if (!line) return { ok: false, display: null, why: 'no Grain CLI is named' };
+  let prog;
+  try {
+    prog = programFor(splitCommandLine(line));
+  } catch (e) {
+    return { ok: false, display: line, why: e.message };
+  }
+  let out;
+  try {
+    out = execFileSync(prog.cmd, [...prog.prefix, 'version'], {
+      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60 * 1000,
+    });
+  } catch (e) {
+    const how = e.code === 'ENOENT' ? 'there is no such program' : `exit ${e.status === undefined || e.status === null ? '?' : e.status}`;
+    return { ok: false, display: line, why: `\`${line} version\` did not run (${how})` };
+  }
+  const m = /\bgrain\s+v?(\d+\.\d+\.\d+)/.exec(String(out));
+  if (!m) {
+    return { ok: false, display: line, why: `\`${line} version\` did not answer with a Grain version (it said: ${String(out).trim().slice(0, 120) || 'nothing'})` };
+  }
+  if (!atLeast(m[1], GRAIN_FLOOR)) {
+    return {
+      ok: false, display: line, version: m[1],
+      why: `\`${line}\` is Grain ${m[1]}, older than ${GRAIN_FLOOR} — the first release that answers ${GRAIN_COCHANGE_SCHEMA} and ${GRAIN_MEASURE_SCHEMA}`,
+    };
+  }
+  return { ok: true, display: line, version: m[1] };
+}
+
+// The install step, said the same way wherever Grain is refused.
+export const GRAIN_INSTALL = 'Install Grain (git clone https://github.com/krzysztofdudek/Grain, or its plugin: '
+  + '/plugin install grain@grain-marketplace) and name its CLI once: '
+  + 'horde.mjs config set grainCommand "node <path to Grain>/plugins/grain/bin/grain.mjs" '
+  + '(or pass --grain "…" to horde.mjs init).';
+
+// The refusal every mission start goes through: the Grain named by `override`, else the config, else
+// a bare `grain` on PATH — and a stop naming the install step when none of them runs.
+export function requireGrain(cfg, cwd, { override = null, what = 'A horde' } = {}) {
+  const raw = (override && String(override).trim()) || grainLine(cfg) || 'grain';
+  const res = grainCheck(raw, cwd);
+  if (!res.ok) {
+    fail(
+      `${what} needs Grain ${GRAIN_FLOOR} or newer, and ${res.why}.\n`
+      + 'The architect measures with it: the mission is cut along the seams this repository\'s own history '
+      + 'shows, the rules a territory writes down start from the drafts Grain reads out of the code, and the '
+      + 'client\'s report says what the mission did to its territory, before and after.\n'
+      + GRAIN_INSTALL,
+    );
+  }
+  return res;
+}
+
+// One call to Grain. Every caller reads Grain as advice, so this never throws: it reports what Grain
+// said, that the config names no Grain, or that the command did not run, and the caller carries
+// whichever it got.
+export function grainAsk(cfg, root, args) {
+  const raw = grainLine(cfg);
+  if (!raw) return { available: false, why: `no Grain CLI is configured for this repository — ${GRAIN_INSTALL}` };
+  const display = `${raw} ${args.join(' ')}`;
+  try {
+    const { cmd, prefix } = programFor(splitCommandLine(raw));
+    const out = execFileSync(cmd, [...prefix, ...args], {
+      cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024,
+    });
+    return { available: true, display, text: String(out).trim() };
+  } catch (e) {
+    const said = ((e.stderr && e.stderr.toString()) || '').trim().split('\n').filter(Boolean).slice(-2).join(' ');
+    return {
+      available: false,
+      display,
+      why: `\`${display}\` did not run (exit ${e.status === undefined ? '?' : e.status})${said ? `: ${said}` : ''}`,
+    };
+  }
+}
+
+// Where Grain runs: the main checkout, beside `.horde/`, where its own cache (`.grain/`) lives —
+// never a ticket's worktree. A graph read from another tree (the trunk's, most often) is handed over
+// with `--graph <that tree>`: Grain reads the `.yggdrasil/` under the directory it is given. The one
+// exception is the report's before-and-after (report.mjs measureMission), which counts a range of the
+// trunk's own history and so runs in the trunk tree, with Grain's store there ignored whole.
+export function grainHome() {
+  return dirname(hordeRoot());
+}
+
+export function grainGraphArgs(tree) {
+  if (!tree) return [];
+  const home = grainHome();
+  return resolve(tree) === resolve(home) ? [] : ['--graph', tree];
+}
+
+// One call to Grain that answers a machine document: `args` (with `--json` already in them), and the
+// schema id the caller reads. { ok: true, doc, display } or { ok: false, why, display } — a document of
+// another version is not read around, and says which release to install, as the family's contract
+// register asks of every consumer; Grain progress on stderr is ignored.
+export function grainJson(cfg, root, args, schema) {
+  const res = grainAsk(cfg, root, args);
+  if (!res.available) return { ok: false, why: res.why, display: res.display || null };
+  const text = res.text || '';
+  const start = text.indexOf('{');
+  let doc = null;
+  if (start !== -1) {
+    try { doc = JSON.parse(text.slice(start)); } catch { doc = null; }
+  }
+  if (!doc) return { ok: false, why: `\`${res.display}\` did not answer with a JSON document`, display: res.display };
+  if (doc.schema !== schema) {
+    return {
+      ok: false,
+      display: res.display,
+      why: `\`${res.display}\` answered \`${doc.schema === undefined ? 'a document with no schema' : doc.schema}\`, not \`${schema}\` — `
+        + `this Horde does not read that version; install the Grain release this Horde ships with (${GRAIN_FLOOR} or newer, the same major)`,
+    };
+  }
+  return { ok: true, doc, display: res.display };
+}
+
 // ---- talking to the Yggdrasil CLI ------------------------------------------------------------
 
 // How this repository invokes the Yggdrasil CLI: `config.ygCommand`, default the bare `yg` on
 // PATH. Written as a command line ("yg", "node ./yg/bin.js") so a checkout that runs a local
 // build needs no other change; split into a program plus its fixed leading arguments here, once,
 // for every call site.
-// Grain's own command line, exactly as `config.grainCommand` names it — `null` when the repository
-// has none configured. Grain is optional everywhere it is asked, unlike Yggdrasil.
-export function grainLine(cfg) {
-  const raw = cfg && cfg.grainCommand;
-  return raw ? String(raw).trim() : null;
-}
-
-// One call to Grain, wherever it is available. Grain is optional (config.grainCommand is null by
-// default) and a caller that fell over without it would make an optional tool mandatory in
-// practice. So this reports one of three things — what it said, that there is no Grain here, or
-// that the command did not run — and every caller carries whichever it got, never a throw.
-export function grainAsk(cfg, root, args) {
-  const raw = grainLine(cfg);
-  if (!raw) return { available: false, why: 'no Grain CLI is configured for this repository' };
-  const display = `${raw} ${args.join(' ')}`;
-  try {
-    const { cmd, prefix } = programFor(splitCommandLine(raw));
-    const out = execFileSync(cmd, [...prefix, ...args], {
-      cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 32 * 1024 * 1024,
-    });
-    return { available: true, display, text: String(out).trim() };
-  } catch (e) {
-    return {
-      available: false,
-      display,
-      why: `\`${display}\` did not run (exit ${e.status === undefined ? '?' : e.status})`,
-    };
-  }
-}
-
 export function ygCommand(cfg) {
   const raw = (cfg && cfg.ygCommand) || 'yg';
   const parts = splitCommandLine(raw);
