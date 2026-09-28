@@ -381,3 +381,49 @@ test('contract: a mission opened before a profile key existed gets it on the nex
   run('tick.mjs', [], dir);
   assert.equal(readFileSync(stored, 'utf8'), before, 'a profile already up to date is not written again');
 });
+
+// Jarl's own answer to a ratify item of a mission sends nothing to the graph — the mission's profile keeps
+// that to Horde, which writes it at done into the trunk it hands over — so an entry is never written twice,
+// nor into the main checkout the mission's work never reaches (issue 436). The yg Jarl would run is the real
+// one, reachable, so only the profile stands between the answer and a write.
+test('contract: Jarl\'s own answer to a mission\'s ratify item writes nothing into the graph; Horde writes it once, at done', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  if (!JARL.ok) { t.skip(JARL.reason); return; }
+  const { requireYg, yg } = await import('./helpers.mjs');
+  const { splitCommandLine, programFor } = await import('../_lib.mjs');
+  yg(dir, ['init']);
+  writeFileSync(join(dir, '.yggdrasil', 'yg-architecture.yaml'), 'node_types:\n  module:\n    description: "A module"\n    parents: [root]\n');
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'graph'], dir);
+  git(['branch', '-f', 'develop', 'HEAD'], dir);
+  initHorde(dir);
+  const { cmd, prefix } = programFor(splitCommandLine(requireYg()));
+  const shim = join(dir, '.horde', 'yg-shim.mjs');
+  writeFileSync(shim, `import { spawnSync } from 'node:child_process';\nconst r = spawnSync(${JSON.stringify(cmd)}, [...${JSON.stringify(prefix)}, ...process.argv.slice(2)], { stdio: 'inherit' });\nprocess.exit(r.status ?? 1);\n`);
+
+  run('decide.mjs', ['add', 'mod-one', 'Every module validates its input.', '--area', 'module', '--reach', '3'], dir);
+  const item = run('decide.mjs', ['ratify'], dir).json.items[0];
+  let said;
+  try {
+    said = execFileSync(process.execPath, [JARL.path, 'answer', item.id, 'yes', '--root', loopOf(dir), '--json'], { cwd: dir, encoding: 'utf8', env: { ...process.env, JARL_YG: shim } });
+  } catch (e) { assert.fail(`jarl answer: ${e.stderr}`); }
+  const out = JSON.parse(said);
+  assert.equal(out.verdict, 'ratified');
+  assert.equal(out.typeLog.state, 'skipped');
+  assert.match(out.typeLog.reason, /run by horde, which writes it into the graph with its own code/);
+  assert.equal(existsSync(join(dir, '.yggdrasil', 'types', 'module', 'log.md')), false, 'nothing reached the main checkout');
+
+  const script = [
+    `import { writeGraphLogs } from ${JSON.stringify(new URL('../decide.mjs', import.meta.url).href)};`,
+    `import { readConfig, git } from ${JSON.stringify(new URL('../_lib.mjs', import.meta.url).href)};`,
+    "const sha = git(['rev-parse', 'mission1/trunk']);",
+    "console.log(JSON.stringify(writeGraphLogs('mission1', readConfig() || {}, { branch: 'mission1/trunk', sha })));",
+  ].join('\n');
+  const once = () => JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', script], { cwd: dir, encoding: 'utf8' }).trim().split('\n').pop());
+  const first = once();
+  assert.deepEqual(first.written.map((w) => w.slug), ['mod-one']);
+  const entries = execFileSync('git', ['show', 'mission1/trunk:.yggdrasil/types/module/log.md'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(entries.split('Every module validates its input.').length - 1, 1, 'written once');
+  assert.equal(once().commit, null, 'and never again');
+});

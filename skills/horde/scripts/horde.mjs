@@ -33,6 +33,7 @@ import {
 import { openLoop } from './loop.mjs';
 import { loadAsks } from './ask.mjs';
 import { refreshReport } from './report.mjs';
+import { writeGraphLogs } from './decide.mjs';
 
 export const USAGE = `usage: horde.mjs <command> [options]
 
@@ -98,7 +99,11 @@ commands:
       reproduced, any filled row no longer holds against what it was proved by (a cell typed by
       hand holds against nothing), the trunk gate (config.gates.trunk) is not green at the trunk tip, or the
       retrospective (retro.mjs) has not been run over the mission as it now stands. Otherwise
-      stamps the charter, appends the completion block to the mission journal, archives the
+      writes what the mission decided about code into the graph's logs — every node ruling in force
+      into its node's log, every area ruling the client ratified into its type's log (and its rule's
+      ratification into the rule's own log) — as one commit of log entries on the trunk, over the tip
+      the gate passed; what yg refuses is reported with the command to run by hand, and holds nothing.
+      Then stamps the charter, appends the completion block to the mission journal, archives the
       horde the way "archive" does, and prints what to do next (push — that decision is the
       chairman's, never this tool's). What the tools recorded is a record, never a proof: the trunk
       gate and every command row's command (hordes/<h>/evidence.json) are run again at the trunk
@@ -1451,6 +1456,14 @@ function cmdDone(positional, flags) {
     fail(`mission "${horde}" is not done — ${reasons.length} reason(s):\n- ${reasons.join('\n- ')}`);
   }
 
+  // What the mission decided about code reaches the graph's own logs, so an agent touching that code
+  // after the mission reads it there: every node ruling in force, and every area ruling the client
+  // ratified (with its rule's ratification). One commit on the trunk over the tip the gate just
+  // passed, holding log entries only; what yg refuses, or what cannot reach the trunk, is reported
+  // and never holds the mission — it stays a ruling of the mission, as does every area ruling nobody
+  // ratified.
+  const graphLog = writeGraphLogs(horde, cfg, { branch: trunkBranch, sha: trunkSha });
+
   // The last word on what this mission did to the law, taken at the trunk it is handing over —
   // which has usually moved since the last wave closed. Written at that wave's own path, because
   // the document measures the same two trees the close measured and is the same answer, taken
@@ -1490,6 +1503,7 @@ function cmdDone(positional, flags) {
     },
     retro: { path: relocate(retroPath), law: retro.law.length, inexpressible: retro.inexpressible.length },
     measure,
+    graphLog,
     ...(report.ok ? {} : { reportNote: report.note }),
     archived: { to: archived.to, date: archived.date, releasedLeases: archived.releasedLeases },
   };
@@ -1500,10 +1514,28 @@ function cmdDone(positional, flags) {
     `What the law still cannot say — ${retro.inexpressible.length} item(s), beside ${retro.law.length} rule proposal(s) `
       + `the retrospective raised: ${result.retro.path}`,
     measureLine(measure),
+    ...graphLogLines(graphLog, trunkBranch),
     ...(report.ok ? [] : [report.note]),
     `Archived: ${archived.to} — marked ${archived.date} at ${short(archived.sha)}, and nothing of it is committed.`,
     `Push when ready: git push <remote> ${trunkBranch} — and open the pull request. That decision is the chairman's, never this tool's.`,
   ].join('\n'));
+}
+
+// What done wrote into the graph's logs, and what it could not, for the director.
+function graphLogLines(g, branch) {
+  const lines = [];
+  const what = (w) => (w.kind === 'node' ? `node ${w.node}` : w.kind === 'type' ? `type ${w.type}` : `rule ${w.rule}`);
+  if (g.commit) {
+    lines.push(`Written into the graph's logs — ${g.written.map((w) => `${w.slug} → ${what(w)}`).join(', ')} — as one commit on ${branch} (${short(g.commit)}) over the tip the gate passed (${short(g.from)}): log entries only.`);
+  }
+  if (g.unmarked) lines.push(`NOTE: ${g.unmarked}.`);
+  for (const f of g.failed) {
+    lines.push(`NOT written into the log of ${what(f)} (ruling ${f.slug}): ${f.reason}${f.retry ? ` — write it by hand on ${branch}: ${f.retry}` : ''}. It stays a ruling of this mission.`);
+  }
+  if (g.unratified.length) {
+    lines.push(`${g.unratified.length} area ruling(s) nobody ratified stay rulings of this mission and never enter the type's decisions: ${g.unratified.join(', ')}${g.pending.length ? ` (open ratify questions: ${g.pending.join(', ')})` : ''}.`);
+  }
+  return lines;
 }
 
 // One line on what the mission did to its territory, for the director at done.

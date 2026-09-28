@@ -1,6 +1,6 @@
 {
   "source": "https://github.com/krzysztofdudek/JarlSkill.git",
-  "ref": "cd9850d58161008827a3b4a5a613eab9b2a83512",
+  "ref": "release/6.1.0",
   "commit": "cd9850d58161008827a3b4a5a613eab9b2a83512",
   "api": "jarl-record/1",
   "dest": "jarl",

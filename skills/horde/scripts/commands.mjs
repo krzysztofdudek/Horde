@@ -46,7 +46,8 @@ export const COMMANDS = {
   'brief review': { args: ['ticket'], flags: { ...BRIEF }, writes: true, summary: "Renders a ticket's one-shot review brief (or writes it to out)." },
 
   // decide.mjs — the mission's rulings
-  'decide add': { args: ['slug', 'ruling'], flags: { ticket: 'value', node: 'value', by: 'value', supersedes: 'value' }, writes: true, summary: "Appends a ruling to the mission's record." },
+  'decide add': { args: ['slug', 'ruling'], flags: { ticket: 'value', node: 'value', by: 'value', supersedes: 'value', area: 'value', reach: 'number', rule: 'value' }, writes: true, summary: "Appends a ruling to the mission's record; one about a component (node) or a whole type (area) reaches the graph's logs when the mission is done." },
+  'decide ratify': { writes: true, summary: 'Puts the area rulings nobody has asked about to the client for ratification, widest reach first, and lists the open ones.' },
   'decide list': { flags: { grep: 'value', node: 'value' }, summary: 'Lists the rulings, newest first.' },
   'decide show': { args: ['slug'], summary: 'Shows one ruling in full.' },
 

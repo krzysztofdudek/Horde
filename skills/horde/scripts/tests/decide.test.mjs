@@ -6,7 +6,7 @@ import {
 } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { makeRepo, rmRepo, run, initHorde, requireYg } from './helpers.mjs';
+import { makeRepo, rmRepo, run, initHorde } from './helpers.mjs';
 import { raceOneLock, overlaps, describeRace } from './lock-race/harness.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -76,23 +76,8 @@ test('decide.mjs: add, list, show, refusals', async (t) => {
   });
 });
 
-// A node's decisions belong in the graph's own log, and there is only one graph — so this redirect
-// is unconditional now, not a mode. The command it prints names the CLI this repository actually
-// invokes, not a bare `yg` it might not have.
-test('decide.mjs: --node always redirects to the graph\'s own log', async (t) => {
-  const dir = makeRepo();
-  t.after(() => rmRepo(dir));
-  initHorde(dir);
-
-  const r = run('decide.mjs', ['add', 'arch-1', 'move the boundary', '--node', 'auth'], dir);
-  assert.equal(r.code, 1);
-  assert.match(r.stderr, /graph's own log/);
-  assert.match(r.stderr, /log add --node auth/);
-  assert.ok(
-    r.stderr.includes(`${requireYg()} log add`),
-    `the redirect names this repository's own CLI: ${r.stderr}`,
-  );
-});
+// A ruling about one component is no longer refused here: it is recorded on the mission and written
+// into that node's own log when the mission is done (graph-log.test.mjs).
 
 // ---- a dead holder must not wedge decisions.md forever ------------------------------------------
 //

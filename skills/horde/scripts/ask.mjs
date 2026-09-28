@@ -70,7 +70,8 @@ commands:
   show <id> [--horde h]
   answer <id> "<answer>" [--scope once|mission] [--horde h]
       records the client's answer, closes the item, and appends it to the mission's decisions as
-      "ask-NNN". --scope is accepted only for kind "lower": "once" (the default) spends the grant on
+      "ask-NNN". A ratification item (decide.mjs ratify) is answered with one word first — tak or
+      yes admits the area ruling it names, nie or reject leaves it a ruling of this mission. --scope is accepted only for kind "lower": "once" (the default) spends the grant on
       the landing that uses it; "mission" stands until "horde done". land.mjs's guards read this
       decision, not the raw item, to decide whether a branch that weakens a rule, the proof or a
       gate may land; a "stuck" ticket returns to the queue or closes as not-done only through an
@@ -225,7 +226,19 @@ export function answerAsk(horde, id, { answer, scope } = {}) {
   const ref = String(id).startsWith('a-') ? String(id) : `a-${String(id).padStart(3, '0')}`;
   return withAsksLock(horde, () => withLoopLock(horde, () => {
     const item = loadAsks(horde).items.find((x) => x.id === ref);
-    if (!item) throw new Error(`no such ask: ${ref}`);
+    if (!item) {
+      // A ratify item (decide.mjs ratify) is no question the landing guards read, so it is not among the
+      // items above; its answer is one word, which the loop checks, and it marks the area ruling it asks
+      // about ratified or rejected. The graph's logs are written from that mark when the mission is done.
+      const r = loopAsks(horde).find((a) => `a-${a.id}` === ref && a.kind === 'ratify');
+      if (!r) throw new Error(`no such ask: ${ref}`);
+      if (r.state === 'answered') throw new Error(`already answered: ${ref}`);
+      if (scope !== undefined) throw new Error('--scope is only accepted for kind "lower" (this ask is "ratify")');
+      const done = answerLoopAsk(horde, ref, answer);
+      return {
+        id: ref, kind: 'ratify', why: r.question, state: 'answered', answer, ...(done.ruling ? { ruling: done.ruling, verdict: done.verdict } : {}), answeredAt: nowIso(),
+      };
+    }
     if (item.state === 'answered') throw new Error(`already answered: ${ref}`);
     if (scope !== undefined && item.kind !== 'lower') {
       throw new Error(`--scope is only accepted for kind "lower" (this ask is "${item.kind}")`);
@@ -311,7 +324,7 @@ function cmdAnswer(horde, positional, flags) {
   } catch (e) {
     fail(e.message);
   }
-  emit(item, flags, () => `ask ${item.id} answered — recorded as ask-${item.id.slice(2)}`);
+  emit(item, flags, () => `ask ${item.id} answered — recorded as ask-${item.id.slice(2)}${item.verdict ? ` · ${item.ruling} ${item.verdict}${item.verdict === 'ratified' ? ' — written into the graph\'s logs when the mission is done' : ' — it stays a ruling of this mission'}` : ''}`);
 }
 
 function main() {
