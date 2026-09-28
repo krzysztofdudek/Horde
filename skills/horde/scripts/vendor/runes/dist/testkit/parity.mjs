@@ -1,8 +1,9 @@
 /**
  * Parity, both ways, between a tool's command table, its hand-written usage text and its MCP tools: names, and for the tools also each field's type, which fields are required, and the order of the arguments. The table is the one source; the check proves that the usage text and the tools say the same thing as it, so a command, an argument or a flag added in one place and forgotten in another fails a test instead of shipping.
  */
-import { argSpec, publicCommands, readUsage } from '../cli/index.mjs';
-import { buildTools, toolFlags, toolName, prefixOf } from '../mcp/index.mjs';
+import { argSpec, publicCommands } from '../cli/table.mjs';
+import { readUsage } from '../cli/usage.mjs';
+import { buildTools, toolFlags, toolName, prefixOf } from '../mcp/tools.mjs';
 /** Every disagreement between the table and the usage text or the tools; empty means parity. */
 export function parityProblems(options) {
     const { table } = options;

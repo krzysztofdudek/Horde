@@ -1,5 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
-import { type CommandTable, type CommandResult, type ParsedArgs } from '../cli/index.mjs';
+import type { CommandTable } from '../cli/table.mjs';
+import { type ParsedArgs } from '../cli/parse.mjs';
+import { type CommandResult } from '../cli/output.mjs';
 import { type McpTool, type ToolOptions } from './tools.mjs';
 export declare const PROTOCOL_VERSION = "2025-06-18";
 /** The versions the server speaks: it uses nothing a later one added beyond tool annotations, which an older client ignores. A client asking for one of these gets it back; any other gets `PROTOCOL_VERSION`. */
@@ -85,6 +87,21 @@ export interface ServerOptions {
     instructions?: string;
     /** A refusal in JSON mode answers with the `<tool>-error/1` document. Default true; false answers with the message text. Either way it is the one block, notes in `_meta`. */
     errorDocuments?: boolean;
+    /**
+     * How many tool calls `serveStdio` runs at once. Default one at a time, in order. `total` bounds all calls together, `perCommand` the calls of one command: a number for every command, or a function of the command (a CLI that serialises its own writes behind a lock can still say 1 for a command that must not overlap with itself). Each limit is a whole number from 1 up, or `Infinity`; a function's answer that is not counts as 1. Above one at a time the executor must be spawn: an in-process run cannot be stopped, so a timeout or a cancel would leave it running beside the next call, and `createServer` refuses the combination.
+     */
+    concurrency?: {
+        total?: number;
+        perCommand?: number | ((command: string) => number);
+    };
+}
+/** How `serveStdio` schedules tool calls: `total` calls at once, and per tool the key it shares a limit under and that limit. */
+export interface Concurrency {
+    total: number;
+    perTool(name: unknown): {
+        key: string;
+        limit: number;
+    };
 }
 export interface ToolResult {
     content: {
@@ -119,6 +136,8 @@ export interface McpServer {
     callTool(name: unknown, input: unknown, signal?: AbortSignal): Promise<ToolResult>;
     /** Resolves when no call's work is still running (an in-process run a timeout gave up on, say). */
     idle(): Promise<void>;
+    /** How many calls may run at once; absent, one at a time. */
+    concurrency?: Concurrency;
 }
 /** A server over the table, answering one message at a time through `handle`; `serveStdio` puts it on stdin/stdout. */
 export declare function createServer(options: ServerOptions): McpServer;

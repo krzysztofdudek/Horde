@@ -1,13 +1,6 @@
 /**
  * @chrisdudek/runes/cli
  *
- * CLI scaffolding: the command table and its checks, `parseArgs` driven by it, the `<tool>-error/1` error document, the one-block `--json` rule, and reading a hand-written usage text against the table.
+ * The command table: `defineTable` and the shape it takes, the one source of a tool's CLI, its MCP tools and its parity tests. This index is the stable 1.x surface (docs/api.md), and it holds only what a family tool imports today. The parser, the `<tool>-error/1` document and the one-block `--json` rule stay internal modules that the MCP adapter and the test kit use; a later 1.x minor may export them when a tool adopts them.
  */
-export { RUNES_VERSION as version } from '../version.mjs';
-/** The subpath this module is published under. */
-export const subpath = 'cli';
-export { defineTable, tableProblems, argSpec, commandFlags, pathFields, publicCommands, resolveCommand } from './table.mjs';
-export { parseArgs } from './parse.mjs';
-export { CliError, UsageError, errorDocument, errorSchema, errorParts, formatError, commandArgv } from './error.mjs';
-export { renderResult, renderFailure, emit, jsonBlock, isSingleJsonBlock } from './output.mjs';
-export { readUsage } from './usage.mjs';
+export { defineTable } from './table.mjs';

@@ -91,6 +91,10 @@ export function tableProblems(table) {
             if (!names.has(f) && !(Object.hasOwn(flags, f) && flags[f] !== 'bool' && flags[f] !== 'number'))
                 p.push(`${at}: paths names "${f}", which is neither an argument nor a flag that takes a value`);
         }
+        if (!spec.writes && spec.destructive)
+            p.push(`${at}: destructive, but it does not write`);
+        if (!spec.writes && spec.idempotent !== undefined)
+            p.push(`${at}: idempotent is said only of a command that writes`);
         if (typeof spec.stdoutJson === 'string' && !Object.hasOwn(flags, spec.stdoutJson))
             p.push(`${at}: stdoutJson names --${spec.stdoutJson}, which it does not take`);
     }

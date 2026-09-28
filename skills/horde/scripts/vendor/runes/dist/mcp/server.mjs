@@ -8,11 +8,13 @@
  *
  * Result shape. With a JSON answer (`json: true`, or a command that prints JSON unasked) the content is exactly one text block, the document, so a client that concatenates blocks can parse it; every note (the CLI's stderr, what `prepare` says) goes into `_meta` under `<tool>/<key>`, never into a second block. A refusal in JSON mode is the `<tool>-error/1` document as that one block (with `errorDocuments: false`, the message text as that one block). Without JSON, the answer is the first text block and each note a block after it. A refusal or a non-zero exit comes back with `isError: true`. Input that does not fit a tool is a JSON-RPC -32602 error, and nothing runs.
  *
- * Transport (`serveStdio`): newline-delimited JSON-RPC 2.0 on stdin/stdout. Tool calls run one at a time, in order; `initialize`, `ping` and `tools/list` are answered at once, never queued behind a running call (a synchronous in-process run still blocks everything while it runs, see above). `notifications/cancelled` stops a running call (killing its process tree) or drops a queued one, and the cancelled request gets no answer. A cancel for any other id is ignored: one that arrives after its call was answered (a late cancel) does nothing, and a later request that reuses the id is answered as usual. Responses from the client are ignored. When stdin closes, or on SIGTERM, SIGINT or SIGHUP, every running call is stopped first; a signal then exits with 128 + its number.
+ * Transport (`serveStdio`): newline-delimited JSON-RPC 2.0 on stdin/stdout. By default tool calls run one at a time, in order. With the spawn executor, `concurrency` lets several run at once: `total` bounds the calls running together, `perCommand` the calls of one command (a number for every command, or a function of the command), and a call that would exceed either waits, in arrival order among the calls it competes with; answers then go out as calls finish, each under its own id. Each call has its own time limit, counted from when it starts running (not while it waits), and its own cancel. `initialize`, `ping` and `tools/list` are answered at once, never queued behind a running call (a synchronous in-process run still blocks everything while it runs, see above). `notifications/cancelled` stops a running call (killing its process tree) or drops a waiting one, and the cancelled request gets no answer. A cancel for any other id is ignored: one that arrives after its call was answered (a late cancel) does nothing, and a later request that reuses the id is answered as usual. Responses from the client are ignored. When stdin closes, or on SIGTERM, SIGINT or SIGHUP, every running call is stopped first; a signal then exits with 128 + its number.
  */
 import { createInterface } from 'node:readline';
 import { constants as osConstants } from 'node:os';
-import { parseArgs, errorDocument, errorParts, isSingleJsonBlock } from '../cli/index.mjs';
+import { parseArgs } from '../cli/parse.mjs';
+import { errorDocument, errorParts } from '../cli/error.mjs';
+import { isSingleJsonBlock } from '../cli/output.mjs';
 import { buildTools, argvFor, answersJson, commandForTool, toolName, prefixOf, InvalidParams } from './tools.mjs';
 import { runProcess } from './process.mjs';
 export const PROTOCOL_VERSION = '2025-06-18';
@@ -27,6 +29,7 @@ export function spawnCli(options = {}) {
     return { kind: 'spawn', command: options.command ?? process.execPath, args: options.args ?? [], stderrLines: options.stderrLines ?? 40 };
 }
 const DEFAULT_TIMEOUT_MS = 10 * 60_000;
+const isLimit = (n) => n === Infinity || (typeof n === 'number' && Number.isInteger(n) && n >= 1);
 const text = (t) => ({ type: 'text', text: t });
 const seconds = (ms) => (ms < 1000 ? `${ms} ms` : `${Math.round(ms / 1000)} s`);
 /** A server over the table, answering one message at a time through `handle`; `serveStdio` puts it on stdin/stdout. */
@@ -40,6 +43,32 @@ export function createServer(options) {
     const errorDocs = options.errorDocuments ?? true;
     const inflight = new Set();
     const meta = (notes) => Object.fromEntries(Object.entries(notes).map(([k, v]) => [`${tool}/${k}`, v]));
+    const total = options.concurrency?.total ?? 1;
+    const perCommand = options.concurrency?.perCommand ?? Infinity;
+    if (!isLimit(total))
+        throw new TypeError(`concurrency.total must be a whole number from 1 up, or Infinity (got ${String(total)})`);
+    if (typeof perCommand !== 'function' && !isLimit(perCommand))
+        throw new TypeError(`concurrency.perCommand must be a whole number from 1 up, Infinity, or a function of the command (got ${String(perCommand)})`);
+    if (total > 1 && executor.kind !== 'spawn')
+        throw new TypeError('concurrency above one call at a time needs the spawn executor: an in-process run cannot be stopped, so a timed-out or cancelled one would keep running beside the next call');
+    const concurrency = {
+        total,
+        perTool(name) {
+            const command = commandForTool(table, name, toolOptions);
+            if (command === null)
+                return { key: '', limit: Infinity }; // the help tool, or a name the call will refuse: nothing to hold back
+            let n = perCommand;
+            if (typeof perCommand === 'function') {
+                try {
+                    n = perCommand(command);
+                }
+                catch {
+                    n = 1;
+                }
+            }
+            return { key: command, limit: isLimit(n) ? n : 1 };
+        },
+    };
     const timeoutOf = (command) => {
         const t = typeof options.timeoutMs === 'function' ? options.timeoutMs(command) : options.timeoutMs;
         return typeof t === 'number' && Number.isFinite(t) && t > 0 ? t : DEFAULT_TIMEOUT_MS;
@@ -93,8 +122,16 @@ export function createServer(options) {
         return { content: [...content, ...noteBlocks], isError: o.code !== 0 };
     }
     async function callTool(name, input, signal) {
-        if (helpName !== null && name === helpName)
+        if (helpName !== null && name === helpName) {
+            // The help tool takes no fields; like every other tool it refuses one it does not list, since the schema no longer says additionalProperties: false.
+            const given = input ?? {};
+            if (typeof given !== 'object' || Array.isArray(given))
+                throw new InvalidParams(`${helpName}: arguments must be an object`);
+            const extra = Object.keys(given);
+            if (extra.length)
+                throw new InvalidParams(`${helpName}: unknown field "${extra[0]}" — it takes no fields`);
             return { content: [text(toolOptions.help)], isError: false };
+        }
         const command = commandForTool(table, name, toolOptions);
         if (command === null)
             throw new InvalidParams(`Unknown tool: ${String(name)}`);
@@ -193,7 +230,7 @@ export function createServer(options) {
         return err(-32601, `Method not found: ${method}`);
     }
     return { tools, handle, callTool, idle: async () => { while (inflight.size)
-            await Promise.allSettled([...inflight]); } };
+            await Promise.allSettled([...inflight]); }, concurrency };
 }
 /** Serves the server on stdin/stdout (see the module note). */
 export function serveStdio(server, options = {}) {
@@ -203,15 +240,20 @@ export function serveStdio(server, options = {}) {
     const log = options.log ?? ((line) => { process.stderr.write(`${line}\n`); });
     const send = (m) => { output.write(`${JSON.stringify(m)}\n`); };
     const key = (id) => JSON.stringify(id);
-    const running = new Map(); // request id → the running call's controller
-    const queued = new Map(); // request id → how many calls with it wait their turn
-    const cancelled = new Set(); // ids of queued calls to drop when their turn comes
-    let queue = Promise.resolve();
+    const total = server.concurrency?.total ?? 1;
+    const slotOf = (msg) => server.concurrency?.perTool(msg.params?.name) ?? { key: '', limit: Infinity };
+    const waiting = []; // calls not started yet, in arrival order
+    const running = new Map(); // request id → the running calls' controllers
+    const busy = new Map(); // per-command key → calls of it running
+    let active = 0;
     async function answer(msg, call) {
         const ctrl = new AbortController();
         const k = key(msg.id);
-        if (call)
-            running.set(k, ctrl);
+        if (call) {
+            const set = running.get(k) ?? new Set();
+            set.add(ctrl);
+            running.set(k, set);
+        }
         let reply;
         try {
             reply = await server.handle(msg, ctrl.signal);
@@ -220,11 +262,49 @@ export function serveStdio(server, options = {}) {
             reply = { jsonrpc: '2.0', id: msg.id ?? null, error: { code: -32603, message: e instanceof Error ? e.message : String(e) } };
         }
         finally {
-            if (call)
-                running.delete(k);
+            if (call) {
+                const set = running.get(k);
+                set?.delete(ctrl);
+                if (!set?.size)
+                    running.delete(k);
+            }
         }
         if (reply && !ctrl.signal.aborted)
             send(reply);
+    }
+    // Starts every waiting call the limits let through, oldest first; a call held back by its command's limit does not hold back a later call of another command.
+    function pump() {
+        for (let i = 0; i < waiting.length && active < total;) {
+            const w = waiting[i];
+            if ((busy.get(w.slot.key) ?? 0) >= w.slot.limit) {
+                i += 1;
+                continue;
+            }
+            waiting.splice(i, 1);
+            void run(w);
+        }
+    }
+    async function run(w) {
+        active += 1;
+        busy.set(w.slot.key, (busy.get(w.slot.key) ?? 0) + 1);
+        try {
+            await answer(w.msg, true);
+            // One at a time: an in-process run a timeout gave up on still finishes before the next call starts.
+            if (total === 1)
+                await server.idle();
+        }
+        catch (e) {
+            log(`[mcp] ${e?.stack ?? e}`);
+        }
+        finally {
+            active -= 1;
+            const n = (busy.get(w.slot.key) ?? 1) - 1;
+            if (n)
+                busy.set(w.slot.key, n);
+            else
+                busy.delete(w.slot.key);
+            pump();
+        }
     }
     const onLine = (line) => {
         const t = line.trim();
@@ -242,11 +322,12 @@ export function serveStdio(server, options = {}) {
             const id = msg.params?.requestId;
             if (id === undefined)
                 return;
-            const ctrl = running.get(key(id));
-            if (ctrl)
+            const k = key(id);
+            for (const ctrl of running.get(k) ?? [])
                 ctrl.abort('cancelled');
-            else if (queued.has(key(id)))
-                cancelled.add(key(id));
+            for (let i = waiting.length - 1; i >= 0; i -= 1)
+                if (waiting[i]?.id === k)
+                    waiting.splice(i, 1);
             return;
         }
         const isCall = !!msg && typeof msg === 'object' && msg.method === 'tools/call' && Object.hasOwn(msg, 'id');
@@ -254,25 +335,14 @@ export function serveStdio(server, options = {}) {
             answer(msg, false).catch((e) => log(`[mcp] ${e?.stack ?? e}`));
             return;
         }
-        const k = key(msg.id);
-        queued.set(k, (queued.get(k) ?? 0) + 1);
-        queue = queue.then(async () => {
-            const n = (queued.get(k) ?? 1) - 1;
-            if (n)
-                queued.set(k, n);
-            else
-                queued.delete(k);
-            if (cancelled.delete(k))
-                return; // cancelled while it waited its turn
-            await answer(msg, true);
-            await server.idle(); // an in-process run given up on still finishes before the next call starts
-        }).catch((e) => log(`[mcp] ${e?.stack ?? e}`));
+        waiting.push({ msg, id: key(msg.id), slot: slotOf(msg) });
+        pump();
     };
     const stopAll = () => {
-        for (const ctrl of running.values())
-            ctrl.abort('cancelled');
-        for (const k of queued.keys())
-            cancelled.add(k);
+        waiting.length = 0;
+        for (const set of running.values())
+            for (const ctrl of set)
+                ctrl.abort('cancelled');
     };
     const rl = createInterface({ input, crlfDelay: Infinity });
     rl.on('line', (line) => { try {

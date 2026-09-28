@@ -1,4 +1,4 @@
-import { type CommandSpec, type CommandTable, type FlagKind } from '../cli/index.mjs';
+import { type CommandSpec, type CommandTable, type FlagKind } from '../cli/table.mjs';
 /** A JSON-RPC "invalid params" refusal (-32602): the call's input does not fit the tool. */
 export declare class InvalidParams extends Error {
     readonly rpcCode = -32602;
@@ -9,17 +9,20 @@ export declare function requireParam(cond: unknown, message: string): asserts co
 export interface McpTool {
     name: string;
     description: string;
+    /** The fields: one per argument and per flag. The schema is closed in practice rather than by `additionalProperties: false`: the server refuses a field it does not list with a -32602 error naming the fields it takes, so the keyword would cost every tool its bytes in `tools/list` to say what the refusal already says. */
     inputSchema: {
         type: 'object';
         properties: Record<string, Record<string, unknown>>;
         required?: string[];
-        additionalProperties: false;
     };
+    /**
+     * The MCP tool annotations, written only where they differ from the specification's defaults (`readOnlyHint` false, `destructiveHint` true, `idempotentHint` false, `openWorldHint` true), so an absent hint means its default. A read-only tool says `readOnlyHint: true` and nothing about destruction or idempotence, which the specification gives meaning only for a tool that writes; a tool that writes says `destructiveHint: false` unless the table marks it destructive and `idempotentHint: true` when the table marks it idempotent. Every tool says `openWorldHint: false`: it works on local files, not an open world.
+     */
     annotations: {
-        readOnlyHint: boolean;
-        destructiveHint: boolean;
-        idempotentHint: boolean;
-        openWorldHint: boolean;
+        readOnlyHint?: true;
+        destructiveHint?: false;
+        idempotentHint?: true;
+        openWorldHint: false;
     };
 }
 export interface ToolOptions {

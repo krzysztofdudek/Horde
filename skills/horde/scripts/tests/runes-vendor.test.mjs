@@ -30,12 +30,12 @@ function copyOfSkill() {
   return dir;
 }
 
-test('the vendored copy, the tool and the skill fragment match the pin, at tag v0.1.4', () => {
+test('the vendored copy, the tool and the skill fragment match the pin, at tag v1.0.0', () => {
   const r = check(SKILL);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /\d+ vendored files, 1 skill fragments? and the tool match v0\.1\.4/);
+  assert.match(r.stdout, /\d+ vendored files, 1 skill fragments? and the tool match v1\.0\.0/);
   const pin = JSON.parse(readFileSync(join(SKILL, 'scripts', 'vendor', 'runes.pin.json'), 'utf8'));
-  assert.equal(pin.tag, 'v0.1.4');
+  assert.equal(pin.tag, 'v1.0.0');
   assert.deepEqual(pin.paths, ['dist/version.mjs', 'dist/cli', 'dist/mcp', 'dist/testkit/parity.mjs', 'dist/testkit/measure.mjs', 'dist/testkit/client.mjs']);
   assert.ok(Object.keys(pin.files).length > 0 && Object.keys(pin.files).every((f) => pin.paths.some((p) => f === p || f.startsWith(`${p}/`))));
 });

@@ -15,9 +15,9 @@ export interface CommandSpec {
     summary?: string;
     /** The command writes something beyond a disposable cache. */
     writes?: boolean;
-    /** The command can remove or overwrite what is there. */
+    /** The command can remove or overwrite what is there. Only a command that writes can be; `defineTable` refuses it on one that does not. */
     destructive?: boolean;
-    /** Running the command twice with the same input has no further effect. Default: true for a command that does not write. */
+    /** Running the command twice with the same input has no further effect. Only said of a command that writes (one that does not is trivially so); `defineTable` refuses it on one that does not. */
     idempotent?: boolean;
     /** Arguments and `value`/`many` flags that name a file resolved against the working directory. A `path` flag is one already. Over MCP they must be absolute. */
     paths?: readonly string[];

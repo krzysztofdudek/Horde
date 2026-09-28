@@ -2,7 +2,7 @@
  * MCP tools generated from the command table: one tool per public command, `<prefix><command>` (a subcommand or a dash joins with `_`: `grain_decide_steer`), one field per argument and per flag under the flag's own name, and the annotations from the table. A call is turned back into the argv the CLI would get, so the CLI's own parser reads it exactly as it reads a command line.
  */
 import { isAbsolute } from 'node:path';
-import { argSpec, commandFlags, pathFields, publicCommands } from '../cli/index.mjs';
+import { argSpec, commandFlags, pathFields, publicCommands } from '../cli/table.mjs';
 /** A JSON-RPC "invalid params" refusal (-32602): the call's input does not fit the tool. */
 export class InvalidParams extends Error {
     rpcCode = -32602;
@@ -13,7 +13,8 @@ export function requireParam(cond, message) {
     if (!cond)
         throw new InvalidParams(message);
 }
-const ABS = ' An absolute path: the server does not run in your working directory.';
+/** The note a path field carries: the one description the adapter writes itself. */
+const ABS = 'An absolute path.';
 const DEFAULT_OMIT = ['help'];
 /** A tool's name for a command. */
 export function toolName(prefix, command) {
@@ -32,14 +33,19 @@ export function commandForTool(table, name, options = {}) {
     const prefix = prefixOf(table, options);
     return publicCommands(table).find((c) => toolName(prefix, c) === name) ?? null;
 }
-function flagSchema(name, kind) {
+// A field's schema says only what its name and type do not: a flag's name is the field's name, its kind is the type (an array for a repeatable flag, a number for a number flag), and an argument's position and whether it is required are the table's business (argv order) and `required`'s. Only a path field carries a word, because "absolute" is a rule the type cannot say. Everything else a caller needs is in the help tool, said once instead of once per tool.
+function flagSchema(kind) {
     switch (kind) {
-        case 'bool': return { type: 'boolean', description: `--${name}` };
-        case 'many': return { type: 'array', items: { type: 'string' }, description: `--${name}, repeatable: one item per value (a single string is one item).` };
-        case 'number': return { type: ['number', 'string'], description: `--${name} <number>` };
-        case 'path': return { type: 'string', description: `--${name} <path>.${ABS}` };
-        default: return { type: 'string', description: `--${name} <value>` };
+        case 'bool': return { type: 'boolean' };
+        case 'many': return { type: 'array', items: { type: 'string' } };
+        case 'number': return { type: ['number', 'string'] };
+        default: return { type: 'string' };
     }
+}
+function annotationsFor(spec) {
+    if (!spec.writes)
+        return { readOnlyHint: true, openWorldHint: false };
+    return { ...(spec.destructive ? {} : { destructiveHint: false }), ...(spec.idempotent ? { idempotentHint: true } : {}), openWorldHint: false };
 }
 function defaultDescription(_command, spec) {
     return [spec.writes ? 'WRITES.' : 'Read-only.', spec.summary ?? ''].filter(Boolean).join(' ');
@@ -54,38 +60,31 @@ export function buildTools(table, options = {}) {
         const paths = pathFields(table, command);
         const properties = {};
         const required = [];
-        (spec.args ?? []).map(argSpec).forEach((a, i) => {
-            properties[a.name] = a.variadic
-                ? { type: 'array', items: { type: 'string' }, ...(a.optional ? {} : { minItems: 1 }), description: `Arguments ${i + 1} and on, one per item.` }
-                : { type: 'string', description: `Argument ${i + 1}${a.optional ? ' (optional)' : ''}.` };
+        for (const a of (spec.args ?? []).map(argSpec)) {
+            properties[a.name] = a.variadic ? { type: 'array', items: { type: 'string' }, ...(a.optional ? {} : { minItems: 1 }) } : { type: 'string' };
             if (!a.optional)
                 required.push(a.name);
-        });
-        for (const [f, kind] of Object.entries(toolFlags(table, command, options))) {
-            properties[f] = flagSchema(f, kind);
-            if (f === 'json' && kind === 'bool')
-                properties[f].description = 'Answer with the JSON document --json prints.';
         }
+        for (const [f, kind] of Object.entries(toolFlags(table, command, options)))
+            properties[f] = flagSchema(kind);
         for (const [f, schema] of Object.entries(properties)) {
-            if (paths.has(f) && !String(schema.description).includes(ABS))
-                schema.description = `${schema.description}${ABS}`;
-            const note = options.fieldNote?.(command, f);
-            if (note)
-                schema.description = `${schema.description} ${note}`;
+            const words = [paths.has(f) ? ABS : undefined, options.fieldNote?.(command, f)].filter(Boolean);
+            if (words.length)
+                schema.description = words.join(' ');
         }
         tools.push({
             name: toolName(prefix, command),
             description: describe(command, spec),
-            inputSchema: { type: 'object', properties, ...(required.length ? { required } : {}), additionalProperties: false },
-            annotations: { readOnlyHint: !spec.writes, destructiveHint: !!spec.destructive, idempotentHint: spec.idempotent ?? !spec.writes, openWorldHint: false },
+            inputSchema: { type: 'object', properties, ...(required.length ? { required } : {}) },
+            annotations: annotationsFor(spec),
         });
     }
     if (options.help !== undefined) {
         tools.push({
             name: toolName(prefix, 'help'),
-            description: 'Read-only. The CLI usage text: every command, flag and rule the tools are generated from.',
-            inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-            annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+            description: 'Read-only. The full usage text.',
+            inputSchema: { type: 'object', properties: {} },
+            annotations: { readOnlyHint: true, openWorldHint: false },
         });
     }
     return tools;

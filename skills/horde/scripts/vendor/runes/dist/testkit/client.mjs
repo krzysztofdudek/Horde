@@ -3,7 +3,7 @@
  */
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { killTree } from '../mcp/index.mjs';
+import { killTree } from '../mcp/process.mjs';
 /** Starts a server and connects to its stdio. */
 export function startMcpClient(options) {
     // Its own process group on POSIX, so stop() can kill the server together with whatever it started.

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Runes 1.0.0: the vendored MCP adapter and skill fragment move from Runes v0.1.4 to v1.0.0, whose tools/list is shorter with every field kept (issue 516).
+
 Needs Yggdrasil 6.1.0 or newer and Grain 6.1.0 or newer; an older one is refused with the release to install.
 
 ### Breaking
