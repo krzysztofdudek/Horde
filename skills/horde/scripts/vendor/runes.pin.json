@@ -1,0 +1,51 @@
+{
+  "source": "https://github.com/krzysztofdudek/Runes.git",
+  "dest": "runes",
+  "paths": [
+    "dist/version.mjs",
+    "dist/cli",
+    "dist/mcp",
+    "dist/testkit/parity.mjs",
+    "dist/testkit/measure.mjs",
+    "dist/testkit/client.mjs"
+  ],
+  "fragments": [
+    {
+      "name": "mcp-first",
+      "target": "../../SKILL.md",
+      "sha256": "ed635d4cd89ef1adfd007aeeb743f4976e37b91d8fd25db7bbac28dee9f0ce0b"
+    }
+  ],
+  "tool": {
+    "path": "../runes.mjs",
+    "sha256": "6c6547e0326a7d2f66348fa72f21d09839095e1324957f06da20461b1ea9ca51"
+  },
+  "tag": "v0.1.4",
+  "commit": "274f20bca40903f2cfd696e6fe6f6958a270c707",
+  "files": {
+    "dist/cli/error.d.mts": "42dd9c7cfba8716ba1bdc296f0923c7660a9c21453bebc452ab6c20616e9f672",
+    "dist/cli/error.mjs": "b0389e6191224799520db84ce0728bde4a1ea6f8d0e7b6d16985dd9d17e829ec",
+    "dist/cli/index.d.mts": "7c2e0865951594866ba85122fdc935ffc58bdf182b57feaaeedc36ef6616bf9a",
+    "dist/cli/index.mjs": "2aae8460f23aa9740d5df27f31610141598bcfd78d01469e847c02e95d6a6e15",
+    "dist/cli/output.d.mts": "aa1ec6e5df6a774f2df3fcc118928412e70dfccc0e993625e0a7fb7a22d3fdf4",
+    "dist/cli/output.mjs": "817ca2691ebc4b82e1f8ab5a7d3277ec1fac678ad1f4d8de4b87e73d21261d22",
+    "dist/cli/parse.d.mts": "53a27de6ebe73d1abba3ff1280d504a68b3ae9c17d55561d1ec216c0b414c836",
+    "dist/cli/parse.mjs": "f903d01c7c03d6513be59f5cae15bd31bf966a48c2d64699dfed7339a654c52f",
+    "dist/cli/table.d.mts": "6a8382fcea3a27cc627aec87d0f1ac7f86e8f5b15617f99a4f1a42635e597cb1",
+    "dist/cli/table.mjs": "f82dc1bdb17d8228dda1bbffde63f3aa19b7ac6ec2f734abd05131a4ccdf7634",
+    "dist/cli/usage.d.mts": "d8bc1203323773ef235a58e89e98a83902aa004b41b3acd84b8bb2f180d7e0a8",
+    "dist/cli/usage.mjs": "ca7761384ee9e0897f3906fafb9004e2049fe90087bb33466491c22f8f559f82",
+    "dist/mcp/index.d.mts": "7f6aa64c46cb7048dec300676226a59f569ea4910aba545fe85cc1a2fdf79b4b",
+    "dist/mcp/index.mjs": "87c3b067deb5f7964768f99f4be48ed54ed25700239c19eac629dcdebd44f675",
+    "dist/mcp/process.d.mts": "2360ec9348875fbaacff1085366381d22d4bdaaac38f98c356ad851f8e2f3390",
+    "dist/mcp/process.mjs": "4660c765f2b49d0046c622912ca81e2739fd4819e431cb9a626a9e90806da850",
+    "dist/mcp/server.d.mts": "a7394fe9066b2efa8db892dd16201046fcd58647d805a1137fc82f8356716311",
+    "dist/mcp/server.mjs": "4ee1d77c450b2fae76ddaa2956f363ae6b2baa05a378807ffae38230cd829e92",
+    "dist/mcp/tools.d.mts": "456cfc1603a2d33296457e0e96d84a442db8c4bfd81a10c6c25e8591d2535ab1",
+    "dist/mcp/tools.mjs": "b9f1f0aaab2f6de89e46c89bfd23fc9988015ffb72c2c157bb0c218346d5f057",
+    "dist/testkit/client.mjs": "aa43976aeb8ea0731f134e58de31fc732a7a5a434ce1a61d53d50b916383f49a",
+    "dist/testkit/measure.mjs": "79f05ebf7579a6021c04331e8dd56396e67dafde9d55cbcfe236abc3a903f375",
+    "dist/testkit/parity.mjs": "190e8e84ae885805af2ad53f862fca6f13dc3cafffa6ff23382eeb94e6c0e436",
+    "dist/version.mjs": "a99af37d382b5e7b5ed6ff4435c3c0b3080bd36fd7d9b6877d4f47f3e8231249"
+  }
+}

@@ -56,7 +56,7 @@ export const RULE_KINDS = ['check', 'prose'];
 // against a gate refusal ("gate") or a worker's remark ("log").
 export const RETURN_SOURCES = new Set(['revert', 'reopen']);
 
-const USAGE = `usage: retro.mjs [--horde h] [--tree p] [--json]
+export const USAGE = `usage: retro.mjs [--horde h] [--tree p] [--json]
 
 The mission's retrospective, in two runs.
 

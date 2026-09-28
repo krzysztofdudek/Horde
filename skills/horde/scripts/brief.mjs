@@ -75,7 +75,7 @@ const ROLE_LAW = {
   review: ['review'],
 };
 
-const USAGE = `usage: brief.mjs <role> [args] --name <n> [--tree p] [--horde h] [--json] [--out <path>]
+export const USAGE = `usage: brief.mjs <role> [args] --name <n> [--tree p] [--horde h] [--json] [--out <path>]
 
 roles:
   architect --name <n>

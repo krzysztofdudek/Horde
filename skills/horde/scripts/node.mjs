@@ -29,7 +29,7 @@ import {
 } from './_lib.mjs';
 import { loopTickets } from './loop.mjs';
 
-const USAGE = `usage: node.mjs <command> [options]
+export const USAGE = `usage: node.mjs <command> [options]
 
 commands:
   bind [--horde h]

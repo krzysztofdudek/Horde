@@ -26,7 +26,7 @@
 import {
   existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
@@ -88,13 +88,18 @@ const KINDS = ['work', 'quality', 'prototype', 'revert'];
 const TICKET_QUALITY = ['autonomous', 'only-the-work'];
 const OPEN_EXCLUDE = new Set(['merged', 'dropped']);
 
-const USAGE = `usage: tk.mjs <command> [options]
+// The tree new/edit read the graph from (boundaries, ports, node logs, test nodes): --tree when given,
+// else cwd. A call through the MCP server runs in the server's directory, not the caller's, so it names
+// the tree instead of running from it.
+let graphTree;
+
+export const USAGE = `usage: tk.mjs <command> [options]
 
 commands:
   new <slug> --title "<t>" --node <n> [--node <n2> …] --class <c> [--severity high|medium|low]
       [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
       [--produces <node>/<port>,…] [--evidence "<…>"]… [--revert-base <ref>] [--mutate "<command>"]
-      [--reopens NNN] [--reverts NNN] [--team t] [--horde h]
+      [--reopens NNN] [--reverts NNN] [--tree p] [--team t] [--horde h]
       renders templates/ticket.md; status starts "proposed". --node is repeatable, up to two —
       three or more is refused, since nobody holds the whole of such a diff.
       --kind defaults to "work"; "quality" marks a self-filed improvement outside a wave's
@@ -133,10 +138,10 @@ commands:
       rules, and takes an explicit edit --files. --consumes/--produces name the
       ports the ticket needs and delivers, as <node>/<port>; a consumed port with no producing
       ticket and no such port in the graph is refused. Boundary and port existence are both read
-      from the graph in the tree this command runs from (cwd) — --horde here only picks which
-      horde's ticket store the ticket is filed into, same as every ordinary read in this tool set;
-      it never switches the tree. Run new/edit from the tree whose graph state should decide the
-      check. An --evidence value that is
+      from the graph in the tree --tree names, else the tree this command runs from (cwd) — --horde
+      here only picks which horde's ticket store the ticket is filed into, same as every ordinary
+      read in this tool set; it never switches the tree. Run new/edit from (or name with --tree) the
+      tree whose graph state should decide the check. An --evidence value that is
       nothing but catalogue ids ("E2,E5") fills the Evidence field; any other value becomes its
       own "- [ ] …" line in the ticket's Acceptance — evidence checklist, and the ids cited in it
       fill the field too. A catalogue id (E1, E2, …) must already be a row in the horde's
@@ -167,8 +172,9 @@ commands:
       <reason>". The reason is required. The gate is asked on the next tick.mjs run, and nothing
       the review logs after this line is acted on. Refuses a ticket with no review raised.
   edit <ticket> --by <name> [--files a,b] [--boundary-proposal <id>] [--consumes …] [--produces …] [--evidence E1,…]
-      [--depends NNN,MMM] [--horde h]
-      rewrites the body (everything from "## What" on) from stdin, leaving the header block —
+      [--depends NNN,MMM] [--from <file>] [--tree p] [--horde h]
+      rewrites the body (everything from "## What" on) from stdin, or from the file --from
+      names, leaving the header block —
       the id/title heading, Status, Node/Class/Severity/Team, Depends on/Branch, Reopens, Files,
       Consumes/Produces, Evidence — untouched. Appends "body edited by <name>" to the log.
       What the director uses to write ticket bodies. With any of --files/--consumes/--produces/
@@ -639,7 +645,7 @@ function listFlag(value) {
 function checkFilesInBoundary(nodes, files, moved = []) {
   if (files.length === 0) return;
   const cfg = readConfig() || {};
-  const root = resolveTree({}).path;
+  const root = resolveTree({ tree: graphTree }).path;
   const boundary = [...ticketBoundary(root, cfg, nodes), ...moved];
   if (boundary.length === 0) return;
   const outside = files.filter((f) => !pathInBoundary(f, boundary));
@@ -657,7 +663,7 @@ function checkFilesInBoundary(nodes, files, moved = []) {
 function withNodeLogs(nodes, files) {
   if (files.length === 0) return files;
   const cfg = readConfig() || {};
-  const root = resolveTree({}).path;
+  const root = resolveTree({ tree: graphTree }).path;
   const logs = nodes.filter((n) => nodeExists(root, cfg, n)).map((n) => `${nodeGraphPathPrefix(root, cfg, n)}log.md`);
   return [...files, ...logs.filter((l) => !files.includes(l))];
 }
@@ -721,7 +727,7 @@ function legacyTickets(horde) {
 function checkConsumesHaveProducers(horde, consumes, selfId) {
   if (consumes.length === 0) return;
   const cfg = readConfig() || {};
-  const root = resolveTree({}).path;
+  const root = resolveTree({ tree: graphTree }).path;
   const tickets = allTickets(horde).filter((t) => t.id !== selfId);
   const missing = consumes.filter((c) => {
     if (portExists(root, cfg, c.node, c.port)) return false;
@@ -839,7 +845,7 @@ export function createTicket(horde, spec) {
     if (!item || item.state !== 'merged' || !item.sha) {
       fail(`--reverts ${reverts}: t-${reverted.id} ${item ? `is ${item.state}` : 'has no queue item'}, not merged — a revert takes back a landing, and nothing has landed on it${item && item.state === 'merged' ? ' that this horde recorded a merge commit for' : ''}`);
     }
-    const root = resolveTree({}).path;
+    const root = resolveTree({ tree: graphTree }).path;
     revertOf = { id: reverted.id, sha: item.sha, files: mergeFiles(item.sha, root) };
     if (!revertOf.files.length) fail(`--reverts ${reverts}: the merge ${item.sha} changed no file this repository can read — there is nothing to take back`);
   }
@@ -933,7 +939,7 @@ function isTestNode(node) {
   const cfg = readConfig() || {};
   const globs = asArray(cfg.testGlobs).map(String).filter(Boolean);
   if (!globs.length) return false;
-  const root = resolveTree({}).path;
+  const root = resolveTree({ tree: graphTree }).path;
   let boundary = [];
   try { boundary = nodeBoundary(root, cfg, node); } catch { boundary = []; }
   if (!boundary.length) return false;
@@ -1016,7 +1022,7 @@ function cmdNew(horde, positional, flags) {
     boundaryProposal: flags['boundary-proposal'] || null,
   });
   const cfg = readConfig() || {};
-  const root = resolveTree({}).path;
+  const root = resolveTree({ tree: graphTree }).path;
   const declared = listFlag(flags.files);
   const obligation = checkObligations(horde, root, cfg, asArray(flags.node), declared);
   emit({
@@ -1319,7 +1325,17 @@ function cmdMove(horde, positional, flags) {
   emit({ id: ticket.id, from: ticket.team, to: flags.team }, flags, () => `${ticket.id} moved: ${ticket.team} -> ${flags.team}`);
 }
 
-function readStdin() {
+// The text a command replaces something with: the file --from names, else stdin. A call through the MCP
+// server has no stdin (the server starts the CLI with none), so it names the file.
+function readInput(from) {
+  if (from !== undefined) {
+    if (typeof from !== 'string' || !from.trim()) fail('--from needs the path of the file to read');
+    try {
+      return readFileSync(resolve(from), 'utf8');
+    } catch (e) {
+      fail(`--from ${from}: ${e.code === 'ENOENT' ? 'no such file' : e.message}`);
+    }
+  }
   try {
     return readFileSync(0, 'utf8');
   } catch {
@@ -1446,8 +1462,8 @@ function cmdEdit(horde, positional, flags) {
     }
   }
 
-  const stdin = wantsFields ? '' : readStdin();
-  if (!wantsFields && !stdin.trim()) fail('edit requires the new body on stdin (everything from "## What" on), or one of --files/--consumes/--produces/--evidence/--depends');
+  const stdin = wantsFields ? '' : readInput(flags.from);
+  if (!wantsFields && !stdin.trim()) fail('edit requires the new body on stdin or in the file --from names (everything from "## What" on), or one of --files/--consumes/--produces/--evidence/--depends');
 
   let bytes = 0;
   if (stdin.trim()) {
@@ -1479,6 +1495,7 @@ function main() {
   if (!cmd) fail('missing command (see --help)');
 
   const horde = resolveHorde(flags);
+  graphTree = flags.tree;
 
   switch (cmd) {
     case 'new': return cmdNew(horde, positional, flags);

@@ -57,7 +57,7 @@ import {
 } from './loop.mjs';
 import { loadAsks, addAsk } from './ask.mjs';
 
-const USAGE = `usage: land.mjs <ticket|branch>[,<ticket|branch>...] [--level trunk] [--no-gate] [--background] [--tree p] [--horde h]
+export const USAGE = `usage: land.mjs <ticket|branch>[,<ticket|branch>...] [--level trunk] [--no-gate] [--background] [--tree p] [--horde h]
        land.mjs <ticket> --fate reverted --by <sha> [--tree p] [--horde h]
        land.mjs <ticket> --fate reopened --by <ticket> [--tree p] [--horde h]
 
@@ -4818,7 +4818,10 @@ function finish(horde, ticketId, result, head, flags, parent, level) {
 function startInBackground(horde, ticketId, argv) {
   const self = fileURLToPath(import.meta.url);
   const args = argv.filter((a) => a !== '--background');
-  const child = spawn(process.execPath, [self, ...args, '--result', '--json'], {
+  // Its own flags go before a bare -- when the call it repeats has one (how the MCP server hands a call
+  // over): a flag after it would be read as one more argument.
+  const end = args.indexOf('--') === -1 ? args.length : args.indexOf('--');
+  const child = spawn(process.execPath, [self, ...args.slice(0, end), '--result', '--json', ...args.slice(end)], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,

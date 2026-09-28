@@ -30,12 +30,37 @@ You speak to the user in their language, briefly, with numbers. Agents are brief
 
 ## The one rule above all
 
-**All state mutates only through `scripts/`.** No `cat >` into `.horde/`, no hand edits of tickets,
+**All state mutates only through `scripts/`** — called as Horde's MCP tools (below) or, where the session has none, on the command line. No `cat >` into `.horde/`, no hand edits of tickets,
 queues, rosters or journals. A hand-written file skips normalisation and the journal, and breaks the
 next boot. Missing a tool → add it to the skill, do not work around it. Files are the channel; messages
 between agents are doorbells that say "look at file X".
 
+## Call it through its MCP tools
+
+<!-- RUNES:mcp-first:START -->
+**Call the tool through its MCP tools first, when the session has them.** A tool with an MCP server offers every command of its CLI as an MCP tool named after the tool and the command (`<tool>_<command>`, a subcommand joined with `_`); the server may start by itself (installed as a plugin) or be configured by hand. The tools are generated from the same command table as the CLI and run the same code, with the same checks, so they are not a second implementation and a tool's answer is the CLI's answer. A tool's description starts by saying whether it writes; when the server also offers a help tool, it prints the full usage text.
+
+- A flag is the field of the same name without the dashes; a flag that takes no value is `true`; a repeatable flag is a list, one item per repetition.
+- An argument is the field its usage names, in the usage's order. An argument in brackets may be left out, but not one that comes before another you give.
+- The server does not run in your working directory, so a field naming a file or directory the command would look up from there must be an absolute path; a relative one is refused.
+- `json: true` answers with the JSON document `--json` prints, as exactly one text block; notes ride in `_meta`.
+- Input that does not fit the tool is refused before anything runs (a JSON-RPC -32602 error naming the field). A refusal or a failed check comes back with `isError: true`; where the tool answers a refusal with an error document (`<tool>-error/1`), read its `code`, never its wording.
+- A call that runs past the server's time limit, where it sets one, is stopped with everything it started, and the answer says so and how to allow longer.
+
+**The CLI is the fallback.** When a session has no such tools (a host without MCP, a subagent given none, a server that is not installed or not running), run the same command through the CLI, with the same effect; its help prints the usage.
+<!-- RUNES:mcp-first:END -->
+
+**Horde's server.** Installed as a plugin, Horde starts an MCP server named `horde` by itself, and every command of every script is a tool: `node …/scripts/<script>.mjs <command> …` is `horde_<script>_<command>` (a space or a dash joins with `_`: `horde_tk_log`, `horde_queue_set`, `horde_node_contract_propose`, `horde_tk_review_close`), a script with no subcommand is `horde_<script>` (`horde_tick`, `horde_land`, `horde_status`, `horde_refine`), and `horde_help` prints every script's usage, the same text its `--help` prints. This skill and every brief write a command the way its usage does (`tk.mjs log NNN "<text>"`), because the one command table in `scripts/commands.mjs` is what both surfaces are built from; read each such line as its tool, and run the line itself only when the session has no tools. The fields, beyond what the fragment above says:
+
+- every tool takes `json` and `horde`; an argument is the field its usage names (`horde_tk_log` takes `ticket` and `text`);
+- the server runs each command as its script, in the directory the host started it in — the session's own checkout, where you run the scripts anyway. A command that reads a tree takes `tree`, as an absolute path; a worker in its worktree passes it wherever the command takes it;
+- there is no stdin over MCP: `horde_horde_charter_edit` and `horde_tk_edit` take the text from the file `from` names (the CLI's `--from <file>`), written first to a scratch file;
+- the gate, a reviewer and Grain can run long: `horde_land`, `horde_tick`, `horde_horde_done` and a few more get an hour, every other tool ten minutes. `tick.mjs --watch` never ends on its own: run it in a terminal, never through the tool.
+- the server answers one call at a time, so a long call holds every other one, a worker's `horde_tk_log` through the same session included: while workers are out, land with `background: true`.
+
 ## Boot — every session, every wake-up, in this order
+
+Through the tools: `horde_status`, `horde_handoff_read`, `horde_ask_list` with `open: true`, `horde_decide_list`, `horde_tick`. The same five on the command line:
 
 ```
 node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/status.mjs                 # hordes on this repo, branches, queues, last gate

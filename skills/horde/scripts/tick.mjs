@@ -54,6 +54,7 @@ import {
   readLandResult, acquireGateLock, gateLockWaitMs, landingLoad, landingLine, landingDrain, drainLine,
 } from './land.mjs';
 import { refreshReport } from './report.mjs';
+import { refreshProfile } from './loop.mjs';
 import { loadAsks, addAsk } from './ask.mjs';
 import { mentionsEvidenceId } from './wave.mjs';
 
@@ -63,7 +64,7 @@ const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 const TEAM = 'trunk';
 const RUNNERS = ['session', 'external'];
 
-const USAGE = `usage: tick.mjs [--runner session|external] [--watch] [--stack] [--reclaim NNN[,MMM]]
+export const USAGE = `usage: tick.mjs [--runner session|external] [--watch] [--stack] [--reclaim NNN[,MMM]]
                 [--tree <path>] [--horde h] [--json]
 
 One run: reconcile what an ended worker left behind, put every ready branch through the gate, print
@@ -1187,6 +1188,8 @@ function main() {
   if (flags.help) { console.log(USAGE); process.exit(0); }
 
   const horde = resolveHorde(flags);
+  // A mission opened before a key was added to Horde's profile gets it here (loop.mjs refreshProfile).
+  refreshProfile(horde);
   const cfg = readConfig() || {};
   const runner = flags.runner || (cfg.runner && cfg.runner.kind) || 'session';
   if (!RUNNERS.includes(runner)) fail(`unknown runner: ${runner} (runners: ${RUNNERS.join(', ')})`);

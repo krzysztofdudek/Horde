@@ -46,7 +46,7 @@ import { findTicket, ticketKind, parseField, ticketsOf } from './tk.mjs';
 const START_RE = /^# Wave (\S+) — start \d{4}-\d{2}-\d{2}$/;
 const CLOSE_RE = /^# Wave (\S+) — close \d{4}-\d{2}-\d{2}$/;
 
-const USAGE = `usage: wave.mjs <command> [options]
+export const USAGE = `usage: wave.mjs <command> [options]
 
 commands:
   start [n] [--team t] [--tree p] [--horde h]
