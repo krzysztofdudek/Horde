@@ -667,6 +667,16 @@ test('an advisory is known by what it is about: counts in its text do not make i
   const convention = (nodes, text) => ({ kind: 'rule', nodes, text, evidence: { origin: 'convention', aspect: 'helper-writes' } });
   assert.equal(advisoryKey(convention(['feature'], 'in feature')), advisoryKey(convention(['feature', 'api'], 'in feature and api')));
   assert.notEqual(advisoryKey(convention(['feature'], 'x')), advisoryKey({ ...convention(['feature'], 'x'), evidence: { origin: 'convention', aspect: 'other' } }));
+  // Grain's aspect id names the node holding the rule most strongly (`grain/<partition>/…`), so it moves
+  // when another node overtakes that one; the rule identity Grain sends beside it does not.
+  const mined = (aspect, nodes) => ({ kind: 'rule', nodes, text: `in ${nodes.join(', ')}`,
+    evidence: { origin: 'convention', rule: 'nameshape||PascalCase|type', aspect } });
+  assert.equal(advisoryKey(mined('grain/cli-core/partition-nameshape', ['cli/core'])),
+    advisoryKey(mined('grain/cli-commands/partition-nameshape', ['cli/commands', 'cli/core'])),
+    'a rule whose strongest node changed is the rule already filed');
+  assert.notEqual(advisoryKey(mined('a', ['x'])),
+    advisoryKey({ ...mined('a', ['x']), evidence: { origin: 'convention', rule: 'nameshape||camelCase|function', aspect: 'a' } }),
+    'two rules are two, even drafted under one aspect id');
   const boundary = (decision, nodes) => ({ kind: 'rule', nodes, text: `${nodes.length} nodes`, evidence: { origin: 'boundary', decision } });
   assert.equal(advisoryKey(boundary('bd-1', ['ui'])), advisoryKey(boundary('bd-1', ['ui', 'web'])));
   assert.notEqual(advisoryKey(boundary('bd-1', ['ui'])), advisoryKey(boundary('bd-2', ['ui'])), 'two decisions are two rules');
