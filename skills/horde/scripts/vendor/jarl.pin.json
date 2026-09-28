@@ -1,7 +1,7 @@
 {
   "source": "https://github.com/krzysztofdudek/JarlSkill.git",
-  "ref": "jarl/436-node-log",
-  "commit": "49f70751ac2b83a81169d023cf05f989be0d13c5",
+  "ref": "release/6.1.0",
+  "commit": "a054c095fc0a5f1df52793af64f9770893897fc9",
   "api": "jarl-record/1",
   "dest": "jarl",
   "paths": [
