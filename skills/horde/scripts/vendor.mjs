@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// horde skill — jarl-vendor.mjs
+// horde skill — vendor.mjs
 //
 // Horde stands on Jarl's record: the loop a mission keeps (its tickets, rulings, questions and log) is
 // written by Jarl's record.mjs, vendored here under a pin. This tool keeps that copy honest. Zero
@@ -221,7 +221,7 @@ async function cmdCheck(args) {
     try { head = git(['rev-parse', 'HEAD'], source); } catch { head = null; }
     const label = `the JarlSkill tree at ${source}${head ? ` (${head.slice(0, 12)})` : ''}`;
     const found = compareWith(ctx, source, label);
-    if (found.length) found.push(`bring the copy up to that tree: node jarl-vendor.mjs update --source ${source}`);
+    if (found.length) found.push(`bring the copy up to that tree: node vendor.mjs update --source ${source}`);
     problems.push(...found);
   }
   if (!problems.length && args.flags.has('ci')) {
@@ -236,10 +236,10 @@ async function cmdCheck(args) {
     }
   }
   if (problems.length) {
-    for (const p of problems) err(`jarl-vendor: ${p}`);
+    for (const p of problems) err(`vendor: ${p}`);
     return EXIT_FAIL;
   }
-  out(`jarl-vendor: ${Object.keys(ctx.pin.files).length} file(s) match the pin (${ctx.pin.api}, ${ctx.pin.ref} @ ${ctx.pin.commit.slice(0, 12)})`);
+  out(`vendor: ${Object.keys(ctx.pin.files).length} file(s) match the pin (${ctx.pin.api}, ${ctx.pin.ref} @ ${ctx.pin.commit.slice(0, 12)})`);
   return EXIT_PASS;
 }
 
@@ -277,8 +277,8 @@ async function cmdUpdate(args) {
     source: ctx.pin.source, ref: ref === 'HEAD' ? head : ref, commit: head, api, dest: ctx.pin.dest, paths: ctx.pin.paths, files,
   };
   writeFileSync(ctx.pinPath, `${JSON.stringify(pin, null, 2)}\n`);
-  out(`jarl-vendor: ${ctx.pin.paths.length} file(s) copied from ${source} (${pin.ref} @ ${head.slice(0, 12)}), ${api}`);
-  if (before && before !== head) out(`jarl-vendor: the pin moved from ${before.slice(0, 12)} to ${head.slice(0, 12)} — read Jarl's CHANGELOG between them before committing`);
+  out(`vendor: ${ctx.pin.paths.length} file(s) copied from ${source} (${pin.ref} @ ${head.slice(0, 12)}), ${api}`);
+  if (before && before !== head) out(`vendor: the pin moved from ${before.slice(0, 12)} to ${head.slice(0, 12)} — read Jarl's CHANGELOG between them before committing`);
   return EXIT_PASS;
 }
 
@@ -290,12 +290,12 @@ async function main() {
     throw new UsageError(args.command ? `unknown command '${args.command}'` : 'missing command');
   } catch (e) {
     if (e instanceof UsageError) {
-      err(`jarl-vendor: ${e.message}`);
-      err('usage: jarl-vendor.mjs check [--source <dir> | --ci] [--pin <file>] [--work-dir <dir>]');
-      err('       jarl-vendor.mjs update --source <JarlSkill working tree> [--pin <file>]');
+      err(`vendor: ${e.message}`);
+      err('usage: vendor.mjs check [--source <dir> | --ci] [--pin <file>] [--work-dir <dir>]');
+      err('       vendor.mjs update --source <JarlSkill working tree> [--pin <file>]');
       return EXIT_USAGE;
     }
-    err(`jarl-vendor: ${e.message}`);
+    err(`vendor: ${e.message}`);
     return EXIT_USAGE;
   }
 }

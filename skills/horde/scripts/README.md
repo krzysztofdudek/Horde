@@ -30,7 +30,7 @@ refused rather than silently landing in the wrong directory. JSON files are the 
 Horde's own state; every `.md` beside one is rendered on write and never parsed. No tool ever rewrites
 history in a journal; journals append.
 
-A mission's **record** is not one of those files: it is a Jarl loop, `.horde/hordes/<horde>/.jarl/`, opened by `horde.mjs init` with Horde's profile and written through Jarl's vendored record module (see `loop.mjs` and `jarl-vendor.mjs` below). The tickets, the rulings, the client's questions and answers and the journal of every move live there, in Jarl's format, so Jarl's own tools read the mission like any loop. The schedule, the gate, the leases between hordes and each ticket's own log stay Horde's, in the files named below. A horde directory with no loop was started by Horde 6.0.x: every tool refuses it by name (`requireLoopHorde`), saying to finish that mission on the release it was started on.
+A mission's **record** is not one of those files: it is a Jarl loop, `.horde/hordes/<horde>/.jarl/`, opened by `horde.mjs init` with Horde's profile and written through Jarl's vendored record module (see `loop.mjs` and `vendor.mjs` below). The tickets, the rulings, the client's questions and answers and the journal of every move live there, in Jarl's format, so Jarl's own tools read the mission like any loop. The schedule, the gate, the leases between hordes and each ticket's own log stay Horde's, in the files named below. A horde directory with no loop was started by Horde 6.0.x: every tool refuses it by name (`requireLoopHorde`), saying to finish that mission on the release it was started on.
 
 Shared internals live in `_lib.mjs` (root discovery, JSON read/write with rendering, arg parsing, table printing, timestamps, git helpers). Tools import it; nothing else does.
 
@@ -177,7 +177,7 @@ The goal line names the charter, and its `Check:` line names `land.mjs`, so Jarl
 
 `jarl.mjs resume --root .horde/hordes/<h>` (or `handoff.mjs read`, which reads the same data without the Jarl plugin) shows the live mission.
 
-## jarl-vendor.mjs — the vendored record, kept honest
+## vendor.mjs — the vendored Jarl record, kept honest
 
 `check` (sha256 of every vendored file against `vendor/jarl.pin.json`, no file missing and none extra, and the record API the copy exports against the pin's — offline, run by `npm test`), `check --source <JarlSkill tree>` (the copy byte for byte against a Jarl working tree: CI checks out the Jarl branch of the same name beside this one), `check --ci` (a fresh shallow fetch of the pinned commit into `.jarl-vendor/`, ignored by git, compared byte for byte), and `update --source <JarlSkill tree>` (copy `record.mjs` and `jarl-lib.mjs` from a clean tree and rewrite the pin: commit, branch, API, every sha256). The pin names a commit rather than a tag because Jarl's release line is untagged while a release is built; moving the pin is a commit of its own, reviewed like code. Exit 0 pass, 1 gate failure, 2 usage or environment error.
 
@@ -1194,13 +1194,13 @@ the JSON, and every item below is measured against it:
    architecture change the architect then files. One warning is read as a
    refusal: `log-cycle-open` on a `log_required` component that owns a file the branch changed —
    on the branch's tree, or on the base's for a file the branch deleted. Asked only when there is
-   such a warning, and in one reading of the graph per tree: the changed files are put to the owner resolver (`yg owner --files`, `node.mjs ownersOf`), and a component is open for this branch when it owns one of them. A
+   such a warning, and in one reading of the graph per tree: the changed files are put to the territory resolver (`node.mjs ownersOf`, Yggdrasil's batch ownership read), and a component is open for this branch when it owns one of them. A
    tree red with such a cycle is never read as waiting on the user alone. The free half never records a
    component's source baseline, so its first log entry would otherwise answer for every later edit
    and the log gate would never ask for another why; the item names the component and the way out —
    record why, run the full `yg check --approve` (calls the reviewer only if pairs are pending), commit the
    lock it writes. A shared batch gate reads it against the whole batch's diff;
-7. mapping — every file the branch added is owned by a node on the branch's own tree, or covered by its type, or excluded from coverage by design — all of them asked at once through the owner resolver (`yg owner --files`, one reading of the graph for the whole list); skipped with
+7. mapping — every file the branch added is owned by a node on the branch's own tree, or covered by its type, or excluded from coverage by design — all of them asked at once through the territory resolver (`node.mjs ownersOf`, one reading of the graph for the whole list); skipped with
    `--no-gate`;
 8. journal — `tk log` has an entry newer than the last commit a worker made (a merge of the parent
    into the branch, which the landing itself may have made, is not one);

@@ -54,7 +54,7 @@ it. So every ticket the first `tick.mjs` lists as `working` without a pid is rec
 --reclaim NNN[,NNN]`, and what its worker left is settled and handed out again. First message to
 the user: one sentence of state, one of what you are doing first, nothing more.
 
-**Nothing to write at the end of a turn.** A mission's record is a Jarl loop (`.horde/hordes/<h>/.jarl/`), and everything a wake-up needs is already in it, written by the tools as they ran: `handoff.mjs read` assembles it live (the same data as `jarl.mjs resume --root .horde/hordes/<h>`, when the Jarl plugin is installed). Intent lives where it is acted on: order in the plan and its dependencies, reasons in rulings (`decide.mjs add`) and ticket bodies (`tk.mjs edit`), what the client owes in a question (`ask.mjs add`).
+**Nothing to write at the end of a turn.** A mission's record is a Jarl loop (`.horde/hordes/<h>/.jarl/`), and everything a wake-up needs is already in it, written by the tools as they ran: `handoff.mjs read` assembles it live (the same data as Jarl's own `resume --root .horde/hordes/<h>`, when the Jarl plugin is installed). Intent lives where it is acted on: order in the plan and its dependencies, reasons in rulings (`decide.mjs add`) and ticket bodies (`tk.mjs edit`), what the client owes in a question (`ask.mjs add`).
 
 ## Framing — the only linear phase, done with the user
 

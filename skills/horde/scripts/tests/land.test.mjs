@@ -484,7 +484,7 @@ test('land + tick: two tickets on a prose-ruled node with no reviewer wait on on
     assert.equal(step.action, 'waiting', JSON.stringify(step));
     assert.equal(step.round, null);
   }
-  const asks = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json'), 'utf8')).items;
+  const asks = run('ask.mjs', ['list'], dir).json;
   assert.equal(asks.length, 1, `exactly one question for the whole horde: ${JSON.stringify(asks)}`);
   assert.equal(asks[0].kind, 'stuck');
   assert.equal(asks[0].ticket, undefined, 'it names no ticket — it is the horde\'s question');
@@ -3468,7 +3468,7 @@ test('land.mjs batch: two tickets leaning on one "once" answer — only one merg
   assert.ok(merge && !merge.ok, 'the other one was refused at its merge');
   assert.match(merge.note, /already spent/);
 
-  const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'decisions.md'), 'utf8');
+  const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', '.jarl', 'decisions.md'), 'utf8');
   assert.equal((decisions.match(/\*\*Consumed:\*\*/g) || []).length, 1, 'and the answer was spent once');
 
   // Only a new answer lets the second one through, so it waits on a new question for that rule —
@@ -3476,7 +3476,7 @@ test('land.mjs batch: two tickets leaning on one "once" answer — only one merg
   const waiting = refused.full.waitingOnUser;
   assert.ok(waiting && Array.isArray(waiting.asks) && waiting.asks.length === 1, JSON.stringify(refused.full));
   assert.match(merge.note, new RegExp(`asked again as ${waiting.asks[0]}`));
-  const asks = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json'), 'utf8')).items;
+  const asks = run('ask.mjs', ['list'], dir).json;
   const again = asks.find((a) => a.id === waiting.asks[0]);
   assert.equal(again.kind, 'lower');
   assert.equal(again.aspect, 'no-marker');
@@ -3553,7 +3553,7 @@ test('land.mjs: a merge refused because decisions.md stayed locked counts no rou
   assert.match(merge.note, /could not be locked/);
   const log = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', readdirSync(join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues')).find((n) => n.startsWith('121')), 'log.md'), 'utf8');
   assert.doesNotMatch(log, /\(round \d+/, 'and no round was counted');
-  const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'decisions.md'), 'utf8');
+  const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', '.jarl', 'decisions.md'), 'utf8');
   assert.doesNotMatch(decisions, /\*\*Consumed:\*\*/, 'the answer is still there for the next attempt');
 
   // tick asks the gate again for the same branch, and raises no worker for it.

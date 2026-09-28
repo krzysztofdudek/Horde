@@ -667,7 +667,7 @@ test('tick.mjs review: a Critical finding on a ticket whose rounds are spent sto
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.json.landed.find((l) => l.ticket === id).action, 'blocked');
   assert.equal(itemOf(dir, id).state, 'blocked');
-  const asks = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json'), 'utf8'));
+  const asks = ({ items: run('ask.mjs', ['list'], dir).json });
   const ask = asks.items.find((a) => a.ticket === id);
   assert.equal(ask.kind, 'stuck');
   assert.match(ask.why, /the lock is never released/);
@@ -1094,7 +1094,7 @@ test('tick.mjs: a ticket whose fix rounds are spent stops, asks the client, and 
   });
 
   await t.test('an ask of kind "stuck" is filed with the gate\'s last words and the ticket\'s log', () => {
-    const asks = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json'), 'utf8'));
+    const asks = ({ items: run('ask.mjs', ['list'], dir).json });
     const ask = asks.items.find((a) => a.ticket === id);
     assert.equal(ask.kind, 'stuck');
     assert.equal(ask.state, 'open');
@@ -1139,7 +1139,7 @@ test('tick.mjs: a red gate with rounds left puts the ticket back in the queue ra
   assert.match(step.note, /two cases fail/);
   assert.equal(itemOf(dir, id).state, 'running', 'the fix round goes straight back out on this same run');
   assert.ok(r.json.spawn.some((s) => s.ticket === id), 'and it is on the dispatch list again');
-  assert.ok(!existsSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json')), 'nothing is asked of the client while rounds remain');
+  assert.deepEqual(run('ask.mjs', ['list'], dir).json, [], 'nothing is asked of the client while rounds remain');
 });
 
 // changesRoundInfo's own label ("resume same worker" for rounds 1..resume, "fresh worker, class
@@ -1301,11 +1301,11 @@ test('tick.mjs --runner external: a horde name is never handed to a shell, even 
   assert.ok(briefText.includes(horde), 'the horde name reached the brief intact, as one literal value');
 });
 
-test('tick.mjs: asks.json that does not exist is an empty in-tray, not a refusal', async (t) => {
+test('tick.mjs: a mission nobody has asked anything yet is an empty in-tray, not a refusal', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
   initHorde(dir);
-  assert.ok(!existsSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json')));
+  assert.ok(!existsSync(join(dir, '.horde', 'hordes', 'mission1', '.jarl', 'asks.md')));
   const r = tick(dir);
   assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(r.json.askClient, []);

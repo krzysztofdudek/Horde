@@ -700,7 +700,7 @@ test('the law audit: a promotion and a lowering never become a worker\'s ticket;
   assert.equal(first.asked[0].aspect, 'no-marker');
   const queue = JSON.parse(readFileSync(queuePath(dir), 'utf8')).items;
   assert.equal(queue.length, 1, 'one ticket on the queue, for the hot spot');
-  const asks = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'asks.json'), 'utf8')).items;
+  const asks = run('ask.mjs', ['list'], dir).json;
   assert.equal(asks.length, 1);
   assert.equal(asks[0].aspect, 'no-marker');
   assert.match(asks[0].why, /decorative-rule:no-marker/);

@@ -6,7 +6,7 @@
 // client are the loop's asks.md, and every move is a line in the loop's log. Jarl's own views read it as
 // they read any loop — `jarl.mjs resume --root .horde/hordes/<h>` shows the live mission.
 //
-// It is written through Jarl's record module, vendored under a pin (vendor/jarl, jarl-vendor.mjs), and
+// It is written through Jarl's record module, vendored under a pin (vendor/jarl, vendor.mjs), and
 // through nothing else: this file is the one place Horde calls it. What stays Horde's own sits beside
 // the loop, never in it — the schedule and its leases (teams/<team>/queue.json), a ticket's own log with
 // its millisecond stamps (teams/<team>/issues/NNN-slug/log.md), the gate and its results, the leases
@@ -31,7 +31,7 @@ import {
 } from './_lib.mjs';
 
 // The record API Horde is written against. The vendored copy's own RECORD_API is checked against it
-// (jarl-vendor.mjs check, and again here before the first write): a copy that moved to another API is
+// (vendor.mjs check, and again here before the first write): a copy that moved to another API is
 // refused loudly rather than half-used.
 export const RECORD_API = 'jarl-record/1';
 export const PROFILE_FILE = join(dirname(fileURLToPath(import.meta.url)), 'jarl-profile.json');
@@ -46,7 +46,7 @@ export function hasLoop(horde) { return R.hasLiveLoop(loopRoot(horde)); }
 
 function checkApi() {
   if (R.RECORD_API !== RECORD_API) {
-    fail(`the vendored Jarl record exports ${R.RECORD_API}, and this Horde is written against ${RECORD_API} — the copy under vendor/jarl does not belong to this release; run: node jarl-vendor.mjs check`);
+    fail(`the vendored Jarl record exports ${R.RECORD_API}, and this Horde is written against ${RECORD_API} — the copy under vendor/jarl does not belong to this release; run: node vendor.mjs check`);
   }
 }
 

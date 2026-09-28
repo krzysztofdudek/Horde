@@ -1065,7 +1065,7 @@ test('E21 — family contract: the "adds-two-numbers" promise reverted to planne
   // own refusal named the way to. `--scope mission` (rather than `once`) is what this test asked
   // for, so the answer stands rather than being marked spent; that once/mission distinction has its
   // own dedicated proof in law-guard.test.mjs and is not what this case exists to re-prove.
-  const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'decisions.md'), 'utf8');
+  const decisions = readFileSync(join(dir, '.horde', 'hordes', 'mission1', '.jarl', 'decisions.md'), 'utf8');
   assert.match(decisions, /\*\*Kind:\*\* lower · \*\*Aspect:\*\* evidence:adds-two-numbers/);
   assert.match(decisions, /\*\*Answer:\*\* approved — park it/);
   assert.doesNotMatch(decisions, /\*\*Consumed:\*\*/, 'a mission-scope answer stands until the mission closes');

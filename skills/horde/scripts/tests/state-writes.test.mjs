@@ -167,7 +167,7 @@ test('a spent "once" answer is marked under the decisions lock, so nothing recor
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  const path = join(dir, '.horde', 'hordes', 'mission1', 'decisions.md');
+  const path = join(dir, '.horde', 'hordes', 'mission1', '.jarl', 'decisions.md');
   const block = [
     '## 2026-09-27 · ask-lower-no-marker', '',
     '**Kind:** lower · **Aspect:** no-marker · **Scope:** once',
@@ -198,7 +198,7 @@ test('consumeAnswer reports an answer another landing already spent', async (t) 
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
-  const path = join(dir, '.horde', 'hordes', 'mission1', 'decisions.md');
+  const path = join(dir, '.horde', 'hordes', 'mission1', '.jarl', 'decisions.md');
   const block = [
     '## 2026-09-27 · ask-lower-twice', '',
     '**Kind:** lower · **Aspect:** no-marker · **Scope:** once',
@@ -226,7 +226,7 @@ test('mergeSpendingAnswers: a mark that fails after the merge is a note, not a t
   t.after(() => rmRepo(dir));
   initHorde(dir);
   const hordeDir = join(dir, '.horde', 'hordes', 'mission1');
-  const path = join(hordeDir, 'decisions.md');
+  const path = join(hordeDir, '.jarl', 'decisions.md');
   const block = [
     '## 2026-09-27 · ask-lower-unwritable', '',
     '**Kind:** lower · **Aspect:** no-marker · **Scope:** once',

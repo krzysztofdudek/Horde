@@ -272,4 +272,12 @@ test('contract: a mission started by Horde 6.0.x is refused by name, with what t
     assert.match(refused.refused, /started by Horde 6\.0\.x/);
     assert.ok(r.json.hordes.some((h) => h.name === 'mission1' && !h.refused));
   });
+  await t.test('archive still sets it aside, and history still reads it there', () => {
+    const r = run('horde.mjs', ['archive', 'oldmission'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    const history = run('horde.mjs', ['history'], dir);
+    assert.equal(history.code, 0, history.stderr);
+    assert.ok(JSON.stringify(history.json).includes('oldmission'));
+  });
+
 });
