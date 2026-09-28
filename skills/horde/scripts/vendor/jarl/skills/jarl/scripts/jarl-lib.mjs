@@ -2738,8 +2738,10 @@ function ratifyRefusal(id, ruling, answer) {
   return `a-${id} ratifies ruling ${ruling}: the answer starts with one word — ${RATIFY_WORDS.join(', ')} to ratify it, ${REJECT_WORDS.join(', ')} to reject it`;
 }
 
-export function cmdAnswer(root, rawId, answer) {
+export function cmdAnswer(root, rawId, answer, flags = {}) {
   need(answer, 'answer requires "<answer>"');
+  need(flags.by === undefined || fieldText(flags.by), '--by needs a value — who answered: owner or a name');
+  const by = flags.by === undefined ? null : fieldText(flags.by);
   const id = String(rawId).replace(/^a-/, '').padStart(3, '0');
   const ask = loadAsks(root).find((a) => a.id === id);
   need(ask, `no such question: a-${id}`);
@@ -2750,7 +2752,7 @@ export function cmdAnswer(root, rawId, answer) {
   const verdict = ask.ruling ? ratifyVerdict(answer) : null;
   need(!ask.ruling || verdict, ask.ruling && !verdict ? ratifyRefusal(id, ask.ruling, answer) : '');
   need(!ask.ruling || ruling, `a-${id} ratifies ruling ${ask.ruling}, which is no longer in decisions.md`);
-  appendDecision(root, `ask-${id}`, `**Question:** ${ask.question}\n**Answer:** ${answer}`, { by: 'owner' });
+  appendDecision(root, `ask-${id}`, `**Question:** ${ask.question}\n**Answer:** ${answer}`, { by: by || 'owner' });
   const path = asksPath(root);
   writeAtomic(path, readText(path).replace(`- **a-${id}** (open)`, `- **a-${id}** (answered)`));
   appendLog(root, `answered a-${id} · ${answer.split('\n')[0]}`);
@@ -2758,16 +2760,16 @@ export function cmdAnswer(root, rawId, answer) {
   const issue = ask.issue ? findIssue(root, ask.issue) : null;
   if (issue) appendRuling(root, [issue], `Ruling ask-${id}${ask.kind ? ` (${ask.kind})` : ''}: ${answer.split('\n')[0]}`);
   const out = { id, answer, ...(issue ? { issue: issue.id } : {}) };
-  if (ruling) Object.assign(out, ratify(root, ruling, rulings, verdict, id));
+  if (ruling) Object.assign(out, ratify(root, ruling, rulings, verdict, id, by));
   return out;
 }
 
 // A ratification answered: the ruling is marked in place. A ratified area ruling hands back the entry for the type's
 // decision log (typeDecision: { type, text, supersedes }) and, when it names a rule of the graph (decide --rule), the
-// ratification of that rule (ruleRatification: { rule, text }) — what the command line writes through yg-edge.mjs,
+// ratification of that rule (ruleRatification: { rule, text }, with by when answer --by named who gave it) — what the command line writes through yg-edge.mjs,
 // the one place in Jarl that reaches another tool, and what a composer standing on record.mjs may write with its own
 // code. This module never writes either: it reads and writes the loop's files only.
-function ratify(root, ruling, rulings, verdict, askId) {
+function ratify(root, ruling, rulings, verdict, askId, by = null) {
   markDecision(root, ruling.slug, `**${verdict === 'ratified' ? 'Ratified' : 'Rejected'}:** a-${askId} (${today()})`);
   appendLog(root, `${verdict} ${ruling.slug} · a-${askId}${ruling.area ? ` · area ${ruling.area}` : ''}`);
   const out = { ruling: ruling.slug, verdict, typeDecision: null, typeLog: null, ruleRatification: null, ruleLog: null };
@@ -2780,7 +2782,7 @@ function ratify(root, ruling, rulings, verdict, askId) {
   const prior = ruling.supersedes ? rulings.find((d) => d.slug === ruling.supersedes) : null;
   const supersedes = prior && prior.typeLog && prior.typeLog.type === ruling.area ? prior.typeLog.datetime : null;
   const text = `${ruling.ruling}\n\n(ratified: ${ruling.slug}, a-${askId})`;
-  return { ...out, typeDecision: { type: ruling.area, text, supersedes }, ...(ruling.rule ? { ruleRatification: { rule: ruling.rule, text } } : {}) };
+  return { ...out, typeDecision: { type: ruling.area, text, supersedes }, ...(ruling.rule ? { ruleRatification: { rule: ruling.rule, text, ...(by ? { by } : {}) } } : {}) };
 }
 
 // What became of a ratified area ruling's entry in the type's decision log, recorded: a written one marks the ruling
