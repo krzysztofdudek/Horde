@@ -241,7 +241,7 @@ through its consultants — so what is left for you to spawn is the agents that 
   what, what it proves and what it did to the rules belong to git, which outlives `.horde/`. It is
   the only place trailers are written, because it is the only place a merge commit is made. Where an
   adopter's history already has its own convention for this, take theirs and say so. On red it refuses, puts the ticket back on `changes` with the gate's own words, and
-  ticks the round counter. Landings are one at a time, so when many branches wait, the `landing:` line of
+  ticks the round counter; the worker's next brief carries those words and the round. When the words ask for a change to the ticket rather than to the code — a file its Files do not list, a change that adds no test — that change is yours: `tk.mjs edit NNN --files …`, or `tk.mjs edit NNN --no-new-tests "<reason>" --by <you>`. A gate result is an answer about the commit and the ticket together, so the next tick puts the same commit through the gate again. Landings are one at a time, so when many branches wait, the `landing:` line of
   `tick.mjs` and `status.mjs` says how many, what a landing has cost and how long they would take in
   a row; slowing the dispatch or landing in batches is your call, it never holds anything itself. A test file that exists is not a test that ran, so where
   `config.gates.report` names the report the gate command's own runner leaves behind (`junit`, `tap`
@@ -282,7 +282,7 @@ reconcile every `running` item whose worker has ended against its actual branch,
 ready (raising a ticket's one review before its first gate, and calling `land.mjs` itself where a
 fresh check is needed), print the dispatch list at
 `config.parallelism` (beside it, once a gate time is measured, how many landings the gate drains per
-tick interval — the figure to set the parallelism against; workers beyond it wait at landing), and say when the queue holds nothing but `merged` items so you know to close
+tick interval — the figure to set the parallelism against; workers beyond it wait at landing; the run that hands out work opens the next wave when none is open, with the plan it starts from), and say when the queue holds nothing but `merged` items so you know to close
 the wave. Nothing lives between runs, because nothing has to: a run that starts cold reads the same
 state a run that never stopped would have. If the harness gives you a wake-up mechanism (a loop with
 `ScheduleWakeup`, or a scheduled run), use it at 20–30 minute intervals to call `tick.mjs` again;
@@ -434,7 +434,7 @@ One one-shot for the whole mission, never one per area: the input is around 70KB
 mission, well inside what a single area is held to, and the repetitions across areas are the whole point
 of reading it in one place. The one-shot sorts every item into `rule` (a rule proposal, with the
 component and whether a script can decide it), `taste` (one line into that component's own log through
-`yg log add`, and nowhere else) or `inexpressible` (the law will not say it).
+`yg log add`, committed on the mission's trunk, and nowhere else) or `inexpressible` (the law will not say it).
 
 What you hand the client is the `inexpressible` list beside the law document `done` writes — one says
 what the law gained, the other what it still cannot say. **The retrospective hands you facts, not

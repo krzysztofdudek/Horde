@@ -48,7 +48,7 @@ import {
   loadQueue, saveQueue, reconcileRunning, rankedCandidates, recordMerged, startRunning, stackedLine, recordWorkerRun,
 } from './queue.mjs';
 import {
-  findTicket, parseField, changesRoundInfo, lastChangesRoundInfo, transitionStatus, advanceChangesRound, ticketEvidence, readReview,
+  findTicket, parseField, ticketGateState, changesRoundInfo, lastChangesRoundInfo, transitionStatus, advanceChangesRound, ticketEvidence, readReview,
 } from './tk.mjs';
 import {
   readLandResult, acquireGateLock, gateLockWaitMs, landingLoad, landingLine, landingDrain, drainLine,
@@ -56,7 +56,7 @@ import {
 import { refreshReport } from './report.mjs';
 import { refreshProfile } from './loop.mjs';
 import { loadAsks, addAsk } from './ask.mjs';
-import { mentionsEvidenceId } from './wave.mjs';
+import { mentionsEvidenceId, openWaveIfNone } from './wave.mjs';
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 // Sub-teams are gone, so there is one queue and it is the trunk's. Nothing here takes --team: a
@@ -469,6 +469,15 @@ function ownWaitAnswered(horde, result) {
   return ids.every((id) => items.some((a) => a && a.id === id && a.state === 'answered'));
 }
 
+// The ticket's gate-read fields as it stands now (tk.mjs ticketGateState); null when it cannot be read.
+function ticketStateNow(horde, ticketId) {
+  try {
+    return ticketGateState(findTicket(horde, ticketId).text);
+  } catch {
+    return null;
+  }
+}
+
 function landTheLanded(horde, cfg, root, holds) {
   const doc = readQueue(horde);
   assertLandedBranches(horde, doc, root);
@@ -505,7 +514,13 @@ function landTheLanded(horde, cfg, root, holds) {
     // A landing refused because decisions.md stayed locked past the wait found nothing wrong with the
     // branch: the gate is asked again, and no worker is raised to change a branch that needs nothing.
     const lockedOut = !!(result && result.sha === tip && result.lockTimeout);
-    if (!result || result.sha !== tip || ownWaitAnswered(horde, result) || lockedOut) {
+    // A result is an answer about the commit and the ticket fields the gate reads together. The gate's
+    // own refusals ask for ticket-side fixes — "declare **No new tests:**", widen **Files:** — that
+    // need no new commit, so a ticket whose fields changed since the run is asked again, never
+    // answered with the refusal it has already acted on. A result written before the ticket's state
+    // was recorded is read by its sha alone, as it always was.
+    const ticketChanged = !!(result && result.sha === tip && result.ticketState && ticketStateNow(horde, item.ticket) !== result.ticketState);
+    if (!result || result.sha !== tip || ownWaitAnswered(horde, result) || lockedOut || ticketChanged) {
       const reviewed = reviewedGateStep(horde, item);
       if (!reviewed) {
         plan.push({
@@ -543,7 +558,7 @@ function landTheLanded(horde, cfg, root, holds) {
         action: 'gate',
         sha: tip,
         closeReview: reviewed.closeReview,
-        note: `${skipped}${lockedOut ? `the last landing of ${tip} could not lock decisions.md to spend its one-time answer, and nothing was wrong with the branch — running the gate again` : result ? `the recorded result is about ${result.sha}, and ${item.branch} now stands at ${tip} — running the gate again` : `no readable gate result for ${item.branch} at ${tip} — running the gate`}`,
+        note: `${skipped}${ticketChanged ? `the ticket's own fields changed since the gate last ran on ${tip} — running the gate again` : lockedOut ? `the last landing of ${tip} could not lock decisions.md to spend its one-time answer, and nothing was wrong with the branch — running the gate again` : result ? `the recorded result is about ${result.sha}, and ${item.branch} now stands at ${tip} — running the gate again` : `no readable gate result for ${item.branch} at ${tip} — running the gate`}`,
       });
       continue;
     }
@@ -1033,6 +1048,10 @@ function runOnce(horde, cfg, flags, runner) {
     const landed = landTheLanded(horde, cfg, root, holds);
     landed.results.unshift(...released);
     const spawn = dispatch(horde, cfg, root, flags, holds);
+    // Handing out work opens a wave when none is open: the close this run raises once the queue
+    // empties then has a wave to close, with the plan it was opened against written down now, not
+    // reconstructed after everything merged.
+    const waveOpened = spawn.out.length ? openWaveIfNone(horde, { team: TEAM, tree: root }) : null;
 
     const doc = readQueue(horde);
 
@@ -1067,6 +1086,7 @@ function runOnce(horde, cfg, flags, runner) {
       askClient: openAsks(horde),
       landing,
       drain: landingDrain(landing, cfg.tick && cfg.tick.interval, Number(cfg.parallelism ?? 6)),
+      waveOpened,
       close,
       closeCommand: close ? closeCommand(horde) : null,
       external,
@@ -1083,6 +1103,7 @@ function render(out) {
   for (const w of out.working || []) lines.push(`working ${w.ticket} · ${w.note}`);
   for (const l of out.landed) lines.push(`gate ${l.ticket}: ${l.action} · ${l.note}`);
   for (const h of out.held) lines.push(`held (${h.holds}): ${h.note}`);
+  if (out.waveOpened) lines.push(`wave ${out.waveOpened.n} opened — layers ${out.waveOpened.layers.length ? out.waveOpened.layers.join('/') : 'none'}, planned parallelism ${out.waveOpened.plannedParallelism}`);
   if (out.spawn.length) {
     lines.push(`spawn (${out.spawn.length}):`);
     for (const s of out.spawn) {

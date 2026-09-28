@@ -21,7 +21,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   hordePath, teamPath, readJSON, readText, readConfig, fail, parseArgs, asArray, emit,
-  isMain, resolveHorde, parentBranchOf, resolveTree, writeText, latestChangesRound,
+  isMain, resolveHorde, parentBranchOf, resolveTree, writeText, latestChangesRound, parseLogEntries,
   runMain,
 } from './_lib.mjs';
 import {
@@ -302,7 +302,7 @@ function findTicket(horde, rawId) {
   const queue = readJSON(teamPath(horde, t.team, 'queue.json'), { items: [] });
   const queueItem = asArray(queue.items).find((it) => String(it.ticket) === t.id) || null;
   return {
-    team: t.team, id: t.id, issueDirName: t.dirName, issueText: t.text, logText: readText(t.logPath), queueItem,
+    team: t.team, id: t.id, issueDirName: t.dirName, issueText: t.text, logText: readText(t.logPath), logPath: t.logPath, queueItem,
   };
 }
 
@@ -351,6 +351,46 @@ function takeoverBlockFor(horde, t) {
     '```',
     logText.trim() || '(empty)',
     '```',
+  ].join('\n');
+}
+
+// fixRoundBlockFor(horde, t) — the fix round this ticket is in, when it is in one: the round, what sent it
+// back in the words that did (the review's findings, the gate's refusal), and where its whole log is. A
+// ticket whose latest status line in its log is "changes" is in a fix round; the brief of a worker
+// resumed or raised for it — a fresh one especially, who never saw the first attempt — carries the
+// reason, so the round is spent on what was wrong and not on repeating it. '' otherwise.
+export function fixRoundBlockFor(horde, t) {
+  const entries = parseLogEntries(t.logText || '');
+  const statuses = entries.filter((e) => e.isStatus);
+  const last = statuses[statuses.length - 1];
+  if (!last || last.status !== 'changes') return '';
+  const said = last.note || '';
+  const round = last.round ? [null, last.round, last.cap, last.label] : null;
+  // What the review logged on this attempt, word for word: every "review:" line since the landing
+  // this round answers.
+  const at = entries.indexOf(last);
+  let since = at - 1;
+  while (since >= 0 && !(!entries[since].isStatus && /^\S+ landed /.test(entries[since].text))) since -= 1;
+  const findings = entries.slice(since + 1, at).filter((e) => !e.isStatus && /^\S+ review: /.test(e.text)).map((e) => e.text.replace(/^\S+ /, ''));
+  // The gate's own refusal, when the landing result on file is a red one.
+  const result = readJSON(hordePath(horde, 'land', `${t.id}.json`), null);
+  const refusals = result && result.ok === false && !findings.length
+    ? asArray(result.checks).filter((c) => c && !c.ok).map((c) => `${c.name} — ${c.note}`)
+    : [];
+  const logPath = t.logPath || join(teamPath(horde, t.team, 'issues', t.issueDirName), 'log.md');
+  return [
+    `## Fix round${round ? ` ${round[1]} of ${round[2]} (${round[3]})` : ''}`,
+    '',
+    'This ticket came back. What sent it back, word for word:',
+    '',
+    `> ${said || '(no words were logged with it — read the log below)'}`,
+    ...(findings.length ? ['', 'The review\'s findings on the attempt it answers:', '', ...findings.map((f) => `- ${f}`)] : []),
+    ...(refusals.length ? ['', `The landing gate's refusal${result.sha ? ` on ${String(result.sha).slice(0, 12)}` : ''}:`, '', ...refusals.map((r) => `- ${r}`)] : []),
+    '',
+    `Read the ticket's whole log before you change anything: \`${logPath}\` (or \`tk.mjs show ${t.id} --log\`). Fix what these`,
+    'name, and nothing beside it. When what it asks for is a change to the ticket rather than to the code — a',
+    'file its Files do not list, a "**No new tests:**" reason — that is the director\'s to write: log it and stop.',
+    '',
   ].join('\n');
 }
 
@@ -500,6 +540,7 @@ function cmdWorker(horde, cfg, positional, flags) {
     reportsTo: reportsToFor('worker', horde, { team: t.team, name }),
     takeoverBlock: flags.takeover ? takeoverBlockFor(horde, t) : '',
     returnBlock: returnBlockFor(t, parent.branch, cfg),
+    fixRoundBlock: fixRoundBlockFor(horde, t),
   };
   const brief = renderRole('worker', vars);
   emitBrief({

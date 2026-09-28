@@ -78,7 +78,10 @@ this brief. Every proposal, contract and cut you rule on is read against it.
      A row nobody is building is a mission that cannot finish; it is a missing ticket, not a rounding
      error.
   2. **Buildability** — does anything consume a port nothing produces? Is a port change ordered
-     before every ticket that consumes it, and does every one of those tickets exist?
+     before every ticket that consumes it, and does every one of those tickets exist? A ticket the
+     brief lists under "Tickets that name no test file" is refused by the landing gate's revert test
+     as it stands: it either names the test file it adds, or declares why it needs none
+     (`tk.mjs edit <ticket> --no-new-tests "<reason>"`) — reject it with whichever it lacks.
   3. **Cycles** — the plan refuses a circle outright and prints it. When it does, one of the two
      tickets is wrong about what it needs; say which, and why, in the graph's terms.
   4. **Decomposition** — components and the critical path. Two components each larger than half the

@@ -23,6 +23,16 @@ function hordeFile(dir, horde, ...parts) {
   return join(dir, '.horde', 'hordes', horde, ...parts);
 }
 
+// A component's log as the mission's trunk holds it: the retrospective commits taste there, from a
+// scratch tree of its own, and writes nothing into the checkout it runs from.
+function trunkLog(dir, node, horde = 'mission1') {
+  try {
+    return { code: 0, out: git(['show', `${horde}/trunk:.yggdrasil/model/${node}/log.md`], dir) };
+  } catch (e) {
+    return { code: 1, out: String(e.stderr || e.message) };
+  }
+}
+
 // A graph with two real components, so a taste item has somewhere to be logged and a rule
 // proposal has a component to name.
 function graphFixture(dir) {
@@ -221,7 +231,7 @@ test('retro.mjs: five items, five classes, and what each class does with its ite
   });
 
   await t.test('taste leaves one line in the component\'s own log and nothing anywhere else', () => {
-    const log = yg(dir, ['log', 'read', '--node', 'auth']);
+    const log = trunkLog(dir, 'auth');
     assert.equal(log.code, 0, log.out);
     assert.match(log.out, /readX for file IO/);
 
@@ -464,7 +474,7 @@ test('retro.mjs: two retrospectives at once leave one document and one line in t
   const both = await Promise.all([first.done, second.done]);
   for (const r of both) assert.equal(r.code, 0, r.err);
 
-  const log = yg(dir, ['log', 'read', '--node', 'auth']);
+  const log = trunkLog(dir, 'auth');
   assert.equal(log.code, 0, log.out);
   const hits = log.out.split('\n').filter((l) => /cut the failing path/.test(l));
   assert.equal(hits.length, 1, `the same taste line was written ${hits.length} time(s):\n${log.out}`);
@@ -522,7 +532,7 @@ test('retro.mjs: a ticket directory named in unicode is read through without dis
   const r = run('retro.mjs', ['--tree', dir], dir);
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.json.inexpressible[0].text, /łóżko\.mjs/);
-  const log = yg(dir, ['log', 'read', '--node', 'auth']);
+  const log = trunkLog(dir, 'auth');
   assert.match(log.out, /zażółć gęślą jaźń/);
 });
 
