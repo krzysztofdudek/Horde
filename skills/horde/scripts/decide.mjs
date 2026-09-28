@@ -332,7 +332,8 @@ function entryCommand(it, by, file) {
 // the new one says nothing about) is reported with the command to run by hand, and one that could not
 // reach the trunk (the commit refused by a hook, the branch moved) likewise; each stays a ruling of the
 // mission, unmarked. What reached the trunk is marked on its ruling, so it is never written twice.
-// Returns { commit, from, written: [..], failed: [..], unratified, pending }.
+// Returns { commit, from, written: [..], failed: [..], unratified, pending } (and unmarked, a note, when the
+// entries reached the trunk but marking them on their rulings failed).
 export function writeGraphLogs(horde, cfg, { branch, sha }) {
   const plan = graphLogPlan(horde);
   const out = {
@@ -376,14 +377,21 @@ export function writeGraphLogs(horde, cfg, { branch, sha }) {
     const commit = git(['rev-parse', 'HEAD'], info.path);
     if (git(['update-ref', `refs/heads/${branch}`, commit, sha], root) === null) return lost(`${branch} moved while the entries were written, so they were not put on it`);
     out.commit = commit;
-    withLoopLock(horde, () => {
-      for (const w of wrote) {
-        if (w.kind === 'node') headRuling(horde, w.slug, (ls, at) => { const i = ls.findIndex((l, k) => k > at && /^\*\*Node:\*\*/.test(l)); if (i !== -1) ls[i] = `${ls[i]} · **Node log:** ${w.datetime}`; });
-        else closeRuling(horde, w.slug, w.kind === 'type' ? `**Type log:** ${w.type} · ${w.datetime}` : `**Rule log:** ${w.rule} · ${w.datetime}`);
-        appendLoopLog(horde, `${w.slug} written into the log of ${w.kind === 'node' ? `node ${w.node}` : w.kind === 'type' ? `type ${w.type}` : `rule ${w.rule} as its ratification, by ${w.by}`} · ${commit.slice(0, 7)} on ${branch}`);
-      }
-    });
     out.written = wrote;
+    // The entries are on the trunk now: a marking that fails here must not throw out of done, which
+    // would leave the mission open over a trunk that already holds them and write them again on the
+    // next run. It is reported instead, and done goes on to archive the mission.
+    try {
+      withLoopLock(horde, () => {
+        for (const w of wrote) {
+          if (w.kind === 'node') headRuling(horde, w.slug, (ls, at) => { const i = ls.findIndex((l, k) => k > at && /^\*\*Node:\*\*/.test(l)); if (i !== -1) ls[i] = `${ls[i]} · **Node log:** ${w.datetime}`; });
+          else closeRuling(horde, w.slug, w.kind === 'type' ? `**Type log:** ${w.type} · ${w.datetime}` : `**Rule log:** ${w.rule} · ${w.datetime}`);
+          appendLoopLog(horde, `${w.slug} written into the log of ${w.kind === 'node' ? `node ${w.node}` : w.kind === 'type' ? `type ${w.type}` : `rule ${w.rule} as its ratification, by ${w.by}`} · ${commit.slice(0, 7)} on ${branch}`);
+        }
+      });
+    } catch (e) {
+      out.unmarked = `the entries are in ${commit.slice(0, 7)} on ${branch}, but the rulings could not all be marked as written (${String(e.message || e).split('\n')[0]}) — they are in the graph's logs: do not write them again`;
+    }
     return out;
   } finally {
     rmSync(tmp, { recursive: true, force: true });

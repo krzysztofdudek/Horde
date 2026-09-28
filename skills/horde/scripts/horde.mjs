@@ -1528,6 +1528,7 @@ function graphLogLines(g, branch) {
   if (g.commit) {
     lines.push(`Written into the graph's logs — ${g.written.map((w) => `${w.slug} → ${what(w)}`).join(', ')} — as one commit on ${branch} (${short(g.commit)}) over the tip the gate passed (${short(g.from)}): log entries only.`);
   }
+  if (g.unmarked) lines.push(`NOTE: ${g.unmarked}.`);
   for (const f of g.failed) {
     lines.push(`NOT written into the log of ${what(f)} (ruling ${f.slug}): ${f.reason}${f.retry ? ` — write it by hand on ${branch}: ${f.retry}` : ''}. It stays a ruling of this mission.`);
   }

@@ -184,6 +184,27 @@ test('the graph\'s logs: a trunk that moved while they were written is left alon
   assert.equal(git(['log', '-1', '--format=%s', 'mission1/trunk'], dir), 'landed meanwhile');
 });
 
+test('the graph\'s logs: a commit the adopter\'s own hook refuses is reported with what the hook said, the trunk stays, and nothing is marked', (t) => {
+  const dir = missionOnGraph();
+  t.after(() => rmRepo(dir));
+  run('decide.mjs', ['add', 'app-why', 'The app keeps its config in one file.', '--node', 'app'], dir);
+  const hooks = join(dir, git(['rev-parse', '--git-path', 'hooks'], dir));
+  mkdirSync(hooks, { recursive: true });
+  writeFileSync(join(hooks, 'pre-commit'), '#!/bin/sh\necho "adopter hook says no" >&2\nexit 1\n', { mode: 0o755 });
+  const before = git(['rev-parse', 'mission1/trunk'], dir);
+  const out = writeLogs(dir);
+  assert.equal(out.commit, null);
+  assert.deepEqual(out.written, []);
+  assert.deepEqual(out.failed.map((f) => f.slug), ['app-why']);
+  assert.match(out.failed[0].reason, /commit on mission1\/trunk was refused/);
+  assert.match(out.failed[0].reason, /adopter hook says no/);
+  assert.equal(git(['rev-parse', 'mission1/trunk'], dir), before, 'the trunk did not move');
+  assert.doesNotMatch(decisions(dir), /Node log/);
+  // Once the hook lets it through, the same ruling is still owed and is written then.
+  writeFileSync(join(hooks, 'pre-commit'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  assert.deepEqual(writeLogs(dir).written.map((w) => w.slug), ['app-why']);
+});
+
 test('horde.mjs done writes the mission\'s rulings into the graph\'s logs on the trunk it hands over, and says what it could not', (t) => {
   const dir = missionOnGraph();
   t.after(() => rmRepo(dir));
