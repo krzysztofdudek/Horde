@@ -13,7 +13,7 @@ import {
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, git, yg, addNode, issueFileOf,
+  makeRepo, rmRepo, run, initHorde, git, yg, addNode, addAspect, issueFileOf,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -249,7 +249,88 @@ test('horde.mjs done with nothing decided about code moves nothing: the trunk st
   const before = git(['rev-parse', 'mission1/trunk'], dir);
   const out = writeLogs(dir);
   assert.deepEqual(out, {
-    commit: null, from: before, written: [], failed: [], unratified: [], pending: [],
+    commit: null, from: before, written: [], failed: [], unratified: [], pending: [], unasked: [],
   });
   assert.equal(git(['rev-parse', 'mission1/trunk'], dir), before);
+});
+
+// Issue 515: a rule's ratification names whoever answered the ratify item — the name ask.mjs answer --by
+// recorded as the By of the answer's ruling — and "the client" when nobody was named; never the name git
+// holds for whoever runs done (here "Test User").
+test('the graph\'s logs: a rule\'s ratification names who answered (ask.mjs answer --by), else the client — never git\'s user.name', (t) => {
+  const dir = missionOnGraph();
+  t.after(() => rmRepo(dir));
+  addAspect(dir, 'validates-input', { content: 'Every module validates its input.\n' });
+  addAspect(dir, 'names-errors', { content: 'Every module names its errors.\n' });
+  // The type lists both rules, so a ratification of either admits it on that type.
+  writeFileSync(join(dir, '.yggdrasil', 'yg-architecture.yaml'), 'node_types:\n  module:\n    description: "A module"\n    parents: [root]\n    aspects:\n      - validates-input\n      - names-errors\n');
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'rules'], dir);
+  git(['branch', '-f', 'mission1/trunk', 'HEAD'], dir);
+  run('decide.mjs', ['add', 'mod-validate', 'Every module validates its input.', '--area', 'module', '--reach', '5', '--rule', 'validates-input'], dir);
+  run('decide.mjs', ['add', 'mod-errors', 'Every module names its errors.', '--area', 'module', '--reach', '3', '--rule', 'names-errors'], dir);
+  const batch = run('decide.mjs', ['ratify'], dir).json.items;
+  const id = (slug) => batch.find((i) => i.ruling === slug).id;
+
+  const unsafe = run('ask.mjs', ['answer', id('mod-validate'), 'tak', '--by', 'Jan "Kowalski"'], dir);
+  assert.equal(unsafe.code, 1, 'a name yg could not take safely is refused at the answer');
+  assert.match(unsafe.stderr, /--by names who answered/);
+  const named = run('ask.mjs', ['answer', id('mod-validate'), 'tak', '--by', 'Anna Nowak'], dir);
+  assert.equal(named.code, 0, named.stderr);
+  assert.equal(named.json.by, 'Anna Nowak');
+  assert.match(decisions(dir), new RegExp(`## \\S+ · ask-${id('mod-validate').slice(2)}\\n[\\s\\S]*?\\*\\*By:\\*\\* Anna Nowak`));
+  assert.equal(run('ask.mjs', ['answer', id('mod-errors'), 'yes'], dir).code, 0);
+
+  const out = writeLogs(dir);
+  assert.ok(out.commit, JSON.stringify(out));
+  const rules = Object.fromEntries(out.written.filter((w) => w.kind === 'rule').map((w) => [w.rule, w.by]));
+  assert.deepEqual(rules, { 'validates-input': 'Anna Nowak', 'names-errors': 'the client' });
+  // Read by yg itself, on the trunk the entries were committed to.
+  git(['checkout', '-q', 'mission1/trunk'], dir);
+  const validates = yg(dir, ['log', 'read', '--aspect', 'validates-input']);
+  assert.equal(validates.code, 0, validates.out);
+  assert.match(validates.out, /Anna Nowak/);
+  assert.doesNotMatch(validates.out, /Test User/);
+  const errors = yg(dir, ['log', 'read', '--aspect', 'names-errors']);
+  assert.match(errors.out, /the client/);
+  assert.doesNotMatch(errors.out, /Test User/);
+  assert.match(git(['log', '-1', '--format=%b', 'mission1/trunk'], dir), /rule validates-input \(ratified by Anna Nowak\)/);
+});
+
+// Issue 515: yg refuses a type decision that says nothing about the decisions in force for that type, and
+// the command to write it by hand names both ways to answer that: --adds, or --supersedes.
+test('the graph\'s logs: a type decision yg refuses over decisions in force is reported with a hand-run command naming --adds beside --supersedes', (t) => {
+  const dir = missionOnGraph();
+  t.after(() => rmRepo(dir));
+  run('decide.mjs', ['add', 'mod-one', 'Every module validates its input.', '--area', 'module', '--reach', '5'], dir);
+  run('ask.mjs', ['answer', run('decide.mjs', ['ratify'], dir).json.items[0].id, 'tak'], dir);
+  assert.deepEqual(writeLogs(dir).written.map((w) => w.slug), ['mod-one']);
+  // A second decision about the same type, neither replacing the first nor saying it adds to it.
+  run('decide.mjs', ['add', 'mod-two', 'Every module names its errors.', '--area', 'module', '--reach', '5'], dir);
+  run('ask.mjs', ['answer', run('decide.mjs', ['ratify'], dir).json.items[0].id, 'tak'], dir);
+  const out = writeLogs(dir);
+  assert.deepEqual(out.failed.map((f) => f.slug), ['mod-two'], JSON.stringify(out));
+  assert.match(out.failed[0].retry, /log add --type module --reason '<the ruling>' --adds \(or --supersedes <datetime> of each decision in force it replaces\)/);
+  // What the hint says works: the entry written by hand with --adds is taken.
+  const file = join(dir, 'mod-two.md');
+  writeFileSync(file, 'Every module names its errors.\n');
+  const byHand = yg(dir, ['log', 'add', '--type', 'module', '--reason-file', file, '--adds']);
+  assert.equal(byHand.code, 0, byHand.out);
+});
+
+// Issue 515: an area ruling no ratification batch ever put to the client is named at done, apart from the
+// ones the client was asked about and has not answered — nobody declined it; nobody asked.
+test('horde.mjs done warns about area rulings no ratification batch was filed for', async (t) => {
+  const dir = missionOnGraph();
+  t.after(() => rmRepo(dir));
+  run('decide.mjs', ['add', 'mod-asked', 'Modules log refusals.', '--area', 'module', '--reach', '2'], dir);
+  run('decide.mjs', ['ratify'], dir);
+  run('decide.mjs', ['add', 'mod-never', 'Modules name their errors.', '--area', 'module', '--reach', '4'], dir);
+  const out = writeLogs(dir);
+  assert.deepEqual(out.unratified, ['mod-asked', 'mod-never']);
+  assert.deepEqual(out.unasked, ['mod-never']);
+  const { graphLogLines } = await import(pathToFileURL(join(SCRIPTS_DIR, 'horde.mjs')).href);
+  const lines = graphLogLines(out, 'mission1/trunk').join('\n');
+  assert.match(lines, /WARNING: 1 area ruling\(s\) were never put to the client — no ratification batch was filed for them \(decide\.mjs ratify\)[^\n]*: mod-never\./);
+  assert.doesNotMatch(graphLogLines({ ...out, unasked: [] }, 'mission1/trunk').join('\n'), /WARNING/);
 });
