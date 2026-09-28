@@ -362,10 +362,10 @@ test('queue.mjs set merged: the merge is recorded in the wave journal by the sam
   assert.equal(closed.json.total, 1);
 
   // The older habit of also calling wave.mjs merged records nothing twice.
-  const again = run('wave.mjs', ['merged', '001', 'abc1234'], dir);
+  const again = run('wave.mjs', ['merged', '001', sha], dir);
   assert.equal(again.json.appended, false);
   const planAfter = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
-  assert.equal(planAfter.match(/merged: 001 abc1234/g).length, 1);
+  assert.equal(planAfter.match(new RegExp(`merged: 001 ${sha}`, 'g')).length, 1);
 });
 
 // ---- next: locks, critical path, quality-last, --why ---------------------------------

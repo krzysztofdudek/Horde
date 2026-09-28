@@ -5,7 +5,7 @@ import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, writeTicketFixture,
+  makeRepo, rmRepo, run, initHorde, addNode, writeTicketFixture, forceTicketStatus,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -147,7 +147,8 @@ test('queue.mjs plan: the six-ticket worked example — layers, critical path, o
   });
 
   await t.test('a merged ticket leaves the plan; what remains re-layers itself', () => {
-    run('tk.mjs', ['status', '101', 'merged'], dir);
+    // Merged as the landing leaves it (the tools close a ticket only on a real merge; the scene is set here).
+    forceTicketStatus(dir, 'mission1', '101', 'merged');
     const after = run('queue.mjs', ['plan'], dir);
     assert.equal(after.json.tickets.length, 5);
     assert.deepEqual(after.json.layers, [['102', '103', '104', '106'], ['105']]);
