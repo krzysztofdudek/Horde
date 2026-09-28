@@ -49,8 +49,9 @@ if (Number(process.env.HORDE_LOCK_RACE_DELAY_MS || 0) > 0) {
 // withQueueLock and withDecisionsLock each hold their lock only for the span of one synchronous
 // callback, so the "queue" and "decide" cases below run the whole acquire/hold/release cycle
 // inside that callback instead — `held: true` tells the code beneath this function the hold
-// already happened, so it does not sleep or release a second time; the two shapes are otherwise
-// read identically.
+// already happened, so it does not sleep or release a second time, and both of its stamps were
+// taken inside the callback, while the lock was still held; the two shapes are otherwise read
+// identically.
 async function takeTheLock() {
   if (kind === 'gate') {
     const { acquireGateLock } = await import('../../land.mjs');
@@ -62,39 +63,43 @@ async function takeTheLock() {
   }
   if (kind === 'queue') {
     const { withQueueLock } = await import('../../_lib.mjs');
-    let acquired;
+    let acquired; let released;
     withQueueLock('mission1', 'trunk', () => {
       acquired = Date.now();
       sleepSync(hold);
+      released = Date.now();
     }, { waitMs });
-    return { ok: true, held: true, acquired, release: () => {} };
+    return { ok: true, held: true, acquired, released, release: () => {} };
   }
   if (kind === 'decide') {
     const { withDecisionsLock } = await import('../../decide.mjs');
-    let acquired;
+    let acquired; let released;
     withDecisionsLock('mission1', () => {
       acquired = Date.now();
       sleepSync(hold);
+      released = Date.now();
     }, { waitMs });
-    return { ok: true, held: true, acquired, release: () => {} };
+    return { ok: true, held: true, acquired, released, release: () => {} };
   }
   if (kind === 'asks') {
     const { withAsksLock } = await import('../../_lib.mjs');
-    let acquired;
+    let acquired; let released;
     withAsksLock('mission1', () => {
       acquired = Date.now();
       sleepSync(hold);
+      released = Date.now();
     }, { waitMs });
-    return { ok: true, held: true, acquired, release: () => {} };
+    return { ok: true, held: true, acquired, released, release: () => {} };
   }
   if (kind === 'graph') {
     const { withGraphLock } = await import('../../_lib.mjs');
-    let acquired;
+    let acquired; let released;
     withGraphLock('mission1', () => {
       acquired = Date.now();
       sleepSync(hold);
+      released = Date.now();
     }, { waitMs });
-    return { ok: true, held: true, acquired, release: () => {} };
+    return { ok: true, held: true, acquired, released, release: () => {} };
   }
   throw new Error(`no such lock: ${kind}`);
 }
@@ -112,8 +117,14 @@ try {
   if (lock.ok === false) say({ ok: false, error: lock.note }, 1);
   const acquired = lock.held ? lock.acquired : Date.now();
   if (!lock.held) sleepSync(hold);
+  // Stamped while the lock is still held, never after letting go of it: the instant the lock file
+  // is removed the other contender may take it, and a `released` read after the removal can land a
+  // millisecond after that contender's own `acquired` — two windows that "overlap" only because one
+  // was measured late (seen on Windows CI, issue 481). Both stamps sit inside the held span, so an
+  // overlap between two windows can only mean both processes really held the lock at once.
+  const released = lock.held ? lock.released : Date.now();
   lock.release();
-  say({ ok: true, pid: process.pid, acquired, released: Date.now() }, 0);
+  say({ ok: true, pid: process.pid, acquired, released }, 0);
 } catch (e) {
   say({ ok: false, error: String(e && e.message ? e.message : e) }, 1);
 }

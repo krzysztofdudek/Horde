@@ -1522,7 +1522,7 @@ function cmdDone(positional, flags) {
 }
 
 // What done wrote into the graph's logs, and what it could not, for the director.
-function graphLogLines(g, branch) {
+export function graphLogLines(g, branch) {
   const lines = [];
   const what = (w) => (w.kind === 'node' ? `node ${w.node}` : w.kind === 'type' ? `type ${w.type}` : `rule ${w.rule}`);
   if (g.commit) {
@@ -1534,6 +1534,10 @@ function graphLogLines(g, branch) {
   }
   if (g.unratified.length) {
     lines.push(`${g.unratified.length} area ruling(s) nobody ratified stay rulings of this mission and never enter the type's decisions: ${g.unratified.join(', ')}${g.pending.length ? ` (open ratify questions: ${g.pending.join(', ')})` : ''}.`);
+  }
+  // A ruling never put to the client is not one the client declined: nobody ran the batch over it.
+  if (g.unasked && g.unasked.length) {
+    lines.push(`WARNING: ${g.unasked.length} area ruling(s) were never put to the client — no ratification batch was filed for them (decide.mjs ratify), so the client was never asked: ${g.unasked.join(', ')}.`);
   }
   return lines;
 }

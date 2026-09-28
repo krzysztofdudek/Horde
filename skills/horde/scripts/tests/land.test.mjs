@@ -4076,6 +4076,12 @@ test('land.mjs --background with a batch: a ticket with no queue item is refused
     if (!bothLanded) sleepSync(250);
   }
   assert.ok(bothLanded, 'the two real tickets landed despite the third being unresolvable');
+  // The queue says merged before the background worker is through: it still writes each ticket's result
+  // and removes its scratch trees. Its result files are waited for as the test above does, so the
+  // repository is not removed under a running worker — which Windows refuses (EPERM).
+  const pending = r.json.items.filter((it) => it.started);
+  while (Date.now() < deadline && !pending.every((it) => existsSync(it.resultFile))) sleepSync(250);
+  assert.ok(pending.every((it) => existsSync(it.resultFile)), 'both background results were written');
 });
 
 // ---- the family's known conflicts, resolved by rule ------------------------------------------------
