@@ -22,7 +22,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -352,4 +352,32 @@ test('contract: the mission\'s lifecycle is Horde\'s — Jarl\'s own close and a
     assert.ok(existsSync(join(root, '.jarl', 'issues')), 'the finished mission\'s record is still there');
     assert.equal(statusOf(dir, live), 'dropped');
   });
+});
+
+// A mission opened by an earlier build of this release holds a profile without "lifecycle", so Jarl's
+// own close and archive would still reach it. The director's tick brings the stored profile up to
+// Horde's: the keys it lacks are added, the ones it holds are left as they are, and the log says so.
+test('contract: a mission opened before a profile key existed gets it on the next tick, and keeps what it had', (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const root = loopOf(dir);
+  const stored = join(root, '.jarl', 'profile.json');
+  const old = JSON.parse(readFileSync(stored, 'utf8'));
+  delete old.lifecycle;
+  old['external-scheduler'] = 'an older wording of the scheduler line';
+  writeFileSync(stored, `${JSON.stringify(old, null, 2)}\n`);
+  assert.equal(R.describeProfile(R.loadProfile(root)).lifecycle.close, 'any');
+
+  run('tick.mjs', [], dir);
+  const now = JSON.parse(readFileSync(stored, 'utf8'));
+  assert.equal(now.lifecycle.close, 'record');
+  assert.equal(now.lifecycle.archive, 'record');
+  assert.equal(now['external-scheduler'], 'an older wording of the scheduler line', 'a key the mission holds is never rewritten');
+  assert.throws(() => JL.cmdClose(root, { caller: 'cli', force: true }), /never by jarl close/);
+  assert.match(readFileSync(join(root, '.jarl', 'log.md'), 'utf8'), /profile brought up to this Horde's: added lifecycle/);
+
+  const before = readFileSync(stored, 'utf8');
+  run('tick.mjs', [], dir);
+  assert.equal(readFileSync(stored, 'utf8'), before, 'a profile already up to date is not written again');
 });
