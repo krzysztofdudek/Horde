@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, ticketIssuePath, writeTicketFixture,
+  makeRepo, rmRepo, run, initHorde, addNode, ticketIssuePath, writeTicketFixture, git,
 } from './helpers.mjs';
 import { charterMismatches } from '../tk.mjs';
 
@@ -495,6 +495,37 @@ test('tk.mjs new: a ticket names one node, or two — never three', async (t) =>
   assert.equal(three.code, 1);
   assert.match(three.stderr, /names one node, or two/);
   assert.match(three.stderr, /Split it into one ticket per node/);
+});
+
+// Replay defect 3: a graph that keeps a component's tests in a node of their own made every change
+// to pinned behaviour a three-node ticket — the two nodes of a contract and the tests that must
+// change with them — refused by the cap, so the code and its tests had to land apart and neither
+// half could land green. A node whose every tracked file matches config.testGlobs rides along; a
+// node holding code beside its tests still counts.
+test('tk.mjs new: a node holding only tests does not count toward the two-node cap; one holding code beside tests does', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  addNode(dir, 'suite', { mapping: ['tests/**'] });
+  addNode(dir, 'mixed', { mapping: ['mixed/**'] });
+  for (const [path, text] of [
+    ['tests/a.test.mjs', 'export {};\n'],
+    ['tests/b.spec.mjs', 'export {};\n'],
+    ['mixed/c.test.mjs', 'export {};\n'],
+    ['mixed/c.mjs', 'export const c = 1;\n'],
+  ]) {
+    mkdirSync(join(dir, dirname(path)), { recursive: true });
+    writeFileSync(join(dir, path), text);
+  }
+  git(['add', 'tests', 'mixed'], dir);
+  git(['commit', '-qm', 'a node of tests, and one of code with its tests'], dir);
+
+  const withTests = run('tk.mjs', ['new', 'contract-with-tests', '--title', 'A contract and its tests', '--node', 'a', '--node', 'b', '--node', 'suite', '--class', 'standard'], dir);
+  assert.equal(withTests.code, 0, withTests.stderr);
+
+  const withCode = run('tk.mjs', ['new', 'contract-with-code', '--title', 'A contract and more code', '--node', 'a', '--node', 'b', '--node', 'mixed', '--class', 'standard'], dir);
+  assert.equal(withCode.code, 1);
+  assert.match(withCode.stderr, /names 3 that hold code \(a, b, mixed\)/);
 });
 
 test('tk.mjs: Files, Consumes, Produces and Evidence on the ticket', async (t) => {

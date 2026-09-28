@@ -344,6 +344,21 @@ test('drill.mjs check review: green when findings are ranked and Minor stayed in
   assert.equal(r.json.ok, true);
 });
 
+// Replay defect 7: a reviewer of a two-node ticket names both nodes the way anyone writes a list —
+// "core, api changes by …". Read as one token before "changes", that line was no review at all, and
+// the drill reported the ticket as never reviewed.
+test('drill.mjs check review: a change request naming its nodes as a comma-separated list is read as one review', async (t) => {
+  const m = testFirstBranch(t);
+  assert.equal(run('tk.mjs', ['log', '001',
+    'review: core, api changes by owner-core — Important: a permanent failure still costs three calls'], m.dir).code, 0);
+
+  const r = run('drill.mjs', ['check', 'review', '--repo', m.dir, '--ticket', '001'], m.dir);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.equal(r.json.ok, true);
+  assert.match(r.json.checks.find((c) => c.name === 'reviews recorded').note, /^core, api changes by owner-core$/);
+  assert.match(r.json.checks.find((c) => c.name === 'findings carry a severity').note, /^1 change request\(s\)/);
+});
+
 test('drill.mjs check review: red when a Minor finding sent the ticket back', async (t) => {
   const m = testFirstBranch(t);
   assert.equal(run('tk.mjs', ['log', '001',

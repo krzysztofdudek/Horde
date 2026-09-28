@@ -253,6 +253,42 @@ test('refine.mjs --step cut: a linguist-generated file and a binary file are not
   });
 });
 
+// Replay defect 2: a component that keeps its own CHANGELOG carried every line of it into the
+// territory's size, so a node with a long history no longer fit the cap and a mission could not be
+// cut around it. A file config.appendOnly names is only ever appended to, never read whole: it is
+// left out of the sum like a generated or a binary file.
+test('refine.mjs --step cut: a file config.appendOnly names is not counted into the territory\'s code budget', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  graphFixture(dir);
+  writeFile(dir, 'src/auth/CHANGELOG.md', `# Changelog\n\n${'- one more line of history\n'.repeat(400)}`);
+  git(['add', '-A'], dir);
+  git(['commit', '-qm', 'the component keeps its own changelog'], dir);
+  git(['branch', '-f', 'develop', 'HEAD'], dir);
+  initHorde(dir, 'm1');
+  writeTerritories(dir, 'm1', { doors: { nodes: ['auth'], class: 'standard', why: 'The way in.' } });
+  const changelogBytes = readFileSync(join(dir, 'src/auth/CHANGELOG.md')).length;
+
+  const counted = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).json.territories[0].bytes;
+  assert.equal(run('horde.mjs', ['config', 'set', 'appendOnly', '["src/auth/CHANGELOG.md"]'], dir).code, 0);
+  assert.deepEqual(run('horde.mjs', ['config', 'get', 'appendOnly'], dir).json.value, ['src/auth/CHANGELOG.md']);
+  const after = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).json.territories[0].bytes;
+
+  await t.test('the changelog leaves the code total and the file count, and is counted as excluded', () => {
+    assert.equal(after.code, counted.code - changelogBytes);
+    assert.equal(after.files, counted.files - 1);
+    assert.equal(after.excludedFiles, counted.excludedFiles + 1);
+    for (const f of after.largest) assert.notEqual(f.file, 'src/auth/CHANGELOG.md');
+  });
+
+  await t.test('a cap the changelog alone would break is met', () => {
+    assert.equal(run('horde.mjs', ['config', 'set', 'territory.maxBytes', String(after.total)], dir).code, 0);
+    const r = run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir);
+    assert.equal(r.code, 0, r.stderr);
+    assert.ok(counted.total > after.total, 'the same territory measured with the changelog would be over it');
+  });
+});
+
 test('refine.mjs: a territory is leased across every live horde on the repository', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));

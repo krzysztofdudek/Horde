@@ -1000,3 +1000,24 @@ test('node.mjs ygMergeDriverSettings: settings only for a CLI that has the drive
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// Replay defect 4: `yg check --approve` appends its reviewer's verdicts to
+// `.yggdrasil/yg-events.llm.jsonl` (sealed by month into `yg-events.llm.YYYY-MM.jsonl`) on whichever
+// branch ran it. No node owns that record, so a landing that read it as the ticket's own file
+// refused a clean branch for reaching outside its boundary, and a conflict in it stopped the merge.
+// It is derived like the lock files, and it merges by rule.
+test('node.mjs ygDerivedFile and mergesByRule: the committed verdict record and its sealed months are derived, like the lock files', async () => {
+  const { ygDerivedFile, mergesByRule, YG_EVENTS_FILE } = await import('../node.mjs');
+  for (const f of ['.yggdrasil/yg-events.llm.jsonl', '.yggdrasil/yg-events.llm.2026-09.jsonl']) {
+    assert.equal(ygDerivedFile(f), true, `${f} is derived`);
+    assert.equal(mergesByRule(f, {}), true, `${f} merges by rule`);
+    assert.equal(YG_EVENTS_FILE.test(f), true);
+  }
+  assert.equal(ygDerivedFile('.yggdrasil/yg-lock.logs.json'), true, 'the lock files stay derived');
+  // Only the record itself: a file that merely sits beside it, or a month written some other way,
+  // is still somebody's.
+  for (const f of ['.yggdrasil/yg-events.jsonl', '.yggdrasil/yg-events.llm.2026-9.jsonl', 'src/.yggdrasil/yg-events.llm.jsonl', '.yggdrasil/model/core/yg-events.llm.jsonl']) {
+    assert.equal(ygDerivedFile(f), false, `${f} is not derived`);
+    assert.equal(mergesByRule(f, {}), false, `${f} does not merge by rule`);
+  }
+});

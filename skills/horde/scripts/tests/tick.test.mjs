@@ -653,6 +653,35 @@ test('tick.mjs review: a Critical or Important finding sends the ticket back wit
   });
 });
 
+// Replay defect 7: a review of a ticket on two nodes names both, as a reviewer naturally writes a
+// list — "core, api changes by …". Read as one token before "changes", the line was no change
+// request: its Important finding went uncounted, the closing line said nothing was found, and the
+// ticket went on to the gate with the finding still standing.
+test('tick.mjs review: a change request naming its nodes as "a, b" is counted, and its Important finding sends the ticket back', async (t) => {
+  const dir = makeRepo();
+  t.after(() => quietRm(dir));
+  initHorde(dir);
+  const id = landedTicket(dir, 'two-node-finding', { files: 'src/pair.ts' }).id;
+  raiseReview(dir, id);
+  logOn(dir, id, `review: core, api changes by r-${id} — Important: src/pair.ts:7 — the api retries what core already retried — one failure costs nine calls`);
+  const counts = closeReview(dir, id).json.counts;
+
+  const r = tick(dir);
+  assert.equal(r.code, 0, r.stderr);
+  const step = r.json.landed.find((l) => l.ticket === id);
+
+  await t.test('the closing line counts the finding', () => {
+    assert.deepEqual(counts, { Critical: 0, Important: 1, Minor: 0 });
+  });
+
+  await t.test('the ticket goes back to changes with round 1, and the gate is not asked', () => {
+    assert.equal(step.action, 'changes');
+    assert.equal(step.round, 1);
+    assert.match(step.note, /the api retries what core already retried/);
+    assert.equal(landResultExists(dir, id), false);
+  });
+});
+
 test('tick.mjs review: a Critical finding on a ticket whose rounds are spent stops it and asks the client, as a red gate would', async (t) => {
   const dir = makeRepo();
   t.after(() => quietRm(dir));
