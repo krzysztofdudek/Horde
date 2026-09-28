@@ -54,7 +54,7 @@ const SEVERITY_RANK = { high: 0, medium: 1, low: 2 };
 // parallelism left over once the mission's own work has all it needs.
 const KIND_RANK = { prototype: 0, work: 1, quality: 2 };
 
-const USAGE = `usage: queue.mjs <command> [options]
+export const USAGE = `usage: queue.mjs <command> [options]
 
 commands:
   list [--state s] [--team t] [--horde h]
@@ -153,14 +153,15 @@ commands:
       a port or a Depends-on edge going the other way, it writes nothing for that one seam and
       names the cycle instead of writing an edge that would let one exist. queue.mjs undep takes
       an applied edge back off.
-  quality [--from <path>] [--class c] [--dry-run] [--team t] [--horde h]
+  quality [--from <path>] [--class c] [--dry-run] [--all] [--team t] [--horde h]
       the quality pass (ruling quality-always-authorised): reads a grain-advice/1 document —
       the configured Grain CLI's own "advise --json", or --from a file — and files one
       low-priority "quality" ticket per improvement it names, on the node it is about, queued
       straight away without an escalation. An advisory already turned
       into a ticket is not filed twice. Prints and files nothing when the charter's quality
       policy is only-the-work, or when no Grain CLI is configured. --dry-run reads and reports
-      without filing anything.
+      without filing anything. An improvement on a node no horde's lease gives this mission stays
+      for whichever horde leases it; --all files it here anyway.
   rm <ticket> [--team t] [--horde h]
   render [--team t] [--horde h]
   reconcile [--reclaim NNN[,MMM]] [--team t] [--horde h]
@@ -2105,7 +2106,7 @@ function cmdRegate(horde, positional, flags) {
 }
 
 function main() {
-  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['apply-order', 'why', 'stack', 'dry-run', 'proposed', 'adopt'] });
+  const { positional: allPositional, flags } = parseArgs(process.argv.slice(2), { flags: ['apply-order', 'why', 'stack', 'dry-run', 'proposed', 'adopt', 'all'] });
   const [cmd, ...positional] = allPositional;
 
   if (flags.help) { console.log(USAGE); process.exit(0); }

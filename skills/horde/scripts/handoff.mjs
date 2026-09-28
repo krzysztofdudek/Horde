@@ -18,7 +18,7 @@ import {
 } from './_lib.mjs';
 import { loopResume } from './loop.mjs';
 
-const USAGE = `usage: handoff.mjs <command> [options]
+export const USAGE = `usage: handoff.mjs <command> [options]
 
 commands:
   read [--horde h]

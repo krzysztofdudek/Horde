@@ -55,7 +55,7 @@ import {
 
 export const KINDS = ['stop', 'stuck', 'lower', 'charter'];
 
-const USAGE = `usage: ask.mjs <command> [options]
+export const USAGE = `usage: ask.mjs <command> [options]
 
 commands:
   add "<why>" --kind <${KINDS.join('|')}> [--ticket NNN] [--territory t] [--aspect a] [--horde h]

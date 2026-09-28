@@ -34,6 +34,20 @@ A mission's **record** is not one of those files: it is a Jarl loop, `.horde/hor
 
 Shared internals live in `_lib.mjs` (root discovery, JSON read/write with rendering, arg parsing, table printing, timestamps, git helpers). Tools import it; nothing else does.
 
+Every word after a bare `--` is an argument, even one that starts with `--`: that is how the MCP server hands a call over.
+
+## mcp.mjs and commands.mjs — every command as an MCP tool
+
+`commands.mjs` is the command table: every command of every script here, its arguments and its flags, one entry per command (`'tk log': { args: ['ticket', 'text'] }`). `mcp.mjs` is an MCP stdio server generated from it by the family's MCP adapter, `@chrisdudek/runes/mcp`, vendored under `vendor/runes/` (see `runes.mjs` below): one tool per command, `horde_<script>_<command>` (a space or a dash joins with `_`), or `horde_<script>` for a script with no subcommand (`horde_tick`, `horde_land`), one field per argument and per flag under the flag's own name, plus `horde_help`, which answers with every script's usage text — the `USAGE` each script exports and prints for `--help`. A description is one sentence after `WRITES.` or `Read-only.`.
+
+A call becomes the argv the command line would get (the flags inline as `--name=value`, then `--` and the arguments) and runs the script itself, as a child process, in the directory the host started the server in; its stdout is the answer, its stderr a second block, and a non-zero exit an error result. So the two surfaces cannot differ: every lock, refusal and exit code is the script's own. A path field must be absolute; there is no stdin, so `horde.mjs charter edit` and `tk.mjs edit` take their text from `--from <file>` (the same flag on the command line). The long commands (`land`, `tick`, `horde done`, `horde init`, `wave close`, `wave evidence`, the `drill` runs, `node promote`, `queue quality`, `retro`) may run an hour, every other one ten minutes; a call past its limit is stopped with its whole process tree. The plugin starts the server on install: `.mcp.json` (Claude Code) and the portable `mcp.json` at the repository root, behind a guard that prints one line and exits 0 when the path is not reachable (a host path inside a container).
+
+Not in the table: `audit.mjs` and `loop.mjs` (imported, no command line), `vendor.mjs` and `runes.mjs` (this repository's own gates), and `handoff.mjs`'s retired writes. `tests/mcp.test.mjs` holds the table to the scripts from three sides — Runes' parity check between the table, the usage texts and the tools the running server lists; the flags each script's code reads and each usage synopsis names; and real calls over stdio compared with the command line — and measures `tools/list` against the family's budget of 8,500 tokens, a warning when over, never a failure.
+
+## runes.mjs — the vendored Runes code, kept honest
+
+A copy of Runes' own `tools/vendor.mjs`, pinned in `vendor/runes.pin.json` beside the code it vendors (Runes `dist/cli`, `dist/mcp` and the test kit's parity, measure and client parts) and the `mcp-first` skill fragment it keeps between the `RUNES` markers in `SKILL.md`. `check --offline --pin vendor/runes.pin.json` is the sha256 gate `npm test` runs; `check --ci` adds a fresh shallow clone of the pinned tag into `.runes/` (ignored by git), which CI runs; `update --tag vX.Y.Z --pin vendor/runes.pin.json` moves the pin.
+
 ## horde.mjs — hordes
 
 - `init <name> --base <branch> [--title "…"] [--test-globs <glob>[,glob…]]
@@ -103,8 +117,8 @@ Shared internals live in `_lib.mjs` (root discovery, JSON read/write with render
   before running a single test reports a missing environment, not a wrong base.
   A list-valued key (`testGlobs`, `protectedPaths`, `appendOnly`) takes either a comma-separated list or a JSON
   array and is stored as a list either way — never as the text of one.
-- `charter show|edit [--ask id]` — the mission charter. `show` prints it; `edit` replaces it
-  with what arrives on stdin, and reports how
+- `charter show|edit [--ask id] [--from <file>]` — the mission charter. `show` prints it; `edit` replaces it
+  with what arrives on stdin (or the file `--from` names), and reports how
   many evidence rows the new text carries and how many are recorded as reproduced — naming any row
   that was recorded and is no longer, since a rewrite that drops one loses work already done against
   it otherwise, and separately warning by id on a row that keeps its stamp but changes what it
@@ -208,7 +222,7 @@ A ticket is an issue of the mission's loop (`loop.mjs`): `.horde/hordes/<horde>/
 - `new <slug> --title "…" --node n --class light|standard|heavy|max [--severity high|medium|low]
   [--kind work|quality|prototype] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
   [--produces <node>/<port>,…] [--evidence "…"]… [--revert-base <ref>] [--mutate "<command>"]
-  [--reopens NNN]` —
+  [--reopens NNN] [--tree p]` —
   from `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries a contract between them; three or more that hold code are refused — nothing in the graph answers for the whole of such a diff. A node that holds nothing but tests (every tracked file in its boundary matches `config.testGlobs`) does not count toward the two: a graph that keeps a component's tests in a node of their own would otherwise split every change to behaviour its tests pin into two tickets nobody can land green.
   `--revert-base` names the ref where the ticket's new tests must fail (a contract test
   is green on the team tip by design; its red base is e.g. `develop`); `land`'s revert-test item reads it, or
@@ -252,13 +266,13 @@ A ticket is an issue of the mission's loop (`loop.mjs`): `.horde/hordes/<horde>/
   produced by some ticket of this horde (its own team or another's) or already exist on that node in
   the graph — refused by name otherwise. Port existence is read through `node.mjs`'s graph reading,
   in one place, so a later change of where the graph comes from changes one function.
-  Both checks read the graph in the tree `new`/`edit` is run from (cwd) — `--horde` on either is only
+  Both checks read the graph in the tree `--tree p` names, else the tree `new`/`edit` is run from (cwd) — `--horde` on either is only
   the ticket-store disambiguator (which horde's `teams/` this ticket files under), never a tree
   switch, the same ordinary reading every `node.mjs` read takes (`queue.mjs plan`/`quality`,
   `tick.mjs` and `land.mjs` are where `--horde` written out alone also means the tip of trunk
   instead). A node the tree does not carry contributes
   no boundary and no port, so a ticket named against it is accepted uncontested rather than refused —
-  run `new`/`edit` from the tree whose graph state should decide the check, or land the graph change
+  run `new`/`edit` from (or name with `--tree`) the tree whose graph state should decide the check, or land the graph change
   there first.
 - `list [--state s] [--node n] [--team t] [--open]`, `show NNN [--log]`,
   `status NNN <state> ["note"]` (states: proposed queued running landed changes blocked merged
@@ -281,7 +295,7 @@ A ticket is an issue of the mission's loop (`loop.mjs`): `.horde/hordes/<horde>/
   a finding, or the review's own closing line arriving late — is acted on.
 - `--node` on `new` is repeatable; two nodes mark a contract ticket.
 - `move NNN --team t` — relocates the issue folder.
-- `edit NNN --by <name>` — rewrites the body (everything from `## What` on) from stdin, leaving the
+- `edit NNN --by <name> [--from <file>]` — rewrites the body (everything from `## What` on) from stdin (or the file `--from` names), leaving the
   header block (id/title, `**Status:**`, `**Node:**`/`**Class:**`/`**Severity:**`/`**Team:**`,
   `**Depends on:**`/`**Branch:**`, `**Files:**`, `**Consumes:**`/`**Produces:**`, `**Evidence:**`)
   untouched; appends "body edited by `<name>`" to the

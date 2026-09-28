@@ -6,3 +6,5 @@ node_modules/
 .horde/
 .claude/worktrees/
 .jarl-vendor/
+# the Runes vendoring tool's fresh clones (runes.mjs check --ci and update) — disposable
+.runes/
