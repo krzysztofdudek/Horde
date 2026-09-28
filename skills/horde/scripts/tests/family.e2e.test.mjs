@@ -211,6 +211,9 @@ function buildRepository() {
 // otherwise no-op the child and report a green that measured nothing.
 const GATE = ['--test'];
 function runGate(cwd) {
+  // No tree, no gate: a missing cwd would run `node --test` from wherever this suite sits — the whole
+  // Horde suite again, nested inside itself.
+  if (!cwd || !existsSync(cwd)) throw new Error(`runGate: no tree to run the gate in (got ${cwd})`);
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   if (env.NODE_OPTIONS) {
