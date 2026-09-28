@@ -566,6 +566,13 @@ function restoreCase(caseDir, ygCommand) {
   execFileSync('git', ['checkout', '-q', meta.parentBranch], { cwd: tmp, stdio: 'pipe' });
   cpSync(join(caseDir, 'horde'), join(tmp, '.horde'), { recursive: true });
   writeFileSync(join(tmp, '.horde', '.gitignore'), '*\n');
+  // Each mission's loop gets back the ignore file the record left out of the case.
+  const hordesDir = join(tmp, '.horde', 'hordes');
+  if (existsSync(hordesDir)) {
+    for (const h of readdirSync(hordesDir)) {
+      if (existsSync(join(hordesDir, h, '.jarl'))) writeFileSync(join(hordesDir, h, '.jarl', '.gitignore'), '*\n**/*\n');
+    }
+  }
   // How a machine invokes the Yggdrasil CLI is a property of the machine, not of the case: a
   // recorded snapshot carries none, and the drill puts this machine's own in before it runs. A
   // case that carried one would only be runnable on the laptop it was recorded on.
@@ -669,7 +676,12 @@ function snapshotHorde(root, dest) {
     filter: (from) => {
       const rel = from.slice(src.length + 1);
       if (!rel) return true;
-      return !SNAPSHOT_SKIP.has(rel.split(/[\\/]/)[0]);
+      const parts = rel.split(/[\\/]/);
+      // A mission's loop keeps a `.gitignore` of its own (`*`) and, while a write runs, its lock:
+      // neither is state, and the first would hide the case from git. restoreCase puts the ignore
+      // file back.
+      if (parts.includes('.jarl') && ['.gitignore', '.lock', '.lock.break'].includes(parts[parts.length - 1])) return false;
+      return !SNAPSHOT_SKIP.has(parts[0]);
     },
   });
   // A case is state, not a machine. `ygCommand` on the recording machine is very often an
