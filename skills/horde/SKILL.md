@@ -81,9 +81,10 @@ turns both off, and `tk.mjs new --no-quality` turns them off for one ticket**; t
 
 The graph is the repository's Yggdrasil graph and nothing else — `node.mjs bind` reads it, the horde
 never edits it except through `yg`. A repository that has no graph gets one at `horde init` — created
-with `yg`, and where a Grain CLI is available, proposed from the repository's own code and accepted,
-which is the only way a first graph arrives with rules describing how the code is already written.
-Without Yggdrasil, `init` refuses and names the install step. A graph that needs a further cut — a
+with `yg`, proposed by Grain from the repository's own code and accepted, which is the only way a
+first graph arrives with rules describing how the code is already written. Grain is required beside
+Yggdrasil, because the architect measures with it (below). Without either, `init` refuses before
+anything exists and names the install step. A graph that needs a further cut — a
 node too big to hold, a piece that does not belong where it sits — is not something you negotiate
 live: name it to the architect as a proposal once refining starts, or, for the mission's very first
 graph, accept what `horde init` and Grain proposed and correct it the same way afterwards. Framing
@@ -104,7 +105,12 @@ node ${CLAUDE_PLUGIN_ROOT:-.claude/skills/horde}/scripts/refine.mjs --step frame
 
 The **cut** divides the request into territories — sets of whole components, any level. The tool
 checks the three rules that can be checked (whole components, one component to one territory, and a
-size nobody could hold) and leases each territory across every live horde on the repository.
+size nobody could hold) and leases each territory across every live horde on the repository. The
+architect cuts along the seams the repository's own history shows — components that change together
+belong together — and the accepted cut is scored by Grain against that history: how many commits
+stayed inside one territory, against random cuts along the directory tree. The score is advice with
+its denominator, written beside the cut and put in front of the plan's review; it never refuses a
+cut.
 
 The **consultation** sends one agent per territory, all at once, each seeing its own territory and
 nothing else. They write the tickets and propose the law themselves; nothing comes back as prose.
@@ -199,8 +205,9 @@ through its consultants — so what is left for you to spawn is the agents that 
   nothing about it recurs.
 - Spawn **legislate** as a one-shot per territory (`brief.mjs legislate <territory> --name <n>`) after a wave
   closes, or whenever a worker's ticket log flags a pattern nothing enforces. It reads what its own
-  territory's landings were refused for and writes the rule down, in its own branch, raising it on
-  evidence with `node.mjs promote`. Adding a rule needs nobody's permission; taking one away or making
+  territory's landings were refused for, and the rules Grain drafts from its components' own code,
+  and writes the rule down, in its own branch, raising it on evidence with `node.mjs promote` — a
+  Grain draft no higher than advisory, for the client to ratify. Adding a rule needs nobody's permission; taking one away or making
   it bite less is the chairman's alone, and the landing gate refuses a branch that tries.
 - Nobody merges by hand. `land.mjs <ticket>` — which `tick.mjs` calls for you — is the last step of
   a ticket: nine checks, and on
@@ -299,7 +306,8 @@ write a brief `brief.mjs` did not render.
 
 **The client can see the mission without you.** `report.mjs` writes one plain-language page per
 horde — the questions waiting on them, every evidence row and how far it has got, what landed since
-the last report, what waits to be merged — and every tick, wave close and filed question rewrites it
+the last report, what waits to be merged, and what the work did to the mission's part of the code,
+measured before and after — and every tick, wave close and filed question rewrites it
 (`hordes/<horde>/report.md`, and `config.report.out` when the client should find it somewhere else).
 `config.notify` is the command run when a question is filed or a wave closes, for whatever reaches
 the client when they are not at the terminal. Point the client at the page; do not paraphrase it.

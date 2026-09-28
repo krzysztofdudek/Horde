@@ -11,15 +11,15 @@
 /plugin install horde@horde-marketplace
 ```
 
-Run both, then `/reload-plugins` to activate it in this session (or restart Claude Code). Requires Node.js on your `PATH` (any recent version), since the skill's tools are plain ES modules with zero dependencies, and Yggdrasil; see [Requirements](#requirements) below before you invoke it. Invoke it by handing over a mission: `/horde <mission>`, or your own words for it ("let's run this as a horde").
+Run both, then `/reload-plugins` to activate it in this session (or restart Claude Code). Requires Node.js on your `PATH` (any recent version), since the skill's tools are plain ES modules with zero dependencies, Yggdrasil and Grain; see [Requirements](#requirements) below before you invoke it. Invoke it by handing over a mission: `/horde <mission>`, or your own words for it ("let's run this as a horde").
 
-> MIT licensed · Node scripts, zero dependencies · needs [Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil), and creates the graph if your repository has none · part of the [Yggdrasil family](#the-yggdrasil-family) · [full skill body](skills/horde/SKILL.md)
+> MIT licensed · Node scripts, zero dependencies · needs [Yggdrasil](https://github.com/krzysztofdudek/Yggdrasil) and [Grain](https://github.com/krzysztofdudek/Grain), and creates the graph if your repository has none · part of the [Yggdrasil family](#the-yggdrasil-family) · [full skill body](skills/horde/SKILL.md)
 
 ---
 
 ## Requirements
 
-Two things, and only two.
+Three things, and only three.
 
 **Node.js on your `PATH`** (any recent version). The skill's tools are plain ES modules with zero dependencies.
 
@@ -31,7 +31,15 @@ npm i -g @chrisdudek/yg
 
 Horde reads the graph only through Yggdrasil's versioned documents (`yg-node/1`, `yg-context/1`, `yg-impact/1`, and others), and reads a refusal by its code (`yg-error/1`), never by its wording. A release that doesn't answer with the exact document Horde expects — older than 6.1.0, or one that has since changed shape — is refused by name, naming what it saw and which release to install, never read around.
 
-If your repository already has a graph, Horde reads it. If it doesn't, `horde init` makes one for you before anything else happens. With [Grain](https://github.com/krzysztofdudek/Grain) installed as well, the graph it makes is read out of your own code — the components you actually have and the rules you already follow — and it tells you up front how much of the code you have today those rules would refuse. Without Yggdrasil, Horde stops and says so.
+**[Grain](https://github.com/krzysztofdudek/Grain)** 6.1.0 or newer. The architect measures with it. It cuts the mission along the places your repository's own history changes together, and each cut comes with a score against random cuts. The rules a part of the mission writes down start from the rules Grain reads out of your code. Your report says what the mission did to its part of the code, before and after. Grain only advises: every number comes with what it was counted out of, and none of them stops anything. Install it (clone it, or `/plugin install grain@grain-marketplace` after `/plugin marketplace add krzysztofdudek/Grain`) and tell Horde where it is, once:
+
+```
+horde.mjs init <mission> --base <branch> --grain "node /path/to/Grain/plugins/grain/bin/grain.mjs"
+```
+
+With `grain` on your `PATH` there is nothing to name. Horde checks the version before it starts a mission and stops, saying what to install, when Grain is missing or older than 6.1.0.
+
+If your repository already has a graph, Horde reads it. If it doesn't, `horde init` makes one for you before anything else happens, read out of your own code by Grain: the components you actually have and the rules you already follow. It tells you up front how much of the code you have today those rules would refuse. Without Yggdrasil or Grain, Horde stops and says so.
 
 Jarl comes inside Horde. A mission's record — its tickets, your rulings, the questions it asks you — is a [Jarl](https://github.com/krzysztofdudek/JarlSkill) loop, written through the Jarl record Horde carries with it, so there is nothing more to install. With the Jarl plugin installed as well, `jarl resume --root .horde/hordes/<mission>` shows the mission live, the same view any Jarl loop gives.
 
@@ -195,7 +203,7 @@ Dispatch is bounded by `config.parallelism` and by the queue itself: a wave only
 <details>
 <summary><b>Do I have to use Yggdrasil?</b></summary>
 
-Yes, and you don't have to set it up first. Horde works on an architecture graph — that is where the components come from, where the rules over each one come from, and what says a change is safe to merge. On a repository that already has one, Horde reads it and never edits it behind your back. On a repository that doesn't, `horde init` creates the graph, and with Grain installed it reads that first graph out of your own code rather than handing you a blank one. What it will not do is invent a second, weaker map of its own and pretend that is the same thing.
+Yes, and you don't have to set it up first. Horde works on an architecture graph — that is where the components come from, where the rules over each one come from, and what says a change is safe to merge. On a repository that already has one, Horde reads it and never edits it behind your back. On a repository that doesn't, `horde init` creates the graph, and Grain reads that first graph out of your own code rather than handing you a blank one. What it will not do is invent a second, weaker map of its own and pretend that is the same thing.
 </details>
 
 <details>

@@ -23,8 +23,11 @@ The meta plane is the memory of the organisation, and it is Yggdrasil's:
 code respect the graph?), the lock (the loop upwards: is each verdict still bound to the code it
 judged?). The horde invents no meta level and keeps no second copy of one; it is the organisation
 that keeps both loops closed when the work is too large for one agent. A repository without a graph
-gets one at `horde init` — created through `yg`, and where a Grain CLI is available, proposed from
-the repository's own code and accepted.
+gets one at `horde init` — created through `yg`, proposed by Grain from the repository's own code,
+and accepted. Grain is required beside Yggdrasil: the architect measures with it — the cut is scored
+against the seams the history shows, the legislator starts from the rules Grain drafts, and the
+client's report measures the mission's territory before and after. What Grain says is advice with
+its denominator; it never refuses anything.
 
 Versioning of the meta plane needs two axes, not one: git for content, and per verdict the hash of
 what it judged. A rule is current only where the graph still verifies against the code — which is
