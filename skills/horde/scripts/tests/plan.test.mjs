@@ -5,7 +5,7 @@ import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode,
+  makeRepo, rmRepo, run, initHorde, addNode, writeTicketFixture,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -28,10 +28,12 @@ function charter(dir, rows) {
 }
 
 // The horde numbers tickets from 1; the worked example this fixture reproduces numbers them from
-// 101, and the plan reads better against the design when the ids match it. The counter is a
-// plain integer the ticket tool owns — seeded here, then every ticket is filed by the tool.
+// 101, and the plan reads better against the design when the ids match it. The mission's loop
+// numbers a ticket past the highest one it holds, so a dropped placeholder at n-1 is the seed —
+// dropped, it is out of every plan — and then every ticket is filed by the tool.
 function startTicketsAt(dir, horde, n) {
-  writeFileSync(join(dir, '.horde', 'hordes', horde, 'counter.json'), `${JSON.stringify({ next: n }, null, 2)}\n`);
+  const id = String(n - 1).padStart(3, '0');
+  writeTicketFixture(dir, horde, id, 'seed', `# ${id} · seed\n\n**Status:** dropped\n`);
 }
 
 function tk(dir, args) {

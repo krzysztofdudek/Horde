@@ -515,7 +515,7 @@ test('horde.mjs charter edit: dropping a row is free before wave 1, refused afte
     const r = charterEditRaw(`${withOne}\n_E2 dropped per ask-${opened.json.id}._\n`, ['--ask', opened.json.id]);
     assert.equal(r.code, 0);
     assert.equal(r.json.evidenceRows, 1);
-    const decision = run('decide.mjs', ['show', `ask-${opened.json.id}`], dir);
+    const decision = run('decide.mjs', ['show', `ask-${opened.json.id.slice(2)}`], dir);
     assert.equal(decision.code, 0, decision.stderr);
     assert.match(decision.json.body, /E2 is dropped/);
   });

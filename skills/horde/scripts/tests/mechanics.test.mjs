@@ -250,7 +250,7 @@ test('ask answer records a decision', async (t) => {
     assert.equal(answered.code, 0, answered.stderr);
     const decisions = run('decide.mjs', ['list'], dir);
     assert.equal(decisions.code, 0, decisions.stderr);
-    assert.ok(decisions.json.some((d) => d.slug === `ask-${askId}`), JSON.stringify(decisions.json));
+    assert.ok(decisions.json.some((d) => d.slug === `ask-${askId.slice(2)}`), JSON.stringify(decisions.json));
   });
 });
 

@@ -1341,7 +1341,7 @@ function setHeaderField(text, label, value) {
   // In place, and only the field's own value: Consumes and Produces share one line, so the
   // replacement stops at the "·" that separates them (and keeps the spaces around it).
   const inPlace = new RegExp(`\\*\\*${label}:\\*\\*[ \\t]*[^\\n·]*?(?=[ \\t]*(?:·|$))`, 'm');
-  if (inPlace.test(text)) return text.replace(inPlace, () => `**${label}:** ${value}`);
+  if (inPlace.test(text)) return text.replace(inPlace, () => `**${label}:**${value ? ` ${value}` : ''}`);
   const anchor = new RegExp(`^(\\*\\*${FIELD_AFTER[label]}:\\*\\*[^\\n]*)$`, 'm');
   if (anchor.test(text)) return text.replace(anchor, `$1\n**${label}:** ${value}`);
   return text.replace(/^(\*\*Status:\*\*[^\n]*)$/m, `$1\n**${label}:** ${value}`);

@@ -243,11 +243,11 @@ test('mergeSpendingAnswers: a mark that fails after the merge is a note, not a t
         // The merge succeeds, and then the file can no longer be replaced. A read-only directory does
         // that on POSIX; Windows ignores a directory's mode, but refuses a rename over a read-only file.
         if (process.platform === 'win32') chmodSync(path, 0o444);
-        else chmodSync(hordeDir, 0o555);
+        else chmodSync(dirname(path), 0o555);
         return { ok: true, sha: 'c'.repeat(40), note: 'merged' };
       });
     } finally {
-      chmodSync(hordeDir, 0o755);
+      chmodSync(dirname(path), 0o755);
       chmodSync(path, 0o644);
     }
     assert.equal(out.merged.ok, true, 'the merge stands');
@@ -292,7 +292,7 @@ test('tk.mjs move renames the ticket\'s directory while holding the ticket lock'
     if (Date.now() > deadline) throw new Error(`the move never reached its rename: ${err}`);
     await new Promise((r) => { setTimeout(r, 10); });
   }
-  const lock = join(ticketDir, 'issue.md.lock');
+  const lock = join(ticketDir, 'ticket.lock');
   const heldDuringRename = existsSync(lock) ? JSON.parse(readFileSync(lock, 'utf8')).pid : null;
   const code = await done;
   assert.equal(code, 0, err);
@@ -300,7 +300,7 @@ test('tk.mjs move renames the ticket\'s directory while holding the ticket lock'
 
   const moved = join(realpathSync(dir), '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'teams', 'allies', 'issues', basename(ticketDir));
   assert.ok(existsSync(issueFileOf(join(moved))), 'the ticket is in its new team');
-  assert.equal(existsSync(join(moved, 'issue.md.lock')), false, 'with no lock left behind');
+  assert.equal(existsSync(join(moved, 'ticket.lock')), false, 'with no lock left behind');
   assert.equal(existsSync(ticketDir), false, 'and nothing left at the old path');
 });
 

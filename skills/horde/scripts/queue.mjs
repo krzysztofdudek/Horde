@@ -660,7 +660,7 @@ function resolveStackParent(horde, team, key, item, raw, plan) {
 // calls recordMerged below the moment it has made the merge commit itself — the two must not drift,
 // since a landing that recorded a merge differently from a hand-recorded one would leave two
 // shapes of the same event in one queue.
-function applyMerged(horde, team, doc, item, key, sha, { tree } = {}) {
+function applyMerged(horde, team, doc, item, key, sha, { tree, byHand = false } = {}) {
   // Merge order is the dependency order, stack or no stack: a ticket written on top of an
   // unmerged one still lands after it — and a port edge is a dependency here exactly like a
   // hand-written one, read off `plan`'s own derived set rather than the queue item's raw
@@ -675,6 +675,15 @@ function applyMerged(horde, team, doc, item, key, sha, { tree } = {}) {
   const ticket = findTicket(horde, key);
   if (!ticket) fail(`ticket ${key} not found`);
   const mergeRoot = resolveTree({ tree }).path;
+  // A merge recorded by hand is one its base already holds: the mission's record closes a ticket
+  // only on such a merge, so a sha the branch does not carry is refused here, before the branch and
+  // the worktree are taken away. The landing's own merge is one it has just made there.
+  if (byHand) {
+    const base = mergeBase(horde, team, key);
+    if (git(['merge-base', '--is-ancestor', sha, base], mergeRoot) === null) {
+      fail(`${sha} is not a commit on ${base} — a merge is recorded once ${base} holds it, and this mission's record closes a ticket only on such a merge; land it (land.mjs ${key}), or name the sha that landed`);
+    }
+  }
   if (item.worktree) git(['worktree', 'remove', '--force', item.worktree], mergeRoot);
   if (item.branch) git(['branch', '-D', item.branch], mergeRoot);
   item.worktree = null;
@@ -960,14 +969,7 @@ function cmdSet(horde, positional, flags) {
 
     if (state === 'merged') {
       if (!flags.sha) fail('set merged requires --sha');
-      // The loop closes a ticket only on a merge its base holds, so a sha the branch does not carry is
-      // refused here, before the branch and the worktree are taken away.
-      const base = mergeBase(horde, team, key);
-      const root = resolveTree({ tree: flags.tree }).path;
-      if (git(['merge-base', '--is-ancestor', String(flags.sha), base], root) === null) {
-        fail(`${flags.sha} is not a commit on ${base} — a merge is recorded once ${base} holds it, and this mission's record closes a ticket only on such a merge; land it (land.mjs ${key}), or name the sha that landed`);
-      }
-      applyMerged(horde, team, found.doc, found.item, key, String(flags.sha), { tree: flags.tree });
+      applyMerged(horde, team, found.doc, found.item, key, String(flags.sha), { tree: flags.tree, byHand: true });
     }
 
     found.item.state = state;

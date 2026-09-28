@@ -657,38 +657,34 @@ test('node.mjs bind: archiving a horde releases its leases', async (t) => {
 
 // ---- one counter, three prefixes ---------------------------------------------------------------
 //
-// Everything the horde numbers comes out of hordes/<h>/counter.json, and wears the prefix that says
-// what kind of thing it is. Before this, tickets, ports and proposals each ran their own sequence
-// from 1, so one mission could hold three different things all called "1" and an id on its own was
-// an ambiguous question.
+// Every id wears the prefix that says what kind of thing it is, and each kind has one sequence of
+// its own: graph items come out of hordes/<h>/counter.json, tickets and questions out of the
+// mission's loop. The prefix is what makes an id on its own an unambiguous question.
 
-test('the horde numbers everything from one counter, with one prefix per kind', async (t) => {
+test('the horde numbers each kind in one sequence, with one prefix per kind', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
   initHorde(dir);
   addNode(dir, 'core', { mapping: ['src/core/**'] });
 
-  await t.test('a ticket, a graph item and a question to the client take consecutive numbers', async () => {
+  await t.test('a ticket, a graph item and a question to the client each take the next number of their own kind', async () => {
     const ticket = run('tk.mjs', ['new', 'first', '--title', 'First', '--node', 'core', '--class', 'standard'], dir);
     assert.equal(ticket.code, 0, ticket.stderr);
     assert.equal(ticket.json.ref, 't-001');
-    assert.equal(ticket.json.id, '001', 'the number on its own is still what names the folder on disk');
+    assert.equal(ticket.json.id, '001', 'the number on its own is still what names the ticket\'s file and its log\'s folder');
 
     const proposal = run('node.mjs', ['propose', 'rule', 'never bypass the validator', '--by', 'core'], dir);
     assert.equal(proposal.code, 0, proposal.stderr);
-    assert.equal(proposal.json.id, 'g-002');
+    assert.equal(proposal.json.id, 'g-001');
 
-    // The client channel is the third kind. Nothing files one yet, so this asks the allocator
-    // directly — the point under test is that all three come out of the same sequence.
-    const { allocateId } = await import('../_lib.mjs');
-    const prevCwd = process.cwd();
-    process.chdir(dir);
-    let ask;
-    try { ask = allocateId('mission1', 'ask'); } finally { process.chdir(prevCwd); }
-    assert.equal(ask.id, 'a-003');
+    const ask = run('ask.mjs', ['add', 'which validator wins?', '--kind', 'stop'], dir);
+    assert.equal(ask.code, 0, ask.stderr);
+    assert.equal(ask.json.id, 'a-001');
 
     const second = run('tk.mjs', ['new', 'second', '--title', 'Second', '--node', 'core', '--class', 'standard'], dir);
-    assert.equal(second.json.ref, 't-004', 'the ticket sequence never restarts beside the others');
+    assert.equal(second.json.ref, 't-002', 'the ticket sequence goes on beside the others');
+    const secondProposal = run('node.mjs', ['propose', 'rule', 'and never skip the log', '--by', 'core'], dir);
+    assert.equal(secondProposal.json.id, 'g-002');
   });
 
   await t.test('a contract proposal is a graph item like any other, with no letter of its own', () => {
@@ -764,7 +760,7 @@ test('a graph.json from before the shared counter reads without collision, and n
     assert.equal(fresh.json.id, 'g-003', 'counter.json said 1; the file already held 1 and 2, so the next free number is 3');
 
     const ticket = run('tk.mjs', ['new', 'after-migration', '--title', 'After', '--node', 'core', '--class', 'standard'], dir);
-    assert.equal(ticket.json.ref, 't-004');
+    assert.equal(ticket.json.ref, 't-001', 'tickets are the loop\'s own sequence');
 
     // The old file's own two "1"s stay exactly as they were — nothing rewrites history. What must
     // never happen is a THIRD one: every number the shared counter issues from here clears both.

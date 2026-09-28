@@ -772,8 +772,9 @@ test('refine.mjs --step review: the architect\'s ruling is the only way out of "
     assert.match(byTicket[first].why, /already running/);
     assert.equal(byTicket[second].skipped, undefined);
     assert.equal(byTicket[second].status, 'queued');
-    // The ticket's own status is whatever it was; only the queue says the ticket is out on a branch. Neither moved.
-    assert.match(run('tk.mjs', ['show', first, '--horde', 'm1'], dir).json.text, /\*\*Status:\*\* queued/);
+    // The ticket's own status follows the schedule out to a worker (running, in the mission's record);
+    // the verdict moved neither it nor the queue item.
+    assert.match(run('tk.mjs', ['show', first, '--horde', 'm1'], dir).json.text, /\*\*Status:\*\* running/);
     assert.equal(run('queue.mjs', ['list', '--horde', 'm1'], dir).json.find((i) => i.ticket === first).state, 'running');
     assert.equal(r.json.rulings.filter((x) => x.skipped).length, 1);
     assert.match(r.json.appliedFile, /review\.applied-.*\.json$/);

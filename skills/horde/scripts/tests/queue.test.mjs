@@ -342,16 +342,19 @@ test('queue.mjs set merged: the merge is recorded in the wave journal by the sam
   writeFileSync(queuePath, JSON.stringify(doc, null, 2));
 
   run('wave.mjs', ['start'], dir);
-  const merged = run('queue.mjs', ['set', '001', 'merged', '--sha', 'abc1234'], dir);
+  // A merge recorded by hand names a commit the trunk holds: the mission's record closes a ticket
+  // only on such a merge.
+  const sha = git(['rev-parse', '--short', 'mission1/trunk'], dir);
+  const merged = run('queue.mjs', ['set', '001', 'merged', '--sha', sha], dir);
   assert.equal(merged.code, 0, merged.stderr);
   assert.equal(merged.json.journal.appended, true);
-  // The ticket's own Status says merged too, so a reader of issue.md sees what the queue says.
+  // The ticket's own Status says merged too, so a reader of the ticket sees what the queue says.
   const ticketDir = join(dir, '.horde', 'hordes', 'mission1', 'teams', 'trunk', 'issues', '001-slug');
   assert.match(readFileSync(issueFileOf(join(ticketDir)), 'utf8'), /^\*\*Status:\*\* merged$/m);
-  assert.match(readFileSync(join(ticketDir, 'log.md'), 'utf8'), /status: merged — merged as abc1234/);
+  assert.match(readFileSync(join(ticketDir, 'log.md'), 'utf8'), new RegExp(`status: merged — merged as ${sha}`));
 
   const plan = readFileSync(join(dir, '.horde', 'hordes', 'mission1', 'plan.md'), 'utf8');
-  assert.match(plan, /merged: 001 abc1234/);
+  assert.match(plan, new RegExp(`merged: 001 ${sha}`));
 
   // …and that one write is enough for the catalogue to go green at wave close.
   const closed = run('wave.mjs', ['close', '--gate', 'green'], dir);

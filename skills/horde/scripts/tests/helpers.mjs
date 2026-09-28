@@ -210,6 +210,15 @@ export function issueFileOf(ticketDir) {
   return ticketIssuePath(root, horde, id) || join(issues, `${name}.md`);
 }
 
+// A ticket's status written straight into its file — for a fixture that needs a ticket to stand in a
+// status no tool would move it to there (merged with no merge behind it, say). The tools refuse that
+// move on purpose; a test setting the scene is not a tool.
+export function forceTicketStatus(dir, horde, id, status) {
+  const path = ticketIssuePath(dir, horde, id);
+  if (!path) throw new Error(`no ticket ${id} in ${horde}`);
+  writeFileSync(path, readFileSync(path, 'utf8').replace(/^\*\*Status:\*\*.*$/m, `**Status:** ${status}`));
+}
+
 // A ticket written by hand, the way a test sets one up: its file in the loop (text as given — a
 // ticket written with the fields a test needs and nothing else is read like any other), and the
 // directory holding its own log. Returns that directory.
