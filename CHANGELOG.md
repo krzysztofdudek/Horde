@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version numbers follow the Yggdrasil family's one-number policy, not Semantic Versioning: the core of the family (Yggdrasil, Grain and Horde) ships together under one number, so a release may carry breaking changes under a minor number. Read a release's **Removed** and **Changed** sections before you upgrade.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version numbers follow the Yggdrasil family's one-number policy, not Semantic Versioning: the core of the family (Yggdrasil, Grain, Jarl and Horde) ships together under one number, so a release may carry breaking changes under a minor number. Read a release's **Removed** and **Changed** sections before you upgrade.
 
 ## [Unreleased]
 
@@ -84,6 +84,7 @@ Finish a mission you started with an earlier Horde on that release: Horde does n
 
 ### Changed
 
+- The README's family section and its answer to "what if I'd rather just have one agent do the whole thing?" describe the family as it stands in 6.1.0: Jarl is the loop, Yggdrasil the law, Grain the survey, and Horde plans the mission on Jarl's loop with Grain in the architect's hands; where to start follows what hurts, and the two doors are gone. Skald joins the add-ons.
 - A ticket may name a component that holds only tests beside the one or two it changes, so a fix and the tests that pin its behaviour land together in one green change.
 - A file every change only adds lines to, such as a CHANGELOG, no longer counts toward the size of an area of the mission, so the area holding it can still be worked on.
 - `queue.mjs undep` now takes a dependency off the ticket's own dependency list too, and says so in the ticket's log. Before, only a queue edge came off, and the list itself could only be edited by hand.
