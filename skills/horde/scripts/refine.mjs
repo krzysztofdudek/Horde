@@ -38,11 +38,11 @@ import {
 import {
   ygCommand, ygNode, ygContext, nodeExists, nodeBoundary, nodeRules, renderRules, listAllNodes,
   pathInBoundary, nodeDir, loadGraph, grainLine, grainAsk, grainJson, requireGrain, grainHome, grainGraphArgs, reviewerGap, isAppendOnly,
-  GRAIN_COCHANGE_SCHEMA,
+  GRAIN_COCHANGE_SCHEMA, globToRegExp,
 } from './node.mjs';
 import { buildPlan, renderPlan, titleOf, loadQueue } from './queue.mjs';
 import {
-  findTicket, allTickets, nodesOf, ticketEvidence, ticketKind, parseField,
+  findTicket, allTickets, nodesOf, ticketEvidence, ticketKind, parseField, ticketWorkFiles,
 } from './tk.mjs';
 import {
   EVIDENCE_SECTION, catalogueCut, upsertCharterSection,
@@ -729,10 +729,21 @@ function consultBrief(horde, root, cfg, info, charter, territory) {
     '```',
     `node ${here()}/tk.mjs new <slug> --title "<t>" --node <component> --class <class> \\`,
     '    --files <path>[,path…] --consumes <component>/<port> --produces <component>/<port> \\',
-    `    --evidence <E-id or "what a verifier reproduces"> --horde ${horde}`,
+    `    --evidence "<what a verifier reproduces to see it done> (<E-id>)" --horde ${horde}`,
     `node ${here()}/queue.mjs add <NNN> --proposed --horde ${horde}`,
     `node ${here()}/tk.mjs edit <NNN> --depends <NNN>,<MMM> --by <your name> --horde ${horde}`,
     '```',
+    '',
+    'The `--evidence` value is the ticket\'s acceptance line: a sentence becomes one "- [ ] …" line, and',
+    'the evidence ids it cites (E1, E2, …) fill the Evidence field too. A bare id (`--evidence E1`) fills',
+    'only the field and leaves the ticket with no acceptance line, which `queue.mjs add` refuses — so',
+    'write the sentence, citing the row it earns. Repeat `--evidence` for a second line.',
+    '',
+    'A ticket whose change adds no test — a re-export, a rename, configuration the existing tests',
+    'already cover — says so, with its reason, or the landing gate refuses it for having no test file:',
+    '`--no-new-tests "<why no test is needed>"` on `tk.mjs new`, or later',
+    `\`tk.mjs edit <NNN> --no-new-tests "<why>" --by <your name> --horde ${horde}\`. Otherwise name the test`,
+    'file it adds or changes in `--files`.',
     '',
     'Every ticket you file is added with `--proposed`: it is in the queue, counted and visible, and',
     'nothing dispatches it until the whole plan has been ruled on. `tk.mjs edit --depends` is how a',
@@ -888,7 +899,37 @@ function here0() {
   return fileURLToPath(new URL('.', import.meta.url));
 }
 
-function reviewBrief(horde, team, charter, planFile, planText) {
+// Proposed tickets whose declared files hold no test file (by config.testGlobs) and which do not
+// declare "**No new tests:**" either. The landing gate's revert test refuses exactly those, so the
+// plan review is where they are caught, before a round is spent finding it out at the gate. A
+// revert declares its own exemption and a prototype never reaches the trunk; neither is listed.
+export function ticketsWithoutTests(horde, team, cfg) {
+  const globs = Array.isArray(cfg && cfg.testGlobs) ? cfg.testGlobs.filter(Boolean) : [];
+  if (!globs.length) return [];
+  const res = globs.map((g) => globToRegExp(g));
+  return allTickets(horde)
+    .filter((t) => t.status === 'proposed' && String(t.team || 'trunk').split('/').pop() === team)
+    .filter((t) => !['revert', 'prototype'].includes(ticketKind(t.text)))
+    .filter((t) => !/^\*\*No new tests:\*\*[ \t]*\S/m.test(t.text))
+    .map((t) => ({ id: t.id, files: ticketWorkFiles(t.text) }))
+    .filter((t) => t.files.length && !t.files.some((f) => res.some((re) => re.test(f))));
+}
+
+function untestedSection(untested, cfg) {
+  if (!untested.length) return [];
+  return [
+    '## Tickets that name no test file',
+    '',
+    `These tickets declare files, and none of them is a test (${cfg.testGlobs.join(', ')}), and none says why it needs none. The landing gate refuses such a diff at its revert test, so each one is either missing a test file in its Files or missing its reason — rule on which, and reject the ticket with that sentence if its writer has to change it:`,
+    '',
+    ...untested.map((t) => `- ${t.id} — files: ${t.files.join(', ')}`),
+    '',
+    `Widening the files is \`tk.mjs edit <ticket> --files <a,b> --by <name>\`; declaring the reason is \`tk.mjs edit <ticket> --no-new-tests "<reason>" --by <name>\`.`,
+    '',
+  ];
+}
+
+function reviewBrief(horde, team, charter, planFile, planText, untested = [], cfg = {}) {
   return [
     `# Rule on this plan — horde \`${horde}\`, team \`${team}\``,
     '',
@@ -916,6 +957,7 @@ function reviewBrief(horde, team, charter, planFile, planText) {
     '',
     ...renderCutScore(readJSON(cutScorePath(horde), null)).map((l) => `- ${l}`),
     '',
+    ...untestedSection(untested, cfg),
     '## What you are ruling on',
     '',
     architectPlanQuestions(),
@@ -1134,9 +1176,10 @@ function stepReview(horde, flags) {
     const file = planPath(horde, team);
     const planText = renderPlan(plan);
     writeText(file, `${planText}\n${provenanceLine(info)}\n`);
-    const brief = reviewBrief(horde, team, charter, file, planText);
+    const untested = ticketsWithoutTests(horde, team, cfg);
+    const brief = reviewBrief(horde, team, charter, file, planText, untested, cfg);
     emit(withProvenance({
-      step: 'review', horde, team, state: 'awaiting', plan: file, file: reviewPath(horde), brief,
+      step: 'review', horde, team, state: 'awaiting', plan: file, file: reviewPath(horde), brief, untested,
     }, info), flags, () => `${brief}\n\n---\nHand the brief above to one architect. It writes ${reviewPath(horde)}; then run this same command again to apply what it ruled.\n${provenanceLine(info)}`);
     return;
   }

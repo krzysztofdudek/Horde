@@ -7,9 +7,11 @@
 // every other tool assumes it already exists.
 
 import {
-  existsSync, mkdirSync, writeFileSync, readFileSync, renameSync, readdirSync, statSync,
+  existsSync, mkdirSync, writeFileSync, readFileSync, renameSync, readdirSync, statSync, realpathSync,
+  mkdtempSync, rmSync, openSync, readSync, closeSync,
 } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, resolve, basename } from 'node:path';
+import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import {
   repoRoot, hordeRoot, hordePath, readConfig, writeConfig, listHordes, readJSON,
@@ -510,9 +512,9 @@ function resolves(cl) {
   }
 }
 
-function runIn(root, cl, args) {
+function runIn(root, cl, args, env) {
   try {
-    return { ok: true, out: execFileSync(cl.cmd, [...cl.prefix, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) };
+    return { ok: true, out: execFileSync(cl.cmd, [...cl.prefix, ...args], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...(env ? { env } : {}) }) };
   } catch (e) {
     return {
       ok: false,
@@ -523,6 +525,77 @@ function runIn(root, cl, args) {
 }
 
 const PROPOSAL_DIR = '.yggdrasil-proposal';
+
+// True when the file is a script node runs: a .js/.mjs/.cjs name, or a `#!` line that names node.
+// An npm global `yg` is a symlink to one; a native binary is not.
+function isNodeScript(file) {
+  if (/\.[cm]?js$/i.test(file)) return true;
+  let fd;
+  try {
+    fd = openSync(file, 'r');
+    const buf = Buffer.alloc(128);
+    const n = readSync(fd, buf, 0, 128, 0);
+    return /^#!.*\bnode\b/.test(buf.subarray(0, n).toString('utf8').split('\n')[0]);
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+// ygBinFor(cl, root) — the Yggdrasil CLI script Grain should consult, in the form Grain's YG_BIN
+// takes (a script it runs with node), for the command line this horde runs `yg adopt` with. Grain
+// asks that CLI which parents a node type may name before it writes a proposal, so a proposal made
+// against one Yggdrasil and adopted by another is refused as soon as the two disagree — the case
+// `--yg` exists for (a local build, a release in progress, an older `yg` on PATH). `null` when the
+// command line is a bare program name (Grain then finds the same one on PATH) or a program that is
+// not a node script (Grain cannot run it through YG_BIN).
+export function ygBinFor(cl, root) {
+  if (!cl || !cl.cmd) return null;
+  const isNode = cl.cmd === process.execPath || /^node(\.exe)?$/i.test(basename(cl.cmd));
+  if (isNode) {
+    const script = cl.prefix.find((a) => !a.startsWith('-'));
+    if (!script) return null;
+    const full = resolve(root, script);
+    return existsSync(full) ? full : null;
+  }
+  if (!/[\\/]/.test(cl.cmd)) return null;
+  const full = resolve(root, cl.cmd);
+  if (!existsSync(full)) return null;
+  let real;
+  try { real = realpathSync(full); } catch { return null; }
+  return isNodeScript(real) ? real : null;
+}
+
+// The environment `grain propose` runs in: YG_BIN names the Yggdrasil this horde adopts with, and
+// a YG_BIN the operator's shell happens to carry is dropped when the horde's own `yg` is a program
+// on PATH, so both tools read the same one.
+function grainEnvFor(yg, root) {
+  const env = { ...process.env };
+  const bin = ygBinFor(yg, root);
+  if (bin) env.YG_BIN = bin;
+  else if (yg && !/[\\/]/.test(yg.cmd)) delete env.YG_BIN;
+  return env;
+}
+
+// Paths `git status` reports as new or changed, relative to the repository root.
+function changedPaths(root) {
+  let out;
+  try {
+    out = execFileSync('git', ['status', '--porcelain', '-z', '-uall'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch {
+    return new Set();
+  }
+  const paths = new Set();
+  const parts = out.split('\0');
+  for (let i = 0; i < parts.length; i++) {
+    const entry = parts[i];
+    if (entry.length < 4) continue;
+    paths.add(entry.slice(3));
+    if (entry[0] === 'R' || entry[0] === 'C') i++;
+  }
+  return paths;
+}
 
 // Creates the graph when the repository has none. Returns what happened, in the words `init`
 // prints, and the Grain it found; fails outright — before a single file of this horde's own state
@@ -547,24 +620,34 @@ function ensureGraph(root, cfg, flags) {
     return { created: false, grain: found, lines: [`architecture graph: already here (${yg.display} reads it)`] };
   }
 
+  const before = changedPaths(root);
   const init = runIn(root, yg, ['init']);
   if (!init.ok || !existsSync(join(root, '.yggdrasil'))) {
     fail(`\`${yg.display} init\` did not create a graph (exit ${init.code || 0}):\n${init.out.trim()}`);
   }
+  // What `yg init` wrote (the graph, and the agent notes it puts beside it) is what gets committed
+  // before the trunk is cut, together with whatever `yg adopt` then writes into the graph.
+  const written = [...changedPaths(root)].filter((p) => !before.has(p) && !p.startsWith('.yggdrasil/'));
+  const graphPaths = ['.yggdrasil', ...written];
   const lines = [`architecture graph created by \`${yg.display} init\``];
 
-  const propose = runIn(root, grain, ['propose', PROPOSAL_DIR]);
+  const propose = runIn(root, grain, ['propose', PROPOSAL_DIR], grainEnvFor(yg, root));
   if (!propose.ok) {
     lines.push(`\`${grain.display} propose\` failed (exit ${propose.code}) — the graph stays empty:\n${propose.out.trim()}`);
     return {
-      created: true, mined: false, grain: found, lines,
+      created: true, mined: false, grain: found, lines, graphPaths,
     };
+  }
+  // Grain keeps a directory of its own beside the code (`.grain/`), everything in it but its cache meant
+  // to be committed; what propose created there goes into the same commit as the graph.
+  for (const p of changedPaths(root)) {
+    if (!before.has(p) && p.startsWith('.grain/') && !graphPaths.includes(p)) graphPaths.push(p);
   }
   const adopt = runIn(root, yg, ['adopt', PROPOSAL_DIR, '--replace']);
   if (!adopt.ok) {
     lines.push(`\`${yg.display} adopt ${PROPOSAL_DIR}\` refused the proposal (exit ${adopt.code}) — the graph stays empty:\n${adopt.out.trim()}`);
     return {
-      created: true, mined: false, grain: found, lines,
+      created: true, mined: false, grain: found, lines, graphPaths,
     };
   }
   lines.push(
@@ -573,8 +656,52 @@ function ensureGraph(root, cfg, flags) {
     adopt.out.trim(),
   );
   return {
-    created: true, mined: true, grain: found, lines,
+    created: true, mined: true, grain: found, lines, graphPaths,
   };
+}
+
+const GRAPH_COMMIT_MESSAGE = 'architecture graph: yg init, and the proposal Grain mined from this repository adopted';
+
+// commitGraph(root, base, paths) — the graph this init just made, committed where the trunk will be
+// cut from. A trunk cut before the graph is committed carries no graph: every worktree made from it
+// has nothing to bind tickets to and nothing for the gate's `yg check` to read. When the checkout is
+// on the base branch the commit goes there, through the repository's own hooks. Otherwise the base
+// branch is left alone and the commit is made off it without touching the checkout; the trunk is cut
+// at that commit, and the graph reaches the base when the trunk merges. Returns {sha, where} or
+// {sha: null, why}.
+function commitGraph(root, base, paths) {
+  const present = paths.filter((p) => existsSync(join(root, p)));
+  if (!present.length) return { sha: null, why: 'nothing of the graph is on disk to commit' };
+  const branch = git(['symbolic-ref', '--quiet', '--short', 'HEAD'], root);
+  if (branch === base) {
+    try {
+      execFileSync('git', ['add', '-A', '--', ...present], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+      execFileSync('git', ['commit', '-q', '-m', GRAPH_COMMIT_MESSAGE, '--', ...present], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+      const said = ((e.stdout && e.stdout.toString()) || '') + ((e.stderr && e.stderr.toString()) || '');
+      // What this staged is taken back out of the index, so a refused commit leaves the checkout's
+      // index as the user had it; the files stay on disk.
+      git(['reset', '-q', '--', ...present], root);
+      return { sha: null, why: `git commit on ${base} was refused:\n${said.trim() || e.message}` };
+    }
+    return { sha: git(['rev-parse', 'HEAD'], root), where: base };
+  }
+  const baseSha = git(['rev-parse', '--verify', `${base}^{commit}`], root);
+  if (!baseSha) return { sha: null, why: `there is no branch "${base}" to commit onto` };
+  const dir = mkdtempSync(join(tmpdir(), 'horde-graph-index-'));
+  const env = { ...process.env, GIT_INDEX_FILE: join(dir, 'index') };
+  const g = (args) => execFileSync('git', args, { cwd: root, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  try {
+    g(['read-tree', baseSha]);
+    g(['add', '-A', '--', ...present]);
+    const tree = g(['write-tree']);
+    const sha = g(['commit-tree', tree, '-p', baseSha, '-m', GRAPH_COMMIT_MESSAGE]);
+    return { sha, where: null };
+  } catch (e) {
+    return { sha: null, why: ((e.stderr && e.stderr.toString()) || e.message).trim() };
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function cmdInit(positional, flags) {
@@ -645,8 +772,25 @@ function cmdInit(positional, flags) {
     }
   }
 
+  // A graph this init made is committed before the trunk is cut, so the trunk carries it.
+  let cutFrom = flags.base;
+  let graphCommitNote = null;
+  let graphCommit = null;
+  if (graph.created) {
+    const committed = commitGraph(root, flags.base, graph.graphPaths || ['.yggdrasil']);
+    graphCommit = committed.sha || null;
+    if (committed.sha) {
+      if (!committed.where) cutFrom = committed.sha;
+      graphCommitNote = committed.where
+        ? `graph committed on ${committed.where} as ${committed.sha.slice(0, 7)}; the trunk is cut after it`
+        : `graph committed as ${committed.sha.slice(0, 7)}, the trunk's first commit on top of ${flags.base} (the checkout is not on ${flags.base}, so ${flags.base} itself was left alone; the graph reaches it when the trunk merges)`;
+    } else {
+      graphCommitNote = `the graph could not be committed, so the trunk is cut from ${flags.base} without it — commit it and cut the horde again: ${committed.why}`;
+    }
+  }
+
   const branch = `${name}/trunk`;
-  const created = git(['branch', branch, flags.base], root);
+  const created = git(['branch', branch, cutFrom], root);
   if (created === null) fail(`could not create branch "${branch}" off "${flags.base}" — does that base exist?`);
   // Where the mission started: the commit its trunk was cut at. What "no weaker than it found them"
   // is measured against when a revert takes back a landing (land.mjs), so it is written once, now,
@@ -730,7 +874,9 @@ function cmdInit(positional, flags) {
       horde: name,
       branch,
       base: flags.base,
-      graph: { created: graph.created, mined: !!graph.mined, notes: graph.lines },
+      graph: {
+        created: graph.created, mined: !!graph.mined, notes: [...graph.lines, ...(graphCommitNote ? [graphCommitNote] : [])], committed: graphCommit,
+      },
       grain: { command: graph.grain.display, version: graph.grain.version },
       graphGate,
       ecosystems,
@@ -746,6 +892,7 @@ function cmdInit(positional, flags) {
       `horde "${name}" created — trunk branch ${branch} off ${flags.base}`,
       ...(leaseNote ? [leaseNote] : []),
       ...graph.lines,
+      ...(graphCommitNote ? [graphCommitNote] : []),
       `Grain ${graph.grain.version}: \`${graph.grain.display}\` — the architect scores the cut against this repository's history with it, the legislator starts from its rule drafts, and the client's report measures the mission's territory before and after`,
       graphGate,
       gateNote,

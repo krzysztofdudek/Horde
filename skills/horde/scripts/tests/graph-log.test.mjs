@@ -184,6 +184,24 @@ test('the graph\'s logs: a trunk that moved while they were written is left alon
   assert.equal(git(['log', '-1', '--format=%s', 'mission1/trunk'], dir), 'landed meanwhile');
 });
 
+// The trunk is moved with update-ref, which would strand a checkout sitting on it: with the trunk checked
+// out in a worktree, nothing is written onto it and nothing is marked.
+test('the graph\'s logs: a trunk somebody has checked out is left alone, and nothing is marked', (t) => {
+  const dir = missionOnGraph();
+  t.after(() => rmRepo(dir));
+  run('decide.mjs', ['add', 'app-why', 'The app keeps its config in one file.', '--node', 'app'], dir);
+  const wt = join(dir, 'trunk-checkout');
+  git(['worktree', 'add', '-q', wt, 'mission1/trunk'], dir);
+  const before = git(['rev-parse', 'mission1/trunk'], dir);
+  const out = writeLogs(dir);
+  assert.equal(out.commit, null);
+  assert.deepEqual(out.written, []);
+  assert.match(out.failed[0].reason, /checked out at/);
+  assert.doesNotMatch(decisions(dir), /Node log/);
+  assert.equal(git(['rev-parse', 'mission1/trunk'], dir), before);
+  assert.equal(git(['status', '--porcelain'], wt), '');
+});
+
 test('the graph\'s logs: a commit the adopter\'s own hook refuses is reported with what the hook said, the trunk stays, and nothing is marked', (t) => {
   const dir = missionOnGraph();
   t.after(() => rmRepo(dir));

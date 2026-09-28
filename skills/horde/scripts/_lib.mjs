@@ -209,6 +209,16 @@ function thisRepoWorktrees(cwd) {
   return parseWorktreeList(out);
 }
 
+// checkoutOn(branch, cwd) — the path of the worktree that has `branch` checked out, or null. A
+// script that moves a branch with `git update-ref` asks this first: moving the ref under a
+// checkout would leave that tree holding a working copy of a commit it is no longer on.
+export function checkoutOn(branch, cwd = process.cwd()) {
+  const out = git(['worktree', 'list', '--porcelain'], cwd);
+  if (out === null) return null;
+  const hit = parseWorktreeList(out).find((w) => w.branch === branch && !w.prunable);
+  return hit ? hit.path : null;
+}
+
 // Whether two paths name the same place as git and Node print them. On Windows git writes
 // `C:/Users/…` where Node writes `C:\Users\…`, and the file system ignores case, so both sides are
 // resolved and folded before they are compared; elsewhere the bytes decide.

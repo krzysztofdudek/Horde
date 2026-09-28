@@ -40,7 +40,7 @@ import { join, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   hordePath, readJSON, writeJSON, nowIso, fail, parseArgs, emit, isMain,
-  resolveHorde, resolveTree, readConfig, asArray, parseLogEntries, noEvidenceLayerNote,
+  resolveHorde, resolveTree, readConfig, asArray, parseLogEntries, noEvidenceLayerNote, git, gitError, repoRoot, checkoutOn,
   createLockFile, processAlive, readLockText, removeStaleLock, sleepSync,
   runMain,
 } from './_lib.mjs';
@@ -120,6 +120,20 @@ const FATE_SOURCES = {
   },
 };
 
+// A log line one of the tools wrote about the ticket's own progress, never a remark: `landed <sha>`
+// (the worker's hand-off line, and land.mjs's "landed <ticket> on <branch> as <sha>"), "body edited by",
+// "<field>: … — changed by", "review closed by" and "review skipped by".
+const BOOKKEEPING = [
+  /^\S+ landed \S+/,
+  /^\S+ body edited by /,
+  /^\S+ [a-z][a-z ]*: .* — changed by \S+$/,
+  /^\S+ review (closed|skipped) by /,
+  /^\S+ evidence changed\b/,
+];
+function isBookkeeping(text) {
+  return BOOKKEEPING.some((re) => re.test(String(text || '')));
+}
+
 // collectRetroInput(horde) — {tickets, items, notes, landed}. Every gate refusal, every return
 // after landing and every remark, in ticket order, each with a key stable across runs so a
 // classification written against one gathering still lines up with the next. A ticket that cannot
@@ -148,6 +162,13 @@ export function collectRetroInput(horde) {
 
   for (const t of tickets) {
     const resultFile = hordePath(horde, 'land', `${t.id}.json`);
+    // The result file holds the LAST landing only; a refusal a later green landing wrote over is
+    // still in the ticket's log, as the "changes" line the gate wrote when it refused (land.mjs
+    // recordChanges: "land refused: …"). Every such line is a gate refusal; the last one is the result
+    // file's own when that result is still red and the line says what it says, and is read from there
+    // instead. A red result that wrote no such line (a refusal waiting on the user, rounds already
+    // spent) leaves every line standing on its own.
+    let currentRed = null;
     if (existsSync(resultFile)) {
       let doc = null;
       try { doc = JSON.parse(readFileSync(resultFile, 'utf8')); } catch { doc = null; }
@@ -155,6 +176,8 @@ export function collectRetroInput(horde) {
         notes.push(`ticket ${t.id}: ${resultFile} would not parse, so what the gate refused on it was not read. Nothing else on this document was affected.`);
       } else {
         if (doc.landed && doc.landed.sha) landed.push({ ticket: t.id, sha: String(doc.landed.sha) });
+        const red = asArray(doc.checks).filter((c) => c && !c.ok);
+        if (doc.ok === false && red.length) currentRed = red.map((c) => `${c.name}: ${c.note}`).join(' · ');
         asArray(doc.checks).forEach((c, i) => {
           if (!c || c.ok) return;
           items.push({
@@ -185,8 +208,26 @@ export function collectRetroInput(horde) {
     // mission's own bookkeeping, not something a retrospective has anything to say about. The
     // distinction is the shape of the line, never its words — a remark that happens to talk
     // about a status is still a remark, which is why this asks the log's own parser.
-    for (const entry of parseLogEntries(readFileSync(t.logPath, 'utf8'))) {
+    const entries = parseLogEntries(readFileSync(t.logPath, 'utf8'));
+    const refusedAt = entries.filter((e) => e.isStatus && e.status === 'changes' && /^land refused: /.test(e.note || ''));
+    const flat = (x) => String(x || '').replace(/\s+/g, ' ').trim();
+    const lastSaid = refusedAt.length ? flat(refusedAt[refusedAt.length - 1].note.replace(/^land refused: /, '')) : '';
+    const sameAsResult = currentRed !== null && lastSaid !== '' && flat(currentRed).startsWith(lastSaid);
+    const earlier = sameAsResult ? refusedAt.slice(0, -1) : refusedAt;
+    for (const entry of earlier) {
+      items.push({
+        key: `gate:${t.id}:log${entry.index}`,
+        source: 'gate',
+        ticket: t.id,
+        text: entry.note.replace(/^land refused: /, ''),
+      });
+    }
+    for (const entry of entries) {
       if (entry.isStatus) continue;
+      // The mission's own bookkeeping, written by the tools as they ran — a landing reported, a body or
+      // a field changed, a review closed — says nothing a retrospective could turn into a rule. Only
+      // what somebody wrote as a remark is classified.
+      if (isBookkeeping(entry.text)) continue;
       items.push({
         key: `log:${t.id}:${entry.index}`,
         source: 'log',
@@ -274,27 +315,66 @@ function readClasses(horde, items) {
 
 // ---- taste goes to the component's log, once -------------------------------------------------
 
-// `yg log add --node <p> --reason "<the words that were written>"`, run for real, best effort:
-// a component whose graph object does not exist has nothing to append to, and a retrospective
-// that stopped over one missing node would lose the whole document over the smallest of its three
-// piles. Keys already on the previous document are skipped, so two runs — or two processes that
-// took the lock in turn — never leave the same line twice.
-function logTaste(root, cfg, items, alreadyLogged) {
-  const yg = ygCommand(cfg);
-  const logged = [];
-  const missed = [];
-  for (const it of items) {
-    if (alreadyLogged.has(it.key)) continue;
-    try {
-      execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', it.node, '--reason', it.text], {
-        cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      logged.push(it.key);
-    } catch {
-      missed.push({ key: it.key, node: it.node });
-    }
+// `yg log add --node <p> --reason "<the words that were written>"`, run for real, best effort, in a
+// scratch tree at the tip of the mission's trunk, and committed there as one commit on the trunk — so
+// every entry reaches the graph the trunk hands over, and nothing is left behind uncommitted in any
+// checkout for a later commit to write over. A component whose graph object does not exist has nothing
+// to append to, and a retrospective that stopped over one missing node would lose the whole document
+// over the smallest of its three piles. Keys already on the previous document are skipped, so two
+// runs — or two processes that took the lock in turn — never leave the same line twice.
+function logTaste(horde, cfg, items, alreadyLogged) {
+  const todo = items.filter((it) => !alreadyLogged.has(it.key));
+  const out = { logged: [], missed: [], commit: null, failed: null };
+  if (!todo.length) return out;
+  const root = repoRoot();
+  const branch = `${horde}/trunk`;
+  const sha = git(['rev-parse', '--verify', `${branch}^{commit}`], root);
+  if (!sha) {
+    out.failed = `there is no ${branch} to write them onto`;
+    out.missed = todo.map((it) => ({ key: it.key, node: it.node }));
+    return out;
   }
-  return { logged, missed };
+  // The trunk is moved with `update-ref`, which is only safe while nobody has it checked out: a
+  // checkout on it would be left on a commit it no longer holds. Refused then, and the entries stand
+  // on this document until the next run, after the checkout has moved off the trunk.
+  const checkout = checkoutOn(branch, root);
+  if (checkout) {
+    out.failed = `${branch} is checked out at ${checkout}, and the entries are committed onto it without touching any checkout — switch that tree off ${branch} and run the retrospective again`;
+    out.missed = todo.map((it) => ({ key: it.key, node: it.node }));
+    return out;
+  }
+  const yg = ygCommand(cfg);
+  const info = resolveTree({ scratch: sha });
+  try {
+    const wrote = [];
+    for (const it of todo) {
+      try {
+        execFileSync(yg.cmd, [...yg.prefix, 'log', 'add', '--node', it.node, '--reason', it.text], {
+          cwd: info.path, stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        wrote.push(it);
+      } catch {
+        out.missed.push({ key: it.key, node: it.node });
+      }
+    }
+    if (!wrote.length) return out;
+    const lost = (why) => {
+      out.failed = why;
+      out.missed.push(...wrote.map((it) => ({ key: it.key, node: it.node })));
+      return out;
+    };
+    if (git(['add', '-A', '--', '.yggdrasil'], info.path) === null) return lost(`the entries were written but could not be staged: ${gitError() || 'git add failed'}`);
+    const subject = `retro: mission ${horde}'s taste into its components' logs — ${wrote.length} entr${wrote.length === 1 ? 'y' : 'ies'}`;
+    const lines = wrote.map((it) => `- ${it.key} → node ${it.node}`);
+    if (git(['commit', '-q', '-m', subject, '-m', lines.join('\n')], info.path) === null) return lost(`the commit on ${branch} was refused: ${gitError() || 'git commit failed'}`);
+    const commit = git(['rev-parse', 'HEAD'], info.path);
+    if (git(['update-ref', `refs/heads/${branch}`, commit, sha], root) === null) return lost(`${branch} moved while the entries were written, so they were not put on it`);
+    out.commit = commit;
+    out.logged = wrote.map((it) => it.key);
+    return out;
+  } finally {
+    info.cleanup();
+  }
 }
 
 // ---- the bar this mission is held to ---------------------------------------------------------
@@ -451,8 +531,10 @@ function cmdRetro(flags) {
   // however many hordes the repository runs). What this DOES honor is --horde typed explicitly:
   // `flags.horde`, never `horde` above (main()'s own resolveHorde(flags), which defaults to the
   // sole horde in a single-horde repository even with nothing typed at all) — the same distinction
-  // tick.mjs (041), land.mjs (109) and horde.mjs done (113) already draw. Only logTaste's
-  // `yg log add` below actually touches this tree; the gathering run
+  // tick.mjs (041), land.mjs (109) and horde.mjs done (113) already draw. Taste no longer lands in
+  // this tree: logTaste commits it onto the mission's trunk from a scratch tree of its own, so nothing
+  // is left uncommitted here; the tree is still resolved, so --tree and --horde are refused or honored
+  // exactly as on every other command. The gathering run
   // above (collectRetroInput) reads only .horde/ and resolves no tree at all, on purpose (see its
   // own comment) — issue 114 caught this command's tree resolution up to the same rule.
   const info = resolveTree({ tree: flags.tree, horde: flags.horde });
@@ -462,10 +544,12 @@ function cmdRetro(flags) {
     const alreadyLogged = new Set(previous ? asArray(previous.logged) : []);
 
     const taste = classified.filter((it) => it.class === 'taste');
-    const logging = logTaste(info.path, cfg, taste, alreadyLogged);
+    const logging = logTaste(horde, cfg, taste, alreadyLogged);
     const notes = [...input.notes];
     for (const m of logging.missed) {
-      notes.push(`taste item ${m.key}: \`yg log add --node ${m.node}\` would not append — that component has no log to write to from this tree, and the item stands on this document instead.`);
+      notes.push(logging.failed
+        ? `taste item ${m.key}: not in the log of ${m.node} — ${logging.failed}; the item stands on this document instead.`
+        : `taste item ${m.key}: \`yg log add --node ${m.node}\` would not append — that component has no log to write to on the trunk, and the item stands on this document instead.`);
     }
 
     const inexpressible = classified.filter((it) => it.class === 'inexpressible')
@@ -492,6 +576,7 @@ function cmdRetro(flags) {
       taste: taste.map((it) => ({ ticket: it.ticket, node: it.node, text: it.text })),
       inexpressible,
       logged: [...alreadyLogged, ...logging.logged],
+      tasteCommit: logging.commit || (previous && previous.tasteCommit) || null,
       threshold: measureThreshold(cfg, classified, inexpressible),
       notes,
     };

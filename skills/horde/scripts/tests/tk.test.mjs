@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, addNode, ticketIssuePath, writeTicketFixture, git,
 } from './helpers.mjs';
-import { charterMismatches } from '../tk.mjs';
+import { charterMismatches, ticketGateState } from '../tk.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -1090,4 +1090,25 @@ test('tk.mjs new: a declared file with a Grain obligation outside the ticket\'s 
     assert.deepEqual(r.json.obligationWarnings, []);
     assert.doesNotMatch(run('tk.mjs', ['new', 'bare2', '--title', 'bare2', '--node', 'api', '--class', 'standard', '--evidence', 'it works'], dir, { json: false }).stdout, /not checked/);
   });
+});
+
+// A gate result is reused only while the ticket fields the gate read are unchanged (tick.mjs, issue
+// 523). With no "**Revert base:**" header the revert test reads its base from a "red on <ref>" phrase
+// in the body, which a body rewrite changes with no new commit, so that phrase is part of the digest.
+test('ticketGateState: a gate-read field or the body\'s "red on" base changes it; the status and the prose do not', () => {
+  const ticket = (over = {}) => [
+    '# 001 · a ticket', '',
+    `**Status:** ${over.status || 'changes'}`,
+    '**Node:** app · **Class:** standard · **Severity:** medium · **Team:** trunk · **Kind:** work · **Quality:** autonomous',
+    `**Files:** ${over.files || 'src/a.mjs'}`,
+    '**Revert base:** ',
+    ...(over.noNewTests ? [`**No new tests:** ${over.noNewTests}`] : []),
+    '', '## What', '', over.what || 'the change', '',
+    '## Acceptance — evidence', '', `- [ ] the new test is red on ${over.base || 'develop'}`, '',
+  ].join('\n');
+  const base = ticketGateState(ticket());
+  assert.equal(ticketGateState(ticket({ status: 'landed', what: 'said differently' })), base);
+  assert.notEqual(ticketGateState(ticket({ files: 'src/a.mjs, test/a.test.mjs' })), base);
+  assert.notEqual(ticketGateState(ticket({ noNewTests: 'a re-export' })), base);
+  assert.notEqual(ticketGateState(ticket({ base: 'main' })), base);
 });

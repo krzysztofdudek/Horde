@@ -46,7 +46,7 @@ import {
 } from './node.mjs';
 import {
   ticketFiles, ticketEvidence, ticketKind, prototypeBranchOf, ticketReopens, findTicket,
-  advanceChangesRound, ticketReverts, mergeFiles,
+  advanceChangesRound, ticketReverts, mergeFiles, ticketGateState,
 } from './tk.mjs';
 import { recordMerged, buildPlan } from './queue.mjs';
 import { noteFate } from './wave.mjs';
@@ -904,7 +904,7 @@ function checkRevertTest(horde, root, cfg, branch, parentBranch, files, issueTex
     }
     return {
       ok: false,
-      note: `no new or changed test files in diff (looked for ${testGlobs.join(', ')}) — a change that adds none must say so: declare "**No new tests:** <reason>" on the ticket`,
+      note: `no new or changed test files in diff (looked for ${testGlobs.join(', ')}) — a change that adds none must say so: declare "**No new tests:** <reason>" on the ticket (tk.mjs edit <ticket> --no-new-tests "<reason>" --by <name>)`,
     };
   }
 
@@ -3677,8 +3677,23 @@ export function readLandResult(horde, ticketId) {
   }
 }
 
+// The ticket's gate-read fields as this run found them when it started (ticketGateState): a result
+// is an answer about the commit and those fields together, so tick.mjs can tell a ticket changed
+// since — a "**No new tests:**" declared, the files widened — from one that did not. Taken when the
+// run starts, never when it ends: an edit made while the gate ran is one the gate did not see.
+const ticketStateAtStart = new Map();
+
+function noteTicketStateAtStart(horde, ticketId) {
+  try {
+    ticketStateAtStart.set(String(ticketId), ticketGateState(findTicket(horde, ticketId).text));
+  } catch {
+    // No ticket to read: nothing to record, and the result stays keyed by its sha alone.
+  }
+}
+
 function writeLandResult(horde, ticketId, result) {
-  writeJSON(resultPath(horde, ticketId), result);
+  const ticketState = ticketStateAtStart.get(String(ticketId)) || result.ticketState || null;
+  writeJSON(resultPath(horde, ticketId), { ...result, ticketState });
 }
 
 // ---- how loaded the landing gate is ------------------------------------------------------
@@ -4906,6 +4921,10 @@ function main() {
     return;
   }
 
+  for (const t of tickets) {
+    const found = findQueueItem(horde, t);
+    if (found) noteTicketStateAtStart(horde, String(found.item.ticket));
+  }
   if (tickets.length <= 1) {
     const result = run(horde, root, cfg, arg, level, !!flags['no-gate'], flags);
     if (!result.ok) process.exit(1);

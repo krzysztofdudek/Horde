@@ -197,13 +197,29 @@ function planAtStart(horde, team, flags) {
   };
 }
 
-function cmdStart(horde, positional, flags) {
+function startWave(horde, n, flags) {
   const path = journalPath(horde, flags.team);
-  const text = readText(path);
-  const n = positional[0] || String(lastWaveNumber(text) + 1);
   append(path, `\n# Wave ${n} — start ${today()}\n`);
   const plan = planAtStart(horde, flags.team, flags);
   append(path, `- ${today()} plan: layers ${plan.layers} · planned parallelism ${plan.parallelism} · opened ${plan.opened}\n`);
+  return plan;
+}
+
+// openWaveIfNone(horde, {team, tree}) — the next wave opened, when none is open: what tick.mjs does
+// the moment it hands out work, so a mission run by ticking has a wave to close once its queue empties
+// without anybody having to remember a start. null when a wave is already open.
+export function openWaveIfNone(horde, { team, tree } = {}) {
+  const text = readText(journalPath(horde, team));
+  if (currentWaveNumber(text)) return null;
+  const n = String(lastWaveNumber(text) + 1);
+  const plan = startWave(horde, n, { team, tree });
+  return { n, layers: plan.sizes, plannedParallelism: plan.parallelism, opened: plan.opened };
+}
+
+function cmdStart(horde, positional, flags) {
+  const text = readText(journalPath(horde, flags.team));
+  const n = positional[0] || String(lastWaveNumber(text) + 1);
+  const plan = startWave(horde, n, flags);
   emit({ n, layers: plan.sizes, plannedParallelism: plan.parallelism, opened: plan.opened }, flags,
     () => `wave started: ${n} — layers ${plan.layers}, planned parallelism ${plan.parallelism}`);
 }

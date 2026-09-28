@@ -56,7 +56,12 @@ A copy of Runes' own `tools/vendor.mjs`, pinned in `vendor/runes.pin.json` besid
   `<ygCommand> init` from the repository root (never a subdirectory — Yggdrasil's own rule) and then
   `grain propose .yggdrasil-proposal` followed by `<ygCommand> adopt .yggdrasil-proposal --replace`,
   whose own report — components, rules by status, and how many sites in the code already here the new
-  rules refuse — is printed verbatim. With no graph and no Yggdrasil CLI it refuses outright, naming
+  rules refuse — is printed verbatim. Grain is run with `YG_BIN` naming the script `--yg` (or
+  `config.ygCommand`) runs, when that is a node script, so the proposal is written against the
+  Yggdrasil that adopts it, never an older `yg` on PATH; a bare program name leaves Grain on PATH, as
+  Horde is. What `yg init` wrote, the adopted graph and what Grain put in `.grain/` are then committed
+  before the trunk is cut (`graph.committed` in `--json`): on `<base>` when the checkout is on it,
+  otherwise as the trunk's first commit on top of `<base>`, which is left alone. With no graph and no Yggdrasil CLI it refuses outright, naming
   the install step, **before** `.horde/` or anything else of this horde exists. **Grain is required
   too** (since 6.1.0; the architect measures with it): `--grain`, else `config.grainCommand`, else a
   bare `grain` on PATH, asked `grain version` and held to 6.1.0 or newer, the first release that
@@ -228,7 +233,7 @@ A ticket is an issue of the mission's loop (`loop.mjs`): `.horde/hordes/<horde>/
 - `new <slug> --title "…" --node n --class light|standard|heavy|max [--severity high|medium|low]
   [--kind work|quality|prototype] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
   [--produces <node>/<port>,…] [--evidence "…"]… [--revert-base <ref>] [--mutate "<command>"]
-  [--reopens NNN] [--tree p]` —
+  [--reopens NNN] [--no-new-tests "<reason>"] [--tree p]` —
   from `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries a contract between them; three or more that hold code are refused — nothing in the graph answers for the whole of such a diff. A node that holds nothing but tests (every tracked file in its boundary matches `config.testGlobs`) does not count toward the two: a graph that keeps a component's tests in a node of their own would otherwise split every change to behaviour its tests pin into two tickets nobody can land green.
   `--revert-base` names the ref where the ticket's new tests must fail (a contract test
   is green on the team tip by design; its red base is e.g. `develop`); `land`'s revert-test item reads it, or
@@ -237,7 +242,11 @@ A ticket is an issue of the mission's loop (`loop.mjs`): `.horde/hordes/<horde>/
   scratch copy of the branch's own tip instead of extracting the new tests onto a base tree, and
   requires them red there — for a ticket whose implementation is cheaper to break on purpose than
   to name a meaningfully failing base for. Refused together with `--revert-base` — only one variant
-  ever runs, so declaring both would leave one of them silently unused. An
+  ever runs, so declaring both would leave one of them silently unused. `--no-new-tests "<reason>"`
+  writes `**No new tests:** <reason>` — the declaration `land`'s revert-test item accepts for a diff
+  with no new or changed test file; `tk.mjs edit NNN --no-new-tests "<reason>" --by <name>` writes it
+  later (an empty reason withdraws it), and `refine.mjs --step review` lists every proposed ticket whose files
+  hold no test and that declares no reason (`untested` in `--json`). An
   `--evidence` value that is nothing but catalogue ids (`E2,E5`) fills the ticket's `**Evidence:**`
   field; any other value becomes its own `- [ ] …` line in the `## Acceptance — evidence`
   checklist, and any id cited inside it fills the field too. A catalogue id (`E1`, `E2`, …) must
@@ -1282,8 +1291,10 @@ fails on it.
 `--no-gate` skips items 2, 5, 6 and 7, and never merges — on two or more tickets it also skips the
 batching mechanic entirely, since there is nothing expensive left to share, and lands each on its
 own. `--background` starts the run, prints the path of the result file it will write
-(`.horde/hordes/<h>/land/<ticket>.json`, shape `{ticket, branch, sha, ok, checks: [{name, ok, note}], at}`
-plus the tree it ran in) and returns at once, for a single ticket; for two or more it prints one
+(`.horde/hordes/<h>/land/<ticket>.json`, shape `{ticket, branch, sha, ok, checks: [{name, ok, note}], at, ticketState}`
+plus the tree it ran in; `ticketState` is a digest of the ticket fields the gate reads — Kind, Files,
+Node, No new tests, Revert base, Mutate, Reverts, Consumes, Produces, Boundary proposal, Evidence — as
+they stood when the run started) and returns at once, for a single ticket; for two or more it prints one
 `{tickets, items: [{ticket, branch, resultFile, started, note}], started}` instead — one detached
 worker for the whole list, not one per ticket, with each ticket's own result file at the same path
 it would carry landed on its own. A half-written result file reads as no file at all — the gate
@@ -1728,14 +1739,22 @@ The second run validates that file — every key classified exactly once, a `rul
 sentence, its component and `check`/`prose`, a `taste` carrying a component and no rule, an
 `inexpressible` carrying neither — and writes `hordes/<h>/retro.json` (`horde-retro/1`) with
 `retro.md` beside it: `{schema, horde, at, noEvidenceLayer, state, items, law, returns, taste,
-inexpressible, logged, threshold, notes}`. A `taste` item leaves one line in its component's own log through
+inexpressible, logged, tasteCommit, threshold, notes}`. A `taste` item leaves one line in its component's own log through
 `yg log add` and nowhere else; a key already on the previous document is never logged twice, and one
 retrospective runs at a time (`hordes/<h>/retro.lock`, taken over when the pid holding it is gone).
-That `yg log add` write runs against the tree `--tree` names;
-without it, cwd, the same ordinary default every read in this tool set takes, not this horde's
-trunk just because a horde was resolvable. `--horde h` written out (no `--tree`) is what changes
-that, exactly as `queue.mjs plan`/`quality`, `tick.mjs`, `land.mjs` and `horde.mjs done` already
-read it (issue 114 — before it, the second run read this horde's own trunk unconditionally).
+That `yg log add` write runs in a scratch tree at the tip of `<h>/trunk` and is committed there as one
+commit on the trunk (`tasteCommit`), so the entries travel with the trunk and nothing is left
+uncommitted in any checkout; an entry that could not be committed is a note, and is not marked logged.
+The trunk is moved by `update-ref` naming its old tip, so none of this happens while `<h>/trunk` is
+checked out in any worktree: that would leave the checkout on a commit it no longer holds, and each
+entry is a note instead, written on the next run once the checkout has moved off the trunk. `done`'s
+log commit of rulings refuses the same way.
+The tree `--tree` names (or `--horde h` written out, or cwd) is still resolved, as on every other command.
+Gate refusals come from the ticket's log as well as its result file: every "changes" line the gate
+wrote (`land refused: …`) is one, keyed `gate:<ticket>:log<line>`, so a refusal a later green landing
+wrote over is still read. Lines the tools write about a ticket's progress — `landed …`, `body edited
+by`, a field `— changed by`, `review closed by`/`skipped by` — are bookkeeping, not remarks, and are
+not handed to the one-shot.
 Writing twice replaces the document; nothing is appended.
 
 `law` is the rule proposals, ready for whoever works that area to write. `inexpressible` is structured
@@ -1780,8 +1799,10 @@ inherits whatever tree the session's shell is already in.
    way. Each answer says what was salvaged, because whoever reads it is usually reading it after a
    crash.
 2. **Land what is ready.** Every `landed` item: the gate's own result file
-   (`hordes/<h>/land/<ticket>.json`) is read, and when it is missing, unreadable, or about a sha the
-   branch has moved past, it is added to the gate's own re-run list. Every item on that list, this
+   (`hordes/<h>/land/<ticket>.json`) is read, and when it is missing, unreadable, about a sha the
+   branch has moved past, or about the same sha with the ticket's gate-read fields changed since
+   (its `ticketState` — a `**No new tests:**` declared, the files widened), it is added to the gate's
+   own re-run list. Every item on that list, this
    whole run, goes out as **one** `land --background` call (comma-joined), not one call each — so any
    of them that turn out non-overlapping and on the same base share `land.mjs`'s own one run of its
    expensive items instead of each paying for one (see "batching" in `land.mjs`'s own section above);
@@ -1860,7 +1881,10 @@ inherits whatever tree the session's shell is already in.
    being how many landings the gate gets through in one `config.tick.interval` at the mean gate
    time. Workers finishing within one interval beyond that many wait at landing, so the line printed
    beside the dispatch list names both numbers. A reading for the director, never a cap on the
-   dispatch list; null (and no line) until a gate time is measured.
+   dispatch list; null (and no line) until a gate time is measured. A run that hands out at least
+   one entry while no wave is open opens the next one first, exactly as `wave.mjs start` does — the
+   plan's layers and parallelism written into the journal — and says so (`waveOpened: {n, layers,
+   plannedParallelism, opened}`), so the close below always has a wave to close.
 4. **Close.** A queue holding nothing but `merged` items gives `close: true` and the command that
    closes the wave. Tick prints that command and never runs it.
 

@@ -27,6 +27,7 @@ import {
   existsSync, mkdirSync, readdirSync, readFileSync, rmSync,
 } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   hordePath, teamPath, readJSON, writeJSON, readText, writeText, appendText, nowIso, fail,
   parseArgs, asArray, emit, isMain, resolveHorde, renderTemplate, readConfig, resolveTree,
@@ -99,7 +100,7 @@ commands:
   new <slug> --title "<t>" --node <n> [--node <n2> …] --class <c> [--severity high|medium|low]
       [--kind work|quality] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
       [--produces <node>/<port>,…] [--evidence "<…>"]… [--revert-base <ref>] [--mutate "<command>"]
-      [--reopens NNN] [--reverts NNN] [--tree p] [--team t] [--horde h]
+      [--reopens NNN] [--reverts NNN] [--no-new-tests "<reason>"] [--tree p] [--team t] [--horde h]
       renders templates/ticket.md; status starts "proposed". --node is repeatable, up to two —
       three or more is refused, since nobody holds the whole of such a diff.
       --kind defaults to "work"; "quality" marks a self-filed improvement outside a wave's
@@ -118,6 +119,9 @@ commands:
       of this branch's own tip: it must break the implementation the ticket's new tests exist to
       catch, and every new test must go red once it has run. Chosen from the ticket, never a
       land.mjs flag — refused together with --revert-base, since only one variant runs.
+      --no-new-tests declares that this change adds no test, and why ("**No new tests:** <reason>"):
+      a re-export, a rename, configuration — a change the existing tests already cover. The
+      landing gate's revert test accepts a diff with no new or changed test file only with it.
       --reopens names the ticket this one is the second attempt at: what NNN landed did not hold,
       so the evidence it claimed is red again. It writes "**Reopens:** t-NNN" on the ticket, and
       refuses a number this horde has never filed.
@@ -172,7 +176,7 @@ commands:
       <reason>". The reason is required. The gate is asked on the next tick.mjs run, and nothing
       the review logs after this line is acted on. Refuses a ticket with no review raised.
   edit <ticket> --by <name> [--files a,b] [--boundary-proposal <id>] [--consumes …] [--produces …] [--evidence E1,…]
-      [--depends NNN,MMM] [--from <file>] [--tree p] [--horde h]
+      [--no-new-tests "<reason>"] [--depends NNN,MMM] [--from <file>] [--tree p] [--horde h]
       rewrites the body (everything from "## What" on) from stdin, or from the file --from
       names, leaving the header block —
       the id/title heading, Status, Node/Class/Severity/Team, Depends on/Branch, Reopens, Files,
@@ -180,6 +184,9 @@ commands:
       What the director uses to write ticket bodies. With any of --files/--consumes/--produces/
       --evidence it changes those fields instead, each with its own log line saying who changed
       it — how a ticket is widened when the work turns out to touch a file it never declared.
+      --no-new-tests "<reason>" writes the ticket's "**No new tests:**" declaration (see new), the
+      answer the landing gate asks for when it refuses a diff with no test file; an empty reason withdraws it.
+      The next tick.mjs run puts the same commit through the gate again, since the ticket changed.
       --depends adds dependencies to the ticket's queue item, one per number, through the same
       path "queue.mjs dep" uses — so a dependency is written the same way whoever writes it, and
       the cycle check lives in one place. The ticket has to be in the queue for that.
@@ -197,6 +204,29 @@ export function parseField(text, label) {
   const re = new RegExp(`\\*\\*${label}:\\*\\*[ \\t]*([^\\n·]*?)[ \\t]*(?:·|$)`, 'm');
   const m = re.exec(text);
   return m ? m[1].trim() : '';
+}
+
+// The ticket fields the landing gate reads: what the diff may touch, which components it belongs to,
+// its declared exemption from the revert test, the ref or command that test runs against, what it
+// reverts, and the ports and evidence it names. A result the gate recorded is an answer about the
+// branch's commit AND these fields; changing one of them (`tk.mjs edit --files`, a "**No new
+// tests:**" declaration) with no new commit is a different question, which tick.mjs asks again.
+export const GATE_READ_FIELDS = Object.freeze([
+  'Kind', 'Files', 'Node', 'No new tests', 'Revert base', 'Mutate', 'Reverts', 'Consumes', 'Produces', 'Boundary proposal', 'Evidence',
+]);
+
+// ticketGateState(text) — a short digest of GATE_READ_FIELDS as the ticket states them now.
+export function ticketGateState(text) {
+  const lines = GATE_READ_FIELDS.map((label) => {
+    const m = new RegExp(`^\\*\\*${label}:\\*\\*(.*)$`, 'm').exec(String(text || ''));
+    return `${label}=${m ? m[1].trim() : ''}`;
+  });
+  // With no "**Revert base:**" header the revert test takes its base from a "red on <ref>" phrase in
+  // the body (land.mjs revertBaseRef), and a body rewrite (`tk.mjs edit --from`) changes it with no
+  // new commit, so that phrase is part of what the gate read too.
+  const redOn = /\bred on `?([^\s`]+)`?/.exec(String(text || ''));
+  lines.push(`red on=${redOn ? redOn[1].replace(/[.,;:)]+$/, '') : ''}`);
+  return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
 }
 
 function setField(text, label, value) {
@@ -773,7 +803,7 @@ export function createTicket(horde, spec) {
     slug, title, nodes, cls, severity = 'medium', kind = 'work', quality = 'autonomous',
     team = 'trunk', evidence = [], files: fileList = [], consumes: consumesRaw,
     produces: producesRaw, depends = [], revertBase = null, mutate = null, reopens = null,
-    boundaryProposal = null, reverts = null,
+    boundaryProposal = null, reverts = null, noNewTests: noNewTestsRaw = null,
   } = spec;
   // A revert ticket takes back one landed ticket's merge: its kind is "revert", whatever --kind
   // said, and "revert" is never a kind a ticket takes without naming what it reverts.
@@ -784,6 +814,7 @@ export function createTicket(horde, spec) {
     fail('a ticket names either --mutate or --revert-base, not both — --mutate replaces the revert-to-base check entirely, so a --revert-base alongside it would be silently unused by land.mjs\'s revert test. Pick the one variant this ticket actually needs');
   }
   if (!title) fail('new requires --title "<t>"');
+  const declaredNoNewTests = noNewTestsRaw === null || noNewTestsRaw === undefined ? '' : noNewTestsReason(noNewTestsRaw);
   if (!Array.isArray(nodes) || nodes.length === 0) fail('new requires --node <n> (repeatable)');
   // The model allows a ticket one node, or two when the ticket carries a contract between them —
   // and no more, because a ticket spanning three nodes is one diff three separate components
@@ -862,7 +893,7 @@ export function createTicket(horde, spec) {
 
   // What a revert declares beyond its merge: no test of its own, and one acceptance line — the merge
   // undone on the branch.
-  let noNewTests = '';
+  let noNewTests = declaredNoNewTests;
   if (revertOf) {
     noNewTests = `a revert takes back t-${revertOf.id}'s landed change (${revertOf.sha.slice(0, 12)}); it adds no test of its own`;
     acceptance.length = 0;
@@ -1020,6 +1051,7 @@ function cmdNew(horde, positional, flags) {
     reopens: flags.reopens || null,
     reverts: flags.reverts || null,
     boundaryProposal: flags['boundary-proposal'] || null,
+    noNewTests: flags['no-new-tests'] === undefined ? null : flags['no-new-tests'],
   });
   const cfg = readConfig() || {};
   const root = resolveTree({ tree: graphTree }).path;
@@ -1352,7 +1384,17 @@ const FIELD_AFTER = {
   Consumes: 'Files',
   Produces: 'Consumes',
   Evidence: 'Produces',
+  'No new tests': 'Mutate',
 };
+// The reason a "**No new tests:**" declaration gives, as one header line: whitespace collapsed, and
+// the "·" that separates two header fields on one line never inside it. A reason is required — the
+// landing gate reads an empty declaration as none.
+function noNewTestsReason(raw) {
+  const reason = String(raw === true ? '' : raw).replace(/\s*·\s*/g, ', ').replace(/\s+/g, ' ').trim();
+  if (!reason) fail('--no-new-tests needs a reason — why this change adds no test and the existing ones cover it, e.g. --no-new-tests "a one-line re-export; the helper\'s own tests cover it"');
+  return reason;
+}
+
 function setHeaderField(text, label, value) {
   // In place, and only the field's own value: Consumes and Produces share one line, so the
   // replacement stops at the "·" that separates them (and keeps the spaces around it).
@@ -1407,7 +1449,7 @@ export function setTicketBody(horde, id, body, by) {
 function cmdEdit(horde, positional, flags) {
   const ticket = requireTicket(horde, positional[0]);
   if (!flags.by) fail('edit requires --by <name>');
-  const wantsFields = ['files', 'consumes', 'produces', 'evidence', 'depends', 'boundary-proposal'].some((k) => flags[k] !== undefined);
+  const wantsFields = ['files', 'consumes', 'produces', 'evidence', 'depends', 'boundary-proposal', 'no-new-tests'].some((k) => flags[k] !== undefined);
 
   // Every change is worked out against the copy read above and then applied, under the ticket's
   // lock, to issue.md as it stands at the moment of writing: a transition written in between (a
@@ -1460,10 +1502,17 @@ function cmdEdit(horde, positional, flags) {
       setEditedField('Evidence', ids.length ? ids.join(', ') : 'none');
       changed.push(`evidence: ${ids.length ? ids.join(', ') : 'none'}`);
     }
+    if (flags['no-new-tests'] !== undefined) {
+      const raw = flags['no-new-tests'] === true ? '' : String(flags['no-new-tests']);
+      // An empty value takes the declaration back: the ticket owes the revert test a test again.
+      const reason = raw.trim() ? noNewTestsReason(raw) : '';
+      setEditedField('No new tests', reason);
+      changed.push(`no new tests: ${reason || 'withdrawn'}`);
+    }
   }
 
   const stdin = wantsFields ? '' : readInput(flags.from);
-  if (!wantsFields && !stdin.trim()) fail('edit requires the new body on stdin or in the file --from names (everything from "## What" on), or one of --files/--consumes/--produces/--evidence/--depends');
+  if (!wantsFields && !stdin.trim()) fail('edit requires the new body on stdin or in the file --from names (everything from "## What" on), or one of --files/--consumes/--produces/--evidence/--no-new-tests/--depends');
 
   let bytes = 0;
   if (stdin.trim()) {
