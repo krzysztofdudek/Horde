@@ -18,7 +18,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, addAspect, requireYg, MARKER_CHECK, git, ticketIssuePath,
+  makeRepo, rmRepo, run, initHorde, addNode, addAspect, requireYg, MARKER_CHECK, git, ticketIssuePath, requireGrain,
 } from './helpers.mjs';
 
 // One real component with one real rule attached to it. Which component owns a file, and which
@@ -302,7 +302,7 @@ test('blame.mjs: --horde narrows the search to one horde', async (t) => {
 
   // A second, unrelated horde on the same repository — once it exists, --horde is the only way
   // to say which one's tickets should be searched.
-  run('horde.mjs', ['init', 'other', '--base', 'develop', '--yg', requireYg(), '--test-globs', '**/*.test.*'], dir);
+  run('horde.mjs', ['init', 'other', '--base', 'develop', '--yg', requireYg(), '--grain', requireGrain(), '--test-globs', '**/*.test.*'], dir);
 
   const found = run('blame.mjs', ['src/model/hook.mjs:1', '--horde', 'mission1'], dir);
   assert.equal(found.code, 0, found.stderr);

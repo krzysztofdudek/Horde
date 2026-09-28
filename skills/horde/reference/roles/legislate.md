@@ -55,6 +55,20 @@ runs is never a reason on its own, and no rule is ever retired or weakened over 
 still reaches code but has stopped making sense is NOT this case — that one is a lowering like any
 other and goes to whoever is asking for the work.
 
+### Rules this territory's code already keeps
+
+{{grainRules}}
+
+These are drafts Grain read out of this repository's own code and history (`grain advise --json`,
+the `rule` items), each with how many places follow it and how many do not. A draft is evidence, not
+law: you write it down through the steps below like any rule you found yourself — the `yg-aspect.yaml`
+and `check.mjs` above are a starting point, not a finished rule, and a draft you judge wrong for this
+territory you leave out and say why in your report. One Grain drafted enters this pass no higher than
+**advisory**: it is law the territory proposes, and the client ratifies it — enforced is earned over
+closed waves like any other rule, never on Grain's word. For the full proposal behind a draft (its
+drilled cases included), run `grain propose --scope <component> <scratch-dir>` and read it there; never
+into `.yggdrasil/` itself.
+
 ## What you do
 
 1. **Name the pattern.** One sentence, in this repository's own words, about what the code here must do
@@ -86,4 +100,4 @@ landing gate refuses a branch that tries. Touch a component outside {{territory}
 rule you just wrote: a rule and the code it judges are not written by the same hand in one landing, and
 the gate refuses that too. Commit to trunk.
 
-Start with the boot, then read the three sections above before you write anything.
+Start with the boot, then read the four sections above before you write anything.

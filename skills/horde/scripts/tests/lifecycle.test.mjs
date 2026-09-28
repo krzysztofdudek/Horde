@@ -24,7 +24,7 @@ import assert from 'node:assert/strict';
 import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  makeRepo, rmRepo, run, initHorde, addNode, requireYg, git,
+  makeRepo, rmRepo, run, initHorde, addNode, requireYg, git, requireGrain,
 } from './helpers.mjs';
 
 test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async (t) => {
@@ -32,7 +32,7 @@ test('horde lifecycle: one mini-wave from init to a cold-boot reconcile', async 
   t.after(() => rmRepo(dir));
 
   await t.test('1. horde init', () => {
-    const init = run('horde.mjs', ['init', 'pilot', '--base', 'develop', '--title', 'Pilot', '--yg', requireYg(), '--test-globs', '**/*.test.*'], dir);
+    const init = run('horde.mjs', ['init', 'pilot', '--base', 'develop', '--title', 'Pilot', '--yg', requireYg(), '--grain', requireGrain(), '--test-globs', '**/*.test.*'], dir);
     assert.equal(init.code, 0, init.stderr);
     // The gate this repository is held to for the rest of the walk, and the judge policy, said
     // once here rather than at each step that needs them.

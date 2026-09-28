@@ -7,12 +7,14 @@ import { dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
-  makeRepo, rmRepo, run, initHorde, requireYg, addNode, addAspect, MARKER_CHECK, git, issueFileOf,
+  makeRepo, rmRepo, run, initHorde, requireYg, requireGrain, ygInit, addNode, addAspect, MARKER_CHECK, git, issueFileOf,
 } from './helpers.mjs';
 
 // Horde requires Yggdrasil: `init` creates the graph when a repository has none, so every direct
 // call to it here names the real build the same way `initHorde` does.
 const YG = ['--yg', requireYg()];
+// …and Horde requires Grain: every direct call that is not about the refusal names the real one.
+const GRAIN = ['--grain', requireGrain()];
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -140,7 +142,7 @@ for (const [label, files, gate, glob] of ECOSYSTEMS) {
   test(`horde.mjs init: works the gate out of a ${label} repository`, async (t) => {
     const dir = ecoRepo(files);
     t.after(() => rmRepo(dir));
-    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG], dir);
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG, ...GRAIN], dir);
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.gates.team, gate);
     assert.equal(r.json.gates.trunk, gate);
@@ -154,11 +156,11 @@ test('horde.mjs init: a repository with two ecosystems composes both gate comman
     'go.mod': 'module x\n',
   });
   t.after(() => rmRepo(dir));
-  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG], dir, { json: false });
+  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG, ...GRAIN], dir, { json: false });
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, /gate: `mvn -B test && go test \.\/\.\.\.`/);
   assert.match(r.stdout, /Maven \+ Go/);
-  const asJson = run('horde.mjs', ['init', 'mission2', '--base', 'develop', ...YG], dir);
+  const asJson = run('horde.mjs', ['init', 'mission2', '--base', 'develop', ...YG, ...GRAIN], dir);
   assert.equal(asJson.json.gates.team, 'mvn -B test && go test ./...');
   assert.equal(asJson.json.gates.trunk, 'mvn -B test && go test ./...');
   assert.ok(asJson.json.testGlobs.includes('**/*Test.java'));
@@ -168,7 +170,7 @@ test('horde.mjs init: a repository with two ecosystems composes both gate comman
 test('horde.mjs init: an unrecognised repository is told so, and asked, rather than left with an empty gate', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG], dir, { json: false });
+  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG, ...GRAIN], dir, { json: false });
   assert.equal(r.code, 0);
   assert.match(r.stdout, /no gate command could be worked out/);
   assert.match(r.stdout, /What proves this repository still works\?/);
@@ -179,7 +181,7 @@ test('horde.mjs init: an unrecognised repository is told so, and asked, rather t
 test('horde.mjs init: --test-globs names the test patterns outright', async (t) => {
   const dir = makeRepo();
   t.after(() => rmRepo(dir));
-  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG, '--test-globs', '**/*Tests.java,**/*Test.java'], dir);
+  const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG, ...GRAIN, '--test-globs', '**/*Tests.java,**/*Test.java'], dir);
   assert.deepEqual(r.json.testGlobs, ['**/*Tests.java', '**/*Test.java']);
 });
 
@@ -997,7 +999,7 @@ const GRAIN_STUB = [
   "import { cpSync, mkdirSync, writeFileSync, appendFileSync } from 'node:fs';",
   "import { join } from 'node:path';",
   'const argv = process.argv.slice(2);',
-  "if (argv[0] === '--version') { console.log('0.0.0-stub'); process.exit(0); }",
+  "if (argv[0] === 'version') { console.log('grain 6.1.0 · stub'); process.exit(0); }",
   "appendFileSync('grain-calls.log', `${JSON.stringify(argv)}\\n`);",
   "if (argv[0] !== 'propose') process.exit(2);",
   "const out = argv[1] || '.yggdrasil-proposal';",
@@ -1052,18 +1054,47 @@ test('E10 — init refuses without Yggdrasil, creates the graph with it, and min
     assert.equal(execFileSync('git', ['branch', '--list', 'mission1/trunk'], { cwd: dir, encoding: 'utf8' }).trim(), '');
   });
 
-  await t.test('with Yggdrasil and no Grain: the graph is created, empty, and says what naming Grain would add', () => {
+  await t.test('with Yggdrasil and no Grain: it refuses, names the install step, and leaves nothing behind', () => {
     const dir = makeRepo();
     t.after(() => rmRepo(dir));
-    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG], dir);
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG, '--grain', join(dir, 'no-such-grain')], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /A horde needs Grain 6\.1\.0 or newer/);
+    assert.match(r.stderr, /did not run \(there is no such program\)/);
+    assert.match(r.stderr, /git clone https:\/\/github\.com\/krzysztofdudek\/Grain/);
+    assert.match(r.stderr, /config set grainCommand "node <path to Grain>\/plugins\/grain\/bin\/grain\.mjs"/);
+    // checked before anything was created: no graph, no horde, no branch
+    assert.equal(existsSync(join(dir, '.horde')), false);
+    assert.equal(existsSync(join(dir, '.yggdrasil')), false);
+    assert.equal(execFileSync('git', ['branch', '--list', 'mission1/trunk'], { cwd: dir, encoding: 'utf8' }).trim(), '');
+  });
+
+  await t.test('a Grain older than 6.1.0 is refused by its version, before anything is created', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    const old = join(dir, 'old-grain.mjs');
+    writeFileSync(old, "console.log('grain 6.0.0 · extractor g30');\n");
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG, '--grain', `node ${old}`], dir);
+    assert.equal(r.code, 1);
+    assert.match(r.stderr, /is Grain 6\.0\.0, older than 6\.1\.0 — the first release that answers grain-cochange\/1 and grain-measure\/1/);
+    assert.equal(existsSync(join(dir, '.horde')), false);
+    assert.equal(existsSync(join(dir, '.yggdrasil')), false);
+  });
+
+  await t.test('with a real Grain the one it found is written down, and an empty grainCommand is refused', () => {
+    const dir = makeRepo();
+    t.after(() => rmRepo(dir));
+    ygInit(dir);
+    const grain = requireGrain();
+    const r = run('horde.mjs', ['init', 'mission1', '--base', 'develop', ...YG, '--grain', grain], dir);
     assert.equal(r.code, 0, r.stderr);
-    assert.equal(r.json.graph.created, true);
-    assert.equal(r.json.graph.mined, false);
-    assert.equal(existsSync(join(dir, '.yggdrasil', 'yg-architecture.yaml')), true);
-    assert.ok(r.json.graph.notes.some((n) => /the graph is empty/.test(n)), r.json.graph.notes.join('\n'));
-    assert.ok(r.json.graph.notes.some((n) => /--grain/.test(n)));
-    // and it is really readable through the CLI, which is the only way the horde ever reads it
-    assert.equal(run('node.mjs', ['bind'], dir).code, 0);
+    assert.equal(r.json.grain.command, grain);
+    assert.match(r.json.grain.version, /^\d+\.\d+\.\d+$/);
+    assert.equal(run('horde.mjs', ['config', 'get', 'grainCommand'], dir).json.value, grain);
+    const empty = run('horde.mjs', ['config', 'set', 'grainCommand', ''], dir);
+    assert.equal(empty.code, 1);
+    assert.match(empty.stderr, /grainCommand cannot be empty — Horde needs Grain 6\.1\.0 or newer/);
+    assert.equal(run('horde.mjs', ['config', 'get', 'grainCommand'], dir).json.value, grain);
   });
 
   await t.test('with Grain as well: propose is called, the proposal is adopted, and the baseline is reported', () => {

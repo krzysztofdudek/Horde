@@ -349,7 +349,7 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
   await t.test('3. horde init on the graph the family just made, and the nodes it binds', () => {
     const init = run('horde.mjs', [
       'init', 'family', '--base', 'develop', '--title', 'Discounts on orders',
-      ...YG_FLAGS, '--nodes', 'src/orders',
+      ...YG_FLAGS, '--grain', GRAIN.cmd, '--nodes', 'src/orders',
     ], dir);
     assert.equal(init.code, 0, init.stderr);
     // horde-requires-yggdrasil: the graph was already here, so init kept it rather than making one.
@@ -405,6 +405,8 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     // never to one it composed itself.
     assert.match(asked.json.file, /\.horde[\\/]hordes[\\/]family[\\/]territories\.json$/);
     assert.doesNotMatch(asked.json.brief, /\{\{/);
+    // The architect is told to cut along the seams the history shows, with the command that weighs a cut.
+    assert.match(asked.json.brief, /cochange --partition/);
     // Asking takes nothing. The file already holds the node lease `init --nodes` took in step 3;
     // what must not be in it yet is a territory, because no territory has been named yet.
     const beforeCut = JSON.parse(readFileSync(join(dir, '.horde', 'leases.json'), 'utf8')).leases;
@@ -432,6 +434,20 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     const leases = JSON.parse(readFileSync(join(dir, '.horde', 'leases.json'), 'utf8')).leases;
     assert.equal(leases['the shop front'].horde, 'family');
     assert.equal(leases['the ledger'].horde, 'family');
+
+    // The accepted cut is scored by the real Grain against this repository's own history
+    // (grain-cochange/1 read through --partition): commits and imports counted against random cuts
+    // along the directory tree, every share with its denominator, and the same score on disk for
+    // the plan's review. Advice only: the cut was accepted whatever it says.
+    const score = accepted.json.score;
+    assert.equal(score.scored, true, JSON.stringify(score));
+    assert.equal(score.territories, 2);
+    assert.ok(score.commits && score.commits.total > 0, `commits counted: ${JSON.stringify(score.commits)}`);
+    assert.equal(score.commits.inside + score.commits.crossing, score.commits.total);
+    assert.equal(score.imports.inside + score.imports.crossing, score.imports.total);
+    assert.ok(score.control && score.control.cuts >= 10, `random cuts: ${JSON.stringify(score.control)}`);
+    assert.equal(typeof score.advice, 'string');
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'family', 'cut-score.json'), 'utf8')), score);
   });
 
   await t.test('6. refine --step consult: one spawn per territory, each carrying only its own', () => {
@@ -668,6 +684,20 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     for (const section of ['added', 'raised', 'attached']) {
       assert.ok(Array.isArray(law[section]), `${section} is a list, empty or not`);
     }
+
+    // The close measured the mission's territory before and after with the real Grain
+    // (grain-measure/1, from the commit the trunk was cut at to its tip, over the cut's components),
+    // and the client's page says it in their words.
+    const measure = JSON.parse(readFileSync(join(dir, '.horde', 'hordes', 'family', 'measure.json'), 'utf8'));
+    assert.equal(measure.measured, true, JSON.stringify(measure));
+    assert.deepEqual(measure.scope, ['src/orders', 'src/billing']);
+    assert.equal(measure.to, git(['rev-parse', 'family/trunk'], dir));
+    assert.ok(measure.after.files >= measure.before.files, `files ${measure.before.files} → ${measure.after.files}`);
+    assert.ok(measure.range && measure.range.commits >= 1, `range: ${JSON.stringify(measure.range)}`);
+    const page = readFileSync(join(dir, '.horde', 'hordes', 'family', 'report.md'), 'utf8');
+    assert.match(page, /## What the work did to its part of the code/);
+    assert.match(page, new RegExp(`- Files: ${measure.before.files} → ${measure.after.files}\\.`));
+    assert.doesNotMatch(page, /grain|Grain/, 'the client\'s page names no tool');
   });
 
   // `done` counts three things: evidence reproduced, trunk gate green, and the retrospective run
@@ -700,6 +730,8 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     assert.equal(done.json.evidence.total, 2);
     assert.equal(done.json.cost, undefined, 'done no longer reports a cost figure');
     assert.equal(done.json.retro.inexpressible, gathered.json.items.length);
+    // done measured the mission whole, one last time, for the client's page it archives.
+    assert.equal(done.json.measure.measured, true, JSON.stringify(done.json.measure));
 
     // "done" is also where the mission files itself away: the horde's directory is marked with the
     // date and the trunk sha it handed over at, and moved under _archive/. Everything it wrote is
@@ -851,7 +883,8 @@ function buildContractTicket(t, {
   t.after(() => rmRepo(dir));
 
   const init = initHorde(dir);
-  assert.equal(init.graph.created, true, 'a blank graph, made fresh by the real yg init — nothing mined');
+  // initHorde gives a fixture with no graph a blank one from the real yg init first — nothing mined.
+  assert.equal(init.graph.created, false, 'a blank graph, made fresh by the real yg init — nothing mined');
 
   git(['checkout', '-q', 'mission1/trunk'], dir);
   write(dir, 'promises/adds-two-numbers.md', contractPromiseDoc('implemented'));

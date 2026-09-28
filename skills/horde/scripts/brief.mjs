@@ -25,7 +25,8 @@ import {
   runMain,
 } from './_lib.mjs';
 import {
-  nodeExists, readNodePortsText, ticketNodes, ygAspectsReachJson, ygCommand,
+  nodeExists, readNodePortsText, ticketNodes, ygAspectsReachJson, ygCommand, grainJson, grainLine,
+  grainHome, grainGraphArgs, advisoryKey, readAdvisoryLedger,
 } from './node.mjs';
 import { collectRetroInput, classesPath } from './retro.mjs';
 import { findTicket as findLoopTicket, ticketsOf } from './tk.mjs';
@@ -566,6 +567,60 @@ function deadRulesFor(root, cfg) {
   return dead.map((a) => `- **${a.id}** [${a.status}] — ${a.description || 'no description'}`).join('\n');
 }
 
+// The rules Grain drafts for this territory: the `kind: rule` items of `grain advise --json`
+// (grain-advice/1) that hold in one of the territory's components. A draft is evidence, not law — the
+// legislator writes it down the way it writes any rule, and it enters no higher than advisory, for the
+// client to ratify. A draft the quality pass already filed as a ticket says so, by the same key.
+const ADVICE_SCHEMA = 'grain-advice/1';
+
+function inTerritory(node, nodes) {
+  return nodes.some((n) => node === n || String(node).startsWith(`${n}/`));
+}
+
+function grainRulesFor(horde, root, cfg, nodes) {
+  if (!grainLine(cfg)) return '(not read — no Grain CLI is configured for this repository; horde.mjs config set grainCommand "…")';
+  const res = grainJson(cfg, grainHome(), ['advise', '--json', ...grainGraphArgs(root)], ADVICE_SCHEMA);
+  if (!res.ok) return `(not read — ${res.why})`;
+  const filed = new Map();
+  for (const entry of asArray(readAdvisoryLedger(horde))) {
+    if (entry && entry.key && entry.ticket) filed.set(entry.key, entry.ticket);
+  }
+  const rules = asArray(res.doc.items)
+    .filter((it) => it && it.kind === 'rule' && asArray(it.nodes).some((n) => inTerritory(n, nodes)));
+  if (rules.length === 0) return '(none — Grain drafts no rule for this territory\'s components)';
+  return rules.map((it) => renderGrainRule(it, filed.get(advisoryKey(it)))).join('\n\n');
+}
+
+function fence(lang, text) {
+  const body = String(text || '').replace(/\s+$/, '');
+  return ['  ```' + lang, ...body.split('\n').map((l) => `  ${l}`), '  ```'];
+}
+
+function renderGrainRule(item, ticket) {
+  const ev = item.evidence || {};
+  const draft = ev.draft || {};
+  const where = asArray(item.nodes).join(', ');
+  const also = ticket ? ` The quality pass already filed it as ticket ${ticket}; writing it here answers that ticket.` : '';
+  if (ev.origin === 'boundary') {
+    const lines = [
+      `- **${ev.from || '?'} never imports ${ev.neverImports || '?'}** — a maintainer's decision (${ev.decidedBy || 'someone'}${ev.decidedAt ? `, ${ev.decidedAt}` : ''}) the graph does not make law yet; ${ev.violations ?? '?'} import(s) cross it today. Components: ${where}.${also}`,
+      '',
+      ...fence('json', JSON.stringify(draft, null, 2)),
+    ];
+    return lines.join('\n');
+  }
+  const conforming = Number(ev.conforming) || 0;
+  const deviating = Number(ev.deviating) || 0;
+  const total = conforming + deviating;
+  const lines = [
+    `- **${ev.name || ev.aspect || 'a convention'}** (\`${draft.aspect || ev.aspect || '?'}\` on \`${draft.attachTo || where}\`) — followed at ${conforming} of ${total} site(s)${total ? ` (${Math.round((conforming / total) * 100)}%)` : ''}; holds in ${where}.${also}`,
+  ];
+  if (item.text) lines.push(`  ${String(item.text).trim().split('\n').join(' ')}`);
+  if (draft.yaml) lines.push('', ...fence('yaml', draft.yaml));
+  if (draft.check) lines.push('', ...fence('js', draft.check));
+  return lines.join('\n');
+}
+
 function ticketLogFor(tickets) {
   if (tickets.length === 0) return '(this territory has no tickets yet)';
   return tickets.map((t) => {
@@ -604,6 +659,7 @@ function cmdLegislate(horde, cfg, positional, flags) {
     gateRefusals: gateRefusalsFor(horde, tickets),
     ticketLog: ticketLogFor(tickets),
     deadRules: deadRulesFor(info.path, cfg),
+    grainRules: grainRulesFor(horde, info.path, cfg, nodes),
     retireAfterWaves: law.retireAfterWaves === undefined ? 2 : law.retireAfterWaves,
   };
   const brief = renderRole('legislate', vars);

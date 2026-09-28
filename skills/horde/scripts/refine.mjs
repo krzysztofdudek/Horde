@@ -37,7 +37,8 @@ import {
 } from './_lib.mjs';
 import {
   ygCommand, ygNode, ygContext, nodeExists, nodeBoundary, nodeRules, renderRules, listAllNodes,
-  pathInBoundary, nodeDir, loadGraph, grainLine, grainAsk, reviewerGap, isAppendOnly,
+  pathInBoundary, nodeDir, loadGraph, grainLine, grainAsk, grainJson, requireGrain, grainHome, grainGraphArgs, reviewerGap, isAppendOnly,
+  GRAIN_COCHANGE_SCHEMA,
 } from './node.mjs';
 import { buildPlan, renderPlan, titleOf, loadQueue } from './queue.mjs';
 import {
@@ -75,6 +76,11 @@ steps (default: cut):
       checked here rather than asked for: a territory is a set of WHOLE components (a component is
       never split — it is the graph's own unit), any level counts including a whole subtree root,
       and a territory fits under one size. One component belongs to at most one territory.
+      The accepted cut is then scored against this repository's own history (Grain's co-change
+      score: how many commits that touched the territories stayed inside one, against random cuts
+      along the directory tree), written to cut-score.json and put in front of the plan's review.
+      The score is advice with its denominator and never refuses a cut. Grain is required: without
+      one that runs, this step refuses and names the install step.
   consult
       prints one spawn per territory, all of them parallel, each carrying only its own
       territory's context and the five questions. The consultants write the tickets and propose
@@ -108,6 +114,7 @@ options: --json  --help`;
 // ---- the files each step hands back ---------------------------------------------------------
 
 function territoriesPath(horde) { return hordePath(horde, 'territories.json'); }
+function cutScorePath(horde) { return hordePath(horde, 'cut-score.json'); }
 function reviewPath(horde) { return hordePath(horde, 'review.json'); }
 function planPath(horde, team) { return hordePath(horde, `plan-${String(team).replace(/\//g, '-')}.md`); }
 
@@ -324,6 +331,148 @@ function validateCut(horde, root, cfg, doc) {
   return out;
 }
 
+// ---- the cut, measured ------------------------------------------------------------------------
+//
+// The architect cuts along the seams the repository's own history shows, and the accepted cut is
+// measured the same way: Grain's co-change score of the cut as a partition (`grain cochange
+// --partition --level node`, grain-cochange/1) — how many retained commits that touched any territory
+// touched exactly one, how many imports between them stay inside one, and how many of the component
+// pairs the history changes together more often than chance a territory splits — beside the same
+// share for random cuts of the same files along the directory tree. It is advice with its
+// denominator: nothing here refuses a cut, and a score that could not be taken says why.
+//
+// Grain runs from the repository root, where its cache lives, reading the graph of the tree the cut
+// was checked in (`--graph`), so no untracked cache lands in the mission's trunk tree.
+const COCHANGE_RUNS = 3;
+
+function scoreCut(horde, root, cfg, territories) {
+  const at = nowIso();
+  if (territories.length < 2) {
+    return { scored: false, at, why: 'one territory — there is no seam to cut across, so there is nothing to score' };
+  }
+  // A component that maps no file is one Grain cannot place (it refuses an entry that selects
+  // nothing), and a territory of nothing but such components has no files to score: both are left out
+  // and named, and the rest is scored.
+  const partition = {};
+  const unmapped = [];
+  for (const t of territories) {
+    const nodes = t.nodes.filter((n) => {
+      const mapped = nodeBoundary(root, cfg, n).length > 0;
+      if (!mapped) unmapped.push(n);
+      return mapped;
+    });
+    if (nodes.length) partition[t.territory] = nodes;
+  }
+  const parts = Object.keys(partition);
+  if (parts.length < 2) {
+    return {
+      scored: false, at, unmapped, why: 'fewer than two territories map any file yet, so there is no seam between them to score',
+    };
+  }
+  const file = hordePath(horde, 'cut-partition.json');
+  writeText(file, `${JSON.stringify(partition, null, 2)}\n`);
+  const res = grainJson(cfg, grainHome(), [
+    'cochange', '--partition', file, '--level', 'node', ...grainGraphArgs(root),
+    '--runs', String(COCHANGE_RUNS), '--json',
+  ], GRAIN_COCHANGE_SCHEMA);
+  if (!res.ok) return { scored: false, at, unmapped, why: res.why };
+  return summariseCutScore(res.doc, partition, { at, unmapped, command: res.display });
+}
+
+const share = (k, n) => (n > 0 ? Math.round((k / n) * 1000) / 1000 : null);
+
+export function summariseCutScore(doc, partition, { at = nowIso(), unmapped = [], command = null } = {}) {
+  const p = doc && doc.partition;
+  if (!p || !p.score) {
+    return { scored: false, at, unmapped, why: 'Grain answered with no partition score' };
+  }
+  const partOf = new Map();
+  for (const [part, nodes] of Object.entries(partition)) for (const n of nodes) partOf.set(n, part);
+  // A pair of components the history changes together, one in each of two territories: the seams
+  // this cut crosses, strongest first. A pair with an end outside every territory is not the cut's.
+  const crossing = (Array.isArray(doc.pairs) ? doc.pairs : [])
+    .filter((pr) => pr && partOf.has(pr.a) && partOf.has(pr.b) && partOf.get(pr.a) !== partOf.get(pr.b))
+    .sort((x, y) => (y.sup || 0) - (x.sup || 0) || String(x.a).localeCompare(String(y.a)))
+    .map((pr) => ({
+      a: pr.a, b: pr.b, together: pr.sup, territories: [partOf.get(pr.a), partOf.get(pr.b)],
+    }));
+  const sc = p.score;
+  const ctl = p.control || null;
+  const commitsTotal = sc.commitsInside === null || sc.commitsInside === undefined ? null : (sc.commitsInside || 0) + (sc.commitsCrossing || 0);
+  const importsTotal = (sc.importsInside || 0) + (sc.importsCrossing || 0);
+  const out = {
+    scored: true,
+    at,
+    sha: doc.at || null,
+    command,
+    territories: Object.keys(partition).length,
+    unmapped,
+    commits: commitsTotal === null ? null : {
+      inside: sc.commitsInside, crossing: sc.commitsCrossing, total: commitsTotal, share: share(sc.commitsInside, commitsTotal),
+    },
+    imports: {
+      inside: sc.importsInside || 0, crossing: sc.importsCrossing || 0, total: importsTotal, share: share(sc.importsInside || 0, importsTotal),
+    },
+    pairs: { inside: sc.pairsInside ?? null, crossing: sc.pairsCrossing ?? null },
+    crossing: crossing.slice(0, 10),
+    control: ctl ? {
+      cuts: ctl.runs,
+      directories: ctl.directories,
+      commitShareMean: ctl.commitShareMean ?? null,
+      importShareMean: ctl.importShareMean ?? null,
+      atLeastAsGoodCommitShare: ctl.atLeastAsGoodCommitShare ?? null,
+      atLeastAsGoodImportShare: ctl.atLeastAsGoodImportShare ?? null,
+    } : null,
+    note: doc.note || null,
+  };
+  out.advice = cutAdvice(out);
+  return out;
+}
+
+// One sentence of advice, from the numbers alone. A cut that random cuts along the directory tree beat
+// or matched more often than not does not follow the seams the history shows better than chance; one
+// that none of them matched does. Anything in between is said as the count it is.
+function cutAdvice(score) {
+  const c = score.control;
+  if (!score.commits) return 'no history to score the cut against — only the import side was measured';
+  if (!c || !c.cuts || c.atLeastAsGoodCommitShare === null) return 'no random cuts to compare against';
+  if (c.directories !== undefined && c.directories !== null && c.directories < score.territories) {
+    return `these territories span only ${c.directories} director${c.directories === 1 ? 'y' : 'ies'}, fewer than the ${score.territories} territories, so a random cut along the directory tree cannot fill them all and the comparison favours the random cuts`;
+  }
+  const k = c.atLeastAsGoodCommitShare;
+  if (k === 0) return `none of ${c.cuts} random cuts kept as many commits inside one territory — the cut follows the seams the history shows`;
+  if (k * 2 > c.cuts) {
+    return `${k} of ${c.cuts} random cuts kept at least as many commits inside one territory — the cut does not follow the seams the history shows better than chance; re-cutting along them is the architect's call, and the cut stands as it is`;
+  }
+  return `${k} of ${c.cuts} random cuts kept at least as many commits inside one territory`;
+}
+
+function pct(x) { return x === null || x === undefined ? '?' : `${Math.round(x * 100)}%`; }
+
+// The score in lines, for the cut's own output and the plan's review brief.
+export function renderCutScore(score) {
+  if (!score) return ['(the cut has not been scored)'];
+  if (!score.scored) return [`not scored: ${score.why}`];
+  const lines = [];
+  if (score.commits) {
+    lines.push(`commits: ${score.commits.inside} of ${score.commits.total} that touched these territories stayed inside one (${pct(score.commits.share)})`
+      + (score.control && score.control.commitShareMean !== null ? `; random cuts along the directory tree: ${pct(score.control.commitShareMean)} on average` : ''));
+  } else {
+    lines.push('commits: not counted — this repository\'s history is not available to Grain');
+  }
+  lines.push(`imports: ${score.imports.inside} of ${score.imports.total} between these territories' files stay inside one (${pct(score.imports.share)})`
+    + (score.control && score.control.importShareMean !== null ? `; random cuts: ${pct(score.control.importShareMean)} on average` : ''));
+  if (score.pairs.inside !== null) {
+    lines.push(`component pairs the history changes together more often than chance: ${score.pairs.inside} inside one territory, ${score.pairs.crossing} across two`);
+  }
+  for (const c of score.crossing.slice(0, 5)) {
+    lines.push(`  across: ${c.a} (${c.territories[0]}) and ${c.b} (${c.territories[1]}) changed together in ${c.together} commits`);
+  }
+  if (score.unmapped.length) lines.push(`not scored (they map no file yet): ${score.unmapped.join(', ')}`);
+  lines.push(`advice: ${score.advice}`);
+  return lines;
+}
+
 function cutBrief(horde, root, cfg, info, charter) {
   const { display } = ygCommand(cfg);
   const classes = (cfg && cfg.classes) || {};
@@ -343,7 +492,9 @@ function cutBrief(horde, root, cfg, info, charter) {
     `${display} structure`,
     `${display} node <path>          # for every component you are about to place`,
     `${display} impact --node <path> # who depends on it`,
-    grain ? `${grain} map                # what this repository's own history says its shape is` : '# (no Grain CLI configured here — the repository\'s own history is not available for this)',
+    `${grain} map                # what this repository's own history says its shape is`,
+    `${grain} cochange --nodes <component>,<component> --level node --json   # which of them change together more often than chance`,
+    `${grain} cochange --partition '{"<territory>": ["<component>", …], …}' --level node   # how a cut you are weighing follows those seams`,
     '```',
     '',
     '## The mission',
@@ -362,6 +513,12 @@ function cutBrief(horde, root, cfg, info, charter) {
     '  component is two answers and no owner.',
     `- **It fits.** A territory is at most ${maxBytes} bytes of code, rules and component logs together.`,
     '  Over that, this is refused with the count broken down, and you cut finer.',
+    '- **It follows the seams.** Components this repository\'s own history changes together belong in one',
+    '  territory unless you have a reason; a cut across a seam is two consultants deciding one change.',
+    '  Weigh a cut with `cochange --partition` before you write it. When you hand it back it is scored the',
+    '  same way — how many commits that touched these territories stayed inside one, against random cuts',
+    '  along the directory tree — and the score goes in front of the plan\'s review. It is advice with its',
+    '  denominator; it never refuses a cut, and a component no commit has touched yet scores nothing.',
     '',
     '## What you hand back',
     '',
@@ -747,6 +904,14 @@ function reviewBrief(horde, team, charter, planFile, planText) {
     planText.trim(),
     '```',
     '',
+    '## How the cut follows this repository\'s history',
+    '',
+    'Measured by Grain when the cut was accepted — advice with its denominator, never a verdict. A seam',
+    'the cut crosses is a place two consultants each decided half of one change; read the tickets on',
+    'both sides of it with that in mind (question 5, collision).',
+    '',
+    ...renderCutScore(readJSON(cutScorePath(horde), null)).map((l) => `- ${l}`),
+    '',
     '## What you are ruling on',
     '',
     architectPlanQuestions(),
@@ -777,6 +942,9 @@ function reviewBrief(horde, team, charter, planFile, planText) {
 function stepCut(horde, flags) {
   const cfg = readConfig() || {};
   const info = resolveTree({ tree: flags.tree, horde: flags.horde });
+  // The architect measures with Grain, so the mission's first step after framing is where a
+  // repository without one stops — before a brief is handed out or a lease is taken.
+  requireGrain(cfg, grainHome(), { what: 'The cut' });
   const charter = readText(hordePath(horde, 'charter.md')) || '(no charter on file)';
   const path = territoriesPath(horde);
   const doc = readHandback(path, 'the cut');
@@ -808,6 +976,8 @@ function stepCut(horde, flags) {
   });
 
   const evidence = writeEvidenceJudgement(horde, info.path, cfg);
+  const score = scoreCut(horde, info.path, cfg, territories);
+  writeText(cutScorePath(horde), `${JSON.stringify(score, null, 2)}\n`);
 
   emit(withProvenance({
     step: 'cut',
@@ -818,11 +988,14 @@ function stepCut(horde, flags) {
     territories,
     leases: leases.map((l) => ({ territory: l.node, status: l.status })),
     evidenceLayer: evidence.layer,
+    score,
   }, info), flags, () => [
     `cut accepted: ${territories.length} territor${territories.length === 1 ? 'y' : 'ies'} (limit ${cfg.territory.maxBytes} bytes each)`,
     ...territories.map((t) => `  ${t.territory}  [${t.class}]  ${t.nodes.join(', ')}  — ${t.bytes.total} bytes (code ${t.bytes.code} · rules ${t.bytes.aspects} · logs ${t.bytes.logs})`),
     `leases taken: ${leases.map((l) => `${l.node} (${l.status})`).join(', ')}`,
     `evidence layer: ${evidence.layer.kind} — written into "${EVIDENCE_SECTION}" in ${evidence.path}`,
+    'how the cut follows this repository\'s history (Grain, advice only):',
+    ...renderCutScore(score).map((l) => `  ${l}`),
     provenanceLine(info),
   ].join('\n'));
 }

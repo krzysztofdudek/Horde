@@ -1429,8 +1429,9 @@ function cmdClose(horde, positional, flags) {
     fail(e.message);
   }
   append(path, `\n${rendered}`);
-  // The close reaches the client too: their page rewritten, and their hook told.
-  const report = refreshReport(horde, { cfg });
+  // The close reaches the client too: their page rewritten — with the mission's territory measured
+  // before and after, which only a close, done or a run by hand takes the time for — and their hook told.
+  const report = refreshReport(horde, { cfg, measure: true });
   const notified = notifyClient(horde, cfg, {
     event: 'wave-close', kind: 'wave', id: String(n), text: `wave ${n} closed — ${green}/${total} evidence rows proven, gate ${gate}`,
   });
