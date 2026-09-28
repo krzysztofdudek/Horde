@@ -56,6 +56,7 @@ between agents are doorbells that say "look at file X".
 - the server runs each command as its script, in the directory the host started it in — the session's own checkout, where you run the scripts anyway. A command that reads a tree takes `tree`, as an absolute path; a worker in its worktree passes it wherever the command takes it;
 - there is no stdin over MCP: `horde_horde_charter_edit` and `horde_tk_edit` take the text from the file `from` names (the CLI's `--from <file>`), written first to a scratch file;
 - the gate, a reviewer and Grain can run long: `horde_land`, `horde_tick`, `horde_horde_done` and a few more get an hour, every other tool ten minutes. `tick.mjs --watch` never ends on its own: run it in a terminal, never through the tool.
+- the server answers one call at a time, so a long call holds every other one, a worker's `horde_tk_log` through the same session included: while workers are out, land with `background: true`.
 
 ## Boot — every session, every wake-up, in this order
 

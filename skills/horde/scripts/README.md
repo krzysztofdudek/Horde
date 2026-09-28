@@ -222,7 +222,7 @@ A ticket is an issue of the mission's loop (`loop.mjs`): `.horde/hordes/<horde>/
 - `new <slug> --title "…" --node n --class light|standard|heavy|max [--severity high|medium|low]
   [--kind work|quality|prototype] [--no-quality] [--depends NNN,…] [--files a,b] [--consumes <node>/<port>,…]
   [--produces <node>/<port>,…] [--evidence "…"]… [--revert-base <ref>] [--mutate "<command>"]
-  [--reopens NNN]` —
+  [--reopens NNN] [--tree p]` —
   from `templates/ticket.md`; status `proposed`. `--node` takes one node, or two when the ticket carries a contract between them; three or more that hold code are refused — nothing in the graph answers for the whole of such a diff. A node that holds nothing but tests (every tracked file in its boundary matches `config.testGlobs`) does not count toward the two: a graph that keeps a component's tests in a node of their own would otherwise split every change to behaviour its tests pin into two tickets nobody can land green.
   `--revert-base` names the ref where the ticket's new tests must fail (a contract test
   is green on the team tip by design; its red base is e.g. `develop`); `land`'s revert-test item reads it, or
@@ -266,13 +266,13 @@ A ticket is an issue of the mission's loop (`loop.mjs`): `.horde/hordes/<horde>/
   produced by some ticket of this horde (its own team or another's) or already exist on that node in
   the graph — refused by name otherwise. Port existence is read through `node.mjs`'s graph reading,
   in one place, so a later change of where the graph comes from changes one function.
-  Both checks read the graph in the tree `new`/`edit` is run from (cwd) — `--horde` on either is only
+  Both checks read the graph in the tree `--tree p` names, else the tree `new`/`edit` is run from (cwd) — `--horde` on either is only
   the ticket-store disambiguator (which horde's `teams/` this ticket files under), never a tree
   switch, the same ordinary reading every `node.mjs` read takes (`queue.mjs plan`/`quality`,
   `tick.mjs` and `land.mjs` are where `--horde` written out alone also means the tip of trunk
   instead). A node the tree does not carry contributes
   no boundary and no port, so a ticket named against it is accepted uncontested rather than refused —
-  run `new`/`edit` from the tree whose graph state should decide the check, or land the graph change
+  run `new`/`edit` from (or name with `--tree`) the tree whose graph state should decide the check, or land the graph change
   there first.
 - `list [--state s] [--node n] [--team t] [--open]`, `show NNN [--log]`,
   `status NNN <state> ["note"]` (states: proposed queued running landed changes blocked merged

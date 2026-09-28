@@ -8,7 +8,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertParity, parityProblems } from '../vendor/runes/dist/testkit/parity.mjs';
@@ -17,7 +18,7 @@ import { listToolsOverStdio, startMcpClient } from '../vendor/runes/dist/testkit
 import { COMMANDS, GLOBAL_FLAGS, SCRIPTS, scriptOf } from '../commands.mjs';
 import * as mcp from '../mcp.mjs';
 import { parseArgs } from '../_lib.mjs';
-import { makeRepo, rmRepo, initHorde, run } from './helpers.mjs';
+import { makeRepo, rmRepo, initHorde, run, git, addNode } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const PLUGIN = join(SCRIPTS_DIR, '..', '..', '..');
@@ -262,5 +263,29 @@ test('over stdio: a refusal is an error result with the script\'s own reason; in
   } finally {
     await c.stop();
     rmRepo(dir);
+  }
+});
+
+test('over stdio: tk new reads the graph of the tree "tree" names, not the directory the server runs in', async () => {
+  const dir = makeRepo();
+  const wt = join(mkdtempSync(join(tmpdir(), 'horde-wt-')), 'side');
+  const c = await server(dir);
+  try {
+    initHorde(dir);
+    addNode(dir, 'core', { mapping: ['src/core/**'] });
+    git(['add', '--', '.yggdrasil'], dir);
+    git(['commit', '-qm', 'graph'], dir);
+    git(['worktree', 'add', '-q', '-b', 'side', wt, 'HEAD'], dir);
+    addNode(wt, 'core', { mapping: ['src/core/**', 'src/extra/**'] });
+    const fields = { title: 'Extra', node: ['core'], class: 'light', files: 'src/extra/a.ts', json: true };
+    const here = await c.call('horde_tk_new', { slug: 'here', ...fields });
+    assert.equal(here.result.isError, true, 'the server directory\'s graph puts src/extra outside core');
+    assert.match(textOf(here), /outside the boundary of core/);
+    const there = await c.call('horde_tk_new', { slug: 'there', ...fields, tree: wt });
+    assert.equal(there.result.isError, false, textOf(there));
+  } finally {
+    await c.stop();
+    rmRepo(dir);
+    rmRepo(dirname(wt));
   }
 });

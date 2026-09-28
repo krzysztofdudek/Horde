@@ -65,6 +65,7 @@ Finish a mission you started with an earlier Horde on that release: Horde does n
 
 - Every Horde command is now an MCP tool. Installing the plugin starts a server named `horde` by itself, with one tool per command of every script (`horde_tick`, `horde_tk_log`, `horde_queue_set`, `horde_land` and the rest, the writing ones included) and `horde_help` with the full usage. A tool runs the same script the command line does, so its answer, its refusals and its locks are the same. The skill now tells the director to call the tools first and use the command line when a session has none.
 - `horde.mjs charter edit` and `tk.mjs edit` take `--from <file>` to read the new text from a file instead of stdin, which is how the MCP tools pass it.
+- `tk.mjs new` and `tk.mjs edit` take `--tree <path>`: the tree whose graph decides the boundary and port checks, which before was always the directory the command ran in. A tool call runs in the server's directory, so it names the tree instead.
 - Every script reads a bare `--` as the end of its flags, so an argument that starts with `--` is taken as written.
 - `queue.mjs regate <ticket> --note "<why>"` asks the gate again at the same commit when you judge its last red was a flake, with no worker raised and no empty commit to move the branch. What the gate command printed on its last run is now kept, so you can tell a flake from a failure.
 - `decide.mjs add` takes `--by` and `--supersedes`: who ruled, and an earlier ruling this one replaces, which is then marked as replaced.

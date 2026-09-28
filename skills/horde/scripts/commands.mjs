@@ -127,7 +127,7 @@ export const COMMANDS = {
   tick: { flags: { runner: 'value', watch: 'bool', stack: 'bool', reclaim: 'value', tree: 'path' }, writes: true, summary: 'One run of the loop: reconcile, put ready branches through the gate, and list what to start now.' },
 
   // tk.mjs — tickets
-  'tk new': { args: ['slug'], flags: { title: 'value', node: 'many', class: 'value', severity: 'value', kind: 'value', 'no-quality': 'bool', depends: 'value', files: 'value', 'boundary-proposal': 'value', consumes: 'value', produces: 'value', evidence: 'many', 'revert-base': 'value', mutate: 'value', reopens: 'value', reverts: 'value', team: 'value' }, writes: true, summary: 'Files a ticket.' },
+  'tk new': { args: ['slug'], flags: { title: 'value', node: 'many', class: 'value', severity: 'value', kind: 'value', 'no-quality': 'bool', depends: 'value', files: 'value', 'boundary-proposal': 'value', consumes: 'value', produces: 'value', evidence: 'many', 'revert-base': 'value', mutate: 'value', reopens: 'value', reverts: 'value', tree: 'path', team: 'value' }, writes: true, summary: 'Files a ticket.' },
   'tk list': { flags: { state: 'value', node: 'value', open: 'bool', team: 'value' }, summary: 'Lists the tickets.' },
   'tk show': { args: ['ticket'], flags: { log: 'bool' }, summary: 'Shows a ticket, and its log with log.' },
   'tk status': { args: ['ticket', 'state', 'note?'], writes: true, summary: "Sets a ticket's status (changes counts a fix round)." },
@@ -136,7 +136,7 @@ export const COMMANDS = {
   'tk accept': { args: ['ticket'], flags: { sha256: 'value', by: 'value' }, writes: true, summary: "Records the client's acceptance of a prototype." },
   'tk review-close': { args: ['ticket'], flags: { by: 'value' }, writes: true, summary: "Writes a review's closing line, counting its findings." },
   'tk review-skip': { args: ['ticket', 'reason'], flags: { by: 'value' }, writes: true, summary: "The director's call that a raised review will not close." },
-  'tk edit': { args: ['ticket'], flags: { by: 'value', files: 'value', 'boundary-proposal': 'value', consumes: 'value', produces: 'value', evidence: 'many', depends: 'value', from: 'path' }, writes: true, summary: "Rewrites a ticket's body from the file from names, or changes its fields." },
+  'tk edit': { args: ['ticket'], flags: { by: 'value', files: 'value', 'boundary-proposal': 'value', consumes: 'value', produces: 'value', evidence: 'many', depends: 'value', from: 'path', tree: 'path' }, writes: true, summary: "Rewrites a ticket's body from the file from names, or changes its fields." },
   'tk move': { args: ['ticket'], flags: { team: 'value' }, writes: true, summary: 'Moves a ticket to another team.' },
 
   // wave.mjs — waves
