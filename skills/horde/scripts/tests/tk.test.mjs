@@ -1019,7 +1019,7 @@ test('tk.mjs new: a declared file with a Grain obligation outside the ticket\'s 
   const stub = join(dir, 'grain-stub.mjs');
   writeFileSync(stub, [
     "const argv = process.argv.slice(2);",
-    "if (argv[0] === '--version') { console.log('0.0.0-stub'); process.exit(0); }",
+    "if (argv[0] === 'version') { console.log('grain 6.1.0 · stub'); process.exit(0); }",
     "if (argv[0] === 'obligation') {",
     "  const path = argv[1];",
     "  const rules = path === 'src/api/handler.ts'",
@@ -1034,6 +1034,9 @@ test('tk.mjs new: a declared file with a Grain obligation outside the ticket\'s 
   ].join('\n'));
 
   await t.test('with no Grain configured, it says so and refuses nothing', () => {
+    // A config written before Grain was required names none; the tools no longer write one that way.
+    const cfgPath = join(dir, '.horde', 'config.json');
+    writeFileSync(cfgPath, JSON.stringify({ ...JSON.parse(readFileSync(cfgPath, 'utf8')), grainCommand: null }, null, 2));
     const r = run('tk.mjs', ['new', 'handler', '--title', 'handler', '--node', 'api', '--class', 'standard',
       '--files', 'src/api/handler.ts', '--evidence', 'it works'], dir);
     assert.equal(r.code, 0, r.stderr);

@@ -34,7 +34,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  run, findRealYg, git, initHorde, addNode, addAspect, MARKER_CHECK, makeRepo, rmRepo, issueFileOf,
+  run, findRealYg, git, initHorde, addNode, addAspect, MARKER_CHECK, makeRepo, rmRepo, issueFileOf, ticketIssuePath,
 } from './helpers.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -653,7 +653,8 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
       readFileSync(join(dir, '.horde', 'hordes', 'family', 'teams', 'trunk', 'issues', '001-order-discount', 'log.md'), 'utf8'),
       /landed 001 on family\/trunk as [0-9a-f]{7}/,
     );
-    assert.equal(run('tk.mjs', ['status', '001', 'merged'], dir).json.status, 'merged');
+    // The landing marked the ticket merged itself; no tool may say it by hand.
+    assert.match(readFileSync(ticketIssuePath(dir, 'family', '001'), 'utf8'), /^\*\*Status:\*\* merged$/m);
 
     // A catalogue row is filled by something the tool checks, never by a name typed into it: these
     // two rows name no kind of proof, so each is filled by a command the tool runs at the trunk

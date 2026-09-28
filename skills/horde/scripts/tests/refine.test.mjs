@@ -67,8 +67,17 @@ function fileTicket(dir, horde, args) {
 // already uses: started for real, answering each subcommand with something recognisable.
 const GRAIN_STUB = [
   "const argv = process.argv.slice(2);",
-  "if (argv[0] === '--version') { console.log('0.0.0-stub'); process.exit(0); }",
+  "if (argv[0] === 'version') { console.log('grain 6.1.0 · stub'); process.exit(0); }",
   "console.log('grain-stub answering: ' + argv.join(' '));",
+  '',
+].join('\n');
+
+// A Grain that answers nothing a brief reads: every question exits 3. A consultant's brief is scoped
+// to its own territory by Horde, and what Grain says about the whole repository is Grain's — so the
+// scoping tests below read a brief this one leaves without Grain's answers.
+const GRAIN_SILENT = [
+  "if (process.argv[2] === 'version') { console.log('grain 6.1.0 · silent'); process.exit(0); }",
+  'process.exit(3);',
   '',
 ].join('\n');
 
@@ -382,6 +391,9 @@ test('refine.mjs --step consult: one spawn per territory, each seeing only its o
   ]);
   writeTerritories(dir, 'm1', TWO_TERRITORIES);
   assert.equal(run('refine.mjs', ['--step', 'cut', '--horde', 'm1'], dir).code, 0);
+  const silent = join(dir, 'grain-silent.mjs');
+  writeFileSync(silent, GRAIN_SILENT);
+  assert.equal(run('horde.mjs', ['config', 'set', 'grainCommand', `node ${silent}`], dir).code, 0);
 
   const r = run('refine.mjs', ['--step', 'consult', '--horde', 'm1'], dir);
   assert.equal(r.code, 0, r.stderr);
@@ -462,9 +474,9 @@ test('refine.mjs --step consult: one spawn per territory, each seeing only its o
     }
   });
 
-  await t.test('without a Grain CLI the brief still renders, and says what is missing', () => {
+  await t.test('when Grain does not answer, the brief still renders, and says what is missing', () => {
     const front = r.json.spawns.find((s) => s.territory === 'the front door').brief;
-    assert.match(front, /no Grain CLI is configured/);
+    assert.match(front, /grain-silent\.mjs where .*did not run \(exit 3\)/);
     assert.match(front, /say in your\ntickets where you were guessing/);
   });
 
@@ -481,8 +493,7 @@ test('refine.mjs --step consult: one spawn per territory, each seeing only its o
     // component's directory with the extension the files there carry, never about the bare directory.
     assert.match(front, /grain-stub answering: obligation src\/auth\/new-file\.mjs/);
     assert.match(front, /What a new \.mjs file under /);
-    assert.doesNotMatch(front, /no Grain CLI is configured/);
-    assert.equal(run('horde.mjs', ['config', 'set', 'grainCommand', ''], dir).code, 0);
+    assert.doesNotMatch(front, /did not run/);
   });
 });
 
