@@ -11,6 +11,8 @@
 //   - the done guard: a ticket closes (merged) only on a recorded merge its base holds, with an
 //     evidence row — never by a status typed in;
 //   - Jarl's own resume shows the live mission: the tickets a worker holds, with their leases;
+//   - the mission's lifecycle is Horde's: Jarl's own close (which would delete the record for good)
+//     and archive (which would move a live mission away) refuse, naming horde.mjs done / archive;
 //   - a mission started by Horde 6.0.x (a horde directory with no loop) is refused by name.
 //
 // The record half runs through the vendored record.mjs with the caller Jarl's command line passes
@@ -20,13 +22,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   makeRepo, rmRepo, run, initHorde, git,
 } from './helpers.mjs';
 import * as R from '../vendor/jarl/skills/jarl/scripts/record.mjs';
+import * as JL from '../vendor/jarl/skills/jarl/scripts/jarl-lib.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -297,11 +300,84 @@ test('contract: the loop says queued for a ticket the director queued, and a loo
   assert.equal(statusOf(dir, direct), 'queued');
   assert.equal(statusOf(dir, proposed), 'proposed');
 
-  if (!JARL.ok) { t.diagnostic(`archive half skipped — ${JARL.reason}`); return; }
-  assert.equal(jarl(['archive', 'oops', '--root', loopOf(dir)], dir).code, 0);
+  // Jarl's own archive refuses a mission's loop now (the lifecycle contract below); a loop archived
+  // anyway — by a Jarl from before that, or by a library call — is what is named here.
+  JL.withLock(loopOf(dir), () => JL.cmdArchive(loopOf(dir), 'oops'));
   const r = run('tk.mjs', ['list'], dir);
   assert.notEqual(r.code, 0);
   assert.match(r.stderr, /Jarl's own archive or close was run on it/);
   assert.match(r.stderr, /\.jarl\/archive\/\d{4}\.\d{2}\.\d{2}-oops\//);
   assert.doesNotMatch(r.stderr, /6\.0\.x/);
+});
+
+// A mission's record lives in its loop: Jarl's own close on a finished mission deleted .jarl/ with no
+// way back (the loop is out of git), and Jarl's own archive moved a live mission out from under Horde.
+// The profile keeps both to Horde ("lifecycle"), so the command line and the MCP tools refuse, name
+// Horde's own commands and write nothing.
+test('contract: the mission\'s lifecycle is Horde\'s — Jarl\'s own close and archive refuse, naming horde.mjs done and archive', async (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const live = newTicket(dir, 'live');
+  const root = loopOf(dir);
+
+  await t.test('the profile keeps close and archive to the record, and names Horde\'s commands', () => {
+    const { lifecycle } = R.describeProfile(R.loadProfile(root));
+    assert.equal(lifecycle.close, 'record');
+    assert.equal(lifecycle.archive, 'record');
+    assert.match(lifecycle.command, /horde\.mjs done --horde <mission>.*horde\.mjs archive <mission>/);
+  });
+
+  await t.test('a close or archive made the way the command line makes it is refused, and nothing moves', () => {
+    assert.throws(() => JL.cmdClose(root, { caller: 'cli', force: true }), /never by jarl close.*run: Horde's horde\.mjs done/);
+    assert.throws(() => JL.cmdArchive(root, 'x', { caller: 'cli' }), /never by jarl archive.*run: Horde's horde\.mjs done/);
+    assert.ok(R.hasLiveLoop(root));
+    assert.equal(statusOf(dir, live), 'proposed');
+  });
+
+  await t.test('Jarl\'s own command line refuses both: archive on a live mission, close on a finished one', (tt) => {
+    if (!JARL.ok) { tt.skip(JARL.reason); return; }
+    const archived = jarl(['archive', 'oops', '--root', root], dir);
+    assert.equal(archived.code, 1, archived.stdout);
+    assert.match(archived.stderr, /never by jarl archive/);
+    assert.match(archived.stderr, /horde\.mjs archive <mission>/);
+    assert.ok(R.hasLiveLoop(root), 'the live mission stays where Horde keeps it');
+    R.setStatus(root, live, 'dropped', 'not needed', { caller: 'record' });
+    for (const args of [['close'], ['close', '--force']]) {
+      const closed = jarl([...args, '--root', root], dir);
+      assert.equal(closed.code, 1, closed.stdout);
+      assert.match(closed.stderr, /never by jarl close/);
+      assert.match(closed.stderr, /horde\.mjs done --horde <mission>/);
+    }
+    assert.ok(existsSync(join(root, '.jarl', 'issues')), 'the finished mission\'s record is still there');
+    assert.equal(statusOf(dir, live), 'dropped');
+  });
+});
+
+// A mission opened by an earlier build of this release holds a profile without "lifecycle", so Jarl's
+// own close and archive would still reach it. The director's tick brings the stored profile up to
+// Horde's: the keys it lacks are added, the ones it holds are left as they are, and the log says so.
+test('contract: a mission opened before a profile key existed gets it on the next tick, and keeps what it had', (t) => {
+  const dir = makeRepo();
+  t.after(() => rmRepo(dir));
+  initHorde(dir);
+  const root = loopOf(dir);
+  const stored = join(root, '.jarl', 'profile.json');
+  const old = JSON.parse(readFileSync(stored, 'utf8'));
+  delete old.lifecycle;
+  old['external-scheduler'] = 'an older wording of the scheduler line';
+  writeFileSync(stored, `${JSON.stringify(old, null, 2)}\n`);
+  assert.equal(R.describeProfile(R.loadProfile(root)).lifecycle.close, 'any');
+
+  run('tick.mjs', [], dir);
+  const now = JSON.parse(readFileSync(stored, 'utf8'));
+  assert.equal(now.lifecycle.close, 'record');
+  assert.equal(now.lifecycle.archive, 'record');
+  assert.equal(now['external-scheduler'], 'an older wording of the scheduler line', 'a key the mission holds is never rewritten');
+  assert.throws(() => JL.cmdClose(root, { caller: 'cli', force: true }), /never by jarl close/);
+  assert.match(readFileSync(join(root, '.jarl', 'log.md'), 'utf8'), /profile brought up to this Horde's: added lifecycle/);
+
+  const before = readFileSync(stored, 'utf8');
+  run('tick.mjs', [], dir);
+  assert.equal(readFileSync(stored, 'utf8'), before, 'a profile already up to date is not written again');
 });

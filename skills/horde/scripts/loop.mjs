@@ -68,6 +68,33 @@ export function openLoop(horde, goal) {
   return rec(() => R.initLoop(loopRoot(horde), goal, { profile: PROFILE_FILE }));
 }
 
+// A mission opened by an earlier build of this release keeps the profile it was opened with, and a key
+// added to Horde's profile since (the lifecycle that keeps Jarl's own close and archive off a mission)
+// would never reach it. So the director's tick brings the stored profile up to Horde's: every top-level
+// key the stored one lacks is added, as Horde's profile has it; a key the mission already holds is never
+// changed, since its tickets were filed under it. The result is checked as a profile before it is
+// written, and the loop's log names the keys added. Returns the keys added (none: nothing written).
+export function refreshProfile(horde) {
+  if (!hasLoop(horde)) return [];
+  const root = loopRoot(horde);
+  const stored = join(loopDir(horde), 'profile.json');
+  if (!existsSync(stored)) return [];
+  const added = rec(() => R.withLock(root, () => {
+    const current = JSON.parse(readText(PROFILE_FILE));
+    let own;
+    try { own = JSON.parse(readText(stored)); } catch { return []; }
+    const missing = Object.keys(current).filter((k) => !(k in own));
+    if (!missing.length) return [];
+    const next = { ...own };
+    for (const k of missing) next[k] = current[k];
+    R.validateProfile(next, stored);
+    R.writeAtomic(stored, `${JSON.stringify(next, null, 2)}\n`);
+    return missing;
+  }));
+  if (added.length) rec(() => R.appendLog(root, `profile brought up to this Horde's: added ${added.join(', ')}`));
+  return added;
+}
+
 export function withLoopLock(horde, fn) {
   return rec(() => R.withLock(loopRoot(horde), fn));
 }

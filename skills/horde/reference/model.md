@@ -276,7 +276,9 @@ file ever conflicts in a merge.
                                     architect at `refine.mjs --step cut`
     review.json                     the architect's plan ruling, written at `refine.mjs --step review`; set aside as review.applied-<time>.json once applied
     .jarl/                          the mission's record: a Jarl loop opened with Horde's profile
-      profile.json                  (scripts/jarl-profile.json) — Jarl's own tools read it as any loop
+      profile.json                  (scripts/jarl-profile.json) — Jarl's own tools read it as any loop;
+                                    its "lifecycle" makes Jarl's close and archive refuse the mission;
+                                    tick.mjs adds any key Horde's profile has and this copy lacks
       goal.md                       the mission's line and the check it lands through
       issues/NNN-<slug>.md          a ticket: status, node, class, files, ports, evidence, spec, acceptance
       decisions.md                  rulings (decide.mjs) and the client's answers (ask-NNN)
