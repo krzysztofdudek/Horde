@@ -254,7 +254,7 @@ export const BUILTIN_STATUSES = {
 export const PROFILE_VERSION = 1;
 // The keys a profile file may hold. A key this list does not name is refused, so a profile written for a later
 // Jarl fails loudly here instead of being half-read.
-export const PROFILE_KEYS = ['jarl-profile', 'format', 'name', 'statuses', 'initial', 'fields', 'sections', 'acceptance-heading', 'external-scheduler', 'done-gate'];
+export const PROFILE_KEYS = ['jarl-profile', 'format', 'name', 'statuses', 'initial', 'fields', 'sections', 'acceptance-heading', 'external-scheduler', 'done-gate', 'lifecycle'];
 export const PROFILE_FIELD_KEYS = ['enum', 'default', 'required'];
 // A status written as an object instead of a list of flags: { "flags": [...], "set-by": "record" | "any" }.
 export const PROFILE_STATUS_KEYS = ['flags', 'set-by'];
@@ -262,6 +262,13 @@ export const PROFILE_STATUS_KEYS = ['flags', 'set-by'];
 // ('record') — the command line and the MCP tools are refused, so a composer's own gate (a veto held by one of its roles) cannot
 // be walked around with a set.
 export const SET_BY = ['any', 'record'];
+// Who may end the loop itself: "lifecycle": { "close": "any" | "record", "archive": "any" | "record", "command": "<the
+// composer's own command>" }. 'record' refuses jarl close / jarl archive and their MCP tools (caller 'cli') and names the
+// command, so the record of a loop a composer keeps (Horde's mission) is never removed or moved out from under it by
+// Jarl's own lifecycle; a library caller (caller 'record') still may. The same two words as "set-by".
+export const LIFECYCLE_KEYS = ['close', 'archive', 'command'];
+export const LIFECYCLE_OPS = ['close', 'archive'];
+export const DEFAULT_LIFECYCLE = Object.freeze({ close: 'any', archive: 'any', command: null });
 // The format of the record (the issue files, the log, the rulings) this Jarl reads and writes. A profile may state the
 // format it was written for; one this Jarl does not know is refused before anything else, so a vendored copy and an
 // installed Jarl that drifted apart stop loudly instead of half-reading each other's loop.
@@ -406,13 +413,26 @@ export function validateProfile(json, where = 'the profile') {
       if (bad.length === before) doneGate = Object.freeze(gate);
     }
   }
+  // lifecycle: { "close": "any" | "record", "archive": "any" | "record", "command": "<one line>" }.
+  let lifecycle = DEFAULT_LIFECYCLE;
+  if (json.lifecycle !== undefined) {
+    const l = json.lifecycle;
+    if (!isObj(l)) say('"lifecycle" is an object: { "close": "any" | "record", "archive": "any" | "record", "command": "<the composer\'s command that closes or archives this loop>" }');
+    else {
+      const before = bad.length;
+      for (const k of Object.keys(l)) if (!LIFECYCLE_KEYS.includes(k)) say(`"lifecycle": unknown key "${k}" — it takes ${LIFECYCLE_KEYS.join(', ')}`);
+      for (const op of LIFECYCLE_OPS) if (l[op] !== undefined && !SET_BY.includes(l[op])) say(`"lifecycle": "${op}" is one of ${SET_BY.join(', ')} (record: jarl ${op} and its MCP tool refuse, and the composer does it with its own command)`);
+      if (l.command !== undefined && (!oneLine(l.command) || l.command.length > 200)) say('"lifecycle": "command" is the one-line command (at most 200 characters) that closes or archives this loop instead, named by the refusal');
+      if (bad.length === before) lifecycle = Object.freeze({ close: l.close ?? 'any', archive: l.archive ?? 'any', command: l.command === undefined ? null : l.command.trim() });
+    }
+  }
   if (bad.length) throw new Error(`${where} is not a valid profile:\n- ${bad.join('\n- ')}`);
-  return makeProfile({ name: json.name || 'custom', statuses: statuses.map((s) => [s, [...flagsOf.get(s)]]), initial, fields, sections, acceptance, declared: true, setBy, scheduler, doneGate, format: json.format ?? RECORD_FORMAT });
+  return makeProfile({ name: json.name || 'custom', statuses: statuses.map((s) => [s, [...flagsOf.get(s)]]), initial, fields, sections, acceptance, declared: true, setBy, scheduler, doneGate, lifecycle, format: json.format ?? RECORD_FORMAT });
 }
 
 // The profile as the tool reads it: flags looked up by status, the values Kind and Tier may take and their defaults,
 // the declared fields in order.
-function makeProfile({ name, statuses, initial, fields = [], sections = [], acceptance = null, declared, setBy = new Map(), scheduler = null, doneGate = DEFAULT_DONE_GATE, format = RECORD_FORMAT }) {
+function makeProfile({ name, statuses, initial, fields = [], sections = [], acceptance = null, declared, setBy = new Map(), scheduler = null, doneGate = DEFAULT_DONE_GATE, lifecycle = DEFAULT_LIFECYCLE, format = RECORD_FORMAT }) {
   const flags = new Map(statuses.map(([s, f]) => [s, new Set(f)]));
   const kind = fields.find((f) => f.key === 'kind');
   const tier = fields.find((f) => f.key === 'tier');
@@ -422,6 +442,8 @@ function makeProfile({ name, statuses, initial, fields = [], sections = [], acce
     name, declared, initial, sections, acceptance,
     // The record format, the command of an external scheduler (null: next and queue compute their own), the done gate.
     format, scheduler, doneGate,
+    // Who may close and archive the loop ('any', or 'record': never jarl close / archive), and the composer's command.
+    lifecycle,
     statuses: statuses.map(([s]) => s),
     kinds, kindDefault: kind && kind.default ? kind.default : kinds[0],
     tiers, tierDefault: tier && tier.default ? tier.default : tiers[0],
@@ -481,7 +503,7 @@ export function describeProfile(p) {
     statuses: p.statuses.map((s) => ({ name: s, flags: p.flagsOf(s), ...(p.setBy(s) !== 'any' ? { setBy: p.setBy(s) } : {}) })),
     fields: p.declaredFields ? p.declaredFields.map((f) => ({ name: f.name, enum: f.enum, default: f.default, required: f.required })) : [],
     kinds: p.kinds, tiers: p.tiers, sections: p.sections, acceptanceHeading: p.acceptance || 'Acceptance',
-    format: p.format, externalScheduler: p.scheduler, doneGate: { ...p.doneGate },
+    format: p.format, externalScheduler: p.scheduler, doneGate: { ...p.doneGate }, lifecycle: { ...p.lifecycle },
   };
 }
 export function renderProfile(d) {
@@ -494,6 +516,8 @@ export function renderProfile(d) {
   if (d.acceptanceHeading !== 'Acceptance') lines.push(`acceptance heading: ${d.acceptanceHeading}`);
   if (d.externalScheduler) lines.push(`external scheduler: ${d.externalScheduler} (next and queue show it instead of their own list)`);
   if (d.doneGate.approve !== 'fresh' || d.doneGate['requires-merged']) lines.push(`done gate: approve ${d.doneGate.approve}${d.doneGate['requires-merged'] ? ' · requires a merge in the base' : ''}`);
+  const kept = LIFECYCLE_OPS.filter((op) => d.lifecycle[op] === 'record');
+  if (kept.length) lines.push(`lifecycle: ${kept.join(' and ')} by the record only, never jarl ${kept.join(' / ')}${d.lifecycle.command ? ` — ${d.lifecycle.command}` : ''}`);
   lines.push(`record format: ${d.format}`);
   return lines.join('\n');
 }
@@ -868,9 +892,10 @@ const ARCHIVE_KEEPS = new Set(['archive', 'templates', '.gitignore', '.gitattrib
 // can be opened here with init. Everything but the archive and the mode markers moves: issues, goal,
 // decisions, log, handoff. Open work is not a refusal (archiving is how a session sets old work
 // aside), but the result names it, and the loop's own log records the move before it goes.
-export function cmdArchive(root, slug) {
+export function cmdArchive(root, slug, flags = {}) {
   need(slug, 'archive requires "<slug>" — a short name for the loop being put away');
   need(hasLiveLoop(root), existsSync(jarlDir(root)) ? 'no loop to archive here — .jarl/ holds only earlier archives; open one with: jarl.mjs init "<goal>"' : 'no .jarl/ here');
+  needLifecycle(root, 'archive', flags.caller);
   const name = `${today().replace(/-/g, '.')}-${slugify(slug)}`;
   const dest = join(jarlDir(root), 'archive', name);
   need(!existsSync(dest), `.jarl/archive/${name} already exists — pick another slug`);
@@ -1635,8 +1660,18 @@ export function cmdMode(root, mode) {
   return { permanent: true };
 }
 
-export function cmdClose(root, flags) {
+// A loop whose profile keeps close or archive to the record ("lifecycle") refuses them from the command line and the
+// MCP tools (caller 'cli'), naming the composer's command; a library caller ('record', the default) passes.
+export function needLifecycle(root, op, caller = 'record') {
+  need(SET_CALLERS.includes(caller), `caller must be one of: ${SET_CALLERS.join(', ')} (got "${caller}")`);
+  if (caller !== 'cli') return;
+  const profile = loadProfile(root);
+  need(profile.lifecycle[op] !== 'record', `this loop is ${op === 'close' ? 'closed' : 'archived'} by the tool that runs it, never by jarl ${op} — its profile (${profile.name}) marks "lifecycle": { "${op}": "record" }, so jarl ${op} and the MCP tools refuse, and nothing was ${op === 'close' ? 'closed or removed' : 'moved'}${profile.lifecycle.command ? `; run: ${profile.lifecycle.command}` : ''}`);
+}
+
+export function cmdClose(root, flags = {}) {
   needLiveLoop(root, '');
+  needLifecycle(root, 'close', flags.caller);
   // --batch files the ratification batch and closes nothing, so the user can answer it before the loop goes.
   if (flags.batch) return { closed: false, batch: ratificationBatch(root) };
   const profile = loadProfile(root);
