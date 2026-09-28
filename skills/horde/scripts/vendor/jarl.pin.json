@@ -1,7 +1,7 @@
 {
   "source": "https://github.com/krzysztofdudek/JarlSkill.git",
-  "ref": "jarl/505-lifecycle-guard",
-  "commit": "aef6736b05b0516bd7259e22cd017d7034f8e74e",
+  "ref": "release/6.1.0",
+  "commit": "9a8074f0e7b36e94f972b45f4b1f608be52d9a00",
   "api": "jarl-record/1",
   "dest": "jarl",
   "paths": [
