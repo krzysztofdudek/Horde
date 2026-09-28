@@ -361,7 +361,7 @@ runs, a commit or push hook, a CI workflow. Requires `--aspect`, naming that one
 id, `evidence:<promise or test file>`, or `gate:<path>`), and `charter` (a mission-card change: the
 goal, an exclusion, an evidence-catalogue row). A build decision — a contract, a boundary, a conflict between
 two tickets —
-is yours, not the client's; rule on it and record it with `decide.mjs add`. A ruling is complete when
+is yours, not the client's; rule on it and record it with `decide.mjs add`. A ruling about one component takes `--node <path>`: its why, written into that node's own log when the mission is done, needing nobody's consent. A ruling that every file of one type has to follow — would an agent touching another file of that type need to know it? only the thick ones pass — takes `--area <type> --reach <files>` (and `--rule <id>` when it admits a rule of the graph on that type): it binds the mission at once, and enters the type's decisions only when the client ratifies it. Put those to the client with `decide.mjs ratify` — one batch, at most ten, widest reach first, each answered with one word (`ask.mjs answer <a-id> "tak"` or `"nie"`) — at a wave close or before `done`; an unanswered one never holds anything and stays a ruling of the mission. A ruling is complete when
 a worker can execute it without coming back: before approving a
 mapping read the node's type in `yg-architecture.yaml` and check the file against the type's
 `when:` globs — under a strict type a mapping the globs do not admit is refused, and that `when:`
@@ -399,7 +399,7 @@ ask. Only what ran counts: a catalogue row is filled by what the tool checks (`w
 answered ask naming the row for client testimony, a file the trunk carries for an artifact, and for
 anything else the command the row itself states, which the tool runs), never by a name you type — a
 cell typed into the charter is taken as text and refused by `done`. What the tools record (`evidence.json`, `cache/last-gate.json`) is a record, never a proof: `done` runs every command row's command and the trunk gate again at the trunk tip, and only what passes then counts. `horde.mjs done` is the gate
-itself: it refuses, listing every reason, until all three hold, then
+itself: it refuses, listing every reason, until all three hold, then writes what the mission decided about code into the graph's logs — every node ruling, and every area ruling the client ratified — as one commit of log entries on the trunk over the tip the gate passed (what yg refuses is named with the command to run by hand, and holds nothing), then
 stamps the charter, appends the completion block to the mission journal, archives the horde, and tells
 you what to do next. Only then do you present it to the user with the branch name. The pull request and
 the push are theirs.

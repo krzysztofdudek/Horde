@@ -183,9 +183,13 @@ export function loopAsks(horde) {
   return rec(() => R.loadAsks(loopRoot(horde)));
 }
 
-export function fileLoopAsk(horde, question, { kind, target, issue } = {}) {
+// `ruling` (kind ratify only) names the area ruling the question puts to the client: its answer marks
+// that ruling ratified or rejected (decide.mjs ratify).
+export function fileLoopAsk(horde, question, {
+  kind, target, issue, ruling,
+} = {}) {
   return rec(() => R.ask(loopRoot(horde), question, {
-    kind, ...(target ? { target } : {}), ...(issue ? { issue } : {}),
+    kind, ...(target ? { target } : {}), ...(issue ? { issue } : {}), ...(ruling ? { ruling } : {}),
   }));
 }
 

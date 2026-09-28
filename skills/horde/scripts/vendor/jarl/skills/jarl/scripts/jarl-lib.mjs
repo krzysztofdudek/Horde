@@ -2748,7 +2748,15 @@ export function cmdAsk(root, question, flags) {
   const id = String(asks.reduce((m, a) => Math.max(m, Number(a.id)), 0) + 1).padStart(3, '0');
   const path = asksPath(root);
   const target = kind === 'lower' ? ` · target ${flags.target}` : '';
-  // flags.ruling is not a flag of the command line: only the close's ratification batch passes it.
+  // flags.ruling is not a flag of the command line: the close's ratification batch passes it, and so may a composer
+  // filing its own batch (record.mjs ask). It names an area ruling in force that no item has asked about yet.
+  if (flags.ruling !== undefined) {
+    need(kind === 'ratify', `a question naming a ruling is that ruling's ratification item — kind ratify (got "${kind}")`);
+    const d = loadDecisions(root).find((x) => x.slug === String(flags.ruling));
+    need(d && d.area, `no area ruling ${flags.ruling} in decisions.md to put to ratification`);
+    need(!d.supersededBy && !d.ratified && !d.rejected, `${flags.ruling} is ${d.supersededBy ? `superseded by ${d.supersededBy}` : d.ratified ? 'already ratified' : 'already rejected'} — nothing to ratify`);
+    need(!loadAsks(root).some((x) => x.ruling === d.slug), `${flags.ruling} has been put to ratification already`);
+  }
   const ruling = kind === 'ratify' && flags.ruling ? ` · ruling ${flags.ruling}` : '';
   appendAtomic(path, '# Questions to the user\n\n', `- **a-${id}** (open) · ${kind}${target}${flags.issue ? ` · issue ${String(flags.issue).padStart(3, '0')}` : ''}${ruling} · ${question}\n`);
   appendLog(root, `asked a-${id} (${kind}) · ${question}`);

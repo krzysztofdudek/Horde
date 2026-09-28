@@ -1,7 +1,7 @@
 {
   "source": "https://github.com/krzysztofdudek/JarlSkill.git",
-  "ref": "release/6.1.0",
-  "commit": "9a8074f0e7b36e94f972b45f4b1f608be52d9a00",
+  "ref": "jarl/436-node-log",
+  "commit": "49f70751ac2b83a81169d023cf05f989be0d13c5",
   "api": "jarl-record/1",
   "dest": "jarl",
   "paths": [
@@ -9,7 +9,7 @@
     "skills/jarl/scripts/jarl-lib.mjs"
   ],
   "files": {
-    "skills/jarl/scripts/record.mjs": "d12f921df6914a917b8be568b9c5eb156dcf91beb1890f0d0062e611452ba51a",
-    "skills/jarl/scripts/jarl-lib.mjs": "ca53ea40e3fe669099bf45916e77cfb2fa04724f1aa99490ce4aa2602b9afc09"
+    "skills/jarl/scripts/record.mjs": "6cdb271fe43cceba8c3a998d4f96ed2de948fdf51fe3e6a654b82eb4e7c17857",
+    "skills/jarl/scripts/jarl-lib.mjs": "6c735ff50f3ed41123fa4ecc02be76b9bbc96c8bd8223f7bea7ea0b068f713f0"
   }
 }

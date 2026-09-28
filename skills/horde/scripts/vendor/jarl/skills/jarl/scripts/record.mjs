@@ -125,13 +125,18 @@ export function recordMerged(root, ids, opts = {}) { return write(root, () => L.
 export function addRound(root, id, what) { return write(root, () => L.cmdRound(root, id, what)); }
 // opts { by, supersedes, settles, area, reach, rule }.
 export function decide(root, slug, ruling, opts = {}) { return write(root, () => L.cmdDecide(root, slug, ruling, opts)); }
-// opts { kind, target, issue }.
+// opts { kind, target, issue, ruling }. ruling (the slug of an area ruling in force, with kind ratify) makes the question
+// that ruling's ratification item — what close's batch files, and what a composer files for a batch of its own — so its
+// answer marks the ruling ratified or rejected. A ruling already asked about, ratified, rejected or superseded is refused.
 export function ask(root, question, opts = {}) { return write(root, () => L.cmdAsk(root, question, opts)); }
 // A ratify item from the close's batch names an area ruling: its answer starts with yes or reject and marks that ruling
 // Ratified or Rejected; the result then carries { ruling, verdict, typeDecision, typeLog, ruleRatification, ruleLog }.
 // A ratified area ruling's typeDecision ({ type, text, supersedes }) is the entry for the type's decision log, and its
 // ruleRatification ({ rule, text }, when the ruling names a rule) the ratification for that rule's own log: the command
 // line writes both (yg-edge.mjs); this library never does, so a composer writes them with its own code or leaves them.
+// The command line leaves them to the composer too on a loop whose profile keeps close to the record (lifecycle): its
+// answer says so as a skipped write. decisions() tells a composer what is written already: typeLog and ruleLog, set
+// once the entry is in the graph's log (the **Type log:** and **Rule log:** fields a writer adds to the ruling).
 export function answer(root, id, text) { return write(root, () => L.cmdAnswer(root, id, text)); }
 export function appendLog(root, event) {
   return write(root, () => { L.need(event, 'log requires "<event>"'); L.appendLog(root, event); return { logged: event }; });
