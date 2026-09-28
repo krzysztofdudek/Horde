@@ -29,7 +29,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync,
+  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -37,6 +37,7 @@ import { fileURLToPath } from 'node:url';
 import {
   run, findRealYg, git, initHorde, addNode, addAspect, MARKER_CHECK, makeRepo, rmRepo, issueFileOf, ticketIssuePath,
 } from './helpers.mjs';
+import { splitCommandLine, programFor } from '../_lib.mjs';
 
 const SCRIPTS_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -53,9 +54,11 @@ function asCommandLine(raw) {
 // Runs a command line and hands back its exit code and output — the probe both builds are found
 // with, and the way this test invokes them for real afterwards.
 function runCommandLine(cmdline, args, opts = {}) {
-  const parts = cmdline.split(/\s+/);
+  // Split the way the tools split a configured command line: a quoted path with a space in it (a
+  // Windows install location) stays one word, and on Windows an npm .cmd shim runs as node on its script.
   try {
-    const out = execFileSync(parts[0], [...parts.slice(1), ...args], {
+    const { cmd, prefix } = programFor(splitCommandLine(cmdline));
+    const out = execFileSync(cmd, [...prefix, ...args], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts,
     });
     return { code: 0, out };
@@ -127,6 +130,35 @@ function findGrain() {
 
 const YG = findYg();
 const GRAIN = findGrain();
+
+// Grain reads YG_BIN as a FILE it runs with node (a built bin.js), never as a command line: a value
+// that is not a file on disk means "no Yggdrasil" to it, so it drills nothing and every rule it mines
+// ships as an untried draft. The Yggdrasil this suite found is a command line — `node <bin.js>` from
+// HORDE_TEST_YG or a sibling build, or a bare `yg` on PATH (CI links one there). This hands Grain the
+// script that command line runs: the node argument as it stands, or the file `yg` on PATH resolves to
+// (npm's link is a symlink onto the bin.js, and on Windows programFor reads the .cmd shim's script). A
+// launcher that is not a script is left for Grain to find on PATH itself, with YG_BIN cleared.
+function ygScriptFor(cmdline) {
+  const { cmd, prefix } = programFor(splitCommandLine(cmdline));
+  const isScript = (p) => /\.(mjs|cjs|js)$/i.test(p || '') && existsSync(p);
+  if (prefix.length && isScript(prefix[0])) return resolve(prefix[0]);
+  let found = cmd;
+  if (!/[\\/]/.test(found)) {
+    try {
+      found = execFileSync(process.platform === 'win32' ? 'where' : 'which', [found], {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim().split(/\r?\n/)[0];
+    } catch { return null; }
+  }
+  try { found = realpathSync(found); } catch { return null; }
+  return isScript(found) ? found : null;
+}
+function grainEnvFor(cmdline) {
+  const env = { ...process.env };
+  const script = ygScriptFor(cmdline);
+  if (script) env.YG_BIN = script; else delete env.YG_BIN;
+  return env;
+}
 
 // ---- the fixture repository --------------------------------------------------------------
 
@@ -306,7 +338,7 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     // YG_BIN is how Grain finds a Yggdrasil to drill its candidate rules against; without one it
     // would still write a proposal, but every rule in it would be a draft nobody tried.
     const proposed = runCommandLine(GRAIN.cmd, ['propose', '.yggdrasil-proposal'], {
-      cwd: dir, env: { ...process.env, YG_BIN: YG.cmd.replace(/^node\s+/, '') },
+      cwd: dir, env: grainEnvFor(YG.cmd),
     });
     assert.equal(proposed.code, 0, `grain propose exited ${proposed.code}:\n${proposed.out}`);
 
@@ -335,6 +367,11 @@ test('E18 — the family end to end: a bare repository, a mined graph, a merged 
     // rule arrives as a proposal about how the code is already written, and only a convention Grain
     // certified, whose drill a real Yggdrasil passed, arrives enforced. The dated history is what
     // lets Grain certify one here at all; the count says it did.
+    // First the precondition, so a Grain that found no Yggdrasil to drill against says that rather
+    // than looking like a Grain that measured the history and certified nothing.
+    assert.ok(proposal.counts.aspectsVerifiedAgainst,
+      `Grain drilled no rule against a Yggdrasil (YG_BIN handed to it: ${grainEnvFor(YG.cmd).YG_BIN ?? 'none'}; `
+        + `the suite's Yggdrasil: ${YG.cmd}): ${JSON.stringify(proposal.counts)}`);
     assert.ok(proposal.counts.aspectsActive >= 1,
       `Grain certified no convention in the fixture: ${JSON.stringify(proposal.counts)}`);
     const aspectsDir = join(dir, '.yggdrasil', 'aspects');

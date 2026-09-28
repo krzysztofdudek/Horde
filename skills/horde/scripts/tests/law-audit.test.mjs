@@ -90,6 +90,13 @@ function graphFixture(dir, ygCommand, { reviewBy = '2020-01-01', hotSpot = true 
 
   git(['add', '-A'], dir);
   git(['commit', '-qm', 'the graph and the code it governs'], dir);
+  if (hotSpot) {
+    // A hot spot is code that keeps changing: Yggdrasil 6.1.0 names an unguarded one only when its files
+    // changed in at least two commits of the window, so billing gets its second change here.
+    write(dir, 'billing.mjs', 'export const price = 2;\n');
+    git(['add', '-A'], dir);
+    git(['commit', '-qm', 'billing: the price moves'], dir);
+  }
   git(['branch', '-f', 'develop', 'HEAD'], dir);
 }
 
