@@ -8,39 +8,46 @@ import assert from 'node:assert/strict';
 import {
   chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import {
   makeRepo, rmRepo, run, requireYg, requireGrain, git, initHorde, addNode, ygInit,
 } from './helpers.mjs';
+import { splitCommandLine } from '../_lib.mjs';
 
 // The real Yggdrasil as a node script path. The smoke mission named its build with `--yg "node
 // <bin.js>"`; the suite's own may be `yg` on PATH, which is resolved to the script it links to.
 function ygScript() {
-  const line = requireYg();
-  const m = /^node\s+(\S+)$/.exec(line.trim());
-  if (m) return m[1];
-  const found = execFileSync('which', [line.trim()], { encoding: 'utf8' }).trim();
+  const words = splitCommandLine(requireYg());
+  if (words.length === 2 && /(^|[\\/])node(\.exe)?$/i.test(words[0])) return words[1];
+  const found = execFileSync(process.platform === 'win32' ? 'where' : 'which', [words[0]], { encoding: 'utf8' }).trim().split(/\r?\n/)[0];
   return realpathSync(found);
 }
 
 // A stand-in for an older Yggdrasil first on PATH, answering the root-parent probe the way 6.0.0
-// did: `root` in `parents:` is an undefined type.
+// did: `root` in `parents:` is an undefined type. A node script, started through a shell wrapper
+// elsewhere and through an npm-style `.cmd` shim on Windows, the way Grain finds `yg` there.
 function oldYgOnPath(dir) {
   const bin = join(dir, '.old-yg-bin');
   mkdirSync(bin, { recursive: true });
-  writeFileSync(join(bin, 'yg'), [
-    '#!/bin/sh',
-    'case "$1" in',
-    '  --version) echo 6.0.0 ;;',
-    '  check) echo \'{"issues":[{"code":"type-unknown-parent"}]}\' ;;',
-    '  *) echo "old yg: $*" >&2; exit 1 ;;',
-    'esac',
+  writeFileSync(join(bin, 'old-yg.mjs'), [
+    'const [cmd] = process.argv.slice(2);',
+    "if (cmd === '--version') console.log('6.0.0');",
+    "else if (cmd === 'check') console.log(JSON.stringify({ issues: [{ code: 'type-unknown-parent' }] }));",
+    "else { console.error('old yg: ' + process.argv.slice(2).join(' ')); process.exit(1); }",
     '',
   ].join('\n'));
-  chmodSync(join(bin, 'yg'), 0o755);
+  if (process.platform === 'win32') {
+    writeFileSync(join(bin, 'yg.cmd'), '@node "%~dp0\\old-yg.mjs" %*\r\n');
+  } else {
+    writeFileSync(join(bin, 'yg'), `#!/bin/sh\nexec node "${join(bin, 'old-yg.mjs')}" "$@"\n`);
+    chmodSync(join(bin, 'yg'), 0o755);
+  }
   return bin;
 }
+
+// The environment's own name for PATH (`Path` on Windows), so the stand-in goes first on the one the child reads.
+const PATH_KEY = Object.keys(process.env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
 
 // The smoke mission's repository: strings and math helpers with their tests, built over nine
 // commits, no graph.
@@ -97,12 +104,18 @@ export function makeToyRepo() {
 test('519 — init with --yg naming a build while an older yg sits on PATH mines a graph that is adopted and committed before the trunk', async (t) => {
   const grain = requireGrain();
   const script = ygScript();
+  // The suite's `yg` may be a wrapper of some other kind (a shell script) rather than the node script
+  // npm links; `--yg "node <script>"` then has nothing to name.
+  if (!/\.[cm]?js$/i.test(script) && !/^#!.*\bnode\b/.test(readFileSync(script, 'utf8').split('\n')[0])) {
+    t.skip(`the suite's Yggdrasil (${script}) is not a node script, so it cannot be named as --yg "node <script>"`);
+    return;
+  }
 
   await t.test('on the base branch: the graph is committed there and the trunk is cut after it', () => {
     const dir = makeToyRepo();
     t.after(() => rmRepo(dir));
     const oldBin = oldYgOnPath(dir);
-    const env = { PATH: `${oldBin}:${process.env.PATH}`, YG_BIN: '' };
+    const env = { [PATH_KEY]: `${oldBin}${delimiter}${process.env[PATH_KEY]}`, YG_BIN: '' };
     const r = run('horde.mjs', ['init', 'truncate', '--base', 'main', '--yg', `node ${script}`, '--grain', grain, '--test-globs', '**/*.test.*'], dir, { env });
     assert.equal(r.code, 0, r.stderr);
     assert.equal(r.json.graph.created, true);
@@ -123,7 +136,7 @@ test('519 — init with --yg naming a build while an older yg sits on PATH mines
     const dir = makeToyRepo();
     t.after(() => rmRepo(dir));
     const oldBin = oldYgOnPath(dir);
-    const env = { PATH: `${oldBin}:${process.env.PATH}`, YG_BIN: '' };
+    const env = { [PATH_KEY]: `${oldBin}${delimiter}${process.env[PATH_KEY]}`, YG_BIN: '' };
     git(['branch', '-f', 'develop', 'main'], dir);
     const developBefore = git(['rev-parse', 'develop'], dir);
     const r = run('horde.mjs', ['init', 'truncate', '--base', 'develop', '--yg', `node ${script}`, '--grain', grain, '--test-globs', '**/*.test.*'], dir, { env });
