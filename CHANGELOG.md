@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [6.1.1] - 2026-10-13
+
+Needs Yggdrasil 6.1.0 or newer and Grain 6.1.0 or newer.
+
+### Fixed
+- Horde's tools now start in Cursor, from an entry of the plugin made for Cursor.
+- GitHub Copilot now lists the horde skill. Its description was written in a form Copilot could not read, so Copilot left the skill out while Claude Code accepted it.
+
 ## [6.1.0] - 2026-09-29
 
 Needs Yggdrasil 6.1.0 or newer and Grain 6.1.0 or newer; Horde names the release to install when it finds an older one.
@@ -206,7 +214,8 @@ Experimental. This version needs a Yggdrasil newer than 5.8.0 — the first one 
 ### Added
 - First version. A prototype, expect rough edges.
 
-[Unreleased]: https://github.com/krzysztofdudek/Horde/compare/v6.1.0...HEAD
+[Unreleased]: https://github.com/krzysztofdudek/Horde/compare/v6.1.1...HEAD
+[6.1.1]: https://github.com/krzysztofdudek/Horde/compare/v6.1.0...v6.1.1
 [6.1.0]: https://github.com/krzysztofdudek/Horde/compare/v6.0.0...v6.1.0
 [6.0.0]: https://github.com/krzysztofdudek/Horde/compare/v0.4.0...v6.0.0
 [0.4.0]: https://github.com/krzysztofdudek/Horde/compare/v0.3.0...v0.4.0
